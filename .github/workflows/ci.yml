@@ -58,7 +58,7 @@ jobs:
       # — no external service/token, downloadable per-run, not enforced as a gate.
       # taiki-e/install-action's `@<tool-name>` shorthand can't be SHA-pinned (the tool name
       # lives in the ref itself); the documented SHA-pinned form is @<version> + `with: tool:`.
-      - uses: taiki-e/install-action@83ac0ad63c0167e6f06796fab0fce28db1bf3db0 # v2
+      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
         with:
           tool: cargo-llvm-cov
       - name: Test + coverage
@@ -67,7 +67,7 @@ jobs:
         run: |
           cargo build --locked -p atlas-gateway -p atlas-native --bins
           PYTHONPATH=tools python3 tools/atlas_recovery/tests/live_native.py
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-coverage
           path: lcov.info
@@ -156,7 +156,7 @@ jobs:
         working-directory: crates/atlas-gateway/ui
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: crates/atlas-gateway/ui/.nvmrc
           cache: npm
@@ -169,7 +169,7 @@ jobs:
       # coverage report — no external service/token, downloadable per-run.
       - name: Test + coverage
         run: npm run test:coverage
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: ui-coverage
           path: crates/atlas-gateway/ui/coverage
@@ -181,7 +181,7 @@ jobs:
       - name: Typecheck + production build
         run: npm run build
       - name: Upload dist artifact
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: atlas-ui-dist
           path: crates/atlas-gateway/ui/dist

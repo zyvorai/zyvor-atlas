@@ -4,7 +4,7 @@
 # (FSAL_VFS) serves FUSE mounts of each exported filesystem; atlas-native-nfs mounts them, writes
 # the Ganesha configuration and supervises both. Ganesha runs as its own process (LGPL-3.0).
 # ---- builder ----
-FROM docker.io/library/rust:1.98-bookworm@sha256:93ce27a88655056a51dbdd8f5f2d7ddc071c7b0070fb288a37b5a285fc83971e AS builder
+FROM docker.io/library/rust:1.99-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS builder
 WORKDIR /build
 COPY . .
 RUN cargo build --release --locked -p atlas-native-fuse --features fuse \
@@ -14,7 +14,7 @@ RUN cargo build --release --locked -p atlas-native-fuse --features fuse \
 # Ganesha 9.14 or later: older releases answer the GET_DIR_DELEGATION that recent Linux clients
 # send with NFS4ERR_OP_ILLEGAL instead of NFS4ERR_NOTSUPP, which the client turns into EREMOTEIO
 # on directory reads. Debian testing has it; Ubuntu 26.04 ships 6.5.
-FROM docker.io/library/debian:testing@sha256:deae2af882a1b5f60a3646cd5d5f10ef1e65bc3b9d741b38f5c8ec4b0925a132 AS runtime
+FROM docker.io/library/debian:testing@sha256:f35963177a0584848d5222b3d2b4f4ebcc6434d39db0a709c3088237ef619cbf AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 # Ganesha finds the filesystem under each export through /etc/mtab. NFSv3 needs rpcbind (which
 # looks its port up in /etc/services, from netbase) and rpc.statd (nfs-common) for NLM locks.

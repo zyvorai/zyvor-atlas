@@ -4,14 +4,14 @@
 # one binary: it speaks its own TCP protocols plus a small HTTP endpoint, so the runtime image needs
 # nothing beyond CA certificates.
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:59037199c44290f2befcdd58dcc540164763fc296950255aaefeef096a1866b0 AS builder
+FROM docker.io/library/rust:1.99-bookworm@sha256:114c7a4425406451c2866b6aafe69fe29b1b298832db1277d411ac73c82d04d6 AS builder
 WORKDIR /build
 COPY . .
 # `s3`: tiering cold extents to Ceph RGW or another S3-compatible bucket.
 RUN cargo build --release --locked -p atlas-native --features s3 --bin atlas-native-node
 
 # ---- runtime ----
-FROM docker.io/library/debian:bookworm-slim@sha256:3783cc01769c7b2b1b83a5c5ad96c815348e28ed7da68e2e3687004faa906251 AS runtime
+FROM docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home /var/lib/atlas-native atlas-native \
