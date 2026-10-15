@@ -179,3 +179,55 @@ async fn live_mode_reports_missing_programs() {
     assert!(h.programs_missing.contains(&"atlas_bio".into()));
     assert!(h.programs_missing.contains(&"atlas_native".into()));
 }
+
+async fn get_json(app: axum::Router, uri: &str) -> serde_json::Value {
+    let res = app
+        .oneshot(Request::builder().uri(uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    serde_json::from_slice(&bytes).unwrap()
+}
+
+#[tokio::test]
+async fn risk_route_scores_rca_and_capacity() {
+    let c = Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab());
+    let app = router(c);
+
+    // The demo has a critical write tail on vol_vm_web01.
+    let v = get_json(app.clone(), "/io/risk?volume=vol_vm_web01").await;
+    assert_eq!(v["level"], "critical");
+    assert_eq!(v["can_execute"], false);
+    assert_eq!(v["capacity_used"], false);
+    assert!(!v["evidence"].as_array().unwrap().is_empty());
+
+    // An unknown volume has no RCA evidence: healthy, until capacity says otherwise.
+    let v = get_json(app.clone(), "/io/risk?volume=nope").await;
+    assert_eq!(v["level"], "healthy");
+    let v = get_json(app.clone(), "/io/risk?volume=nope&used_percent=80").await;
+    assert_eq!(v["level"], "elevated");
+    assert_eq!(v["capacity_used"], true);
+    let v = get_json(app.clone(), "/io/risk?volume=nope&used_percent=95").await;
+    assert_eq!(v["level"], "critical");
+    // Out-of-range capacity is ignored by the scorer, not trusted.
+    let v = get_json(app.clone(), "/io/risk?volume=nope&used_percent=500").await;
+    assert_eq!(v["level"], "healthy");
+
+    let res = app
+        .oneshot(
+            Request::builder()
+                .uri("/metrics")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let text = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(text.contains("atlas_io_risk_level 2"), "{text}");
+}

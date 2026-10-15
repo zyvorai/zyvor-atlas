@@ -12,7 +12,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 ### Added
 
 - `atlas-io`: deterministic `risk` scorer (`score`, `RiskLevel`, `CapacitySignal`) combining RCA
-  verdicts and queue-cause notes with an optional capacity signal; library only (`docs/IO_RISK.md`).
+  verdicts and queue-cause notes with an optional capacity signal; served at `GET /io/risk` and as `atlas_io_risk_level` (`docs/IO_RISK.md`).
 - Application recovery operator tool (`PYTHONPATH=tools python3 -m atlas_recovery`):
   dependency-ordered snapshot capture and restore drills, trusted bounded application hooks,
   Native block-range checksum verification, RPO/RTO objectives, atomic private reports,
