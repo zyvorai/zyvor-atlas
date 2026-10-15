@@ -3,8 +3,21 @@
 # Atlas I/O risk scoring
 
 `atlas_io::risk` turns RCA results (`atlas_io::rca`) plus an optional capacity signal into one
-`RiskLevel`. It is deterministic, read-only and makes no external calls. It is a **library
-helper only**: it is not exposed through an HTTP route, `atlasctl`, or the Ops Advisor yet.
+`RiskLevel`. It is deterministic, read-only and makes no external calls. It is served by the
+`atlas-io-agent` HTTP API (below); it is not yet consumed by `atlasctl` or the gateway's Ops Advisor.
+
+## HTTP
+
+`GET /io/risk[?volume=<id>&used_percent=<0-100>&days_to_full=<n>]` on the agent:
+
+```json
+{"level":"critical","capacity_used":false,"can_execute":false,
+ "evidence":[{"device":"rbd0","volume_id":"vol_vm_web01","verdict":"critical_latency","notes":["..."]}]}
+```
+
+The agent has no capacity telemetry, so the capacity signal is supplied by the caller and
+validated by the scorer. `/metrics` also exports `atlas_io_risk_level` (0 healthy, 1 elevated,
+2 critical) over all current RCA.
 
 ## Levels
 

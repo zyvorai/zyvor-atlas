@@ -11,7 +11,7 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
-use crate::Collector;
+use crate::{score, CapacitySignal, Collector};
 
 #[derive(Clone)]
 pub struct AppState {
@@ -26,6 +26,7 @@ pub fn router(collector: Arc<Collector>) -> Router {
         .route("/io/histograms", get(histograms))
         .route("/io/workloads", get(workloads))
         .route("/io/rca", get(rca))
+        .route("/io/risk", get(risk))
         .route("/io/leases", get(leases).post(grant_lease))
         .route("/io/coverage", get(coverage))
         .route("/io/native", get(native))
@@ -68,6 +69,37 @@ struct RcaQuery {
 async fn rca(State(st): State<AppState>, Query(q): Query<RcaQuery>) -> impl IntoResponse {
     st.collector.poll();
     Json(st.collector.rca(q.volume.as_deref()))
+}
+
+#[derive(Deserialize)]
+struct RiskQuery {
+    volume: Option<String>,
+    used_percent: Option<f64>,
+    days_to_full: Option<f64>,
+}
+
+/// Read-only risk level over the current RCA, optionally combined with a capacity signal the
+/// caller supplies (the agent has no capacity telemetry of its own). Invalid capacity values are
+/// ignored by the scorer; `capacity_used` reports whether one was supplied.
+async fn risk(State(st): State<AppState>, Query(q): Query<RiskQuery>) -> impl IntoResponse {
+    st.collector.poll();
+    let rca = st.collector.rca(q.volume.as_deref());
+    let capacity = q.used_percent.map(|used_percent| CapacitySignal {
+        used_percent,
+        days_to_full: q.days_to_full,
+    });
+    let level = score(&rca, capacity);
+    Json(serde_json::json!({
+        "level": level.as_str(),
+        "capacity_used": capacity.is_some(),
+        "can_execute": false,
+        "evidence": rca.iter().map(|r| serde_json::json!({
+            "device": r.device,
+            "volume_id": r.volume_id,
+            "verdict": r.verdict,
+            "notes": r.notes,
+        })).collect::<Vec<_>>(),
+    }))
 }
 
 async fn leases(State(st): State<AppState>) -> impl IntoResponse {
@@ -163,6 +195,9 @@ async fn prom(State(st): State<AppState>) -> impl IntoResponse {
             ));
         }
     }
+    out.push_str("# HELP atlas_io_risk_level Risk from RCA (0 healthy, 1 elevated, 2 critical)\n# TYPE atlas_io_risk_level gauge\n");
+    let level = score(&st.collector.rca(None), None);
+    out.push_str(&format!("atlas_io_risk_level {}\n", level as u8));
     if let Some(n) = st.collector.native() {
         out.push_str("# HELP atlas_io_native_tracked_pids Atlas Native processes in the kernel PID set\n# TYPE atlas_io_native_tracked_pids gauge\n");
         out.push_str(&format!(
