@@ -37,6 +37,8 @@ jobs:
       - name: Install protoc + cmake + libcurl
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - name: Application recovery scenario tests
+        run: PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_recovery/tests -v
       - name: License headers
         run: ./scripts/check-license-headers.sh
       - name: Migrations parity (migrations/ vs migrations-postgres/)
@@ -61,6 +63,10 @@ jobs:
           tool: cargo-llvm-cov
       - name: Test + coverage
         run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Application recovery against actual Native processes
+        run: |
+          cargo build --locked -p atlas-gateway -p atlas-native --bins
+          PYTHONPATH=tools python3 tools/atlas_recovery/tests/live_native.py
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: rust-coverage
