@@ -19,9 +19,11 @@ pub mod http;
 pub mod lease;
 pub mod procscan;
 pub mod rca;
+pub mod risk;
 pub mod source;
 
 pub use collector::Collector;
+pub use risk::{score, CapacitySignal, RiskLevel};
 pub use source::{FakeSource, IoSource};
 
 /// Pin directory advertised in health; the live source pins the native maps under
