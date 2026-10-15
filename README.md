@@ -93,6 +93,13 @@ Everything below ran on real infrastructure in the Atlas lab. Lab verification i
 
 Compared with a parallel filesystem such as WEKA, including where WEKA is the better choice today: [docs/COMPARISON.md](docs/COMPARISON.md).
 
+## Application recovery drills
+
+Capture coordinated recovery points, restore into new drill volumes, validate application
+startup or Native block checksums, measure recovery objectives, and retain cleanup evidence.
+The operator tool uses existing Atlas APIs and supports dependency ordering, bounded hooks,
+and scheduled drills: [Application recovery guide](docs/APPLICATION_RECOVERY.md).
+
 ## The console
 
 <div align="center">

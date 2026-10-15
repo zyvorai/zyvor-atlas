@@ -1,0 +1,21 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+[Unit]
+Description=Atlas application restore drill
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=atlas-recovery
+WorkingDirectory=/opt/zyvor-atlas
+Environment=PYTHONPATH=/opt/zyvor-atlas/tools
+EnvironmentFile=/etc/atlas-recovery/credentials.env
+ExecStart=/usr/bin/python3 -m atlas_recovery drill --plan /etc/atlas-recovery/plan.json --hooks /etc/atlas-recovery/hooks.json --base-url https://atlas.example.com/api/atlas/v1 --report-dir /var/lib/atlas-recovery/reports
+# Hook registry and plan are operator-owned; the runner cannot change them.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/atlas-recovery
+# Hook-specific access (Kubernetes credentials, sockets) must be provisioned explicitly.

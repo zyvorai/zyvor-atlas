@@ -9,6 +9,20 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- Application recovery operator tool (`PYTHONPATH=tools python3 -m atlas_recovery`):
+  dependency-ordered snapshot capture and restore drills, trusted bounded application hooks,
+  Native block-range checksum verification, RPO/RTO objectives, atomic private reports,
+  conservative cleanup, latest-snapshot selection, and daily systemd examples.
+- Recovery contract scenarios and actual gateway/Native-process smoke checks in CI.
+
+### Changed
+
+- I/O RCA distinguishes scheduler queue pressure from issue-to-complete service latency,
+  handles insufficient or inconsistent queue evidence, and restricts hottest-issuer attribution
+  to the known volume while preserving the existing response schema.
+
 ## [0.5.0] — 2026-10-09
 
 Documentation: a rewritten README with animated graphics, an animated landing page, and the full docs set published on the website.
