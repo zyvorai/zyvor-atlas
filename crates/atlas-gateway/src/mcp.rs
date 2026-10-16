@@ -14,7 +14,7 @@ use rmcp::{
         router::tool::ToolRouter,
         wrapper::{Json as ToolJson, Parameters},
     },
-    model::{ErrorData as McpError, ServerCapabilities, ServerInfo},
+    model::{ErrorData as McpError, ServerCapabilities, ServerConfig},
     service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router,
     transport::streamable_http_server::{
@@ -292,8 +292,8 @@ impl AtlasMcp {
 
 #[tool_handler]
 impl ServerHandler for AtlasMcp {
-    fn get_info(&self) -> ServerInfo {
-        let mut info = ServerInfo::default();
+    fn get_info(&self) -> ServerConfig {
+        let mut info = ServerConfig::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.instructions = Some(
             "Atlas storage control plane — read-only inventory and advisory tools. No tool here \
