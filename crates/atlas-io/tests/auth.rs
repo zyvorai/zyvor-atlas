@@ -84,4 +84,5 @@ async fn mcp_requires_the_token_and_serves_tools() {
     let body = axum::body::to_bytes(ok.into_body(), 1 << 20).await.unwrap();
     let text = String::from_utf8_lossy(&body);
     assert!(text.contains("atlas-io") || text.contains("I/O sensor"), "{text}");
+    assert!(text.contains("\"prompts\"") && text.contains("\"resources\""), "{text}");
 }
