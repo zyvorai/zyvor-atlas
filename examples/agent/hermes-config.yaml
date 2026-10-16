@@ -1,0 +1,13 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+# Merge into ~/.hermes/config.yaml. Token: examples/agent/mint-token.sh (operator role).
+mcp_servers:
+  atlas:
+    url: "https://atlas.example.com/api/atlas/v1/mcp"   # or http://<node>:30510/... on a lab
+    headers:
+      Authorization: "Bearer ${ATLAS_TOKEN}"
+  # Optional, if the node agent runs with ATLAS_IO_TOKEN set and is reachable from the host:
+  # atlas-io:
+  #   url: "http://atlas-io-agent.zyvor-system:5111/mcp"
+  #   headers:
+  #     Authorization: "Bearer ${ATLAS_IO_TOKEN}"

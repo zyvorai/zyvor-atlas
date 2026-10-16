@@ -647,7 +647,7 @@ namespace?, storage_class?, replicated_size?, gateway_port?, gateway_instances?}
 Built with the `mcp` Cargo feature (default-off for `cargo build`, but included in the shipped `Dockerfile` / `Dockerfile.ceph` images — `cargo build -p atlas-gateway --features mcp`),
 Atlas exposes a read-only/advisory MCP server at `POST /api/atlas/v1/mcp` (streamable-HTTP
 transport), behind the same bearer-JWT `auth_middleware` as the rest of this API — no separate
-port or auth mechanism. Any MCP host (e.g. [Hermes Agent](https://github.com/zyvorai/zyvor-atlas/blob/main/docs/HERMES_AGENT.md), Claude) can
+port or auth mechanism. Any MCP host (e.g. [Hermes Agent](../control-plane/hermes-agent.md), Claude) can
 connect and call:
 
 | Tool | Mirrors |
@@ -672,6 +672,12 @@ connect and call:
 | `list_snapshots` | `GET /snapshots` (operator role; stricter than REST, which is tenant-unscoped) |
 | `list_jobs` | `GET /jobs` (operator role; stricter than REST) |
 | `get_job` | `GET /jobs/{id}` (operator role; stricter than REST) |
+
+**Host header check.** The MCP transport only accepts loopback `Host` headers by default, which
+would reject every remote client. When authentication is required (the deployed case) the check is
+lifted because the endpoint is bearer-token gated; with auth off it stays loopback-only. Override
+with `ATLAS_MCP_ALLOWED_HOSTS` (`*` disables the check; otherwise a comma-separated `host[:port]`
+allow-list).
 
 No write/action tools are exposed — same `can_execute: false` advisory-only posture as the Ops
 Advisor (see `docs/AI_ADVISOR.md`). Use the REST/gRPC API above for anything that mutates storage.

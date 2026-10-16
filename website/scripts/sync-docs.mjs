@@ -37,6 +37,8 @@ const DOCS = [
   ['RUSTFS.md', 'control-plane', 'rustfs', 10, 'RustFS (history)'],
   ['IO_EBPF.md', 'control-plane', 'io-ebpf', 11, 'eBPF I/O sensor'],
   ['IO_RISK.md', 'control-plane', 'io-risk', 12, 'I/O risk scoring'],
+  ['MCP.md', 'control-plane', 'mcp', 13, 'MCP and agents'],
+  ['HERMES_AGENT.md', 'control-plane', 'hermes-agent', 14, 'Hermes Agent'],
 
   ['NATIVE_STORAGE.md', 'atlas-native', 'overview', 1, 'Storage overview'],
   ['NATIVE_NODE.md', 'atlas-native', 'node', 2, 'Node'],

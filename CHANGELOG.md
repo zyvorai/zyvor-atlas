@@ -16,6 +16,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `docs/MCP.md` and `examples/agent/` (operator-token mint script, Hermes/Claude client configs,
+  ops skill) for MCP-connected agents.
+
 
 - `atlas-io-agent`: optional bearer token (`ATLAS_IO_TOKEN`) and, with the `mcp` feature, a read-only
   MCP endpoint at `/mcp`; the gateway sends `ATLAS_IO_AGENT_TOKEN` when fetching `/io/risk`.
