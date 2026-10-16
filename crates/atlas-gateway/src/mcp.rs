@@ -26,15 +26,38 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use axum::extract::{Path, State};
+use axum::{Extension, Json};
+
 use crate::{
-    auth::{tenant_scope, Actor},
-    routes::ai::{compute_advisor, compute_anomalies, compute_incidents, compute_what_if,
-                 AdvisorMode, WhatIfRequest},
+    auth::{require_role, tenant_scope, Actor, ROLE_OPERATOR},
+    routes::ai::{
+        compute_advisor, compute_anomalies, compute_incidents, compute_what_if, fetch_io_risk,
+        io_agent_from_env, io_unavailable, AdvisorMode, WhatIfRequest,
+    },
+    routes::{dr, observability, volume_groups, volumes},
     state::AppState,
 };
 
 fn internal_error(err: impl std::fmt::Display) -> McpError {
     McpError::internal_error(err.to_string(), None)
+}
+
+/// Map a REST handler's result onto an MCP tool result. The handlers run their own role/tenant
+/// checks, so MCP can't drift from REST; caller mistakes become `invalid_params`/`forbidden`-style
+/// errors rather than internal ones.
+fn rest(result: atlas_common::AppResult<Json<Value>>) -> Result<ToolJson<Value>, McpError> {
+    use atlas_common::AppError;
+    match result {
+        Ok(Json(v)) => Ok(ToolJson(v)),
+        Err(e @ (AppError::NotFound(_) | AppError::Validation(_) | AppError::Conflict(_))) => {
+            Err(McpError::invalid_params(e.to_string(), None))
+        }
+        Err(e @ (AppError::Auth(_) | AppError::Forbidden(_))) => {
+            Err(McpError::invalid_request(e.to_string(), None))
+        }
+        Err(e) => Err(internal_error(e)),
+    }
 }
 
 /// The `Actor` set by `auth_middleware` on the originating HTTP request, recovered from the MCP
@@ -87,6 +110,12 @@ struct ListVolumesArgs {
     /// Optional volume kind filter (block|filesystem|object).
     #[serde(default)]
     kind: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct IdArgs {
+    /// Resource id, as returned by the matching list tool.
+    id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -273,6 +302,134 @@ impl AtlasMcp {
     }
 
     #[tool(
+        description = "Storage I/O risk from the optional atlas-io agent (healthy/elevated/critical \
+                        plus the devices behind it). Fails open: an unreachable or unconfigured agent \
+                        is reported as status \"unavailable\", never as healthy. Read-only. Requires \
+                        an operator-or-higher token."
+    )]
+    async fn io_risk(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        require_role(self.state.config.auth_required, &actor, ROLE_OPERATOR)
+            .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
+        let view = match io_agent_from_env() {
+            Some((url, timeout)) => fetch_io_risk(&url, timeout).await,
+            None => io_unavailable("ATLAS_IO_AGENT_URL is not configured"),
+        };
+        Ok(ToolJson(json!(view)))
+    }
+
+    #[tool(
+        description = "Disaster-recovery posture: mirror counts by role/state and whether any \
+                        mirror is in error. Read-only. Requires an operator-or-higher token."
+    )]
+    async fn dr_status(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        rest(dr::dr_status(State(self.state.clone()), Extension(actor)).await)
+    }
+
+    #[tool(
+        description = "DR preflight: whether a failover could proceed now and what blocks it. \
+                        Read-only; use it to prepare a human-run failover, it never starts one. \
+                        Requires an operator-or-higher token."
+    )]
+    async fn dr_preflight(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        rest(dr::dr_preflight(State(self.state.clone()), Extension(actor)).await)
+    }
+
+    #[tool(
+        description = "List RBD mirrors (role, state, peer). Read-only. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn list_dr_mirrors(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        rest(dr::list_dr_mirrors(State(self.state.clone()), Extension(actor)).await)
+    }
+
+    #[tool(
+        description = "Detailed live status of one RBD mirror by id (from list_dr_mirrors), \
+                        including whether this site replayed the peer's demotion. Read-only. \
+                        Requires an operator-or-higher token."
+    )]
+    async fn dr_mirror_status(
+        &self,
+        Parameters(args): Parameters<IdArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        rest(
+            dr::mirror_status(State(self.state.clone()), Extension(actor), Path(args.id)).await,
+        )
+    }
+
+    #[tool(
+        description = "List multi-image consistency groups (volume groups). Read-only. \
+                        Requires an operator-or-higher token."
+    )]
+    async fn list_volume_groups(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        rest(volume_groups::list_volume_groups(State(self.state.clone()), Extension(actor)).await)
+    }
+
+    #[tool(
+        description = "List volume snapshots across tenants. Read-only. Requires an \
+                        operator-or-higher token (stricter than the REST route)."
+    )]
+    async fn list_snapshots(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        require_role(self.state.config.auth_required, &actor, ROLE_OPERATOR)
+            .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
+        rest(volumes::list_snapshots(State(self.state.clone())).await)
+    }
+
+    #[tool(
+        description = "List the most recent 100 jobs (state, kind, progress). Read-only. \
+                        Requires an operator-or-higher token (stricter than the REST route)."
+    )]
+    async fn list_jobs(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        require_role(self.state.config.auth_required, &actor, ROLE_OPERATOR)
+            .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
+        rest(observability::list_jobs(State(self.state.clone())).await)
+    }
+
+    #[tool(
+        description = "Get one job by id (from list_jobs or an API response). Read-only. \
+                        Requires an operator-or-higher token (stricter than the REST route)."
+    )]
+    async fn get_job(
+        &self,
+        Parameters(args): Parameters<IdArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        require_role(self.state.config.auth_required, &actor, ROLE_OPERATOR)
+            .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
+        rest(observability::get_job(State(self.state.clone()), Path(args.id)).await)
+    }
+
+    #[tool(
         description = "Project storage risk posture under hypothetical capacity/growth/recovery \
                         assumptions, without changing any inventory or executing any action. \
                         Requires an operator-or-higher token."
@@ -296,8 +453,8 @@ impl ServerHandler for AtlasMcp {
         let mut info = ServerConfig::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.instructions = Some(
-            "Atlas storage control plane — read-only inventory and advisory tools. No tool here \
-             mutates storage; use the REST/gRPC API (docs/API.md) for write operations."
+            "Atlas storage control plane — read-only inventory, DR, I/O-risk and advisory tools. No \
+             tool here mutates storage; use the REST/gRPC API (docs/API.md) for write operations."
                 .into(),
         );
         info

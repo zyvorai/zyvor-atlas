@@ -9,19 +9,19 @@ pub(crate) mod ai;
 mod backends;
 mod databridge;
 mod day2;
-mod dr;
+pub(crate) mod dr;
 mod governance;
 mod inventory;
 mod meta;
 mod object_store;
-mod observability;
+pub(crate) mod observability;
 mod oidc;
 mod protection;
 mod rbd;
 mod rook;
 pub(crate) mod util;
-mod volume_groups;
-mod volumes;
+pub(crate) mod volume_groups;
+pub(crate) mod volumes;
 mod zfs;
 
 use axum::{
