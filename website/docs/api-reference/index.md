@@ -647,7 +647,7 @@ namespace?, storage_class?, replicated_size?, gateway_port?, gateway_instances?}
 Beyond tools, the server also advertises three read-only prompts (`triage`, `capacity_review`, `dr_readiness`) and documentation resources (`atlas://docs/*`, `atlas://skill/ops`), and `GET /.well-known/mcp` is a public discovery card (endpoint and auth scheme only). See [MCP.md](../control-plane/mcp.md#prompts-and-resources).
 
 Built with the `mcp` Cargo feature (default-off for `cargo build`, but included in the shipped `Dockerfile` / `Dockerfile.ceph` images — `cargo build -p atlas-gateway --features mcp`),
-Atlas exposes an MCP server, read-only by default (one opt-in guarded write, below), at `POST /api/atlas/v1/mcp` (streamable-HTTP
+Atlas exposes an MCP server, read-only by default (two opt-in guarded writes, below), at `POST /api/atlas/v1/mcp` (streamable-HTTP
 transport), behind the same bearer-JWT `auth_middleware` as the rest of this API — no separate
 port or auth mechanism. Any MCP host (e.g. [Hermes Agent](../control-plane/hermes-agent.md), Claude) can
 connect and call:
@@ -689,11 +689,12 @@ with `ATLAS_MCP_ALLOWED_HOSTS` (`*` disables the check; otherwise a comma-separa
 allow-list).
 
 Write tools are **off by default**. With `ATLAS_MCP_WRITE_ENABLE=1` the server additionally
-lists `create_snapshot` (one volume, reversible). It is two-phase: a call without
+lists `create_snapshot` (one volume, reversible) and `ack_alert` (records that an operator saw an alert; it
+neither resolves nor silences it). Both are two-phase: a call without
 `confirmation_token` changes nothing and returns the plan plus a 5-minute, single-use token bound to
 the caller, the tool and the exact arguments; the same call with that token executes the REST
 handler (so its role and tenant checks apply). Every proposal, rejection and execution is audited
-as `mcp.create_snapshot`. Failover, promote/demote, delete, restore/rollback and disk operations are
+as `mcp.<tool>`. Failover, promote/demote, delete, restore/rollback and disk operations are
 never exposed over MCP; use the REST/gRPC API or `atlasctl` for them (`dr_preflight` lets an agent
 prepare a human-run failover). Tokens live in process memory, so a gateway restart invalidates them.
 

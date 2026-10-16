@@ -304,7 +304,7 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
-        let result = compute_anomalies(&self.state, &actor, args.minutes, args.sensitivity)
+        let result = compute_anomalies(&self.state, &actor, args.minutes, args.sensitivity, AdvisorMode::Local)
             .await
             .map_err(internal_error)?;
         Ok(ToolJson(json!(result)))
@@ -452,7 +452,7 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
-        let result = compute_what_if(&self.state, &actor, req)
+        let result = compute_what_if(&self.state, &actor, req, AdvisorMode::Local)
             .await
             .map_err(internal_error)?;
         Ok(ToolJson(json!(result)))
@@ -523,7 +523,7 @@ pub(crate) async fn server_card() -> Json<Value> {
         "name": "atlas",
         "title": "Zyvor Atlas storage control plane",
         "description": "Read-only storage inventory, Ops Advisor, I/O risk and DR tools for agents; \
-                        one opt-in, audited, two-phase write.",
+                        two opt-in, audited, two-phase writes.",
         "version": env!("CARGO_PKG_VERSION"),
         "transport": "streamable-http",
         "endpoint": "/api/atlas/v1/mcp",

@@ -11,6 +11,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- MCP `ack_alert` (guarded, behind `ATLAS_MCP_WRITE_ENABLE`): same two-phase, single-use, audited flow as
+  `create_snapshot`, which now shares one gate with it.
+- Optional LLM narratives for `GET /ai/anomalies` and `POST /ai/what-if` via `?mode=auto|llm` (default
+  `local`, nothing sent). MCP tools stay local-only. The three narrative paths share one provider helper.
 - MCP prompts and resources on the gateway (`triage`, `capacity_review`, `dr_readiness`; `atlas://docs/*`,
   `atlas://skill/ops`) and on the `atlas-io` agent (`io_triage`; I/O docs). Prompt arguments are validated;
   resources are embedded text only. `GET /.well-known/mcp` is a public, static discovery card.

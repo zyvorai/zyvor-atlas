@@ -206,7 +206,9 @@ async fn guarded_snapshot_is_two_phase_single_use_and_tenant_scoped() {
     let done_json: serde_json::Value = serde_json::from_str(&text_of(&done)).unwrap();
     assert_eq!(done_json["executed"], true);
     assert!(done_json["result"]["job_id"].is_string(), "{done_json}");
-    assert_eq!(done_json["result"]["state"], "queued");
+    // The job worker may already have picked it up by the time the response is built.
+    let state = done_json["result"]["state"].as_str().unwrap_or_default();
+    assert!(["queued", "running"].contains(&state), "job accepted but state was {state}: {done_json}");
     assert_eq!(snapshots(pool.clone()).await, before + 1);
     let replay = call().await;
     assert!(replay.is_err() || replay.unwrap().is_error == Some(true), "token replay");
@@ -242,4 +244,92 @@ async fn guarded_snapshot_is_two_phase_single_use_and_tenant_scoped() {
     .unwrap();
     let statuses: Vec<_> = rows.into_iter().map(|r| r.0).collect();
     assert_eq!(statuses, vec!["proposed", "rejected", "success", "rejected"], "{statuses:?}");
+}
+
+/// `ack_alert` follows the same two-phase rules: a plan changes nothing, the token is bound to the alert
+/// id and single-use, viewers are refused, and every step lands in the audit trail.
+#[tokio::test]
+async fn guarded_ack_alert_is_two_phase_single_use_and_audited() {
+    use rmcp::model::CallToolRequestParams;
+    std::env::set_var("ATLAS_MCP_WRITE_ENABLE", "1");
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, pool) = spawn(true, secret).await;
+    for id in ["alert_a", "alert_b"] {
+        atlas_inventory::alerts::upsert_open(
+            &pool, id, "warning", "test", "pool", "pool_x", &format!("title {id}"), "d",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+    }
+    let acked = |pool: sqlx::AnyPool, id: &'static str| async move {
+        atlas_inventory::alerts::list(&pool, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == id)
+            .unwrap()
+            .acknowledged_by
+    };
+
+    let op = connect(addr, secret, "operator", "tenant-a").await;
+    let names: Vec<_> = op.list_tools(Default::default()).await.unwrap().tools.iter()
+        .map(|t| t.name.to_string()).collect();
+    assert!(names.contains(&"ack_alert".to_string()), "{names:?}");
+
+    // Phase 1: the plan names the alert and changes nothing.
+    let plan = op
+        .call_tool(CallToolRequestParams::new("ack_alert").with_arguments(args(serde_json::json!({"alert_id": "alert_a"}))))
+        .await
+        .unwrap();
+    let plan_json: serde_json::Value = serde_json::from_str(&text_of(&plan)).unwrap();
+    assert_eq!(plan_json["executed"], false);
+    assert_eq!(plan_json["plan"]["title"], "title alert_a");
+    let token = plan_json["confirmation_token"].as_str().unwrap().to_string();
+    assert_eq!(acked(pool.clone(), "alert_a").await, None, "planning must not acknowledge");
+
+    // The token is bound to the alert id.
+    let wrong = op
+        .call_tool(CallToolRequestParams::new("ack_alert").with_arguments(args(serde_json::json!({
+            "alert_id": "alert_b", "confirmation_token": token
+        }))))
+        .await;
+    assert!(wrong.is_err() || wrong.unwrap().is_error == Some(true));
+    assert_eq!(acked(pool.clone(), "alert_b").await, None);
+
+    // Phase 2 executes once; the replay is refused.
+    let call = || op.call_tool(CallToolRequestParams::new("ack_alert").with_arguments(args(serde_json::json!({
+        "alert_id": "alert_a", "confirmation_token": token
+    }))));
+    let done = call().await.unwrap();
+    assert_eq!(done.is_error, Some(false), "{}", text_of(&done));
+    assert!(acked(pool.clone(), "alert_a").await.is_some());
+    let replay = call().await;
+    assert!(replay.is_err() || replay.unwrap().is_error == Some(true), "a token must not be reusable");
+
+    // Unknown alerts are caller errors.
+    let missing = op
+        .call_tool(CallToolRequestParams::new("ack_alert").with_arguments(args(serde_json::json!({"alert_id": "nope"}))))
+        .await;
+    assert!(missing.is_err() || missing.unwrap().is_error == Some(true));
+    op.cancel().await.unwrap();
+
+    // Viewers cannot even get a plan.
+    let viewer = connect(addr, secret, "viewer", "tenant-a").await;
+    let denied = viewer
+        .call_tool(CallToolRequestParams::new("ack_alert").with_arguments(args(serde_json::json!({"alert_id": "alert_b"}))))
+        .await;
+    assert!(denied.is_err() || denied.unwrap().is_error == Some(true));
+    assert_eq!(acked(pool.clone(), "alert_b").await, None);
+    viewer.cancel().await.unwrap();
+
+    // proposed, rejected (wrong binding), success, rejected (replay) are all audited.
+    let rows = atlas_inventory::audit::list(&pool, None, Some("mcp.ack_alert"), None, None, 50)
+        .await
+        .unwrap();
+    let statuses: Vec<_> = rows.iter().filter_map(|r| r["status"].as_str()).collect();
+    for want in ["proposed", "rejected", "success"] {
+        assert!(statuses.contains(&want), "audit statuses: {statuses:?}");
+    }
 }

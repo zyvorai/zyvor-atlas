@@ -42,7 +42,7 @@ const FeatureList: FeatureItem[] = [
     eyebrow: 'Agent-ready',
     title: 'Let an agent look. Not leap.',
     description:
-      'An MCP server with 20 read-only tools: inventory, the Ops Advisor, eBPF I/O risk, DR and jobs, with the same roles and tenant limits as the API. One opt-in write, snapshots, behind a single-use confirmation token and an audit record. Failover and delete are never exposed.',
+      'An MCP server with 27 read-only tools: inventory, the Ops Advisor, eBPF I/O risk, Ceph, DR and jobs, with the same roles and tenant limits as the API. Two opt-in writes, snapshots and alert acknowledgement, each behind a single-use confirmation token and an audit record. Failover and delete are never exposed.',
     to: '/docs/control-plane/mcp',
     cta: 'MCP and agents',
   },

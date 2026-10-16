@@ -24,11 +24,14 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 
 use super::{actor_from, internal_error, rest, AtlasMcp};
-use crate::auth::{require_role, require_tenant, ROLE_OPERATOR};
+use crate::auth::{require_role, require_tenant, Actor, ROLE_OPERATOR};
+use crate::routes::observability;
 use crate::routes::volumes::{self, SnapshotBody};
+use crate::state::AppState;
 
 const TOKEN_TTL_SECS: u64 = 300;
 const CREATE_SNAPSHOT: &str = "create_snapshot";
+const ACK_ALERT: &str = "ack_alert";
 
 pub(super) fn write_enabled() -> bool {
     matches!(
@@ -106,6 +109,58 @@ fn redeem(token: &str, actor: &str, tool: &str, params: &str) -> Result<(), &'st
     Ok(())
 }
 
+/// Outcome of the shared two-phase gate.
+enum Gate {
+    /// No token was given: change nothing, hand back this token with the plan.
+    Propose(String),
+    /// A valid, unused token bound to this caller, tool and exact arguments: go ahead.
+    Execute,
+}
+
+/// The two-phase confirm shared by every write tool. `params` must be the canonical JSON of the
+/// arguments (everything except the token) so a token cannot be replayed with different arguments.
+fn gate(actor_id: &str, tool: &str, params: &str, token: Option<&str>) -> Result<Gate, &'static str> {
+    match token {
+        None => Ok(Gate::Propose(issue(actor_id, tool, params, now_secs()))),
+        Some(t) => redeem(t, actor_id, tool, params).map(|()| Gate::Execute),
+    }
+}
+
+/// Audit record `mcp.<tool>` (proposed | rejected | success | failure). Failures to audit never block.
+async fn audit(
+    s: &AppState,
+    actor: &Actor,
+    tool: &str,
+    resource_type: &str,
+    resource_id: &str,
+    status: &'static str,
+    detail: Value,
+) {
+    let _ = atlas_inventory::audit::record(
+        &s.pool,
+        Some(&actor.tenant_id),
+        &actor.id,
+        &format!("mcp.{tool}"),
+        resource_type,
+        resource_id,
+        status,
+        None,
+        Some(detail),
+    )
+    .await;
+}
+
+fn write_guard(s: &AppState, actor: &Actor) -> Result<(), McpError> {
+    if !write_enabled() {
+        return Err(McpError::invalid_request(
+            "write tools are disabled on this server",
+            None,
+        ));
+    }
+    require_role(s.config.auth_required, actor, ROLE_OPERATOR)
+        .map_err(|e| McpError::invalid_request(e.to_string(), None))
+}
+
 #[derive(Debug, Deserialize, JsonSchema)]
 struct CreateSnapshotArgs {
     /// Volume id, as returned by `list_volumes`.
@@ -114,6 +169,15 @@ struct CreateSnapshotArgs {
     #[serde(default)]
     name: Option<String>,
     /// Omit to get a plan and a token; pass the token (with identical arguments) to execute.
+    #[serde(default)]
+    confirmation_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct AckAlertArgs {
+    /// Alert id, as returned by `list_alerts`.
+    alert_id: String,
+    /// Omit to get the alert and a token; pass the token (with identical arguments) to execute.
     #[serde(default)]
     confirmation_token: Option<String>,
 }
@@ -132,15 +196,8 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
-        if !write_enabled() {
-            return Err(McpError::invalid_request(
-                "write tools are disabled on this server",
-                None,
-            ));
-        }
         let s = &self.state;
-        require_role(s.config.auth_required, &actor, ROLE_OPERATOR)
-            .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
+        write_guard(s, &actor)?;
         let vol = atlas_inventory::get_volume(&s.pool, &args.volume_id)
             .await
             .map_err(internal_error)?
@@ -160,49 +217,32 @@ impl AtlasMcp {
 
         let name = args.name.clone().filter(|n| !n.trim().is_empty());
         let params = json!({ "volume_id": args.volume_id, "name": name }).to_string();
-        let audit = |status: &'static str, detail: Value| {
-            let pool = s.pool.clone();
-            let tenant_id = actor.tenant_id.clone();
-            let actor_id = actor.id.clone();
-            let rid = args.volume_id.clone();
-            async move {
-                let _ = atlas_inventory::audit::record(
-                    &pool,
-                    Some(&tenant_id),
-                    &actor_id,
-                    "mcp.create_snapshot",
-                    "volume",
-                    &rid,
-                    status,
-                    None,
-                    Some(detail),
-                )
-                .await;
+        let rid = args.volume_id.as_str();
+
+        match gate(&actor.id, CREATE_SNAPSHOT, &params, args.confirmation_token.as_deref()) {
+            Ok(Gate::Propose(token)) => {
+                audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
+                return Ok(ToolJson(json!({
+                    "executed": false,
+                    "plan": {
+                        "action": "create_snapshot",
+                        "volume_id": vol.id,
+                        "volume_name": vol.name,
+                        "size_bytes": vol.size_bytes,
+                        "snapshot_name": name,
+                    },
+                    "confirmation_token": token,
+                    "expires_in_secs": TOKEN_TTL_SECS,
+                    "next": "call create_snapshot again with the same arguments plus confirmation_token",
+                })));
             }
-        };
-
-        let Some(token) = args.confirmation_token.as_deref() else {
-            let token = issue(&actor.id, CREATE_SNAPSHOT, &params, now_secs());
-            audit("proposed", json!({ "via": "mcp", "confirmed": false })).await;
-            return Ok(ToolJson(json!({
-                "executed": false,
-                "plan": {
-                    "action": "create_snapshot",
-                    "volume_id": vol.id,
-                    "volume_name": vol.name,
-                    "size_bytes": vol.size_bytes,
-                    "snapshot_name": name,
-                },
-                "confirmation_token": token,
-                "expires_in_secs": TOKEN_TTL_SECS,
-                "next": "call create_snapshot again with the same arguments plus confirmation_token",
-            })));
-        };
-
-        if let Err(why) = redeem(token, &actor.id, CREATE_SNAPSHOT, &params) {
-            audit("rejected", json!({ "via": "mcp", "reason": why })).await;
-            return Err(McpError::invalid_params(why, None));
+            Ok(Gate::Execute) => {}
+            Err(why) => {
+                audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                return Err(McpError::invalid_params(why, None));
+            }
         }
+
         let body: SnapshotBody =
             serde_json::from_value(json!({ "name": name })).map_err(internal_error)?;
         let result = volumes::create_snapshot(
@@ -214,8 +254,70 @@ impl AtlasMcp {
         .await
         .map(|(_, j)| j);
         match &result {
-            Ok(Json(v)) => audit("success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
-            Err(e) => audit("failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
+            Ok(Json(v)) => audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
+            Err(e) => audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
+        }
+        let out = rest(result)?;
+        Ok(ToolJson(json!({ "executed": true, "result": out.0 })))
+    }
+
+    #[tool(
+        description = "Acknowledge one alert (records who saw it; does not resolve it or silence \
+                        notifications). Two-phase: call without confirmation_token to receive the \
+                        alert and a 5-minute single-use token, then call again with the same \
+                        arguments plus that token to execute. Requires an operator-or-higher token."
+    )]
+    async fn ack_alert(
+        &self,
+        Parameters(args): Parameters<AckAlertArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        let s = &self.state;
+        write_guard(s, &actor)?;
+        let alert = atlas_inventory::alerts::list(&s.pool, None)
+            .await
+            .map_err(internal_error)?
+            .into_iter()
+            .find(|a| a.id == args.alert_id)
+            .ok_or_else(|| McpError::invalid_params(format!("unknown alert {}", args.alert_id), None))?;
+        let params = json!({ "alert_id": args.alert_id }).to_string();
+        let rid = args.alert_id.as_str();
+
+        match gate(&actor.id, ACK_ALERT, &params, args.confirmation_token.as_deref()) {
+            Ok(Gate::Propose(token)) => {
+                audit(s, &actor, ACK_ALERT, "alert", rid, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
+                return Ok(ToolJson(json!({
+                    "executed": false,
+                    "plan": {
+                        "action": "ack_alert",
+                        "alert_id": alert.id,
+                        "severity": alert.severity,
+                        "title": alert.title,
+                        "state": alert.state,
+                        "already_acknowledged_by": alert.acknowledged_by,
+                    },
+                    "confirmation_token": token,
+                    "expires_in_secs": TOKEN_TTL_SECS,
+                    "next": "call ack_alert again with the same arguments plus confirmation_token",
+                })));
+            }
+            Ok(Gate::Execute) => {}
+            Err(why) => {
+                audit(s, &actor, ACK_ALERT, "alert", rid, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                return Err(McpError::invalid_params(why, None));
+            }
+        }
+
+        let result = observability::ack_alert(
+            State(s.clone()),
+            Extension(actor.clone()),
+            Path(args.alert_id.clone()),
+        )
+        .await;
+        match &result {
+            Ok(Json(v)) => audit(s, &actor, ACK_ALERT, "alert", rid, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
+            Err(e) => audit(s, &actor, ACK_ALERT, "alert", rid, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
         }
         let out = rest(result)?;
         Ok(ToolJson(json!({ "executed": true, "result": out.0 })))
@@ -225,6 +327,19 @@ impl AtlasMcp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn gate_proposes_without_a_token_and_executes_with_a_matching_one() {
+        let params = r#"{"alert_id":"alert_a"}"#;
+        let Ok(Gate::Propose(t)) = gate("alice", ACK_ALERT, params, None) else {
+            panic!("no token must propose");
+        };
+        // A token for another tool or other arguments never opens the gate.
+        assert!(gate("alice", CREATE_SNAPSHOT, params, Some(&t)).is_err());
+        assert!(gate("alice", ACK_ALERT, r#"{"alert_id":"alert_b"}"#, Some(&t)).is_err());
+        assert!(matches!(gate("alice", ACK_ALERT, params, Some(&t)), Ok(Gate::Execute)));
+        assert!(gate("alice", ACK_ALERT, params, Some(&t)).is_err(), "single use");
+    }
 
     #[test]
     fn token_is_bound_single_use_and_expires() {

@@ -33,6 +33,6 @@ recommend for a human, each with the Atlas endpoint or `atlasctl` command to ins
 
 ## Guarded writes (only if the operator enabled them)
 
-`create_snapshot` is two-phase. Call it without `confirmation_token`, show the human the returned
+`create_snapshot` and `ack_alert` are two-phase. Call it without `confirmation_token`, show the human the returned
 `plan`, and only after they approve call it again with the **identical** arguments plus the token
 (valid 5 minutes, single use). Do not retry a rejected token; request a new plan.
