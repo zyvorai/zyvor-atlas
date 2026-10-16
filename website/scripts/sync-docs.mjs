@@ -19,6 +19,7 @@ const REPO = 'https://github.com/zyvorai/zyvor-atlas';
 const DOCS = [
   ['GETTING_STARTED.md', 'getting-started', 'build-and-run', 2, 'Build and run locally'],
   ['DEPLOYMENT.md', 'getting-started', 'deployment', 3, 'Deployment'],
+  ['ENVOY.md', 'getting-started', 'envoy', 4, 'Envoy front door'],
 
   ['ARCHITECTURE.md', 'core-concepts', 'architecture', 1, 'Architecture'],
   ['PRODUCTS.md', 'core-concepts', 'products', 2, 'Product integration'],

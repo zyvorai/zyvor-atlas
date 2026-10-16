@@ -1,0 +1,57 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+{{- if .Values.envoy.enabled }}
+{{- $gw := default (include "atlas.fullname" .) .Values.envoy.gatewayName }}
+{{- $gwNs := default (include "atlas.namespace" .) .Values.envoy.gatewayNamespace }}
+{{- $tls := and .Values.envoy.createGateway .Values.envoy.tlsSecretName }}
+{{- if $tls }}
+# Plain-HTTP listener: redirect everything to HTTPS.
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "atlas.fullname" . }}-redirect
+  namespace: {{ include "atlas.namespace" . }}
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gw }}
+      namespace: {{ $gwNs }}
+      sectionName: http
+  hostnames:
+    - {{ .Values.envoy.host | quote }}
+  rules:
+    - filters:
+        - type: RequestRedirect
+          requestRedirect:
+            scheme: https
+            statusCode: 301
+---
+{{- end }}
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: {{ include "atlas.fullname" . }}
+  namespace: {{ include "atlas.namespace" . }}
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  parentRefs:
+    - name: {{ $gw }}
+      namespace: {{ $gwNs }}
+      {{- if $tls }}
+      sectionName: https
+      {{- end }}
+  hostnames:
+    - {{ .Values.envoy.host | quote }}
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: {{ include "atlas.fullname" . }}
+          port: {{ .Values.service.httpPort }}
+      timeouts:
+        request: {{ .Values.envoy.requestTimeout | quote }}
+{{- end }}

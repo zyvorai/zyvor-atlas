@@ -85,6 +85,25 @@ ingress:
   host: ""
   tls: []
 
+# Envoy front door via the Kubernetes Gateway API (needs a Gateway API implementation such as
+# Envoy Gateway — see deploy/envoy-lab/). Mutually exclusive with `ingress`. Plain HTTP to the
+# gateway's `service.httpPort`; HTTP/2 gRPC and TLS-to-backend are not routed by this chart.
+envoy:
+  enabled: false
+  # The chart creates a Gateway (+ HTTPS/HTTP listeners) when true; when false it only attaches an
+  # HTTPRoute to the existing Gateway named below.
+  createGateway: true
+  gatewayClassName: eg
+  gatewayName: ""        # existing Gateway to attach to when createGateway=false (default: release fullname)
+  gatewayNamespace: ""   # existing Gateway's namespace (default: release namespace)
+  host: ""               # required: the hostname clients use
+  # Name of a kubernetes.io/tls Secret in the release namespace. Set = HTTPS listener on 443 plus an
+  # HTTP :80 listener that redirects to it. Empty = a plain HTTP :80 listener only.
+  tlsSecretName: ""
+  # HTTPRoute request timeout. "0s" disables it, which the streamable-HTTP MCP endpoint
+  # (/api/atlas/v1/mcp) needs for long-lived sessions.
+  requestTimeout: "0s"
+
 persistence:
   size: 1Gi
   # Omit (null) to use the cluster's default StorageClass — matches deploy/k8s/atlas-gateway.yaml.
