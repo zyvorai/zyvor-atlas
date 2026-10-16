@@ -140,6 +140,10 @@ Atlas is Apache-2.0 software you can use in production and in commercial product
 
 **[Aether](https://github.com/zyvorai/Aether)** runtime portability plane · **[Zorvia](https://github.com/zyvorai/zyvor-zorvia)** KubeVirt VM platform · **[Kryton](https://github.com/zyvorai/zyvor-kryton)** · **[Transiva](https://github.com/zyvorai/zyvor-transiva)** VM migration · [zyvor.dev](https://zyvor.dev)
 
+## Support
+
+The current release is Apache-2.0 (older tags used other licenses, see the [CHANGELOG](CHANGELOG.md)). If it helps you, you can donate any amount you like: <https://rzp.io/rzp/utwdYh3>. A donation is voluntary and supports development and maintenance of the current code. It is not a purchase: it buys no support, SLA, features, priority or license, and it is not tax-deductible (Zyvor AI Labs Private Limited is a company, not a charity). Zyvor Enterprise (supported releases, SLAs, a named contact and enterprise features) is separate: sales@zyvor.dev.
+
 ## License and support
 
 Free and open source under the [Apache License 2.0](LICENSE) ([NOTICE](NOTICE)). **Zyvor Enterprise** adds supported releases, deployment and upgrade guidance, priority incident triage, a named technical contact and 24x7 critical intake: [plans](docs/SUBSCRIPTION-MODEL.md) · [pricing](https://zyvor.dev/pricing?utm_source=github&utm_medium=atlas&utm_campaign=readme_license) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
