@@ -270,3 +270,123 @@ async fn mcp_list_volumes_is_tenant_scoped() {
 
     client.cancel().await.unwrap();
 }
+
+async fn connect(
+    addr: SocketAddr,
+    secret: &str,
+    role: &str,
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    use rmcp::transport::StreamableHttpClientTransport;
+    use rmcp::ServiceExt;
+    let (token, _, _) =
+        atlas_gateway::auth::mint_token(secret, "agent", role, "global", 3600).unwrap();
+    let http_client = reqwest::Client::builder()
+        .default_headers({
+            let mut headers = reqwest::header::HeaderMap::new();
+            headers.insert(
+                reqwest::header::AUTHORIZATION,
+                format!("Bearer {token}").parse().unwrap(),
+            );
+            headers
+        })
+        .build()
+        .unwrap();
+    let transport = StreamableHttpClientTransport::with_client(
+        http_client,
+        rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
+            format!("http://{addr}/api/atlas/v1/mcp"),
+        ),
+    );
+    ().serve(transport).await.unwrap()
+}
+
+fn text_of(r: &rmcp::model::CallToolResult) -> String {
+    r.content
+        .first()
+        .and_then(|c| c.as_text())
+        .map(|t| t.text.clone())
+        .unwrap_or_default()
+}
+
+/// DR / volume-group / job / snapshot / I-O-risk read tools: listed, callable by an operator,
+/// refused for a viewer, and `io_risk` reports `unavailable` (never healthy) with no agent set.
+#[tokio::test]
+async fn mcp_dr_job_and_io_risk_read_tools() {
+    use rmcp::model::CallToolRequestParams;
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, _pool) = spawn(true, secret).await;
+
+    let op = connect(addr, secret, "operator").await;
+    let tools = op.list_tools(Default::default()).await.unwrap();
+    let names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
+    for n in [
+        "io_risk",
+        "dr_status",
+        "dr_preflight",
+        "list_dr_mirrors",
+        "dr_mirror_status",
+        "list_volume_groups",
+        "list_snapshots",
+        "list_jobs",
+        "get_job",
+    ] {
+        assert!(names.contains(&n), "missing {n}: {names:?}");
+    }
+    // Still no mutating tool names.
+    assert!(
+        !names.iter().any(|n| n.starts_with("create_")
+            || n.starts_with("delete_")
+            || n.contains("failover")
+            || n.contains("promote")),
+        "unexpected write tool: {names:?}"
+    );
+
+    for n in [
+        "dr_status",
+        "dr_preflight",
+        "list_dr_mirrors",
+        "list_volume_groups",
+        "list_snapshots",
+        "list_jobs",
+    ] {
+        let r = op.call_tool(CallToolRequestParams::new(n)).await.unwrap();
+        assert_eq!(r.is_error, Some(false), "{n}: {}", text_of(&r));
+    }
+
+    let io = op
+        .call_tool(CallToolRequestParams::new("io_risk"))
+        .await
+        .unwrap();
+    assert_eq!(io.is_error, Some(false));
+    let io_text = text_of(&io);
+    assert!(io_text.contains("\"status\":\"unavailable\""), "{io_text}");
+    assert!(io_text.contains("\"level\":null"), "{io_text}");
+
+    // Unknown ids are caller errors, not internal ones.
+    let missing = op
+        .call_tool(
+            CallToolRequestParams::new("get_job").with_arguments(
+                serde_json::json!({ "id": "job_does_not_exist" })
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            ),
+        )
+        .await;
+    assert!(
+        missing.is_err() || missing.unwrap().is_error == Some(true),
+        "unknown job must be an error"
+    );
+    op.cancel().await.unwrap();
+
+    let viewer = connect(addr, secret, "viewer").await;
+    for n in ["dr_status", "list_jobs", "io_risk"] {
+        let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
+        assert!(
+            r.is_err() || r.unwrap().is_error == Some(true),
+            "viewer must be refused for {n}"
+        );
+    }
+    viewer.cancel().await.unwrap();
+}

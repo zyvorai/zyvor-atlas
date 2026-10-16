@@ -11,6 +11,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- MCP: read-only `io_risk`, `dr_status`, `dr_preflight`, `list_dr_mirrors`, `dr_mirror_status`,
+  `list_volume_groups`, `list_snapshots`, `list_jobs`, `get_job` tools (`docs/API.md`).
+
 - Helm: optional Envoy front door via the Gateway API (`envoy.*` values, `Gateway` + `HTTPRoute`,
   HTTP→HTTPS redirect, no request timeout for MCP) and `deploy/envoy-lab/up.sh` (Envoy Gateway v1.9.2);
   `docs/ENVOY.md`.
