@@ -9,6 +9,11 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Security
+
+- `hickory-resolver` 0.26.2 (GHSA-5j98-2g5x-46v6, -6w6g-hm98-mhgm, -6f2x-v7q7-m7m5); website lockfile refreshed
+  and `tinypool` forced to >= 2.1.2 (prototype-pollution RCE); `POST /volume-groups` takes at most 256 volumes.
+
 ### Added
 
 - MCP `ack_alert` (guarded, behind `ATLAS_MCP_WRITE_ENABLE`): same two-phase, single-use, audited flow as
