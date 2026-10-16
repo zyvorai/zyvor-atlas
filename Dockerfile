@@ -24,7 +24,7 @@ COPY --from=ui /ui/dist crates/atlas-gateway/ui/dist
 # The `oracle` crate vendors ODPI-C (compiles with the toolchain here) and dlopens the Oracle Instant
 # Client at *runtime* — so no OCI libs are needed at build time, only in the runtime stage below.
 RUN cargo build --release -p atlas-gateway -p atlasctl \
-    --features atlas-databridge/mongodb,atlas-databridge/sqlserver,atlas-databridge/oracle,atlas-databridge/kafka-lag
+    --features atlas-gateway/mcp,atlas-databridge/mongodb,atlas-databridge/sqlserver,atlas-databridge/oracle,atlas-databridge/kafka-lag
 
 # ---- runtime ----
 FROM docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime

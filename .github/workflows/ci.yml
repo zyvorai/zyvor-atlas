@@ -103,7 +103,7 @@ jobs:
       - name: Check MCP feature
         run: |
           set -euo pipefail
-          cargo check -p atlas-gateway --features mcp
+          cargo clippy -p atlas-gateway --features mcp --all-targets -- -D warnings
           cargo test -p atlas-gateway --features mcp --test mcp
 
   # Runs the full atlas-gateway integration suite (~200 tests, unchanged from build-test's run —
