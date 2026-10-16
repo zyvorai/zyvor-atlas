@@ -484,6 +484,7 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     let policies = viewer.call_tool(CallToolRequestParams::new("list_policies")).await.unwrap();
     assert_eq!(policies.is_error, Some(false), "the static catalogue is open to any role");
     viewer.cancel().await.unwrap();
+}
 
 /// Prompts and resources are static text: listed, renderable, and arguments are validated rather
 /// than echoed into the prompt.
