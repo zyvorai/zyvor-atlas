@@ -73,7 +73,18 @@ async fn main() -> Result<()> {
         }
     });
     tracing::info!(%cli.bind, mode = %cli.mode, seen = collector.seen(), "atlas-io-agent listening");
-    let app = atlas_io::http::router(collector);
+    // Bearer token for the whole API except /health, from the environment only (a flag would leak
+    // into `ps`). Unset keeps today's open behaviour — fine on loopback, not on a cluster Service.
+    let token = std::env::var("ATLAS_IO_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    if token.is_none() && !cli.bind.ip().is_loopback() {
+        tracing::warn!(
+            "ATLAS_IO_TOKEN is not set and the agent is bound to a non-loopback address: its API is unauthenticated"
+        );
+    }
+    let app = atlas_io::http::router_with_token(collector, token);
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

@@ -11,7 +11,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends clang libbpf-de
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY . .
-RUN cargo build --release -p atlas-io --features bpf --bin atlas-io-agent
+RUN cargo build --release -p atlas-io --features bpf,mcp --bin atlas-io-agent
 
 # ---- runtime ----
 FROM docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime

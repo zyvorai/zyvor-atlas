@@ -11,6 +11,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `atlas-io-agent`: optional bearer token (`ATLAS_IO_TOKEN`) and, with the `mcp` feature, a read-only
+  MCP endpoint at `/mcp`; the gateway sends `ATLAS_IO_AGENT_TOKEN` when fetching `/io/risk`.
+
 - Helm: optional Envoy front door via the Gateway API (`envoy.*` values, `Gateway` + `HTTPRoute`,
   HTTP→HTTPS redirect, no request timeout for MCP) and `deploy/envoy-lab/up.sh` (Envoy Gateway v1.9.2);
   `docs/ENVOY.md`.

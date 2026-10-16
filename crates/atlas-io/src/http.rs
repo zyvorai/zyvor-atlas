@@ -18,8 +18,15 @@ pub struct AppState {
     pub collector: Arc<Collector>,
 }
 
+/// Router without authentication (tests, `make run`, loopback use).
 pub fn router(collector: Arc<Collector>) -> Router {
-    Router::new()
+    router_with_token(collector, None)
+}
+
+/// Router that, when `token` is `Some`, requires `Authorization: Bearer <token>` on everything
+/// except the liveness endpoints (`/health`, `/io/health`) that kubelet probes hit.
+pub fn router_with_token(collector: Arc<Collector>, token: Option<String>) -> Router {
+    let app = Router::new()
         .route("/health", get(health))
         .route("/io/health", get(health))
         .route("/io/summary", get(summary))
@@ -32,7 +39,50 @@ pub fn router(collector: Arc<Collector>) -> Router {
         .route("/io/native", get(native))
         .route("/metrics", get(prom))
         .route("/io/poll", post(poll))
-        .with_state(AppState { collector })
+        .with_state(AppState {
+            collector: collector.clone(),
+        });
+    #[cfg(feature = "mcp")]
+    let app = app.nest_service("/mcp", crate::mcp::service(collector, token.is_some()));
+    match token {
+        Some(t) => app.layer(axum::middleware::from_fn_with_state(
+            Arc::<str>::from(t),
+            require_bearer,
+        )),
+        None => app,
+    }
+}
+
+/// Constant-time equality (length is not secret: tokens are fixed-size in practice).
+fn ct_eq(a: &[u8], b: &[u8]) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
+async fn require_bearer(
+    State(token): State<Arc<str>>,
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> axum::response::Response {
+    if matches!(req.uri().path(), "/health" | "/io/health") {
+        return next.run(req).await;
+    }
+    let presented = req
+        .headers()
+        .get(axum::http::header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.strip_prefix("Bearer "));
+    match presented {
+        Some(p) if ct_eq(p.as_bytes(), token.as_bytes()) => next.run(req).await,
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            [(axum::http::header::WWW_AUTHENTICATE, "Bearer")],
+            "unauthorized",
+        )
+            .into_response(),
+    }
 }
 
 async fn health(State(st): State<AppState>) -> impl IntoResponse {

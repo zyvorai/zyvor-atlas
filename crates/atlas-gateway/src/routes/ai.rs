@@ -1197,7 +1197,17 @@ async fn fetch_io_risk(base_url: &str, timeout: Duration) -> IoRiskView {
         Ok(c) => c,
         Err(_) => return io_unavailable("http client error"),
     };
-    let mut resp = match client.get(url).send().await {
+    // The agent's optional bearer token (ATLAS_IO_TOKEN on the agent). Redirects are disabled
+    // above, so it is only ever sent to the configured agent URL.
+    let mut request = client.get(url);
+    if let Some(token) = std::env::var("ATLAS_IO_AGENT_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty())
+    {
+        request = request.bearer_auth(token);
+    }
+    let mut resp = match request.send().await {
         Ok(r) if r.status().is_success() => r,
         Ok(r) => return io_unavailable(format!("agent returned HTTP {}", r.status().as_u16())),
         Err(e) if e.is_timeout() => return io_unavailable("request timed out"),

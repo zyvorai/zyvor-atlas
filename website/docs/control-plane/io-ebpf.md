@@ -119,6 +119,18 @@ PID set emptied on the next rescan, and `podman stop` removed the three pins. Un
 `/sys/fs/bpf` itself the pin failed with `Permission denied` (AppArmor), which is why the pin dir
 is configurable.
 
+## Authentication and MCP
+
+- `ATLAS_IO_TOKEN` (environment only): when set, every route except `/health` and `/io/health`
+  requires `Authorization: Bearer <token>` (constant-time compare). Unset keeps the API open, which
+  is only acceptable on loopback; the agent logs a warning if it is bound elsewhere without a token.
+  `deploy/k8s/atlas-io-agent.yaml` reads it from the optional Secret `atlas-io-agent-auth`.
+- The gateway sends `ATLAS_IO_AGENT_TOKEN` (same value) when it fetches `/io/risk` for the Ops
+  Advisor and the `io_risk` MCP tool.
+- Built with `--features mcp` (`Dockerfile.io` does), the agent serves a read-only MCP endpoint at
+  `/mcp`: `io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_risk`, `io_leases`. It sits
+  behind the same token; there is no tool that grants a lease or changes anything.
+
 ## Risk scoring
 
 `GET /io/risk` and the `atlas_io_risk_level` metric reduce the RCA (and an optional,
