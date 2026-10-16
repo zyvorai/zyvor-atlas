@@ -18,6 +18,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - MCP prompts and resources on the gateway (`triage`, `capacity_review`, `dr_readiness`; `atlas://docs/*`,
   `atlas://skill/ops`) and on the `atlas-io` agent (`io_triage`; I/O docs). Prompt arguments are validated;
   resources are embedded text only. `GET /.well-known/mcp` is a public, static discovery card.
+- MCP read tools: `ceph_status`, `ceph_df`, `ceph_osd_tree` (summarised), `databridge_plans`,
+  `databridge_cdc_streams`, `list_policies`, `list_audit`. Operator-gated where the REST route has no
+  check, tenant-filtered where rows carry a tenant, output capped; audit entries omit request/result bodies.
 - `docs/MCP.md` and `examples/agent/` (operator-token mint script, Hermes/Claude client configs,
   ops skill) for MCP-connected agents.
 - MCP: opt-in (`ATLAS_MCP_WRITE_ENABLE=1`) guarded `create_snapshot` tool with a two-phase,
@@ -58,6 +61,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Fixed
 
+- MCP `list_snapshots` returned every tenant's snapshots to any operator; it is now limited to the caller's
+  tenant unless admin.
 - MCP: remote clients were rejected by the transport's loopback-only `Host` check; it is now
   lifted when auth is required, with `ATLAS_MCP_ALLOWED_HOSTS` to override.
 

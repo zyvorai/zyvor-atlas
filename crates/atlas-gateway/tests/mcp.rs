@@ -301,10 +301,19 @@ async fn connect(
     secret: &str,
     role: &str,
 ) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
+    connect_as(addr, secret, role, "global").await
+}
+
+async fn connect_as(
+    addr: SocketAddr,
+    secret: &str,
+    role: &str,
+    tenant: &str,
+) -> rmcp::service::RunningService<rmcp::RoleClient, ()> {
     use rmcp::transport::StreamableHttpClientTransport;
     use rmcp::ServiceExt;
     let (token, _, _) =
-        atlas_gateway::auth::mint_token(secret, "agent", role, "global", 3600).unwrap();
+        atlas_gateway::auth::mint_token(secret, "agent", role, tenant, 3600).unwrap();
     let http_client = reqwest::Client::builder()
         .default_headers({
             let mut headers = reqwest::header::HeaderMap::new();
@@ -413,6 +422,67 @@ async fn mcp_dr_job_and_io_risk_read_tools() {
             "viewer must be refused for {n}"
         );
     }
+    viewer.cancel().await.unwrap();
+}
+
+/// Ceph, DataBridge, policies and audit: operator-gated where the REST route has no check, the OSD
+/// tree is summarised, and audit rows are tenant-filtered with request/result bodies withheld.
+#[tokio::test]
+async fn mcp_ceph_databridge_policy_and_audit_tools() {
+    use rmcp::model::CallToolRequestParams;
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, pool) = spawn(true, secret).await;
+
+    for (tenant, actor) in [("acme", "alice"), ("globex", "bob")] {
+        atlas_inventory::audit::record(
+            &pool,
+            Some(tenant),
+            actor,
+            "volume.create",
+            "volume",
+            &format!("vol_{tenant}"),
+            "success",
+            Some(serde_json::json!({"secret": "do-not-leak"})),
+            Some(serde_json::json!({"also": "private"})),
+        )
+        .await
+        .unwrap();
+    }
+
+    let op = connect_as(addr, secret, "operator", "acme").await;
+    let tools = op.list_tools(Default::default()).await.unwrap();
+    let names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
+    for n in [
+        "ceph_status", "ceph_df", "ceph_osd_tree", "databridge_plans",
+        "databridge_cdc_streams", "list_policies", "list_audit",
+    ] {
+        assert!(names.contains(&n), "tools: {names:?}");
+    }
+
+    let tree = op.call_tool(CallToolRequestParams::new("ceph_osd_tree")).await.unwrap();
+    let tree_text = text_of(&tree);
+    assert!(tree_text.contains("\"status\":\"ok\""), "{tree_text}");
+    assert!(tree_text.contains("\"osds_not_serving\":1"), "fake tree has one down OSD: {tree_text}");
+    for n in ["ceph_status", "ceph_df", "databridge_plans", "databridge_cdc_streams", "list_policies"] {
+        let r = op.call_tool(CallToolRequestParams::new(n)).await.unwrap();
+        assert_eq!(r.is_error, Some(false), "{n}: {}", text_of(&r));
+    }
+
+    let audit = op.call_tool(CallToolRequestParams::new("list_audit")).await.unwrap();
+    let audit_text = text_of(&audit);
+    assert!(audit_text.contains("vol_acme"), "{audit_text}");
+    assert!(!audit_text.contains("vol_globex"), "another tenant's audit leaked: {audit_text}");
+    assert!(!audit_text.contains("do-not-leak") && !audit_text.contains("private"), "{audit_text}");
+    op.cancel().await.unwrap();
+
+    let viewer = connect(addr, secret, "viewer").await;
+    for n in ["ceph_status", "ceph_df", "ceph_osd_tree", "databridge_plans", "databridge_cdc_streams", "list_audit"] {
+        let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
+        assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
+    }
+    let policies = viewer.call_tool(CallToolRequestParams::new("list_policies")).await.unwrap();
+    assert_eq!(policies.is_error, Some(false), "the static catalogue is open to any role");
     viewer.cancel().await.unwrap();
 }
 
