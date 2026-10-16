@@ -294,6 +294,7 @@ async fn mcp_accepts_non_loopback_host_when_authenticated() {
         "remote Host rejected: {}",
         resp.status()
     );
+}
 
 async fn connect(
     addr: SocketAddr,
