@@ -67,5 +67,5 @@ configs and an ops skill are under `examples/agent/`.
 
 **Everything is read-only/advisory by default.** Nothing here can fail over, promote, delete,
 restore or wipe, and acting on an analysis (resizing a volume, cordoning a backend, running a
-failover) still means `atlasctl` or the REST API with a human in the loop. The only write path is
-the opt-in, two-phase `create_snapshot` described in [MCP.md](./mcp.md#guarded-writes).
+failover) still means `atlasctl` or the REST API with a human in the loop. The only write paths are
+the opt-in, two-phase `create_snapshot` and `ack_alert` described in [MCP.md](./mcp.md#guarded-writes).

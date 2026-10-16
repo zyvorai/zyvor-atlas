@@ -327,9 +327,9 @@ no model required for the default path. See [AI_ADVISOR.md](../control-plane/ai-
   `telemetry_status: "stale"` (>15 min old) or `"unavailable"` (missing/invalid/future-dated
   timestamp, or no samples at all) with `anomalies: []` and an explanatory warning instead of
   presenting a stale spike as a current incident.
-- **MCP tool exposure** (`crates/atlas-gateway/src/mcp.rs`, `mcp` feature): 20 read-only tools (inventory,
+- **MCP tool exposure** (`crates/atlas-gateway/src/mcp.rs`, `mcp` feature): 27 read-only tools (inventory,
   `ops_advisor`, `list_incidents`, `detect_anomalies`, `what_if_capacity`, `io_risk`, DR, jobs, snapshots) plus
-  one opt-in guarded write (`create_snapshot`, two-phase confirmation token, audited; off unless
+  two opt-in guarded writes (`create_snapshot`, `ack_alert`; two-phase confirmation token, audited; off unless
   `ATLAS_MCP_WRITE_ENABLE=1`), and an authenticated `/mcp` on the `atlas-io` agent. Failover, delete, restore
   and disk operations are deliberately not exposed. See [MCP.md](../control-plane/mcp.md) and
   [API.md](../api-reference/index.md#mcp-model-context-protocol).

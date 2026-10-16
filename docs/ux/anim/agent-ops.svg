@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="An AI agent calls Atlas over MCP: read-only tools by default, one guarded write that needs a confirmation token">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="An AI agent calls Atlas over MCP: read-only tools by default, guarded writes that need a confirmation token">
   <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. SPDX-License-Identifier: Apache-2.0 -->
   <defs>
     <style>
@@ -20,7 +20,7 @@
   <text class="s" x="306" y="187" text-anchor="middle">roles · tenants · audit</text>
   <path class="ln" d="M164 170H234"/>
   <rect class="ok" x="450" y="40" width="166" height="120" rx="8"/>
-  <text class="t" x="533" y="68" text-anchor="middle">Read-only (20)</text>
+  <text class="t" x="533" y="68" text-anchor="middle">Read-only (27)</text>
   <text class="s" x="533" y="92" text-anchor="middle">inventory · Ops Advisor</text>
   <text class="s" x="533" y="110" text-anchor="middle">I/O risk (eBPF) · DR</text>
   <text class="s" x="533" y="128" text-anchor="middle">jobs · snapshots</text>

@@ -8,9 +8,9 @@ decide when and where to post it. Keep claims factual: other storage vendors als
 
 ## One-line description
 
-Atlas: Apache-2.0 storage control plane (Ceph, NFS, ZFS, Longhorn, native filesystem). MCP server with 20
-read-only tools (inventory, Ops Advisor, eBPF I/O risk, DR, jobs) and one opt-in, audited, two-phase
-`create_snapshot`; self-hosted, bearer-JWT auth, tenant-scoped.
+Atlas: Apache-2.0 storage control plane (Ceph, NFS, ZFS, Longhorn, native filesystem). MCP server with 27
+read-only tools (inventory, Ops Advisor, eBPF I/O risk, Ceph, DR, DataBridge, jobs, audit) and two opt-in,
+audited, two-phase writes (`create_snapshot`, `ack_alert`); self-hosted, bearer-JWT auth, tenant-scoped.
 
 ## Fields most directories ask for
 
@@ -32,7 +32,7 @@ then a short description. Check the list's current `CONTRIBUTING.md` for the exa
 category (likely a cloud/infrastructure or "other tools" section) before opening the pull request.
 
 ```
-- [zyvorai/zyvor-atlas](https://github.com/zyvorai/zyvor-atlas) 🦀 🏠 🐧 – Storage control plane over Ceph, NFS, ZFS and Longhorn: read-only MCP tools for inventory, risk scoring, eBPF I/O risk, DR status and jobs, plus an opt-in, audited, two-phase snapshot.
+- [zyvorai/zyvor-atlas](https://github.com/zyvorai/zyvor-atlas) 🦀 🏠 🐧 – Storage control plane over Ceph, NFS, ZFS and Longhorn: read-only MCP tools for inventory, risk scoring, eBPF I/O risk, DR status and jobs, plus opt-in, audited, two-phase snapshot and alert-ack writes.
 ```
 
 ## Registry notes

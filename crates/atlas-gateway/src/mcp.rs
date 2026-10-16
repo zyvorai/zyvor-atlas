@@ -523,7 +523,7 @@ pub(crate) async fn server_card() -> Json<Value> {
         "name": "atlas",
         "title": "Zyvor Atlas storage control plane",
         "description": "Read-only storage inventory, Ops Advisor, I/O risk and DR tools for agents; \
-                        one opt-in, audited, two-phase write.",
+                        two opt-in, audited, two-phase writes.",
         "version": env!("CARGO_PKG_VERSION"),
         "transport": "streamable-http",
         "endpoint": "/api/atlas/v1/mcp",

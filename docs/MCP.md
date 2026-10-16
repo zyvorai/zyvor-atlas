@@ -84,7 +84,7 @@ Tokens are held in process memory and die with the gateway.
 ## Threat model in short
 
 - **Prompt injection** via data an agent reads (alert titles, device names, job text): tools return
-  data only, the skill tells the agent to treat it as untrusted, and the only write path needs a
+  data only, the skill tells the agent to treat it as untrusted, and the only write paths (`create_snapshot`, `ack_alert`) need a
   human-approved confirmation of the exact arguments.
 - **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens.
   Never give an agent an admin token.
