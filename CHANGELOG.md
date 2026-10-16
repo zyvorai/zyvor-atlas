@@ -15,21 +15,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
   `create_snapshot`, which now shares one gate with it.
 - Optional LLM narratives for `GET /ai/anomalies` and `POST /ai/what-if` via `?mode=auto|llm` (default
   `local`, nothing sent). MCP tools stay local-only. The three narrative paths share one provider helper.
-
-### Changed
-
-- Helm: the Envoy HTTPS listener moves from 443 to `envoy.httpsPort` (default `7443`); the HTTP→HTTPS
-  redirect names the port. Set `envoy.httpsPort=443` to keep the old behaviour.
-- `deploy/k8s/atlas-io-agent-live.yaml`: the live block-layer BPF variant of the agent DaemonSet
-  (BPF/PERFMON, tracefs), matching what the lab runs; `atlas-io-agent.yaml` stays fake by default.
-
-### Fixed
-
-- MCP: remote clients were rejected by the transport's loopback-only `Host` check; it is now
-  lifted when auth is required, with `ATLAS_MCP_ALLOWED_HOSTS` to override.
-
-### Added
-
+- MCP prompts and resources on the gateway (`triage`, `capacity_review`, `dr_readiness`; `atlas://docs/*`,
+  `atlas://skill/ops`) and on the `atlas-io` agent (`io_triage`; I/O docs). Prompt arguments are validated;
+  resources are embedded text only. `GET /.well-known/mcp` is a public, static discovery card.
 - `docs/MCP.md` and `examples/agent/` (operator-token mint script, Hermes/Claude client configs,
   ops skill) for MCP-connected agents.
 - MCP: opt-in (`ATLAS_MCP_WRITE_ENABLE=1`) guarded `create_snapshot` tool with a two-phase,
@@ -60,9 +48,27 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Changed
 
+- Helm: the Envoy HTTPS listener moves from 443 to `envoy.httpsPort` (default `7443`); the HTTP→HTTPS
+  redirect names the port. Set `envoy.httpsPort=443` to keep the old behaviour.
+- `deploy/k8s/atlas-io-agent-live.yaml`: the live block-layer BPF variant of the agent DaemonSet
+  (BPF/PERFMON, tracefs), matching what the lab runs; `atlas-io-agent.yaml` stays fake by default.
 - I/O RCA distinguishes scheduler queue pressure from issue-to-complete service latency,
   handles insufficient or inconsistent queue evidence, and restricts hottest-issuer attribution
   to the known volume while preserving the existing response schema.
+
+### Fixed
+
+- MCP: remote clients were rejected by the transport's loopback-only `Host` check; it is now
+  lifted when auth is required, with `ATLAS_MCP_ALLOWED_HOSTS` to override.
+
+### Documentation
+
+- AI and agents are now visible: README section, website homepage (feature band, block, comparison row,
+  footer link), `llms.txt`, and `docs/MCP_LISTING.md` (directory listing drafts, nothing submitted). Stale
+  "advisory only / no write tools" wording corrected in ROADMAP, STATUS, API and ARCHITECTURE; COMPARISON
+  gains the MCP row and a neutral note on other storage MCP servers.
+- The website now copies `docs/ux/anim` into `static/anim`, which the homepage artwork already referenced
+  but the repo never supplied.
 
 ## [0.5.0] — 2026-10-09
 

@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" role="img" aria-label="Cross-site DR: writes replicate from site A to site B, failover promotes B, and failback is guarded until the demotion has replayed">
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. SPDX-License-Identifier: Apache-2.0 -->
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#06121c"/><stop offset="1" stop-color="#0b1f2e"/></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter><style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#f5f5f7;text-anchor:middle}.s{font-size:12px;fill:#9fb3c0}.h{font-size:15px;font-weight:600}.t{font-size:20px;font-weight:650;text-anchor:start}.l{text-anchor:start}</style></defs>
+<rect width="960" height="360" rx="20" fill="url(#bg)"/>
+<text x="40" y="44" class="t">Fail over, fail back cleanly</text>
+<text x="40" y="66" class="s l">A non-forced promote is refused until this site has replayed the peer's demotion.</text>
+<rect x="60" y="110" width="260" height="170" rx="18" fill="#0e2a3b" stroke="#1f4a63" stroke-width="2"/>
+<rect x="640" y="110" width="260" height="170" rx="18" fill="#0e2a3b" stroke="#1f4a63" stroke-width="2"/>
+<text x="190" y="144" class="h">Site A</text><text x="770" y="144" class="h">Site B</text>
+<g><text x="190" y="214" class="h" style="fill:#2ec4b6">PRIMARY<animate attributeName="opacity" values="1;1;0;0;0;1" keyTimes="0;.4;.45;.8;.85;1" dur="12s" repeatCount="indefinite"/></text>
+<text opacity="0" x="190" y="214" class="h" style="fill:#9fb3c0">SECONDARY<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.4;.45;.8;.85;1" dur="12s" repeatCount="indefinite"/></text>
+<text x="770" y="214" class="h" style="fill:#9fb3c0">SECONDARY<animate attributeName="opacity" values="1;1;0;0;0;1" keyTimes="0;.4;.45;.8;.85;1" dur="12s" repeatCount="indefinite"/></text>
+<text opacity="0" x="770" y="214" class="h" style="fill:#2ec4b6">PRIMARY<animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.4;.45;.8;.85;1" dur="12s" repeatCount="indefinite"/></text></g>
+<path d="M320 170 H640" stroke="#2c5a75" stroke-width="2" stroke-dasharray="4 6" fill="none"/><path d="M640 230 H320" stroke="#2c5a75" stroke-width="2" stroke-dasharray="4 6" fill="none"/>
+<g filter="url(#glow)"><circle r="5" fill="#0a84ff"><animateMotion dur="2s" repeatCount="indefinite" path="M320 170 H640"/><animate attributeName="opacity" values="1;1;0;0;1" keyTimes="0;.38;.4;.85;1" dur="12s" repeatCount="indefinite"/></circle>
+<circle r="5" fill="#0a84ff"><animateMotion dur="2s" begin="1s" repeatCount="indefinite" path="M640 230 H320"/><animate attributeName="opacity" values="0;0;1;1;0;0" keyTimes="0;.45;.5;.8;.85;1" dur="12s" repeatCount="indefinite"/></circle></g>
+<g class="h"><text x="480" y="104" style="fill:#2ec4b6;font-size:14px;font-weight:600">journal replication
+<animate attributeName="opacity" values="1;1;0;0;0;1" keyTimes="0;.38;.4;.8;.85;1" dur="12s" repeatCount="indefinite"/></text>
+<text opacity="0" x="480" y="104" style="fill:#ff9f0a;font-size:14px;font-weight:600">failover: B promoted
+<animate attributeName="opacity" values="0;0;1;0;0;0" keyTimes="0;.4;.42;.55;.56;1" dur="12s" repeatCount="indefinite"/></text>
+<text opacity="0" x="480" y="104" style="fill:#0a84ff;font-size:14px;font-weight:600">replaying demotion, then clean failback
+<animate attributeName="opacity" values="0;0;0;1;1;0" keyTimes="0;.55;.6;.62;.85;.9" dur="12s" repeatCount="indefinite"/></text></g>
+<text x="40" y="338" class="s l">GET /dr/mirrors/{id}/status says when a promote would be clean. ?force=1 stays available for real disasters.</text>
+</svg>

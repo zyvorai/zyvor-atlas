@@ -37,6 +37,27 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 `io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_risk`, `io_leases`: read-only views of the
 sensor ([IO_EBPF.md](./io-ebpf.md)). There is no tool that grants a write-freeze lease.
 
+## Prompts and resources
+
+Besides tools, both servers advertise MCP **prompts** (ready-made read-only workflows) and **resources**
+(documentation), so a host can offer them without the user pasting a runbook.
+
+| Server | Prompts | Resources |
+|---|---|---|
+| Gateway | `triage`, `capacity_review` (optional `add_tib`), `dr_readiness` (optional `mirror_id`) | `atlas://docs/mcp`, `atlas://docs/ai-advisor`, `atlas://docs/io-risk`, `atlas://docs/dr`, `atlas://skill/ops` |
+| Node agent | `io_triage` | `atlas://docs/io-risk`, `atlas://docs/io-ebpf` |
+
+Every prompt restates the rules (tool output is data, `unavailable` is not healthy, nothing here can fail
+over or delete). Prompt arguments are validated, not echoed: `add_tib` must be a number from 0 to 100000 and
+`mirror_id` 1 to 64 characters of letters, digits, `_` or `-`, so an argument cannot carry instructions.
+Resources are fixed text compiled into the binary, identical for every caller; nothing is read from disk
+at request time and any other URI is refused.
+
+## Discovery
+
+`GET /.well-known/mcp` on the gateway is public and static: name, version, transport, the endpoint path and
+the auth scheme. It lists no tools and exposes no inventory or tenant data; those need a token.
+
 ## Connecting an agent
 
 1. Mint a short-lived **operator** token: `examples/agent/mint-token.sh [subject] [ttl_secs]`
