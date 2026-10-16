@@ -9,6 +9,13 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- MCP `ack_alert` (guarded, behind `ATLAS_MCP_WRITE_ENABLE`): same two-phase, single-use, audited flow as
+  `create_snapshot`, which now shares one gate with it.
+- Optional LLM narratives for `GET /ai/anomalies` and `POST /ai/what-if` via `?mode=auto|llm` (default
+  `local`, nothing sent). MCP tools stay local-only. The three narrative paths share one provider helper.
+
 ### Changed
 
 - Helm: the Envoy HTTPS listener moves from 443 to `envoy.httpsPort` (default `7443`); the HTTP→HTTPS

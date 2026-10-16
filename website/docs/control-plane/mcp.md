@@ -30,7 +30,7 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 | I/O | `io_risk` (from the node agent; `unavailable` when not configured/reachable, never healthy) |
 | DR | `dr_status`, `dr_preflight`, `list_dr_mirrors`, `dr_mirror_status`, `list_volume_groups` |
 | Work | `list_jobs`, `get_job`, `list_snapshots` (operator role, stricter than REST) |
-| Guarded write | `create_snapshot`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
+| Guarded write | `create_snapshot`, `ack_alert`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
 
 ## Node agent tools
 
@@ -52,16 +52,18 @@ Detailed Hermes walkthrough: [HERMES_AGENT.md](./hermes-agent.md).
 | Variable | Where | Meaning |
 |---|---|---|
 | `ATLAS_MCP_ALLOWED_HOSTS` | gateway | `Host` allow-list for the transport; `*` disables. Unset: loopback-only without auth, any host when auth is required (the endpoint is bearer-gated). |
-| `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot` tool. Off by default. |
+| `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot` and `ack_alert` tools. Off by default. |
 | `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk` and the Ops Advisor's `io_risk` block read the node agent from. |
 | `ATLAS_IO_TOKEN` | agent | Bearer token for the agent API (health probes exempt) and its `/mcp`. |
 
 ## Guarded writes
 
-`create_snapshot` is two-phase and single-use: the first call (no `confirmation_token`) changes
+`create_snapshot` and `ack_alert` are two-phase and single-use: the first call (no `confirmation_token`) changes
 nothing and returns the plan plus a token valid for 5 minutes and bound to the caller, the tool and
 the exact arguments; the second call with that token executes the REST handler, so its role and
-tenant checks apply. Proposals, rejections and executions are audited as `mcp.create_snapshot`.
+tenant checks apply. Proposals, rejections and executions are audited as `mcp.<tool>`. `ack_alert` only records that a
+named operator saw an alert (the plan shows its title, severity and state); it does not resolve the alert or
+silence notifications. Both tools share one gate, so a token for one tool or alert never works for another.
 Tokens are held in process memory and die with the gateway.
 
 ## Threat model in short

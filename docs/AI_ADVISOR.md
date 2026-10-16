@@ -34,6 +34,16 @@ Configure an optional provider with `ATLAS_AI_BASE_URL`, `ATLAS_AI_MODEL`, and o
 Atlas computes and retains authority over the score, evidence, and actions. Remote endpoints must
 use HTTPS. Plain HTTP is permitted only for a loopback model endpoint.
 
+### Narratives for anomalies and what-if
+
+`GET /ai/anomalies` and `POST /ai/what-if` accept the same `?mode=` (default `local`). With `auto` or `llm`,
+a configured provider adds a short plain-English `narrative` (and `narrative_mode`: `llm` or `local_fallback`)
+to the response; with `local` both fields are `null` and nothing leaves Atlas. The anomaly narrative is only written
+when at least one anomaly was detected; the model gets only the figures Atlas computed with
+an instruction to treat every string as untrusted data, and the scores, anomalies and runbook are never taken
+from the model. The MCP tools (`detect_anomalies`, `what_if_capacity`, `list_incidents`, `ops_advisor`) always
+run in `local` mode: an agent cannot make Atlas call an external provider.
+
 ## Storage I/O risk from `atlas-io-agent`
 
 Set `ATLAS_IO_AGENT_URL` (for example `http://atlas-io-agent.zyvor-system:5111`; optional

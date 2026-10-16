@@ -296,7 +296,7 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
-        let result = compute_anomalies(&self.state, &actor, args.minutes, args.sensitivity)
+        let result = compute_anomalies(&self.state, &actor, args.minutes, args.sensitivity, AdvisorMode::Local)
             .await
             .map_err(internal_error)?;
         Ok(ToolJson(json!(result)))
@@ -441,7 +441,7 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
-        let result = compute_what_if(&self.state, &actor, req)
+        let result = compute_what_if(&self.state, &actor, req, AdvisorMode::Local)
             .await
             .map_err(internal_error)?;
         Ok(ToolJson(json!(result)))
