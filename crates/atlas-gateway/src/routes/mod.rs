@@ -7,11 +7,11 @@
 // (crates/atlas-gateway/src/mcp.rs), gated behind the `mcp` feature.
 pub(crate) mod ai;
 mod backends;
-mod databridge;
+pub(crate) mod databridge;
 mod day2;
 pub(crate) mod dr;
-mod governance;
-mod inventory;
+pub(crate) mod governance;
+pub(crate) mod inventory;
 mod meta;
 mod object_store;
 pub(crate) mod observability;

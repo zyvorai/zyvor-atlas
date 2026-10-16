@@ -20,7 +20,10 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 | Advisory | `ops_advisor`, `list_incidents`, `detect_anomalies`, `what_if_capacity` (always local mode: never calls an external LLM) |
 | I/O | `io_risk` (from the node agent; `unavailable` when not configured/reachable, never healthy) |
 | DR | `dr_status`, `dr_preflight`, `list_dr_mirrors`, `dr_mirror_status`, `list_volume_groups` |
-| Work | `list_jobs`, `get_job`, `list_snapshots` (operator role, stricter than REST) |
+| Work | `list_jobs`, `get_job`, `list_snapshots` (operator role, stricter than REST; limited to the caller's tenant unless admin) |
+| Ceph | `ceph_status`, `ceph_df`, `ceph_osd_tree` (summary: counts and the OSDs that are down or out). Operator role; output capped at 256 KiB |
+| DataBridge | `databridge_plans`, `databridge_cdc_streams` (operator; tenant-filtered) |
+| Governance | `list_policies` (static catalogue), `list_audit` (operator; tenant-filtered; request and result bodies are not returned) |
 | Guarded write | `create_snapshot`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
 
 ## Node agent tools
