@@ -39,6 +39,8 @@ use crate::{
     state::AppState,
 };
 
+mod write;
+
 fn internal_error(err: impl std::fmt::Display) -> McpError {
     McpError::internal_error(err.to_string(), None)
 }
@@ -75,10 +77,8 @@ fn actor_from(context: &RequestContext<RoleServer>) -> Result<Actor, McpError> {
 #[derive(Clone)]
 pub struct AtlasMcp {
     state: AppState,
-    // Read by the #[tool_handler] macro's generated `call_tool`/`list_tools` dispatch, not
-    // directly by our own code — rustc's dead-code analysis doesn't see through that, matching
-    // the upstream rmcp examples (examples/servers/src/common/counter.rs), which suppress the
-    // same warning the same way.
+    // Read by the `#[tool_handler(router = self.tool_router)]` dispatch below (not by our own code
+    // directly), so rustc's dead-code analysis can't see the use.
     #[allow(dead_code)]
     tool_router: ToolRouter<AtlasMcp>,
 }
@@ -154,10 +154,11 @@ fn default_sensitivity() -> f64 {
 #[tool_router]
 impl AtlasMcp {
     pub fn new(state: AppState) -> Self {
-        Self {
-            state,
-            tool_router: Self::tool_router(),
+        let mut tool_router = Self::tool_router();
+        if write::write_enabled() {
+            tool_router.merge(Self::write_router());
         }
+        Self { state, tool_router }
     }
 
     #[tool(description = "List storage clusters known to Atlas, with capacity and health.")]
@@ -447,14 +448,18 @@ impl AtlasMcp {
     }
 }
 
-#[tool_handler]
+// `router = self.tool_router`: the macro's default is `Self::tool_router()`, which would ignore the
+// per-instance router that conditionally includes the guarded write tools.
+#[tool_handler(router = self.tool_router)]
 impl ServerHandler for AtlasMcp {
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::default();
         info.capabilities = ServerCapabilities::builder().enable_tools().build();
         info.instructions = Some(
             "Atlas storage control plane — read-only inventory, DR, I/O-risk and advisory tools. No \
-             tool here mutates storage; use the REST/gRPC API (docs/API.md) for write operations."
+             tool here mutates storage unless the operator enabled ATLAS_MCP_WRITE_ENABLE, and \
+             then only through a two-phase confirm; use the REST/gRPC API (docs/API.md) for \
+             every other write operation."
                 .into(),
         );
         info
