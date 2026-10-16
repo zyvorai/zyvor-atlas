@@ -47,6 +47,9 @@ pub(crate) struct GroupBody {
     volume_ids: Vec<String>,
 }
 
+/// Upper bound on a group's size, so a request cannot make the handler allocate or loop without limit.
+const MAX_GROUP_MEMBERS: usize = 256;
+
 /// `POST /volume-groups` — create an RBD group from direct-RBD volumes (admin). The group lives
 /// in the first volume's pool; members may be in other pools of the same cluster.
 pub(crate) async fn create_volume_group(
@@ -62,6 +65,11 @@ pub(crate) async fn create_volume_group(
     }
     if body.volume_ids.is_empty() {
         return Err(AppError::Validation("volume_ids must not be empty".into()));
+    }
+    if body.volume_ids.len() > MAX_GROUP_MEMBERS {
+        return Err(AppError::Validation(format!(
+            "a group takes at most {MAX_GROUP_MEMBERS} volumes"
+        )));
     }
     let mut members = Vec::with_capacity(body.volume_ids.len());
     for vid in &body.volume_ids {
