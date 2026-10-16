@@ -52,19 +52,11 @@ For an HTTPS deployment, use the gateway's `ATLAS_HTTPS_ADDR` host/port instead.
 
 ## What Hermes can do through this
 
-| Tool | What it returns |
-|---|---|
-| `list_clusters` | Storage clusters with capacity/health |
-| `cluster_health` | Detailed health for one cluster |
-| `list_backends` | Registered backends with a capacity/health summary |
-| `list_pools` | Storage pools, filterable by backend/kind |
-| `list_volumes` | Volumes, filterable by state/backend/kind — scoped to Hermes's own tenant |
-| `list_alerts` | Open/resolved alerts from the monitor worker |
-| `metrics_summary` | Aggregate capacity across clusters |
-| `ops_advisor` | The Ops Advisor's risk score, evidence, and prioritized runbook |
+The full tool catalogue (inventory, advisory, I/O risk, DR, jobs, plus the opt-in guarded
+`create_snapshot`) and the threat model are in [MCP.md](MCP.md). A ready-made token script, client
+configs and an ops skill are under `examples/agent/`.
 
-**Every tool here is read-only/advisory.** None of them create, delete, expand, cordon, or
-otherwise mutate anything in Atlas — the same `can_execute: false` boundary the Ops Advisor itself
-enforces (`docs/AI_ADVISOR.md`). Hermes can *observe* Atlas's state and get advisory analysis
-through this connection; acting on that analysis (resizing a volume, cordoning a backend, etc.)
-still means using `atlasctl` or the REST API directly, with a human in the loop.
+**Everything is read-only/advisory by default.** Nothing here can fail over, promote, delete,
+restore or wipe, and acting on an analysis (resizing a volume, cordoning a backend, running a
+failover) still means `atlasctl` or the REST API with a human in the loop. The only write path is
+the opt-in, two-phase `create_snapshot` described in [MCP.md](MCP.md#guarded-writes).

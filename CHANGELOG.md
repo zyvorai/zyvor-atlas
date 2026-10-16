@@ -16,6 +16,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `docs/MCP.md` and `examples/agent/` (operator-token mint script, Hermes/Claude client configs,
+  ops skill) for MCP-connected agents.
 - MCP: opt-in (`ATLAS_MCP_WRITE_ENABLE=1`) guarded `create_snapshot` tool with a two-phase,
   single-use confirmation token and audit trail; no destructive tools (`docs/API.md`).
 
