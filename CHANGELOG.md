@@ -9,6 +9,11 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Fixed
+
+- MCP: remote clients were rejected by the transport's loopback-only `Host` check; it is now
+  lifted when auth is required, with `ATLAS_MCP_ALLOWED_HOSTS` to override.
+
 ### Added
 
 - MCP: read-only `io_risk`, `dr_status`, `dr_preflight`, `list_dr_mirrors`, `dr_mirror_status`,
