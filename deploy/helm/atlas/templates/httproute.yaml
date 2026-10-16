@@ -25,6 +25,7 @@ spec:
         - type: RequestRedirect
           requestRedirect:
             scheme: https
+            port: {{ .Values.envoy.httpsPort }}
             statusCode: 301
 ---
 {{- end }}

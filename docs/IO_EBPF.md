@@ -115,7 +115,8 @@ is configurable.
 - `ATLAS_IO_TOKEN` (environment only): when set, every route except `/health` and `/io/health`
   requires `Authorization: Bearer <token>` (constant-time compare). Unset keeps the API open, which
   is only acceptable on loopback; the agent logs a warning if it is bound elsewhere without a token.
-  `deploy/k8s/atlas-io-agent.yaml` reads it from the optional Secret `atlas-io-agent-auth`.
+  `deploy/k8s/atlas-io-agent.yaml` (and the live-BPF variant `deploy/k8s/atlas-io-agent-live.yaml`, which
+  is what the lab runs) read it from the optional Secret `atlas-io-agent-auth`.
 - The gateway sends `ATLAS_IO_AGENT_TOKEN` (same value) when it fetches `/io/risk` for the Ops
   Advisor and the `io_risk` MCP tool.
 - Built with `--features mcp` (`Dockerfile.io` does), the agent serves a read-only MCP endpoint at

@@ -28,7 +28,7 @@ spec:
     {{- if .Values.envoy.tlsSecretName }}
     - name: https
       protocol: HTTPS
-      port: 443
+      port: {{ .Values.envoy.httpsPort }}
       hostname: {{ .Values.envoy.host | quote }}
       tls:
         mode: Terminate

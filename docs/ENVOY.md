@@ -29,7 +29,7 @@ controller Deployment. Existing Ingress objects and workloads are untouched.
 ```bash
 helm upgrade --install atlas deploy/helm/atlas \
   --set envoy.enabled=true --set envoy.host=atlas.example.com \
-  --set envoy.tlsSecretName=atlas-tls      # optional: HTTPS :443 + HTTP :80 -> 301 redirect
+  --set envoy.tlsSecretName=atlas-tls      # optional: HTTPS :7443 + HTTP :80 -> 301 redirect
 ```
 
 | Value | Default | Meaning |
@@ -39,6 +39,7 @@ helm upgrade --install atlas deploy/helm/atlas \
 | `envoy.createGateway` | `true` | `false` attaches only an `HTTPRoute` to `envoy.gatewayName` / `envoy.gatewayNamespace` (that Gateway must allow routes from this namespace). |
 | `envoy.gatewayClassName` | `eg` | GatewayClass for the created Gateway. |
 | `envoy.tlsSecretName` | `""` | `kubernetes.io/tls` Secret; adds the HTTPS listener and an HTTP redirect route. |
+| `envoy.httpsPort` | `7443` | Port of the HTTPS listener (not 443); the HTTP→HTTPS redirect names it. |
 | `envoy.requestTimeout` | `0s` | HTTPRoute request timeout; `0s` keeps the streamable-HTTP MCP endpoint's long-lived sessions open. |
 
 ## Lab notes
