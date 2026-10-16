@@ -669,9 +669,16 @@ connect and call:
 | `list_dr_mirrors` | `GET /dr/mirrors` |
 | `dr_mirror_status` | `GET /dr/mirrors/{id}/status` |
 | `list_volume_groups` | `GET /volume-groups` |
-| `list_snapshots` | `GET /snapshots` (operator role; stricter than REST, which is tenant-unscoped) |
+| `list_snapshots` | `GET /snapshots` (operator role; stricter than REST, and limited to the caller's tenant unless admin) |
 | `list_jobs` | `GET /jobs` (operator role; stricter than REST) |
 | `get_job` | `GET /jobs/{id}` (operator role; stricter than REST) |
+| `ceph_status` | `GET /ceph/status` (operator role; stricter than REST; output capped at 256 KiB) |
+| `ceph_df` | `GET /ceph/df` (operator role; capped) |
+| `ceph_osd_tree` | `GET /ceph/osd-tree`, summarised to node counts and the OSDs that are down or out (operator role) |
+| `databridge_plans` | `GET /databridge/plans` (operator role; limited to the caller's tenant unless admin) |
+| `databridge_cdc_streams` | `GET /databridge/cdc/streams` (operator role; tenant-filtered) |
+| `list_policies` | `GET /policies` (static catalogue) |
+| `list_audit` | `GET /audit` (operator role; tenant-filtered; request and result bodies not returned; at most 200 entries) |
 
 **Host header check.** The MCP transport only accepts loopback `Host` headers by default, which
 would reject every remote client. When authentication is required (the deployed case) the check is

@@ -39,6 +39,7 @@ use crate::{
     state::AppState,
 };
 
+mod ops;
 mod write;
 
 fn internal_error(err: impl std::fmt::Display) -> McpError {
@@ -155,6 +156,7 @@ fn default_sensitivity() -> f64 {
 impl AtlasMcp {
     pub fn new(state: AppState) -> Self {
         let mut tool_router = Self::tool_router();
+        tool_router.merge(Self::ops_router());
         if write::write_enabled() {
             tool_router.merge(Self::write_router());
         }
@@ -388,8 +390,8 @@ impl AtlasMcp {
     }
 
     #[tool(
-        description = "List volume snapshots across tenants. Read-only. Requires an \
-                        operator-or-higher token (stricter than the REST route)."
+        description = "List volume snapshots, limited to the caller's tenant unless admin. Read-only. \
+                        Requires an operator-or-higher token (stricter than the REST route)."
     )]
     async fn list_snapshots(
         &self,
@@ -398,7 +400,10 @@ impl AtlasMcp {
         let actor = actor_from(&context)?;
         require_role(self.state.config.auth_required, &actor, ROLE_OPERATOR)
             .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
-        rest(volumes::list_snapshots(State(self.state.clone())).await)
+        let ToolJson(all) = rest(volumes::list_snapshots(State(self.state.clone())).await)?;
+        // The REST route lists every tenant's snapshots; a tenant-scoped agent sees only its own.
+        let scope = tenant_scope(self.state.config.auth_required, &actor);
+        Ok(ToolJson(ops::scope_by_tenant(all, scope)))
     }
 
     #[tool(

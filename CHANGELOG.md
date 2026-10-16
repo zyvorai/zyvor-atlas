@@ -9,6 +9,17 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- MCP read tools: `ceph_status`, `ceph_df`, `ceph_osd_tree` (summarised), `databridge_plans`,
+  `databridge_cdc_streams`, `list_policies`, `list_audit`. Operator-gated where the REST route has no
+  check, tenant-filtered where rows carry a tenant, output capped; audit entries omit request/result bodies.
+
+### Fixed
+
+- MCP `list_snapshots` returned every tenant's snapshots to any operator; it is now limited to the caller's
+  tenant unless admin.
+
 ### Changed
 
 - Helm: the Envoy HTTPS listener moves from 443 to `envoy.httpsPort` (default `7443`); the HTTP→HTTPS
