@@ -1144,7 +1144,7 @@ fn local_summary(level: &str, e: &AdvisorEvidence, question: &str) -> String {
 /// untrusted: levels/verdicts are whitelisted and device names sanitized and bounded, and none of
 /// this is passed to the LLM summarizer.
 #[derive(Debug, Clone, Serialize)]
-struct IoRiskView {
+pub(crate) struct IoRiskView {
     /// "ok" | "unavailable"
     status: &'static str,
     level: Option<&'static str>,
@@ -1161,7 +1161,7 @@ struct IoRiskFlag {
 const IO_AGENT_MAX_BYTES: usize = 256 * 1024;
 const IO_AGENT_MAX_FLAGS: usize = 8;
 
-fn io_agent_from_env() -> Option<(String, Duration)> {
+pub(crate) fn io_agent_from_env() -> Option<(String, Duration)> {
     let url = std::env::var("ATLAS_IO_AGENT_URL").ok()?;
     let url = url.trim().trim_end_matches('/').to_string();
     if url.is_empty() {
@@ -1175,7 +1175,7 @@ fn io_agent_from_env() -> Option<(String, Duration)> {
     Some((url, Duration::from_secs(secs)))
 }
 
-fn io_unavailable(detail: impl Into<String>) -> IoRiskView {
+pub(crate) fn io_unavailable(detail: impl Into<String>) -> IoRiskView {
     IoRiskView {
         status: "unavailable",
         level: None,
@@ -1184,7 +1184,7 @@ fn io_unavailable(detail: impl Into<String>) -> IoRiskView {
     }
 }
 
-async fn fetch_io_risk(base_url: &str, timeout: Duration) -> IoRiskView {
+pub(crate) async fn fetch_io_risk(base_url: &str, timeout: Duration) -> IoRiskView {
     let url = match reqwest::Url::parse(&format!("{base_url}/io/risk")) {
         Ok(u) if matches!(u.scheme(), "http" | "https") => u,
         _ => return io_unavailable("ATLAS_IO_AGENT_URL must be an http(s) URL"),

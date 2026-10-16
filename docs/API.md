@@ -636,7 +636,7 @@ namespace?, storage_class?, replicated_size?, gateway_port?, gateway_instances?}
 
 ## MCP (Model Context Protocol)
 
-Built with the `mcp` Cargo feature (default-off — `cargo build -p atlas-gateway --features mcp`),
+Built with the `mcp` Cargo feature (default-off for `cargo build`, but included in the shipped `Dockerfile` / `Dockerfile.ceph` images — `cargo build -p atlas-gateway --features mcp`),
 Atlas exposes a read-only/advisory MCP server at `POST /api/atlas/v1/mcp` (streamable-HTTP
 transport), behind the same bearer-JWT `auth_middleware` as the rest of this API — no separate
 port or auth mechanism. Any MCP host (e.g. [Hermes Agent](HERMES_AGENT.md), Claude) can
@@ -655,6 +655,15 @@ connect and call:
 | `list_incidents` | `GET /ai/incidents` (local mode only, same rationale as `ops_advisor`) |
 | `detect_anomalies` | `GET /ai/anomalies` — pauses itself (`telemetry_status: "stale"/"unavailable"`, empty results) rather than scoring on telemetry older than 15 minutes or missing/invalid timestamps |
 | `what_if_capacity` | `POST /ai/what-if` |
+| `io_risk` | the atlas-io agent's `GET /io/risk` via `ATLAS_IO_AGENT_URL` — `status: "unavailable"` (never healthy) when unset/unreachable; operator role |
+| `dr_status` | `GET /dr/status` |
+| `dr_preflight` | `GET /dr/preflight` (prepares a human-run failover; never starts one) |
+| `list_dr_mirrors` | `GET /dr/mirrors` |
+| `dr_mirror_status` | `GET /dr/mirrors/{id}/status` |
+| `list_volume_groups` | `GET /volume-groups` |
+| `list_snapshots` | `GET /snapshots` (operator role; stricter than REST, which is tenant-unscoped) |
+| `list_jobs` | `GET /jobs` (operator role; stricter than REST) |
+| `get_job` | `GET /jobs/{id}` (operator role; stricter than REST) |
 
 No write/action tools are exposed — same `can_execute: false` advisory-only posture as the Ops
 Advisor (see `docs/AI_ADVISOR.md`). Use the REST/gRPC API above for anything that mutates storage.
