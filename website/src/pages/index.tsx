@@ -141,7 +141,7 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title="Atlas — one API for your storage, and a filesystem of its own"
-      description="Apache-2.0 storage platform: an intent API over Ceph, NFS, ZFS and Longhorn, plus Atlas Native, a distributed filesystem with erasure coding, NFS, SMB, S3, replication and clean DR failback.">
+      description="Apache-2.0 storage platform: an intent API over Ceph, NFS, ZFS and Longhorn, plus Atlas Native, a distributed filesystem with erasure coding, NFS, SMB, S3, replication and clean DR failback, and an MCP server so AI agents can triage storage read-only.">
       <HomepageHeader />
       <main>
         <StatsBand />

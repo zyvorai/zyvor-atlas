@@ -33,6 +33,8 @@ duplicated.
 
 ## AI
 - **[AI_ADVISOR.md](AI_ADVISOR.md)** — explainable risk scoring, incident correlation, what-if capacity planning, anomaly detection.
+- **[MCP.md](MCP.md)** — the MCP server: tools, auth, the guarded write flow and the threat model.
+- **[IO_RISK.md](IO_RISK.md)** — eBPF-backed storage I/O risk levels for the Ops Advisor and agents.
 - **[HERMES_AGENT.md](HERMES_AGENT.md)** — the Hermes agent integration.
 
 ## Product integration

@@ -9,6 +9,15 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Documentation
+
+- AI and agents are now visible: README section, website homepage (feature band, block, comparison row,
+  footer link), `llms.txt`, and `docs/MCP_LISTING.md` (directory listing drafts, nothing submitted). Stale
+  "advisory only / no write tools" wording corrected in ROADMAP, STATUS, API and ARCHITECTURE; COMPARISON
+  gains the MCP row and a neutral note on other storage MCP servers.
+- The website now copies `docs/ux/anim` into `static/anim`, which the homepage artwork already referenced
+  but the repo never supplied.
+
 ### Changed
 
 - Helm: the Envoy HTTPS listener moves from 443 to `envoy.httpsPort` (default `7443`); the HTTP→HTTPS
