@@ -11,6 +11,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- Ops Advisor: optional read-only `io_risk` block from `atlas-io-agent` (`ATLAS_IO_AGENT_URL`),
+  informational and fail-open (`docs/AI_ADVISOR.md`).
+
 - `atlas-io`: deterministic `risk` scorer (`score`, `RiskLevel`, `CapacitySignal`) combining RCA
   verdicts and queue-cause notes with an optional capacity signal; served at `GET /io/risk` and as `atlas_io_risk_level` (`docs/IO_RISK.md`).
 - Application recovery operator tool (`PYTHONPATH=tools python3 -m atlas_recovery`):
