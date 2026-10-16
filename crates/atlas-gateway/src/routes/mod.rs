@@ -347,13 +347,17 @@ pub fn router(state: AppState) -> Router {
         ))
         .with_state(state.clone());
 
-    Router::new()
+    let root = Router::new()
         .route("/health", get(health))
         .route("/livez", get(livez))
         .route("/readyz", get(readyz))
         .route("/version", get(version))
         .merge(metrics)
-        .nest("/api/atlas/v1", public_api.merge(api))
+        .nest("/api/atlas/v1", public_api.merge(api));
+    // Public and static (no tools, no inventory), so agent hosts can find the endpoint and auth scheme.
+    #[cfg(feature = "mcp")]
+    let root = root.route("/.well-known/mcp", get(crate::mcp::server_card));
+    root
         // Any other path serves the embedded Storage Center SPA (client-side routing).
         .fallback(get(spa_handler))
         .with_state(state)
