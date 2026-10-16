@@ -9,6 +9,13 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Changed
+
+- Helm: the Envoy HTTPS listener moves from 443 to `envoy.httpsPort` (default `7443`); the HTTP→HTTPS
+  redirect names the port. Set `envoy.httpsPort=443` to keep the old behaviour.
+- `deploy/k8s/atlas-io-agent-live.yaml`: the live block-layer BPF variant of the agent DaemonSet
+  (BPF/PERFMON, tracefs), matching what the lab runs; `atlas-io-agent.yaml` stays fake by default.
+
 ### Fixed
 
 - MCP: remote clients were rejected by the transport's loopback-only `Host` check; it is now

@@ -1,0 +1,88 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+# Optional node sensor, LIVE block-layer BPF mode (docs/IO_EBPF.md): the same DaemonSet as
+# atlas-io-agent.yaml with --mode live and the capabilities it needs instead of privileged. This is what
+# the lab runs. Apply one of the two files, not both. Without CAP_BPF the agent still serves, reporting
+# the programs missing. The notes below describe what was added:
+#   securityContext:
+#     runAsUser: 0
+#     seccompProfile: { type: Unconfined }   # RuntimeDefault blocks perf_event_open without SYS_ADMIN
+#     capabilities: { drop: [ALL], add: [BPF, PERFMON] }
+#   volumeMounts: [{ name: tracefs, mountPath: /sys/kernel/tracing, readOnly: true }]
+#   volumes:      [{ name: tracefs, hostPath: { path: /sys/kernel/tracing } }]
+# Without them the agent still serves, reporting the programs missing.
+# The Atlas Native view (/io/native) also needs hostPID: true (it matches host tgids), and to pin
+# its maps the host bpffs mounted outside /sys (RuntimeDefault AppArmor refuses writes there):
+#   volumeMounts: [{ name: bpffs, mountPath: /host-bpf }]
+#   volumes:      [{ name: bpffs, hostPath: { path: /sys/fs/bpf } }]
+#   env:          [{ name: ATLAS_IO_NATIVE_PIN_DIR, value: /host-bpf/atlas/native }]
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: atlas-io-agent
+  namespace: zyvor-system
+  labels:
+    app.kubernetes.io/name: atlas-io-agent
+    app.kubernetes.io/part-of: atlas
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlas-io-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlas-io-agent
+    spec:
+      hostPID: false
+      volumes:
+        - { name: tracefs, hostPath: { path: /sys/kernel/tracing } }
+      containers:
+        - name: agent
+          image: ghcr.io/zyvorai/atlas-io-agent:0.5.0
+          imagePullPolicy: IfNotPresent
+          args: ["--bind", "0.0.0.0:5111", "--mode", "live"]
+          env:
+            - name: ATLAS_IO_MODE
+              value: "live"
+            # Optional bearer token for the whole API except /health (also gates /mcp). Create it with
+            #   kubectl -n zyvor-system create secret generic atlas-io-agent-auth \
+            #     --from-literal=token="$(openssl rand -hex 32)"
+            # and give the gateway the same value as ATLAS_IO_AGENT_TOKEN. Absent = open API.
+            - name: ATLAS_IO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-io-agent-auth
+                  key: token
+                  optional: true
+          ports:
+            - name: http
+              containerPort: 5111
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: http
+          securityContext:
+            runAsUser: 0
+            seccompProfile: { type: Unconfined }   # RuntimeDefault blocks perf_event_open without SYS_ADMIN
+            capabilities: { drop: [ALL], add: [BPF, PERFMON] }
+          volumeMounts:
+            - { name: tracefs, mountPath: /sys/kernel/tracing, readOnly: true }
+          resources:
+            requests:
+              cpu: 25m
+              memory: 64Mi
+            limits:
+              memory: 128Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-io-agent
+  namespace: zyvor-system
+spec:
+  selector:
+    app.kubernetes.io/name: atlas-io-agent
+  ports:
+    - name: http
+      port: 5111
+      targetPort: 5111

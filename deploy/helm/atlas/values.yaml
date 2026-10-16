@@ -97,9 +97,11 @@ envoy:
   gatewayName: ""        # existing Gateway to attach to when createGateway=false (default: release fullname)
   gatewayNamespace: ""   # existing Gateway's namespace (default: release namespace)
   host: ""               # required: the hostname clients use
-  # Name of a kubernetes.io/tls Secret in the release namespace. Set = HTTPS listener on 443 plus an
+  # Name of a kubernetes.io/tls Secret in the release namespace. Set = HTTPS listener on httpsPort plus an
   # HTTP :80 listener that redirects to it. Empty = a plain HTTP :80 listener only.
   tlsSecretName: ""
+  # Client-facing HTTPS listener port (deliberately not 443); the redirect sends browsers here.
+  httpsPort: 7443
   # HTTPRoute request timeout. "0s" disables it, which the streamable-HTTP MCP endpoint
   # (/api/atlas/v1/mcp) needs for long-lived sessions.
   requestTimeout: "0s"
