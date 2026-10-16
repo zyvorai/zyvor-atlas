@@ -679,10 +679,14 @@ lifted because the endpoint is bearer-token gated; with auth off it stays loopba
 with `ATLAS_MCP_ALLOWED_HOSTS` (`*` disables the check; otherwise a comma-separated `host[:port]`
 allow-list).
 
-No write/action tools are exposed — same `can_execute: false` advisory-only posture as the Ops
-Advisor (see `docs/AI_ADVISOR.md`). Use the REST/gRPC API above for anything that mutates storage.
-See `docs/HERMES_AGENT.md` for a concrete client setup walkthrough (token minting +
-`~/.hermes/config.yaml`).
+Write tools are **off by default**. With `ATLAS_MCP_WRITE_ENABLE=1` the server additionally
+lists `create_snapshot` (one volume, reversible). It is two-phase: a call without
+`confirmation_token` changes nothing and returns the plan plus a 5-minute, single-use token bound to
+the caller, the tool and the exact arguments; the same call with that token executes the REST
+handler (so its role and tenant checks apply). Every proposal, rejection and execution is audited
+as `mcp.create_snapshot`. Failover, promote/demote, delete, restore/rollback and disk operations are
+never exposed over MCP; use the REST/gRPC API or `atlasctl` for them (`dr_preflight` lets an agent
+prepare a human-run failover). Tokens live in process memory, so a gateway restart invalidates them.
 
 ## HTTP status codes
 
