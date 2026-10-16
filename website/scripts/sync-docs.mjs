@@ -35,6 +35,7 @@ const DOCS = [
   ['LONGHORN.md', 'control-plane', 'longhorn', 9, 'Longhorn driver'],
   ['RUSTFS.md', 'control-plane', 'rustfs', 10, 'RustFS (history)'],
   ['IO_EBPF.md', 'control-plane', 'io-ebpf', 11, 'eBPF I/O sensor'],
+  ['IO_RISK.md', 'control-plane', 'io-risk', 12, 'I/O risk scoring'],
 
   ['NATIVE_STORAGE.md', 'atlas-native', 'overview', 1, 'Storage overview'],
   ['NATIVE_NODE.md', 'atlas-native', 'node', 2, 'Node'],
@@ -49,6 +50,7 @@ const DOCS = [
 
   ['DR.md', 'disaster-recovery', 'dr', 1, 'Disaster recovery (Ceph)'],
   ['NATIVE_REPLICATION.md', 'disaster-recovery', 'native-replication', 2, 'Native replication'],
+  ['APPLICATION_RECOVERY.md', 'disaster-recovery', 'application-recovery', 3, 'Application recovery drills'],
 
   ['COMPARISON.md', 'evaluate', 'comparison', 1, 'Comparison'],
   ['STATUS.md', 'evaluate', 'status', 2, 'Maturity status'],

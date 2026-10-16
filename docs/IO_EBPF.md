@@ -110,6 +110,12 @@ PID set emptied on the next rescan, and `podman stop` removed the three pins. Un
 `/sys/fs/bpf` itself the pin failed with `Permission denied` (AppArmor), which is why the pin dir
 is configurable.
 
+## Risk scoring
+
+`GET /io/risk` and the `atlas_io_risk_level` metric reduce the RCA (and an optional,
+caller-supplied capacity signal) to healthy / elevated / critical, and the gateway's Ops Advisor
+can include it as `io_risk`. See [IO_RISK.md](IO_RISK.md) and [AI_ADVISOR.md](AI_ADVISOR.md).
+
 ## Non-goals
 
 - TC/XDP, DNS, L7 (Netra / PacketWolf)

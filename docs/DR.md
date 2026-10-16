@@ -278,6 +278,12 @@ is **409**; resync of a primary is **409**; disabled mirrors cannot be promoted/
 real mode a non-forced promote is **409** until this site has replayed the peer's demotion (see
 "Clean-failback guard").
 
+## Application recovery drills
+
+Mirroring protects volumes; proving an *application* actually recovers is a separate step.
+[APPLICATION_RECOVERY.md](APPLICATION_RECOVERY.md) covers the operator-run tool that restores
+snapshots into clones in dependency order, verifies the data and reports RPO/RTO.
+
 ## Failover drill (fake)
 
 ```bash
