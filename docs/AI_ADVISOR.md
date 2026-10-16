@@ -50,8 +50,10 @@ from the agent's `GET /io/risk` ([IO_RISK.md](IO_RISK.md)):
   `status: "unavailable"` plus a warning, never `healthy`. Unset URL means no `io_risk` field.
 - The agent's output is untrusted: the level and verdicts are whitelisted, device names are
   sanitized and capped at 8, redirects are not followed, and none of it is sent to the LLM provider.
-- The agent API has no authentication today; keep it on a cluster-internal Service. The gateway
-  fetches it live per request, so the data is as fresh as the agent's last poll.
+- If the agent has `ATLAS_IO_TOKEN` set, give the gateway the same value as
+  `ATLAS_IO_AGENT_TOKEN` (never followed across redirects). Keep the agent on a cluster-internal
+  Service either way. The gateway fetches it live per request, so the data is as fresh as the
+  agent's last poll.
 
 When authentication is enabled, the endpoint requires an operator-or-higher token and records an
 `ai.advisor` audit event. Questions are capped at 512 characters, model output at 2,000 characters,

@@ -17,6 +17,8 @@ pub mod devmap;
 pub mod hist;
 pub mod http;
 pub mod lease;
+#[cfg(feature = "mcp")]
+pub mod mcp;
 pub mod procscan;
 pub mod rca;
 pub mod risk;

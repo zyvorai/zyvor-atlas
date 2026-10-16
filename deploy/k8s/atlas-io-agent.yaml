@@ -41,6 +41,16 @@ spec:
           env:
             - name: ATLAS_IO_MODE
               value: "fake"
+            # Optional bearer token for the whole API except /health (also gates /mcp). Create it with
+            #   kubectl -n zyvor-system create secret generic atlas-io-agent-auth \
+            #     --from-literal=token="$(openssl rand -hex 32)"
+            # and give the gateway the same value as ATLAS_IO_AGENT_TOKEN. Absent = open API.
+            - name: ATLAS_IO_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-io-agent-auth
+                  key: token
+                  optional: true
           ports:
             - name: http
               containerPort: 5111

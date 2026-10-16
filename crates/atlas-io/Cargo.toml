@@ -16,6 +16,9 @@ path = "src/bin/atlas-io-agent.rs"
 # Live block-layer attach: build.rs compiles bpf/atlas_bio.bpf.c (needs clang + libbpf headers)
 # and src/bpf.rs loads it with aya. Off by default so CI and `make run` need no BPF toolchain.
 bpf = ["dep:aya"]
+# Serve the read-only view over MCP (streamable HTTP) at /mcp on the agent port. Default-off so the
+# node agent stays small (same precedent as atlas-gateway's `mcp`).
+mcp = ["dep:rmcp", "dep:schemars"]
 
 [dependencies]
 atlas-api-types = { workspace = true }
@@ -28,6 +31,8 @@ tokio = { workspace = true }
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 uuid = { workspace = true }
+rmcp = { version = "3.5", optional = true, default-features = false, features = ["server", "macros", "transport-streamable-http-server", "schemars"] }
+schemars = { version = "1", optional = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 aya = { workspace = true, optional = true }
