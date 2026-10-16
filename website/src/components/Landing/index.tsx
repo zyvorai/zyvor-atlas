@@ -78,6 +78,15 @@ const BLOCKS = [
     to: '/docs/',
   },
   {
+    tag: 'Agent-ready operations',
+    title: 'Let an agent look. Not leap.',
+    body: 'Atlas speaks the Model Context Protocol, so an AI agent can triage storage the way an operator does: the Ops Advisor, anomalies, eBPF I/O risk, DR status and jobs. It is read-only by default; the one opt-in write is a snapshot behind a single-use confirmation token, and MCP can never call out to an external LLM.',
+    items: ['20 read-only gateway tools, 6 on the node agent', 'Same roles, tenant scoping and audit as the REST API', 'Opt-in guarded snapshot; failover and delete never exposed'],
+    img: '/anim/agent-ops.svg',
+    alt: 'An AI agent calling Atlas over MCP: read-only tools and one guarded write',
+    to: '/docs/control-plane/mcp',
+  },
+  {
     tag: 'Disaster recovery',
     title: 'Fail over, fail back cleanly.',
     body: 'Two-way RBD mirroring and native replication. A non-forced promote is refused until this site has replayed the peer\'s demotion, so a failback cannot silently lose writes. Force stays available for real disasters.',
@@ -163,6 +172,7 @@ const ROWS = [
   ['Backends', 'Ceph, NFS, ZFS, Longhorn, Atlas Native, S3', 'Ceph'],
   ['Cross-site DR', 'Two-way mirroring with a guarded failback; native replication', 'RBD mirroring CRDs'],
   ['Database migration', 'DataBridge: discovery, full load, CDC, cutover', 'Not in scope'],
+  ['AI and agents', 'MCP server (20 read-only tools, opt-in guarded snapshot), Ops Advisor, eBPF I/O risk', 'Not in scope'],
 ];
 
 export function Compare(): ReactNode {
@@ -178,7 +188,7 @@ export function Compare(): ReactNode {
               <tbody>{ROWS.map((r) => <tr key={r[0]}><th>{r[0]}</th><td>{r[1]}</td><td>{r[2]}</td></tr>)}</tbody>
             </table>
           </div>
-          <p className={styles.note}>Choose Rook alone when you only run Ceph inside Kubernetes and its own dashboard and CRDs are enough. Versus WEKA, including where WEKA is better today: <Link to="/docs/">the comparison</Link>.</p>
+          <p className={styles.note}>Choose Rook alone when you only run Ceph inside Kubernetes and its own dashboard and CRDs are enough. Versus WEKA, including where WEKA is better today: <Link to="/docs/evaluate/comparison">the comparison</Link>.</p>
         </Reveal>
       </div>
     </section>

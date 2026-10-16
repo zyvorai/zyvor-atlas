@@ -327,9 +327,12 @@ no model required for the default path. See [AI_ADVISOR.md](../control-plane/ai-
   `telemetry_status: "stale"` (>15 min old) or `"unavailable"` (missing/invalid/future-dated
   timestamp, or no samples at all) with `anomalies: []` and an explanatory warning instead of
   presenting a stale spike as a current incident.
-- **MCP tool exposure** (`crates/atlas-gateway/src/mcp.rs`, `mcp` feature): `ops_advisor`,
-  `list_incidents`, `detect_anomalies`, `what_if_capacity` alongside the read-only inventory tools
-  — same advisory-only posture, no write/action tools. See [API.md](../api-reference/index.md#mcp-model-context-protocol).
+- **MCP tool exposure** (`crates/atlas-gateway/src/mcp.rs`, `mcp` feature): 20 read-only tools (inventory,
+  `ops_advisor`, `list_incidents`, `detect_anomalies`, `what_if_capacity`, `io_risk`, DR, jobs, snapshots) plus
+  one opt-in guarded write (`create_snapshot`, two-phase confirmation token, audited; off unless
+  `ATLAS_MCP_WRITE_ENABLE=1`), and an authenticated `/mcp` on the `atlas-io` agent. Failover, delete, restore
+  and disk operations are deliberately not exposed. See [MCP.md](../control-plane/mcp.md) and
+  [API.md](../api-reference/index.md#mcp-model-context-protocol).
 
 ## ⏭ Slice 3+ — Enterprise & product integration
 - Product integrations: Veyron (VM datastores), Transiva (direct-to-RBD migration; owner id `hyper2kvm`), GuestKit

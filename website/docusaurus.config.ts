@@ -103,6 +103,7 @@ const config: Config = {
             {label: 'Quickstart', to: '/docs/getting-started/quickstart'},
             {label: 'Architecture', to: '/docs/core-concepts/architecture'},
             {label: 'API Reference', to: '/docs/api-reference'},
+            {label: 'MCP and agents', to: '/docs/control-plane/mcp'},
             {label: 'Licensing', to: '/docs/licensing'},
           ],
         },

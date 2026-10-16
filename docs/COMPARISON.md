@@ -34,7 +34,7 @@ columns state only what has been measured or verified in this repository.
 | Cross-site DR | Two-way RBD mirroring with clean failback, verified live (`docs/DR.md`) | Asynchronous filesystem replication: snapshot increments that send only changed extents, read-only replica, promote and demote for failover and failback; verified live between two clusters on one lab host (`docs/NATIVE_REPLICATION.md`) | Snapshot-to-object and replication features |
 | Mixed backends under one API | Ceph, NFS, ZFS, Longhorn, S3, native | (same gateway) | WEKA only |
 | Cloud-to-edge DB migration | DataBridge: six engines, CDC, cutover | (same gateway) | Not in scope |
-| Operations | AI Ops Advisor, anomaly detection, MCP tools, eBPF I/O RCA (`atlas-io`) | (same gateway) | Own management GUI and monitoring |
+| Operations | AI Ops Advisor, anomaly detection, eBPF I/O RCA (`atlas-io`); MCP server with 20 read-only tools and an opt-in, audited, two-phase `create_snapshot` (`docs/MCP.md`) | (same gateway) | Own management GUI and monitoring |
 | Edge footprint | Single-node Rook lab profile | Single-node low-memory profile (`values-edge.yaml`): one pod, catalog memory capped at ~26 MB however many files, 61 MB peak in a 50k-file lab run (`docs/NATIVE_EDGE.md`) | Multi-node clusters on qualified hardware |
 | Licence | Apache-2.0, no key | Apache-2.0, no key | Commercial |
 
@@ -93,6 +93,16 @@ The atlas-native roadmap, in order, each phase gated on a published benchmark:
 
 Status of each step is tracked in `docs/NATIVE_STORAGE.md`. Until a phase's benchmark is
 published, treat atlas-native as behind WEKA on that axis.
+
+## Other storage MCP servers
+
+Atlas is not the only storage system an AI agent can talk to. As of this writing MinIO ships an
+[MCP server for AIStor](https://www.min.io/blog/mcp-server-for-aistor) (object storage), and Google Cloud's
+[NetApp Volumes](https://docs.cloud.google.com/netapp/volumes/docs/deploy-use-cases/mcp/use-netapp-mcp) has a
+remote MCP server for pools and volumes; community servers exist for other arrays. Those cover one
+product or service. Atlas's MCP server sits on a control plane that already spans Ceph, NFS, ZFS, Longhorn
+and its own native backend, defaults to read-only, and keeps roles, tenant scoping and audit identical to
+the REST API. Check each vendor's own documentation for what theirs exposes today.
 
 WEKA and WekaFS are trademarks of WekaIO, Inc. Ceph, Rook and Longhorn are trademarks of their
 respective owners.
