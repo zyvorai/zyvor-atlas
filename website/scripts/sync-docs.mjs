@@ -4,7 +4,7 @@
 // Deterministic, idempotent sync of curated engineering docs (../docs/*.md)
 // into website/docs/<category>/. Generated files carry a marker comment and
 // are safe to regenerate; run with `npm run sync-docs` (also runs on prebuild).
-import {readFileSync, writeFileSync, mkdirSync, existsSync, statSync} from 'node:fs';
+import {readFileSync, writeFileSync, mkdirSync, existsSync, statSync, readdirSync, copyFileSync} from 'node:fs';
 import {dirname, join, relative, resolve, posix} from 'node:path';
 import {fileURLToPath} from 'node:url';
 
@@ -131,6 +131,13 @@ for (const [src, cat, slug, pos, label] of DOCS) {
     writeFileSync(out, text);
     changed++;
   }
+}
+// Homepage artwork lives with the docs (docs/ux/anim) and is copied to static/anim, served at /anim/*.
+const animSrc = join(srcDir, 'ux', 'anim');
+const animOut = join(siteDir, 'static', 'anim');
+if (existsSync(animSrc)) {
+  mkdirSync(animOut, {recursive: true});
+  for (const f of readdirSync(animSrc)) copyFileSync(join(animSrc, f), join(animOut, f));
 }
 for (const w of warnings) console.warn('sync-docs warning:', w);
 console.log(`sync-docs: ${DOCS.length} docs processed, ${changed} written`);

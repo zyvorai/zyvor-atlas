@@ -52,6 +52,10 @@
 
 Products call stable Atlas APIs, and the `StorageDriver` trait maps the intent to a backend. Drivers cover Ceph (RBD, CephFS, RGW), NFS, ZFS, read-only Longhorn and Atlas Native, each with fake and real modes; real drivers never fabricate data. Around it: **DataBridge** cloud-to-edge database migration, **Day 2** operations (alerts, maintenance, upgrade preflight, quotas, audit export), and a read-only **Ops Advisor** that scores risk and plans capacity, also exposed as MCP tools. [Architecture →](docs/ARCHITECTURE.md)
 
+## Agent-ready operations
+
+Atlas speaks the [Model Context Protocol](https://modelcontextprotocol.io) so an AI agent can look at your storage the way an operator would, with the same roles and tenant limits as the REST API. The gateway's MCP endpoint (`/api/atlas/v1/mcp`) exposes 20 **read-only** tools: inventory, the Ops Advisor (risk, incidents, anomalies, what-if), eBPF-backed I/O risk, DR status and preflight, jobs and snapshots. The `atlas-io` node agent serves its own authenticated `/mcp` with six I/O tools. The only write is opt-in (`ATLAS_MCP_WRITE_ENABLE=1`): `create_snapshot`, two-phase with a single-use, five-minute confirmation token bound to the caller and arguments, and audited. Failover, delete, restore, disk wipe and token minting are never exposed. MCP can never trigger a call to an external LLM. [MCP guide →](docs/MCP.md) · [Ops Advisor →](docs/AI_ADVISOR.md) · [I/O risk →](docs/IO_RISK.md) · [Agent pack →](examples/agent)
+
 ## Run the filesystem yourself
 
 <img src="docs/ux/anim/native-io.svg" alt="Animated Atlas Native data path: client I/O striped across nodes with Raft metadata and an S3 cold tier" width="100%">

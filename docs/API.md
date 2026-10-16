@@ -639,7 +639,7 @@ namespace?, storage_class?, replicated_size?, gateway_port?, gateway_instances?}
 Beyond tools, the server also advertises three read-only prompts (`triage`, `capacity_review`, `dr_readiness`) and documentation resources (`atlas://docs/*`, `atlas://skill/ops`), and `GET /.well-known/mcp` is a public discovery card (endpoint and auth scheme only). See [MCP.md](MCP.md#prompts-and-resources).
 
 Built with the `mcp` Cargo feature (default-off for `cargo build`, but included in the shipped `Dockerfile` / `Dockerfile.ceph` images — `cargo build -p atlas-gateway --features mcp`),
-Atlas exposes a read-only/advisory MCP server at `POST /api/atlas/v1/mcp` (streamable-HTTP
+Atlas exposes an MCP server, read-only by default (one opt-in guarded write, below), at `POST /api/atlas/v1/mcp` (streamable-HTTP
 transport), behind the same bearer-JWT `auth_middleware` as the rest of this API — no separate
 port or auth mechanism. Any MCP host (e.g. [Hermes Agent](HERMES_AGENT.md), Claude) can
 connect and call:
