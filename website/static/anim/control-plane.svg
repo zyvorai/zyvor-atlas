@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 360" role="img" aria-label="Control plane: one intent API maps volume, snapshot and bucket requests to Ceph, NFS, ZFS, Longhorn and Atlas Native drivers">
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. SPDX-License-Identifier: Apache-2.0 -->
+<defs><linearGradient id="bg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#06121c"/><stop offset="1" stop-color="#0b1f2e"/></linearGradient><filter id="glow"><feGaussianBlur stdDeviation="3" result="b"/><feMerge><feMergeNode in="b"/><feMergeNode in="SourceGraphic"/></feMerge></filter><style>text{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Helvetica,Arial,sans-serif;fill:#f5f5f7;text-anchor:middle}.s{font-size:12px;fill:#9fb3c0}.h{font-size:15px;font-weight:600}.t{font-size:20px;font-weight:650;text-anchor:start}.l{text-anchor:start}</style></defs>
+<rect width="960" height="360" rx="20" fill="url(#bg)"/>
+<text x="40" y="44" class="t">One API, every backend</text>
+<text x="40" y="66" class="s l">Products state intent. The StorageDriver trait does the rest.</text>
+<g fill="#0e2a3b" stroke="#1f4a63"><rect x="40" y="130" width="190" height="100" rx="14"/><rect x="380" y="120" width="190" height="120" rx="16" stroke="#0a84ff" stroke-width="2"/>
+<rect x="720" y="84" width="200" height="38" rx="10"/><rect x="720" y="130" width="200" height="38" rx="10"/><rect x="720" y="176" width="200" height="38" rx="10"/><rect x="720" y="222" width="200" height="38" rx="10"/><rect x="720" y="268" width="200" height="38" rx="10" stroke="#2ec4b6"/></g>
+<g><text x="135" y="168" class="h">Intent</text><text x="135" y="190" class="s">volume · snapshot · bucket</text><text x="135" y="208" class="s">REST · gRPC · SSE</text>
+<text x="475" y="170" class="h">Atlas Gateway</text><text x="475" y="192" class="s">quotas · audit · rate limits</text><text x="475" y="210" class="s">StorageDriver trait</text>
+<text x="820" y="108" class="h">Ceph RBD · CephFS · RGW</text><text x="820" y="154" class="h">NFS</text><text x="820" y="200" class="h">ZFS</text><text x="820" y="246" class="h">Longhorn (read-only)</text><text x="820" y="292" class="h" style="fill:#2ec4b6">Atlas Native</text></g>
+<g fill="none" stroke="#2c5a75" stroke-width="2" stroke-dasharray="4 6"><path d="M230 180 H380"/>
+<path d="M570 180 C640 180 650 103 720 103"/><path d="M570 180 C640 180 650 149 720 149"/><path d="M570 180 H720 V195"/><path d="M570 180 C640 180 650 241 720 241"/><path d="M570 180 C640 180 650 287 720 287"/></g>
+<g filter="url(#glow)">
+<circle r="5" fill="#f5f5f7"><animateMotion dur="3s" repeatCount="indefinite" path="M230 180 H380"/></circle>
+<circle r="5" fill="#0a84ff"><animateMotion dur="3s" begin="0s" repeatCount="indefinite" path="M570 180 C640 180 650 103 720 103"/></circle>
+<circle r="5" fill="#0a84ff"><animateMotion dur="3s" begin=".6s" repeatCount="indefinite" path="M570 180 C640 180 650 149 720 149"/></circle>
+<circle r="5" fill="#0a84ff"><animateMotion dur="3s" begin="1.2s" repeatCount="indefinite" path="M570 180 C640 180 650 241 720 241"/></circle>
+<circle r="5" fill="#2ec4b6"><animateMotion dur="3s" begin="1.8s" repeatCount="indefinite" path="M570 180 C640 180 650 287 720 287"/></circle></g>
+<text x="40" y="338" class="s l">Real drivers never fabricate data. Every driver has a fake mode, so make run needs no cluster.</text>
+</svg>

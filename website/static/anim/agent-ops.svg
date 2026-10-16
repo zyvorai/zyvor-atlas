@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="An AI agent calls Atlas over MCP: read-only tools by default, one guarded write that needs a confirmation token">
+  <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. SPDX-License-Identifier: Apache-2.0 -->
+  <defs>
+    <style>
+      .box{fill:#0f2233;stroke:#3fa7c9;stroke-width:1.5}
+      .ok{fill:#0f2a24;stroke:#3fbf8f;stroke-width:1.5}
+      .warn{fill:#2a2412;stroke:#e0b040;stroke-width:1.5}
+      .t{fill:#e6f1f7;font:600 15px system-ui,sans-serif}
+      .s{fill:#9fb7c6;font:12px system-ui,sans-serif}
+      .ln{stroke:#3fa7c9;stroke-width:1.5;fill:none;marker-end:url(#a)}
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M0 0L10 5L0 10z" fill="#3fa7c9"/></marker>
+  </defs>
+  <rect width="640" height="360" rx="12" fill="#0a1a27"/>
+  <rect class="box" x="24" y="130" width="140" height="80" rx="8"/>
+  <text class="t" x="94" y="165" text-anchor="middle">AI agent</text>
+  <text class="s" x="94" y="187" text-anchor="middle">operator token</text>
+  <rect class="box" x="236" y="130" width="140" height="80" rx="8"/>
+  <text class="t" x="306" y="165" text-anchor="middle">Atlas MCP</text>
+  <text class="s" x="306" y="187" text-anchor="middle">roles · tenants · audit</text>
+  <path class="ln" d="M164 170H234"/>
+  <rect class="ok" x="450" y="40" width="166" height="120" rx="8"/>
+  <text class="t" x="533" y="68" text-anchor="middle">Read-only (20)</text>
+  <text class="s" x="533" y="92" text-anchor="middle">inventory · Ops Advisor</text>
+  <text class="s" x="533" y="110" text-anchor="middle">I/O risk (eBPF) · DR</text>
+  <text class="s" x="533" y="128" text-anchor="middle">jobs · snapshots</text>
+  <rect class="warn" x="450" y="200" width="166" height="120" rx="8"/>
+  <text class="t" x="533" y="228" text-anchor="middle">Guarded write</text>
+  <text class="s" x="533" y="252" text-anchor="middle">off unless enabled</text>
+  <text class="s" x="533" y="270" text-anchor="middle">two-phase, single-use</text>
+  <text class="s" x="533" y="288" text-anchor="middle">token · audited</text>
+  <path class="ln" d="M376 150L448 110"/>
+  <path class="ln" d="M376 190L448 250"/>
+  <text class="s" x="320" y="340" text-anchor="middle">Never exposed: failover, delete, restore, disk wipe, token minting</text>
+</svg>

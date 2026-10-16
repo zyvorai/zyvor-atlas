@@ -9,6 +9,12 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- MCP prompts and resources on the gateway (`triage`, `capacity_review`, `dr_readiness`; `atlas://docs/*`,
+  `atlas://skill/ops`) and on the `atlas-io` agent (`io_triage`; I/O docs). Prompt arguments are validated;
+  resources are embedded text only. `GET /.well-known/mcp` is a public, static discovery card.
+
 ### Changed
 
 - Helm: the Envoy HTTPS listener moves from 443 to `envoy.httpsPort` (default `7443`); the HTTP→HTTPS
