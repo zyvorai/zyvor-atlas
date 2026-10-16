@@ -15,6 +15,9 @@
 # Optional:
 #   --with-ceph      also run deploy/rook-ceph-lab/up.sh on the remote (CONSUMES an empty disk
 #                    for a Ceph OSD — destructive to that disk; see up.sh). Off by default.
+#   --no-envoy       skip the Envoy Gateway check. By default deploy/envoy-lab/up.sh --if-missing runs on the
+#                    remote: it installs Envoy Gateway + the `eg` GatewayClass only when the cluster has
+#                    no Envoy Gateway controller yet, and does nothing otherwise (docs/ENVOY.md).
 #   --with-k3s-disk  also run deploy/rook-ceph-lab/setup-k3s-disk.sh: carve /dev/sdb2 from the
 #                    free tail left by resize-osd.sh and move the k3s data-dir onto it, so the
 #                    big disk carries the k3s load instead of the small root FS. Off by default.
@@ -34,15 +37,17 @@ HOST="${1:-${DEPLOY_HOST:-}}"
 USER="${2:-${DEPLOY_USER:-sus}}"
 WITH_CEPH=0
 WITH_K3S_DISK=0
+WITH_ENVOY=1
 ROLLBACK=0
 FORCE=0
 for a in "$@"; do
   [[ "$a" == "--with-ceph" ]] && WITH_CEPH=1
   [[ "$a" == "--with-k3s-disk" ]] && WITH_K3S_DISK=1
+  [[ "$a" == "--no-envoy" ]] && WITH_ENVOY=0
   [[ "$a" == "--rollback" ]] && ROLLBACK=1
   [[ "$a" == "--force" ]] && FORCE=1
 done
-[[ -z "$HOST" ]] && { echo "usage: $0 <host> <user> [--with-ceph] [--with-k3s-disk] [--rollback] [--force]" >&2; exit 2; }
+[[ -z "$HOST" ]] && { echo "usage: $0 <host> <user> [--with-ceph] [--with-k3s-disk] [--no-envoy] [--rollback] [--force]" >&2; exit 2; }
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 REMOTE_DIR=".deployment/atlas"
@@ -118,6 +123,12 @@ fi
 if [[ "$WITH_K3S_DISK" == "1" ]]; then
   log "4c/5 carving /dev/sdb2 + moving the k3s data-dir onto it (needs sdb1 from resize-osd.sh)"
   $SSH "cd ~/${REMOTE_DIR} && bash deploy/rook-ceph-lab/setup-k3s-disk.sh --confirm"
+fi
+
+if [[ "$WITH_ENVOY" == "1" && "$ROLLBACK" != "1" ]]; then
+  log "4d/5 Envoy Gateway (installed only if the cluster has none)"
+  $SSH "${REMOTE_KUBE}; cd ~/${REMOTE_DIR} && bash deploy/envoy-lab/up.sh --if-missing" \
+    || warn "Envoy Gateway check failed (Atlas itself is deployed; see docs/ENVOY.md to install it by hand)"
 fi
 
 log "5/5 verify over NodePort ${NODEPORT}"
