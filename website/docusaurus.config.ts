@@ -76,6 +76,7 @@ const config: Config = {
           label: 'Gallery',
           position: 'left',
         },
+        {to: '/support', label: 'Support', position: 'right'},
         {
           href: 'https://github.com/zyvorai/zyvor-atlas',
           label: 'GitHub',
@@ -110,6 +111,7 @@ const config: Config = {
         {
           title: 'Project',
           items: [
+            {label: 'Support', to: '/support'},
             {label: 'GitHub', href: 'https://github.com/zyvorai/zyvor-atlas'},
             {
               label: 'Changelog',
