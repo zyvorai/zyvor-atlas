@@ -206,7 +206,9 @@ async fn guarded_snapshot_is_two_phase_single_use_and_tenant_scoped() {
     let done_json: serde_json::Value = serde_json::from_str(&text_of(&done)).unwrap();
     assert_eq!(done_json["executed"], true);
     assert!(done_json["result"]["job_id"].is_string(), "{done_json}");
-    assert_eq!(done_json["result"]["state"], "queued");
+    // The job worker may already have picked it up by the time the response is built.
+    let state = done_json["result"]["state"].as_str().unwrap_or_default();
+    assert!(["queued", "running"].contains(&state), "job accepted but state was {state}: {done_json}");
     assert_eq!(snapshots(pool.clone()).await, before + 1);
     let replay = call().await;
     assert!(replay.is_err() || replay.unwrap().is_error == Some(true), "token replay");
