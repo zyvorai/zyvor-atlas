@@ -81,7 +81,7 @@ const BLOCKS = [
     tag: 'Disaster recovery',
     title: 'Fail over, fail back cleanly.',
     body: 'Two-way RBD mirroring and native replication. A non-forced promote is refused until this site has replayed the peer\'s demotion, so a failback cannot silently lose writes. Force stays available for real disasters.',
-    items: ['Live mirror status per site', 'Promote guard', 'Native replication with read-only replicas'],
+    items: ['Live mirror status per site', 'Promote guard', 'Native replication with read-only replicas', 'Automated application recovery drills'],
     img: '/anim/dr-failover.svg',
     alt: 'Animated cross-site failover and failback',
     to: '/docs/',

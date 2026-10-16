@@ -43,6 +43,25 @@ Configure an optional provider with `ATLAS_AI_BASE_URL`, `ATLAS_AI_MODEL`, and o
 Atlas computes and retains authority over the score, evidence, and actions. Remote endpoints must
 use HTTPS. Plain HTTP is permitted only for a loopback model endpoint.
 
+## Storage I/O risk from `atlas-io-agent`
+
+Set `ATLAS_IO_AGENT_URL` (for example `http://atlas-io-agent.zyvor-system:5111`; optional
+`ATLAS_IO_AGENT_TIMEOUT_SECS`, default 3, max 10) and `/ai/advisor` adds an `io_risk` block read
+from the agent's `GET /io/risk` ([IO_RISK.md](./io-risk.md)):
+
+```json
+"io_risk": {"status":"ok","level":"critical",
+            "flagged":[{"device":"rbd0","verdict":"critical_latency"}],"detail":null}
+```
+
+- Informational only: it never changes `risk_score` or the runbook, and `can_execute` stays false.
+- Fails open to *unavailable*: an unreachable, slow, oversized or malformed agent response gives
+  `status: "unavailable"` plus a warning, never `healthy`. Unset URL means no `io_risk` field.
+- The agent's output is untrusted: the level and verdicts are whitelisted, device names are
+  sanitized and capped at 8, redirects are not followed, and none of it is sent to the LLM provider.
+- The agent API has no authentication today; keep it on a cluster-internal Service. The gateway
+  fetches it live per request, so the data is as fresh as the agent's last poll.
+
 When authentication is enabled, the endpoint requires an operator-or-higher token and records an
 `ai.advisor` audit event. Questions are capped at 512 characters, model output at 2,000 characters,
 and only aggregate telemetry plus at most 20 alert titles is sent to the provider.
