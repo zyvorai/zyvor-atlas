@@ -270,3 +270,28 @@ async fn mcp_list_volumes_is_tenant_scoped() {
 
     client.cancel().await.unwrap();
 }
+
+/// A remote client (Host header that isn't loopback) reaches `/mcp` when auth is required — the
+/// transport's loopback-only Host check would otherwise 403 every deployed use.
+#[tokio::test]
+async fn mcp_accepts_non_loopback_host_when_authenticated() {
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, _pool) = spawn(true, secret).await;
+    let (token, _, _) =
+        atlas_gateway::auth::mint_token(secret, "agent", "operator", "global", 3600).unwrap();
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/api/atlas/v1/mcp"))
+        .header("host", "atlas.lab.example:30510")
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#)
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_success(),
+        "remote Host rejected: {}",
+        resp.status()
+    );
+}

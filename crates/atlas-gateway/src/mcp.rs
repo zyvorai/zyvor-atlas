@@ -304,12 +304,62 @@ impl ServerHandler for AtlasMcp {
     }
 }
 
+/// Host-header policy for the streamable-HTTP transport. rmcp's default only accepts
+/// `localhost`/`127.0.0.1`/`::1` (DNS-rebinding protection for unauthenticated local servers),
+/// which would reject every remote client of a deployed gateway. Because the endpoint sits behind
+/// the bearer-JWT `auth_middleware` (a browser cannot attach that header cross-site), the check is
+/// lifted when auth is required. `ATLAS_MCP_ALLOWED_HOSTS` overrides: `*` disables the check,
+/// otherwise a comma-separated allow-list (`host` or `host:port`).
+fn transport_config(
+    auth_required: bool,
+    allowed_hosts_env: Option<&str>,
+) -> StreamableHttpServerConfig {
+    let cfg = StreamableHttpServerConfig::default();
+    match allowed_hosts_env.map(str::trim).filter(|v| !v.is_empty()) {
+        Some("*") => cfg.disable_allowed_hosts(),
+        Some(list) => cfg.with_allowed_hosts(
+            list.split(',')
+                .map(str::trim)
+                .filter(|h| !h.is_empty())
+                .map(str::to_owned),
+        ),
+        None if auth_required => cfg.disable_allowed_hosts(),
+        None => cfg,
+    }
+}
+
 /// Builds the nested MCP service for `routes::router()` to mount at `/mcp` inside the existing,
 /// already-`auth_middleware`-gated `/api/atlas/v1` router.
 pub(crate) fn router(state: AppState) -> StreamableHttpService<AtlasMcp, LocalSessionManager> {
+    let cfg = transport_config(
+        state.config.auth_required,
+        std::env::var("ATLAS_MCP_ALLOWED_HOSTS").ok().as_deref(),
+    );
     StreamableHttpService::new(
         move || Ok(AtlasMcp::new(state.clone())),
         LocalSessionManager::default().into(),
-        StreamableHttpServerConfig::default(),
+        cfg,
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::transport_config;
+
+    #[test]
+    fn host_check_follows_auth_and_override() {
+        let local = vec!["localhost".to_string(), "127.0.0.1".into(), "::1".into()];
+        // Unauthenticated: keep rmcp's loopback-only default.
+        assert_eq!(transport_config(false, None).allowed_hosts, local);
+        // Authenticated: bearer-gated, so remote Host headers are accepted.
+        assert!(transport_config(true, None).allowed_hosts.is_empty());
+        // Explicit override wins in both directions.
+        assert!(transport_config(false, Some("*")).allowed_hosts.is_empty());
+        assert_eq!(
+            transport_config(true, Some("atlas.example.com, 10.0.0.5:5110")).allowed_hosts,
+            vec!["atlas.example.com".to_string(), "10.0.0.5:5110".into()]
+        );
+        // Blank is treated as unset.
+        assert!(transport_config(true, Some("  ")).allowed_hosts.is_empty());
+    }
 }
