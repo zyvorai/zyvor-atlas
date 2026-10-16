@@ -35,6 +35,20 @@ helm upgrade --install atlas deploy/helm/atlas \
 | `envoy.tlsSecretName` | `""` | `kubernetes.io/tls` Secret; adds the HTTPS listener and an HTTP redirect route. |
 | `envoy.requestTimeout` | `0s` | HTTPRoute request timeout; `0s` keeps the streamable-HTTP MCP endpoint's long-lived sessions open. |
 
+## Lab notes
+
+- **`Programmed=False` / `AddressNotAssigned`:** Envoy Gateway exposes each Gateway as a
+  `LoadBalancer` Service. A bare k3s without svclb/MetalLB never assigns it an address, so the Gateway
+  reports `Programmed=False` even though it works: traffic is reachable on the Service's NodePort
+  (`kubectl -n envoy-gateway-system get svc`). Install a LoadBalancer implementation (or an
+  `EnvoyProxy` with `envoyService.type: NodePort`) for a real address.
+- **Jobs are required.** The controller's certgen step is a Helm hook Job. If another component's
+  admission webhook (for example Kueue with `failurePolicy: Fail`) is down, all Jobs are rejected and
+  the install fails with a webhook error; fix that first.
+- **Disk pressure.** The install pulls images; a node below the kubelet's free-space threshold evicts
+  the certgen pod. Keep the root filesystem under ~90% (see `scripts/ci-remote.sh` for where the CI
+  cache lives).
+
 ## Scope and limits
 
 - Routes plain HTTP to `service.httpPort` (the REST API, console and `/api/atlas/v1/mcp`). gRPC
