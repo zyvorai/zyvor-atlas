@@ -1,0 +1,17 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "atlas-driver-macos"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+atlas-api-types = { workspace = true }
+atlas-driver-core = { workspace = true }
+async-trait = { workspace = true }
+plist = "1"
+serde = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }

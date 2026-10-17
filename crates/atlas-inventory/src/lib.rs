@@ -147,6 +147,7 @@ fn backend_type_str(t: BackendType) -> &'static str {
         BackendType::Kubernetes => "kubernetes",
         BackendType::Native => "native",
         BackendType::Weka => "weka",
+        BackendType::Macos => "macos",
     }
 }
 fn backend_type_from(s: &str) -> BackendType {
@@ -160,6 +161,7 @@ fn backend_type_from(s: &str) -> BackendType {
         "kubernetes" => BackendType::Kubernetes,
         "native" => BackendType::Native,
         "weka" => BackendType::Weka,
+        "macos" => BackendType::Macos,
         _ => BackendType::Ceph,
     }
 }

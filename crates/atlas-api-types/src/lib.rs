@@ -28,6 +28,8 @@ pub enum BackendType {
     Native,
     /// A WEKA cluster, discovered read-only (`atlas-driver-weka`).
     Weka,
+    /// The disks of a Mac, internal and external (`atlas-driver-macos`).
+    Macos,
 }
 
 /// How a backend is operated (PDF §6).
