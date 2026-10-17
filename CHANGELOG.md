@@ -9,6 +9,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.7.0] — 2026-10-17
+
 ### Fixed
 
 - Job recovery at start-up no longer fails a job the same process already claimed. It ran on a spawned task and could
