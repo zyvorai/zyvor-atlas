@@ -8,7 +8,7 @@
 
 [![CI](https://img.shields.io/github/actions/workflow/status/zyvorai/zyvor-atlas/ci.yml?branch=main&style=flat-square&labelColor=1d1d1f&label=CI)](https://github.com/zyvorai/zyvor-atlas/actions/workflows/ci.yml)
 [![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-0071e3?style=flat-square&labelColor=1d1d1f)](LICENSE)
-[![Version](https://img.shields.io/badge/version-0.6.0-0071e3?style=flat-square&labelColor=1d1d1f)](CHANGELOG.md)
+[![Version](https://img.shields.io/badge/version-0.7.0-0071e3?style=flat-square&labelColor=1d1d1f)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-gateway%20%C2%B7%20drivers%20%C2%B7%20native%20fs-dea584?style=flat-square&labelColor=1d1d1f&logo=rust&logoColor=white)](Cargo.toml)
 [![Docs](https://img.shields.io/badge/docs-zyvorai.github.io%2Fzyvor--atlas-0071e3?style=flat-square&labelColor=1d1d1f)](https://zyvorai.github.io/zyvor-atlas/)
 
