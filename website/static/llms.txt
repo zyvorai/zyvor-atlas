@@ -1,12 +1,16 @@
 # Atlas
 
-> Atlas is an Apache-2.0 storage control plane: one intent API (REST, gRPC, SSE) over Ceph, NFS, ZFS, Longhorn and its own native distributed filesystem, with DataBridge database migration, cross-site DR and an Ops Advisor. It includes an MCP server so AI agents can inspect storage read-only.
+> Atlas is an Apache-2.0 storage control plane: one intent API (REST, gRPC, SSE) over Ceph, NFS, ZFS, Longhorn, a Mac's APFS and external disks, and its own native distributed filesystem, with DataBridge database migration, cross-site DR and an Ops Advisor. It includes an MCP server so AI agents can inspect storage read-only.
 
 ## Agents and MCP
 - [MCP and agents](https://zyvorai.github.io/zyvor-atlas/docs/control-plane/mcp): endpoints, tools, authentication, the guarded write flow, threat model.
 - [AI Advisor](https://zyvorai.github.io/zyvor-atlas/docs/control-plane/ai-advisor): risk scoring, incidents, anomalies, what-if capacity.
 - [I/O risk scoring](https://zyvorai.github.io/zyvor-atlas/docs/control-plane/io-risk): eBPF-backed latency and queue evidence.
 - [Hermes Agent](https://zyvorai.github.io/zyvor-atlas/docs/control-plane/hermes-agent): worked agent integration.
+
+## macOS
+- [macOS disks](https://zyvorai.github.io/zyvor-atlas/docs/control-plane/macos): discovery, guarded external-disk lifecycle, a fleet of Macs.
+- [Mac as a client](https://zyvorai.github.io/zyvor-atlas/docs/control-plane/macos-client): NFS, SMB and `atlasctl` from a Mac.
 
 ## Facts an agent should know
 - Atlas is self-hosted; there is no public hosted endpoint. The MCP endpoint is `POST /api/atlas/v1/mcp` on your own gateway (streamable HTTP), with `Authorization: Bearer <JWT>`.

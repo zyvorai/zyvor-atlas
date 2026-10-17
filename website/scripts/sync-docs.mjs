@@ -39,6 +39,8 @@ const DOCS = [
   ['IO_RISK.md', 'control-plane', 'io-risk', 12, 'I/O risk scoring'],
   ['MCP.md', 'control-plane', 'mcp', 13, 'MCP and agents'],
   ['HERMES_AGENT.md', 'control-plane', 'hermes-agent', 14, 'Hermes Agent'],
+  ['MACOS.md', 'control-plane', 'macos', 15, 'macOS disks'],
+  ['MACOS_CLIENT.md', 'control-plane', 'macos-client', 16, 'Mac as a client'],
 
   ['NATIVE_STORAGE.md', 'atlas-native', 'overview', 1, 'Storage overview'],
   ['NATIVE_NODE.md', 'atlas-native', 'node', 2, 'Node'],
