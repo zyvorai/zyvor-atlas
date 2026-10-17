@@ -15,7 +15,7 @@ Before Atlas, storage logic was scattered: `hyper2kvm` shipped its own ceph-csi 
 Atlas centralizes it:
 
 - **One API** — products never talk to Ceph directly.
-- **Pluggable drivers** — Ceph, NFS, ZFS, and Longhorn, each with a fake (fixture,
+- **Pluggable drivers** — Ceph, NFS, ZFS, Longhorn, and macOS (`diskutil`, local or via a per-Mac agent; `docs/MACOS.md`), each with a fake (fixture,
   zero-dependency default) and real mode where applicable; SAN/cloud backends later, with no
   product changes. Object storage defaults to Ceph RGW; any S3-compatible endpoint is usable as a
   bring-your-own backend via `atlas-driver-rgw` (Atlas dropped its first-party RustFS integration —
@@ -183,6 +183,7 @@ secret-redacting `Debug`:
 | `ATLAS_DATABASE_URL` | `sqlite://atlas.db?mode=rwc` | SQLite URL (WAL + FK on), or `postgres://...` for HA/multi-replica — see [HA.md](HA.md) |
 | `ATLAS_CEPH_DRIVER_MODE` | `fake` | `real` (ceph/rbd CLI) or `fake` (fixtures) |
 | `ATLAS_NFS_DRIVER_MODE` / `ATLAS_ZFS_DRIVER_MODE` | `fake` | `real` (live `showmount`/`zpool`/`zfs` discovery) or `fake` (fixtures) |
+| `ATLAS_MACOS_ENABLE` / `ATLAS_MACOS_DRIVER_MODE` / `ATLAS_MACOS_AGENTS` | off / `fake` | macOS backend for the Mac the gateway runs on, and the list of `atlas-mac-agent` URLs for a fleet — see [MACOS.md](MACOS.md) |
 | `ATLAS_S3_CA_CERT` | *(unset)* | Path to a mounted CA cert to additionally trust for any S3-compatible endpoint (private CA / self-signed) — never disables verification, only adds one root |
 | `ATLAS_LONGHORN_ENABLE` | `0` | Register the read-only Longhorn backend (see `docs/LONGHORN.md`) |
 | `ATLAS_NATIVE_ENABLE`, `ATLAS_NATIVE_DRIVER_MODE`, `ATLAS_NATIVE_ENDPOINTS`, `ATLAS_NATIVE_TOKEN_FILE`, `ATLAS_NATIVE_CA_CERT`, `ATLAS_NATIVE_CLIENT_CERT`/`_KEY`, `ATLAS_NATIVE_TIMEOUT_SECS` | off / `fake` / – / – / – / – / `10` | Register the atlas-native backend `bkd_native` (see `docs/NATIVE_NODE.md`, "Atlas gateway") |
