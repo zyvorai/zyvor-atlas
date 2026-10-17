@@ -9,6 +9,11 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Fixed
+
+- Job recovery at start-up no longer fails a job the same process already claimed. It ran on a spawned task and could
+  race a job enqueued right after start (the `tests/disks.rs` flake that stopped full workspace runs).
+
 ### Added
 
 - `docs/MACOS_CLIENT.md`: using Atlas storage from a Mac (NFS, SMB, `atlasctl`) and why the native FUSE mount

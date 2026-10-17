@@ -63,6 +63,7 @@ impl JobEngine {
         k8s: Option<Arc<K8sDriver>>,
         opts: JobEngineOptions,
     ) -> Self {
+        let started_at = chrono::Utc::now();
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let paused = Arc::new(AtomicBool::new(false));
         let current = Arc::new(Mutex::new(None));
@@ -93,7 +94,7 @@ impl JobEngine {
         let recover_pool = pool.clone();
         let recover_tx = tx.clone();
         tokio::spawn(async move {
-            if let Err(e) = recover(&recover_pool, &recover_tx).await {
+            if let Err(e) = recover_since(&recover_pool, &recover_tx, started_at).await {
                 tracing::warn!("job recovery failed: {e:#}");
             }
         });
@@ -227,8 +228,22 @@ impl JobEngine {
 /// interrupted mid-flight and may have applied partial side effects — discovery/reconcilers re-derive
 /// real state) and re-enqueue anything still due (`queued`/`pending` with `next_attempt_at` ready).
 pub async fn recover(pool: &AnyPool, tx: &mpsc::UnboundedSender<String>) -> Result<()> {
-    let interrupted =
-        atlas_inventory::jobs::fail_running(pool, "interrupted by control-plane restart").await?;
+    recover_since(pool, tx, chrono::Utc::now()).await
+}
+
+/// [`recover`] for an engine that started at `started_at`: a job this process already claimed
+/// since then is running normally, not interrupted.
+pub async fn recover_since(
+    pool: &AnyPool,
+    tx: &mpsc::UnboundedSender<String>,
+    started_at: chrono::DateTime<chrono::Utc>,
+) -> Result<()> {
+    let interrupted = atlas_inventory::jobs::fail_running_claimed_before(
+        pool,
+        "interrupted by control-plane restart",
+        started_at,
+    )
+    .await?;
     if interrupted > 0 {
         tracing::warn!("job recovery: reset {interrupted} interrupted running job(s) to failed");
     }

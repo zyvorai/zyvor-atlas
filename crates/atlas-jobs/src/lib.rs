@@ -15,7 +15,7 @@ mod engine;
 mod scheduler;
 mod spec;
 
-pub use engine::{recover, JobEngine, JobEngineOptions};
+pub use engine::{recover, recover_since, JobEngine, JobEngineOptions};
 pub use scheduler::spawn_scheduler;
 pub use spec::{JobSpec, OwnerRef};
 
@@ -79,6 +79,26 @@ mod durability_tests {
 
         // The queued job is re-enqueued onto the channel.
         assert_eq!(rx.try_recv().unwrap(), "j_queued");
+    }
+
+    #[tokio::test]
+    async fn recover_spares_a_job_claimed_after_the_engine_started() {
+        let pool = migrated_pool().await;
+        let started = chrono::Utc::now();
+        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        seed(&pool, "j_live", "queued").await;
+        assert!(atlas_inventory::jobs::try_claim(&pool, "j_live", "me")
+            .await
+            .unwrap());
+
+        let (tx, _rx) = mpsc::unbounded_channel::<String>();
+        crate::recover_since(&pool, &tx, started).await.unwrap();
+
+        let live = atlas_inventory::jobs::get_job(&pool, "j_live")
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(live.state, "running");
     }
 
     #[tokio::test]

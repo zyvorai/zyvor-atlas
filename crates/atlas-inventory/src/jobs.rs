@@ -273,14 +273,26 @@ pub async fn reclaim_stale_running(pool: &AnyPool, stale_secs: i64) -> Result<u6
 /// Fail every job stuck in `running` (a crash/restart left it mid-flight; the side effects may be
 /// partial, so we fail-safe rather than blindly re-run). Returns how many were reset.
 pub async fn fail_running(pool: &AnyPool, error: &str) -> Result<u64> {
+    fail_running_claimed_before(pool, error, chrono::Utc::now()).await
+}
+
+/// Like [`fail_running`], but spares jobs claimed at or after `cutoff`. Recovery runs on a task
+/// spawned at start-up, so a job enqueued right after start can already be running when it fires;
+/// only work claimed before this process started can be an interrupted leftover.
+pub async fn fail_running_claimed_before(
+    pool: &AnyPool,
+    error: &str,
+    cutoff: chrono::DateTime<chrono::Utc>,
+) -> Result<u64> {
     let now = now_rfc3339(chrono::Utc::now());
     let res = sqlx::query(
         "UPDATE storage_jobs SET state='failed', error=$1, locked_by=NULL, locked_at=NULL,
          completed_at=$2,
-         updated_at=$2 WHERE state='running'",
+         updated_at=$2 WHERE state='running' AND (locked_at IS NULL OR locked_at < $3)",
     )
     .bind(error)
     .bind(now)
+    .bind(now_rfc3339(cutoff))
     .execute(pool)
     .await?;
     Ok(res.rows_affected())
