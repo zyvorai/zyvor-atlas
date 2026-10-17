@@ -43,16 +43,43 @@ The inventory is refreshed at start and on the monitor interval, so plugging in 
 up on the next scan. If `diskutil` is missing the backend reports unreachable; the driver never
 fabricates disks. `POST /backends` cannot create a macOS backend; use the variables above.
 
+## Managing external disks
+
+Admin only, local to the Mac the gateway runs on, each operation a job with an audit entry
+(`macos.*.requested`). Erase and delete need the target typed back.
+
+| Route | Does |
+|---|---|
+| `GET /macos/devices` | Whole disks; `erase_refusal` says why Atlas would not erase one. |
+| `POST /macos/disks/erase` `{device, confirm_device, name}` | `diskutil eraseDisk APFS <name> GPT <device>` |
+| `POST /macos/containers/{container}/volumes` `{name, quota_bytes?, reserve_bytes?}` | `diskutil apfs addVolume` |
+| `POST /macos/volumes/{device}/delete` `{confirm_device}` | `diskutil apfs deleteVolume` |
+| `POST /macos/disks/{device}/eject` | `diskutil eject` |
+
+Volume names are 1-32 characters of letters, digits, space, `_`, `.`, `-`, starting with a letter or digit.
+After a job, discovery runs again so the inventory matches the Mac.
+
 ## Safety
 
-Everything here only reads. Commands are fixed argument arrays (`diskutil list|apfs list|info -plist`),
-never shell strings, with a 30 s timeout. The write slice will add hard refusals that nothing can
-override: internal disks, the boot container and system volumes, OS-owned snapshots, mounted volumes in use.
+Commands are fixed argument arrays, never shell strings, never `-force`, with a 30 s timeout. Before
+anything runs, the route and then the job (which may run later) check the live layout against refusals
+that no request field can override:
+
+- internal disks (`Internal=true`);
+- any disk holding the running system (a volume mounted at `/`, `/System/...` or `/private/...`);
+- any disk with a volume mounted outside `/Volumes/` (erase);
+- APFS volumes with a system role (System, Data, Preboot, Recovery, VM, Update, xART, Hardware, ISC, Backup)
+  and volumes mounted outside `/Volumes/`;
+- mounted disk images, unless `ATLAS_MACOS_ALLOW_DISK_IMAGES=1` (for throwaway test images);
+- identifiers that are not exactly `diskN` / `diskNsM`.
+
+In fake mode the same checks run against the recorded fixtures and nothing is executed. Local snapshots,
+container resize and a UI page are not part of this slice.
 
 ## Roadmap
 
-1. Read-only discovery (this document).
-2. Volume lifecycle with hard refusals: erase an external disk, add/delete APFS volumes, resize a
-   container, eject, local snapshots; admin only, typed confirmation, jobs, audit.
+1. Read-only discovery.
+2. Volume lifecycle with hard refusals: erase, add/delete volumes, eject (this document). Still to come:
+   container resize, local snapshots, a Disks page.
 3. A Mac agent and a remote driver, so a central gateway manages many Macs.
 4. Macs as clients of Atlas storage (NFS/SMB mounts, and the native filesystem if a macFUSE build proves out).

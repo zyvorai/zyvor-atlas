@@ -84,26 +84,8 @@ pub fn weka_driver_from_env() -> Result<Option<Arc<dyn StorageDriver>>> {
 /// `localhost`; `mac01.zyvor.lab` in fake mode) and `ATLAS_MACOS_ALLOW_DISK_IMAGES` (also report
 /// mounted disk images; off by default).
 pub fn macos_driver_from_env() -> Option<Arc<dyn StorageDriver>> {
-    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
-    let on = |k: &str| var(k).is_some_and(|v| matches!(v.as_str(), "1" | "true" | "yes"));
-    if !on("ATLAS_MACOS_ENABLE") {
-        return None;
-    }
-    let images = on("ATLAS_MACOS_ALLOW_DISK_IMAGES");
-    let mode = var("ATLAS_MACOS_DRIVER_MODE").unwrap_or_default();
-    if atlas_common::config::DriverMode::from_env_str(&mode)
-        == atlas_common::config::DriverMode::Fake
-    {
-        let host = var("ATLAS_MACOS_HOST").unwrap_or_else(|| "mac01.zyvor.lab".into());
-        return Some(Arc::new(
-            atlas_driver_macos::FakeMacosDriver::new(MACOS_BACKEND_ID, host)
-                .allow_disk_images(images),
-        ));
-    }
-    let host = var("ATLAS_MACOS_HOST").unwrap_or_else(|| "localhost".into());
-    Some(Arc::new(
-        atlas_driver_macos::RealMacosDriver::new(MACOS_BACKEND_ID, host).allow_disk_images(images),
-    ))
+    let settings = atlas_driver_macos::EnvSettings::from_env();
+    settings.enabled.then(|| settings.driver(MACOS_BACKEND_ID))
 }
 
 /// Builds the atlas-native driver when `ATLAS_NATIVE_ENABLE=1`:

@@ -11,6 +11,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- macOS volume lifecycle (`/macos/*`): erase an external disk, add/delete APFS volumes, eject. Admin only, typed
+  confirmation, jobs and audit. Hard refusals (internal disks, the running system, system volumes, disk images,
+  odd mounts) are checked in the route and again in the job; fake mode runs them against fixtures. See `docs/MACOS.md`.
 - macOS backend (`atlas-driver-macos`, `ATLAS_MACOS_ENABLE`): APFS containers as pools, APFS volumes and other
   filesystem partitions as volumes, capacity/quota/mount and SMART health from `diskutil`; internal and external
   drives, read-only, fake/real modes, rescanned on the monitor interval. See `docs/MACOS.md`.

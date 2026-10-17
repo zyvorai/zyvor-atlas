@@ -201,7 +201,7 @@ integrations beyond the gRPC surface.
   (no well-known-type imports: Debian's protoc lacks them). Unmounts use `umount2(2)`, not
   `fusermount3 -u` (Ubuntu's AppArmor profile blocks it). Verified on the lab k3s; see `docs/NATIVE_CSI.md`.
 - `crates/atlas-driver-macos` — a Mac's APFS containers/volumes and partitions via `diskutil` plists (`ATLAS_MACOS_ENABLE`,
-  fake/real, read-only; pure parsing in `parse.rs` is tested on recorded plists on any OS); see `docs/MACOS.md`.
+  fake/real, read-only discovery plus guarded external-disk lifecycle (`ops.rs`); pure parsing in `parse.rs` is tested on recorded plists on any OS); see `docs/MACOS.md`.
 - `crates/atlas-driver-weka` — read-only WEKA discovery over its REST API (`ATLAS_WEKA_ENABLE`, fake/real);
  see `docs/COMPARISON.md`.
 - `crates/atlas-driver-k8s` — `kube-rs` read-only StorageClass/PVC/PV listing.
