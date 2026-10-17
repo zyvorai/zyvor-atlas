@@ -101,6 +101,7 @@ pub(crate) async fn create_backend(
         Some("kubernetes") => BackendType::Kubernetes,
         Some("native") => BackendType::Native,
         Some("weka") => BackendType::Weka,
+        Some("macos") => BackendType::Macos,
         Some(other) => {
             return Err(AppError::Validation(format!(
                 "unknown backend_type: {other}"
@@ -175,6 +176,9 @@ pub(crate) async fn create_backend(
         )),
         BackendType::Native => return Err(AppError::Validation(
             "enable atlas-native with ATLAS_NATIVE_ENABLE=1 and ATLAS_NATIVE_ENDPOINTS, then restart the gateway".into(),
+        )),
+        BackendType::Macos => return Err(AppError::Validation(
+            "enable macOS disk discovery with ATLAS_MACOS_ENABLE=1 on a Mac (ATLAS_MACOS_DRIVER_MODE=real), then restart the gateway".into(),
         )),
         BackendType::Weka => return Err(AppError::Validation(
             "enable WEKA discovery with ATLAS_WEKA_ENABLE=1 and ATLAS_WEKA_ENDPOINT, then restart the gateway".into(),

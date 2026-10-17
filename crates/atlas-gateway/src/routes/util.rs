@@ -77,7 +77,7 @@ pub(crate) fn ceph_default_caps(t: BackendType) -> Capabilities {
         // the trait default (NotImplemented), and both classify their volumes as
         // VolumeKind::Filesystem. `Capabilities::default()` (all false, including `file`) was
         // reporting a live, functioning NFS/ZFS backend as supporting nothing at all.
-        BackendType::Nfs | BackendType::Zfs | BackendType::Weka => Capabilities {
+        BackendType::Nfs | BackendType::Zfs | BackendType::Weka | BackendType::Macos => Capabilities {
             file: true,
             ..Capabilities::default()
         },

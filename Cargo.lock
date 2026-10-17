@@ -397,6 +397,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-driver-macos"
+version = "0.6.0"
+dependencies = [
+ "async-trait",
+ "atlas-api-types",
+ "atlas-driver-core",
+ "plist",
+ "serde",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "atlas-driver-native"
 version = "0.6.0"
 dependencies = [
@@ -485,6 +498,7 @@ dependencies = [
  "atlas-driver-core",
  "atlas-driver-k8s",
  "atlas-driver-longhorn",
+ "atlas-driver-macos",
  "atlas-driver-native",
  "atlas-driver-nfs",
  "atlas-driver-rgw",
@@ -4349,6 +4363,19 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "19f132c84eca552bf34cab8ec81f1c1dcc229b811638f9d283dceabe58c5569e"
 
 [[package]]
+name = "plist"
+version = "1.10.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2896bade328c13f7042a297ea5ac5b0951f6cf989dea5f32c2fd98da398195cb"
+dependencies = [
+ "base64 0.23.1",
+ "indexmap 2.14.0",
+ "quick-xml 0.42.0",
+ "serde",
+ "time",
+]
+
+[[package]]
 name = "portable-atomic"
 version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -6223,7 +6250,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "32497e9a4c7b38532efcdebeef879707aa9f794296a4f0244f6f69e9bc8574bd"
 dependencies = [
  "fastrand 2.4.1",
- "getrandom 0.3.4",
+ "getrandom 0.4.3",
  "once_cell",
  "rustix",
  "windows-sys 0.61.2",

@@ -29,6 +29,8 @@ pub const LONGHORN_BACKEND_ID: &str = "bkd_longhorn";
 /// atlas-native cluster backend id (enabled via `ATLAS_NATIVE_ENABLE`).
 pub const NATIVE_BACKEND_ID: &str = "bkd_native";
 pub const WEKA_BACKEND_ID: &str = "bkd_weka";
+/// The Mac this gateway runs on (enabled via `ATLAS_MACOS_ENABLE`).
+pub const MACOS_BACKEND_ID: &str = "bkd_macos";
 /// Retired RustFS backend id. Kept so persisted inventory / jobs still parse.
 /// New buckets default to [`CEPH_BACKEND_ID`] (RGW).
 pub const RUSTFS_BACKEND_ID: &str = "bkd_rustfs_lab";
@@ -75,6 +77,33 @@ pub fn weka_driver_from_env() -> Result<Option<Arc<dyn StorageDriver>>> {
     )
     .map_err(|e| anyhow::anyhow!("{e}"))?;
     Ok(Some(Arc::new(driver)))
+}
+
+/// Builds the macOS disk driver when `ATLAS_MACOS_ENABLE=1`: `ATLAS_MACOS_DRIVER_MODE` (`fake`
+/// default, `real`: runs `diskutil` on this Mac), `ATLAS_MACOS_HOST` (display name, default
+/// `localhost`; `mac01.zyvor.lab` in fake mode) and `ATLAS_MACOS_ALLOW_DISK_IMAGES` (also report
+/// mounted disk images; off by default).
+pub fn macos_driver_from_env() -> Option<Arc<dyn StorageDriver>> {
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    let on = |k: &str| var(k).is_some_and(|v| matches!(v.as_str(), "1" | "true" | "yes"));
+    if !on("ATLAS_MACOS_ENABLE") {
+        return None;
+    }
+    let images = on("ATLAS_MACOS_ALLOW_DISK_IMAGES");
+    let mode = var("ATLAS_MACOS_DRIVER_MODE").unwrap_or_default();
+    if atlas_common::config::DriverMode::from_env_str(&mode)
+        == atlas_common::config::DriverMode::Fake
+    {
+        let host = var("ATLAS_MACOS_HOST").unwrap_or_else(|| "mac01.zyvor.lab".into());
+        return Some(Arc::new(
+            atlas_driver_macos::FakeMacosDriver::new(MACOS_BACKEND_ID, host)
+                .allow_disk_images(images),
+        ));
+    }
+    let host = var("ATLAS_MACOS_HOST").unwrap_or_else(|| "localhost".into());
+    Some(Arc::new(
+        atlas_driver_macos::RealMacosDriver::new(MACOS_BACKEND_ID, host).allow_disk_images(images),
+    ))
 }
 
 /// Builds the atlas-native driver when `ATLAS_NATIVE_ENABLE=1`:
@@ -150,6 +179,30 @@ pub async fn attach_native_driver(
             mode: BackendMode::External,
             status: "active".into(),
             capabilities: crate::routes::util::ceph_default_caps(BackendType::Native),
+            connection_ref: None,
+            cordoned: false,
+        },
+    )
+    .await?;
+    registry.register(driver);
+    Ok(())
+}
+
+/// Records the macOS backend row and registers its driver.
+pub async fn attach_macos_driver(
+    pool: &sqlx::AnyPool,
+    registry: &DriverRegistry,
+    driver: Arc<dyn StorageDriver>,
+) -> Result<()> {
+    atlas_inventory::upsert_backend(
+        pool,
+        &StorageBackend {
+            id: driver.backend_id().into(),
+            name: "macos".into(),
+            backend_type: BackendType::Macos,
+            mode: BackendMode::External,
+            status: "active".into(),
+            capabilities: crate::routes::util::ceph_default_caps(BackendType::Macos),
             connection_ref: None,
             cordoned: false,
         },
@@ -481,6 +534,12 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         tracing::info!("weka backend registered ({WEKA_BACKEND_ID})");
     }
 
+    let macos_driver = macos_driver_from_env();
+    if let Some(macos) = &macos_driver {
+        attach_macos_driver(&pool, &registry, macos.clone()).await?;
+        tracing::info!("macos backend registered ({MACOS_BACKEND_ID})");
+    }
+
     // Start the async job engine (write path) over the same pool + k8s driver.
     // Durable DB poller (ATLAS_JOB_POLL_SECS) keeps queued work alive across channel loss;
     // tests leave poll_secs=0 so only explicit enqueues/recovery drive the worker.
@@ -560,6 +619,12 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
                 Err(e) => tracing::warn!("initial atlas-native discovery failed: {e:#}"),
             }
         }
+        if let Some(macos) = &macos_driver {
+            match atlas_discovery::run_discovery(&state.pool, macos.clone(), None, None).await {
+                Ok(sum) => tracing::info!(?sum, "initial macos discovery complete"),
+                Err(e) => tracing::warn!("initial macos discovery failed: {e:#}"),
+            }
+        }
     }
 
     // Start the monitor/alerts worker (periodic discovery + alert-rule evaluation).
@@ -590,6 +655,14 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
             spawn_rediscovery(
                 state.pool.clone(),
                 native,
+                state.config.monitor_interval_secs,
+            );
+        }
+        // External drives come and go, so a Mac is rescanned on the same interval.
+        if let Some(macos) = macos_driver.clone() {
+            spawn_rediscovery(
+                state.pool.clone(),
+                macos,
                 state.config.monitor_interval_secs,
             );
         }
