@@ -621,6 +621,16 @@ no model required for the default path. See [AI_ADVISOR.md](AI_ADVISOR.md).
   RustFS cluster to point at). See `docs/RUSTFS.md`'s known-unverified-risks list (`CreateBucket`
   body, presigned URLs, multipart — none tested against a real RustFS server yet).
 
+## ✅ macOS storage (0.7.0)
+
+- ✅ `atlas-driver-macos`: APFS containers, volumes and other partitions via `diskutil` plists, read-only by default.
+- ✅ Guarded external-disk lifecycle (`/macos/*`): erase, add/delete volume, eject; admin, typed confirmation, jobs, audit;
+  internal disks, the running system and system volumes are refused twice (route and job).
+- ✅ Fleet: `atlas-mac-agent` per Mac plus `RemoteMacosDriver` (`ATLAS_MACOS_AGENTS`); launchd installer; release archives.
+- ✅ Mac as client: NFS/SMB/`atlasctl` documented (`docs/MACOS_CLIENT.md`); native FUSE mount on macOS is a documented no-go.
+- ⏭ Disks page UI, container resize, local snapshots, remote writes, SMART/capacity alerts. Real-hardware write commands are
+  unverified; see [STATUS.md](STATUS.md).
+
 ## Known limitations (current)
 
 - **DR data plane verified on a lab, not per deployment**: the real `rbd mirror` paths, including

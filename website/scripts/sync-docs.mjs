@@ -41,6 +41,7 @@ const DOCS = [
   ['HERMES_AGENT.md', 'control-plane', 'hermes-agent', 14, 'Hermes Agent'],
   ['MACOS.md', 'control-plane', 'macos', 15, 'macOS disks'],
   ['MACOS_CLIENT.md', 'control-plane', 'macos-client', 16, 'Mac as a client'],
+  ['RELEASING.md', 'control-plane', 'releasing', 17, 'Releasing'],
 
   ['NATIVE_STORAGE.md', 'atlas-native', 'overview', 1, 'Storage overview'],
   ['NATIVE_NODE.md', 'atlas-native', 'node', 2, 'Node'],

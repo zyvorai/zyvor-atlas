@@ -9,6 +9,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- `docs/RELEASING.md` (tag, ghcr images, archives, visibility); macOS rows in STATUS, ROADMAP, ARCHITECTURE and COMPARISON.
+
 ## [0.7.0] — 2026-10-17
 
 ### Fixed

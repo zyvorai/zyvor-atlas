@@ -32,7 +32,7 @@ columns state only what has been measured or verified in this repository.
 | Protocols | Block, CephFS, S3 (RGW) | Block over HTTP, POSIX via FUSE, NFSv3/v4.1/v4.2 (NFS-Ganesha gateway), SMB 2.1/3.x (Samba gateway), S3 over the same files | POSIX, NFS, SMB, S3 |
 | Snapshots and clones | Yes (RBD, CephFS) | Yes, copy-on-write | Yes |
 | Cross-site DR | Two-way RBD mirroring with clean failback, verified live (`docs/DR.md`) | Asynchronous filesystem replication: snapshot increments that send only changed extents, read-only replica, promote and demote for failover and failback; verified live between two clusters on one lab host (`docs/NATIVE_REPLICATION.md`) | Snapshot-to-object and replication features |
-| Mixed backends under one API | Ceph, NFS, ZFS, Longhorn, S3, native | (same gateway) | WEKA only |
+| Mixed backends under one API | Ceph, NFS, ZFS, Longhorn, S3, macOS, native | (same gateway) | WEKA only |
 | Cloud-to-edge DB migration | DataBridge: six engines, CDC, cutover | (same gateway) | Not in scope |
 | Operations | AI Ops Advisor, anomaly detection, eBPF I/O RCA (`atlas-io`); MCP server with 27 read-only tools and two opt-in, audited, two-phase writes (`create_snapshot`, `ack_alert`) (`docs/MCP.md`) | (same gateway) | Own management GUI and monitoring |
 | Edge footprint | Single-node Rook lab profile | Single-node low-memory profile (`values-edge.yaml`): one pod, catalog memory capped at ~26 MB however many files, 61 MB peak in a 50k-file lab run (`docs/NATIVE_EDGE.md`) | Multi-node clusters on qualified hardware |
