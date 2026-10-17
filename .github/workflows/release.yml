@@ -82,6 +82,27 @@ jobs:
           archive: atlasctl-$tag-$target
           token: ${{ secrets.GITHUB_TOKEN }}
 
+  # The per-Mac agent (docs/MACOS.md) is only useful on a Mac, so only macOS targets are built.
+  mac-agent:
+    needs: create-release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: brew install protobuf cmake
+      - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
+        with:
+          bin: atlas-mac-agent
+          package: atlas-mac-agent
+          target: ${{ matrix.target }}
+          archive: atlas-mac-agent-$tag-$target
+          token: ${{ secrets.GITHUB_TOKEN }}
+
   ui-dist:
     needs: create-release
     runs-on: ubuntu-latest
@@ -107,7 +128,7 @@ jobs:
   # CLI archives and the UI zip are uploaded by the jobs above. This job checksums only those
   # name patterns so a parallel docker-publish SBOM cannot land in SHA256SUMS.txt.
   checksums:
-    needs: [binaries, ui-dist]
+    needs: [binaries, mac-agent, ui-dist]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -119,9 +140,9 @@ jobs:
           set -euo pipefail
           mkdir -p assets
           gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --dir assets \
-            --pattern 'atlasctl-*' --pattern 'atlas-ui-dist-*'
+            --pattern 'atlasctl-*' --pattern 'atlas-mac-agent-*' --pattern 'atlas-ui-dist-*'
           cd assets
-          sha256sum atlasctl-* atlas-ui-dist-* | tee SHA256SUMS.txt
+          sha256sum atlasctl-* atlas-mac-agent-* atlas-ui-dist-* | tee SHA256SUMS.txt
           test -s SHA256SUMS.txt
 
       - uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3

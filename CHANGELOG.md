@@ -11,6 +11,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- Mac fleet: `atlas-mac-agent` (read-only HTTP agent per Mac, bearer token, TLS required off loopback,
+  launchd installer, macOS release archives) and `RemoteMacosDriver`; the gateway registers each agent from
+  `ATLAS_MACOS_AGENTS` as its own backend. See `docs/MACOS.md`.
 - macOS volume lifecycle (`/macos/*`): erase an external disk, add/delete APFS volumes, eject. Admin only, typed
   confirmation, jobs and audit. Hard refusals (internal disks, the running system, system volumes, disk images,
   odd mounts) are checked in the route and again in the job; fake mode runs them against fixtures. See `docs/MACOS.md`.

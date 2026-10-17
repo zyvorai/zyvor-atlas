@@ -404,7 +404,9 @@ dependencies = [
  "atlas-api-types",
  "atlas-driver-core",
  "plist",
+ "reqwest 0.13.5",
  "serde",
+ "serde_json",
  "tokio",
  "tracing",
 ]
@@ -506,6 +508,7 @@ dependencies = [
  "atlas-driver-zfs",
  "atlas-inventory",
  "atlas-jobs",
+ "atlas-mac-agent",
  "atlas-monitor",
  "atlas-policy",
  "axum",
@@ -599,6 +602,25 @@ dependencies = [
  "sqlx",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "atlas-mac-agent"
+version = "0.6.0"
+dependencies = [
+ "anyhow",
+ "atlas-api-types",
+ "atlas-driver-core",
+ "atlas-driver-macos",
+ "axum",
+ "axum-server",
+ "clap",
+ "reqwest 0.13.5",
+ "rustls",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
 ]
 
 [[package]]
