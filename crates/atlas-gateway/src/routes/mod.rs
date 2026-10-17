@@ -22,6 +22,7 @@ mod rook;
 pub(crate) mod util;
 pub(crate) mod volume_groups;
 pub(crate) mod volumes;
+mod macos;
 mod zfs;
 
 use axum::{
@@ -50,6 +51,7 @@ use rbd::*;
 use rook::*;
 use volume_groups::*;
 use volumes::*;
+use macos::*;
 use zfs::*;
 
 pub fn router(state: AppState) -> Router {
@@ -152,6 +154,11 @@ pub fn router(state: AppState) -> Router {
             "/ceph/nodes/{node_name}/devices",
             get(list_ceph_node_devices),
         )
+        .route("/macos/devices", get(list_macos_devices))
+        .route("/macos/disks/erase", post(erase_macos_disk))
+        .route("/macos/disks/{device}/eject", post(eject_macos_disk))
+        .route("/macos/containers/{container}/volumes", post(add_macos_volume))
+        .route("/macos/volumes/{device}/delete", post(delete_macos_volume))
         .route("/zfs/devices", get(list_zfs_devices))
         .route("/zfs/pools/from-device", post(create_zfs_pool_from_device))
         .route("/zfs/pools/{name}/destroy", post(destroy_zfs_pool))

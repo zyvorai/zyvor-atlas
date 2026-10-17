@@ -15,7 +15,7 @@
 //!   A Mac cannot be queried remotely by this driver. If `diskutil` is missing it returns
 //!   `Unreachable`; it never fabricates data. Commands are argument arrays, never shell strings.
 //!
-//! This crate is read-only. Mounted disk images are not reported unless `allow_disk_images` is set.
+//! Discovery is read-only. The [`ops`] module adds guarded lifecycle operations. Mounted disk images are not reported unless `allow_disk_images` is set.
 
 use std::collections::HashMap;
 use std::time::Duration;
@@ -26,11 +26,62 @@ use atlas_api_types::{
 };
 use atlas_driver_core::{DriverError, StorageDriver};
 
+pub mod ops;
 pub mod parse;
+pub use ops::MacosOps;
 pub use parse::{
     cluster_id, map_layout, parse_info, parse_layout, whole_disk_of, ApfsContainer, ApfsVolume,
     DiskInfo, Layout, Mapped, Partition,
 };
+
+/// The `ATLAS_MACOS_*` environment, read the same way by the gateway and by job dispatch.
+#[derive(Debug, Clone)]
+pub struct EnvSettings {
+    pub enabled: bool,
+    /// `ATLAS_MACOS_DRIVER_MODE`: anything but `real` is fake.
+    pub fake: bool,
+    pub host: String,
+    pub allow_disk_images: bool,
+}
+
+impl EnvSettings {
+    pub fn from_env() -> Self {
+        let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+        let on = |k: &str| var(k).is_some_and(|v| matches!(v.as_str(), "1" | "true" | "yes"));
+        let fake = var("ATLAS_MACOS_DRIVER_MODE")
+            .map(|m| m.trim().to_lowercase() != "real")
+            .unwrap_or(true);
+        let default_host = if fake { "mac01.zyvor.lab" } else { "localhost" };
+        Self {
+            enabled: on("ATLAS_MACOS_ENABLE"),
+            fake,
+            host: var("ATLAS_MACOS_HOST").unwrap_or_else(|| default_host.into()),
+            allow_disk_images: on("ATLAS_MACOS_ALLOW_DISK_IMAGES"),
+        }
+    }
+
+    pub fn ops(&self) -> MacosOps {
+        if self.fake {
+            MacosOps::fake(self.allow_disk_images)
+        } else {
+            MacosOps::real(self.allow_disk_images)
+        }
+    }
+
+    pub fn driver(&self, backend_id: &str) -> std::sync::Arc<dyn StorageDriver> {
+        if self.fake {
+            std::sync::Arc::new(
+                FakeMacosDriver::new(backend_id, self.host.clone())
+                    .allow_disk_images(self.allow_disk_images),
+            )
+        } else {
+            std::sync::Arc::new(
+                RealMacosDriver::new(backend_id, self.host.clone())
+                    .allow_disk_images(self.allow_disk_images),
+            )
+        }
+    }
+}
 
 const COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
@@ -97,19 +148,7 @@ impl FakeMacosDriver {
     }
 
     fn mapped(&self) -> Result<Mapped, DriverError> {
-        let layout = parse_layout(
-            include_bytes!("../tests/fixtures/list.plist"),
-            include_bytes!("../tests/fixtures/apfs.plist"),
-        )?;
-        let mut infos = HashMap::new();
-        for (disk, bytes) in [
-            ("disk0", &include_bytes!("../tests/fixtures/info_disk0.plist")[..]),
-            ("disk6", &include_bytes!("../tests/fixtures/info_disk6.plist")[..]),
-            ("disk8", &include_bytes!("../tests/fixtures/info_disk8.plist")[..]),
-            ("disk9", &include_bytes!("../tests/fixtures/info_disk9.plist")[..]),
-        ] {
-            infos.insert(disk.to_string(), parse_info(bytes)?);
-        }
+        let (layout, infos) = fixture_state()?;
         Ok(map_layout(
             &self.backend_id,
             &self.host,
@@ -118,6 +157,24 @@ impl FakeMacosDriver {
             self.allow_disk_images,
         ))
     }
+}
+
+/// The recorded layout and per-disk info the fake driver and fake lifecycle operations use.
+pub(crate) fn fixture_state() -> Result<(Layout, HashMap<String, DiskInfo>), DriverError> {
+    let layout = parse_layout(
+        include_bytes!("../tests/fixtures/list.plist"),
+        include_bytes!("../tests/fixtures/apfs.plist"),
+    )?;
+    let mut infos = HashMap::new();
+    for (disk, bytes) in [
+        ("disk0", &include_bytes!("../tests/fixtures/info_disk0.plist")[..]),
+        ("disk6", &include_bytes!("../tests/fixtures/info_disk6.plist")[..]),
+        ("disk8", &include_bytes!("../tests/fixtures/info_disk8.plist")[..]),
+        ("disk9", &include_bytes!("../tests/fixtures/info_disk9.plist")[..]),
+    ] {
+        infos.insert(disk.to_string(), parse_info(bytes)?);
+    }
+    Ok((layout, infos))
 }
 
 #[async_trait]

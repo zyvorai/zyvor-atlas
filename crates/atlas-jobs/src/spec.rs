@@ -425,6 +425,39 @@ pub enum JobSpec {
         /// Re-stated by the caller; dispatch refuses unless equal to `pool_name` byte-for-byte.
         confirmed_pool_name: String,
     },
+    /// Erase an **external** Mac disk to a single APFS container (`diskutil eraseDisk`). Local to
+    /// the Mac the gateway runs on. Dispatch re-runs the hard refusals (internal disk, running
+    /// system, disk image, odd mounts) right before executing.
+    #[serde(rename = "macos.disk.erase")]
+    MacosDiskErase {
+        backend_id: String,
+        device: String,
+        /// Must equal `device` byte-for-byte.
+        confirmed_device: String,
+        name: String,
+    },
+    /// `diskutil apfs addVolume` into an external APFS container.
+    #[serde(rename = "macos.volume.add")]
+    MacosVolumeAdd {
+        backend_id: String,
+        container: String,
+        name: String,
+        #[serde(default)]
+        quota_bytes: Option<u64>,
+        #[serde(default)]
+        reserve_bytes: Option<u64>,
+    },
+    /// `diskutil apfs deleteVolume`; system-role volumes are refused.
+    #[serde(rename = "macos.volume.delete")]
+    MacosVolumeDelete {
+        backend_id: String,
+        device: String,
+        /// Must equal `device` byte-for-byte.
+        confirmed_device: String,
+    },
+    /// `diskutil eject` of an external disk.
+    #[serde(rename = "macos.disk.eject")]
+    MacosDiskEject { backend_id: String, device: String },
     /// Turn a raw local disk into a RustFS drive: the same hard refusals as the ZFS path, an
     /// optional wipe, `mkfs.xfs` (never forced) and a host mount + fstab entry done by a throwaway
     /// privileged node-prep Job, then a `local` PV + bound PVC the RustFS chart consumes as
@@ -518,6 +551,10 @@ impl JobSpec {
             JobSpec::CephObjectStoreDelete { .. } => "ceph.object_store.delete",
             JobSpec::ZfsPoolCreateFromDevice { .. } => "zfs.pool.create_from_device",
             JobSpec::ZfsPoolDestroy { .. } => "zfs.pool.destroy",
+            JobSpec::MacosDiskErase { .. } => "macos.disk.erase",
+            JobSpec::MacosVolumeAdd { .. } => "macos.volume.add",
+            JobSpec::MacosVolumeDelete { .. } => "macos.volume.delete",
+            JobSpec::MacosDiskEject { .. } => "macos.disk.eject",
             JobSpec::RustfsDriveProvision { .. } => "rustfs.drive.provision",
             JobSpec::RustfsInstance { .. } => "rustfs.instance",
             JobSpec::S3BackendSelfTest { .. } => "s3.backend.selftest",
