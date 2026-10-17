@@ -62,7 +62,7 @@ const BLOCKS = [
   {
     tag: 'Control plane',
     title: 'One API, every backend.',
-    body: 'Products state intent: volumes, snapshots, clones, CephFS RWX, S3 buckets. The StorageDriver trait maps it to Ceph, NFS, ZFS, Longhorn or Atlas Native. Real drivers never fabricate data, and every driver has a fake mode.',
+    body: 'Products state intent: volumes, snapshots, clones, CephFS RWX, S3 buckets. The StorageDriver trait maps it to Ceph, NFS, ZFS, Longhorn, macOS disks or Atlas Native. Real drivers never fabricate data, and every driver has a fake mode.',
     items: ['REST, gRPC and SSE', 'Quotas, audit export, OIDC/SSO', 'DataBridge database migration'],
     img: '/anim/control-plane.svg',
     alt: 'Animated control plane routing intent to storage drivers',
@@ -169,7 +169,7 @@ export function PromoteDemo(): ReactNode {
 const ROWS = [
   ['What it is', 'Control plane with drivers per backend, plus its own filesystem', 'Kubernetes operator that runs Ceph'],
   ['Interface', 'Intent-based REST, gRPC and SSE', 'Custom resources and CSI PVCs'],
-  ['Backends', 'Ceph, NFS, ZFS, Longhorn, Atlas Native, S3', 'Ceph'],
+  ['Backends', 'Ceph, NFS, ZFS, Longhorn, macOS disks, Atlas Native, S3', 'Ceph'],
   ['Cross-site DR', 'Two-way mirroring with a guarded failback; native replication', 'RBD mirroring CRDs'],
   ['Database migration', 'DataBridge: discovery, full load, CDC, cutover', 'Not in scope'],
   ['AI and agents', 'MCP server (27 read-only tools, opt-in guarded snapshot and alert ack), Ops Advisor, eBPF I/O risk', 'Not in scope'],

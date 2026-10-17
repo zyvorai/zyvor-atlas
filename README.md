@@ -20,7 +20,7 @@
 
 <img src="docs/ux/anim/hero.gif" alt="Atlas Storage Center: overview, volumes, observatory, Ceph, DataBridge, alerts and jobs" width="100%">
 
-**Atlas is two things in one Apache-2.0 platform.** A **control plane** that maps volume, snapshot and bucket intent to Ceph, NFS, ZFS and Longhorn through pluggable drivers. And **Atlas Native**, a distributed filesystem with its own data path: striped and erasure-coded extents, sharded Raft metadata, NFS, SMB and S3 gateways, replication to a second site, and a single-node edge profile.
+**Atlas is two things in one Apache-2.0 platform.** A **control plane** that maps volume, snapshot and bucket intent to Ceph, NFS, ZFS, Longhorn and a Mac's own APFS disks through pluggable drivers. And **Atlas Native**, a distributed filesystem with its own data path: striped and erasure-coded extents, sharded Raft metadata, NFS, SMB and S3 gateways, replication to a second site, and a single-node edge profile.
 
 **4 backends + Native** · **150+ REST endpoints** · **REST · gRPC · SSE** · **Two-way DR, clean failback** · **6 DB engines in DataBridge**
 
@@ -50,7 +50,7 @@
 
 <img src="docs/ux/anim/control-plane.svg" alt="Animated control plane: one intent API mapped to Ceph, NFS, ZFS, Longhorn and Atlas Native drivers" width="100%">
 
-Products call stable Atlas APIs, and the `StorageDriver` trait maps the intent to a backend. Drivers cover Ceph (RBD, CephFS, RGW), NFS, ZFS, read-only Longhorn and Atlas Native, each with fake and real modes; real drivers never fabricate data. Around it: **DataBridge** cloud-to-edge database migration, **Day 2** operations (alerts, maintenance, upgrade preflight, quotas, audit export), and a read-only **Ops Advisor** that scores risk and plans capacity, also exposed as MCP tools. [Architecture →](docs/ARCHITECTURE.md)
+Products call stable Atlas APIs, and the `StorageDriver` trait maps the intent to a backend. Drivers cover Ceph (RBD, CephFS, RGW), NFS, ZFS, read-only Longhorn, macOS disks (APFS containers and volumes, external drives, a fleet of Macs through a read-only agent, guarded erase/add/delete/eject on external disks; [docs](docs/MACOS.md)) and Atlas Native, each with fake and real modes; real drivers never fabricate data. Around it: **DataBridge** cloud-to-edge database migration, **Day 2** operations (alerts, maintenance, upgrade preflight, quotas, audit export), and a read-only **Ops Advisor** that scores risk and plans capacity, also exposed as MCP tools. [Architecture →](docs/ARCHITECTURE.md)
 
 ## Agent-ready operations
 
@@ -90,7 +90,7 @@ Everything below ran on real infrastructure in the Atlas lab. Lab verification i
 |---|---|---|
 | What it is | Storage control plane with drivers per backend, plus its own filesystem | Kubernetes operator that runs Ceph |
 | Interface for products | Intent-based REST, gRPC and SSE APIs | Kubernetes custom resources and CSI PVCs |
-| Backends | Ceph, NFS, ZFS, Longhorn, Atlas Native, generic S3 | Ceph |
+| Backends | Ceph, NFS, ZFS, Longhorn, macOS disks, Atlas Native, generic S3 | Ceph |
 | Cross-site DR | Two-way RBD mirroring with a guarded failback; native replication | RBD mirroring CRDs |
 | Database migration | DataBridge (discovery, full load, CDC, cutover) | Not in scope |
 | **Choose Rook alone when** | | You only run Ceph inside Kubernetes and its own dashboard and CRDs are enough |

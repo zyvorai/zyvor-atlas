@@ -35,6 +35,9 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 | Governance | `list_policies` (static catalogue), `list_audit` (operator; tenant-filtered; request and result bodies are not returned) |
 | Guarded write | `create_snapshot`, `ack_alert`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
 
+Macs registered as backends (`bkd_macos*`, see [MACOS.md](./macos.md)) appear in `list_pools` and `list_volumes`
+like any other backend. Erase, add/delete volume and eject are REST only, never MCP tools.
+
 ## Node agent tools
 
 `io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_risk`, `io_leases`: read-only views of the
