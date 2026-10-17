@@ -33,7 +33,8 @@ duplicated.
 
 ## AI
 - **[AI_ADVISOR.md](AI_ADVISOR.md)** — explainable risk scoring, incident correlation, what-if capacity planning, anomaly detection.
-- **[MACOS.md](MACOS.md)** — managing a Mac's internal and external disks (read-only discovery today).
+- **[MACOS.md](MACOS.md)** — managing a Mac's internal and external disks: discovery, guarded external-disk lifecycle, a fleet of Macs.
+- **[MACOS_CLIENT.md](MACOS_CLIENT.md)** — using Atlas storage from a Mac (NFS, SMB, `atlasctl`).
 - **[MCP.md](MCP.md)** — the MCP server: tools, auth, the guarded write flow and the threat model.
 - **[IO_RISK.md](IO_RISK.md)** — eBPF-backed storage I/O risk levels for the Ops Advisor and agents.
 - **[HERMES_AGENT.md](HERMES_AGENT.md)** — the Hermes agent integration.

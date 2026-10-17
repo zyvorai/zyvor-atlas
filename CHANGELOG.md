@@ -11,6 +11,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `docs/MACOS_CLIENT.md`: using Atlas storage from a Mac (NFS, SMB, `atlasctl`) and why the native FUSE mount
+  is not available on macOS yet. The mount commands are documented, not yet run against a live gateway.
 - Mac fleet: `atlas-mac-agent` (read-only HTTP agent per Mac, bearer token, TLS required off loopback,
   launchd installer, macOS release archives) and `RemoteMacosDriver`; the gateway registers each agent from
   `ATLAS_MACOS_AGENTS` as its own backend. See `docs/MACOS.md`.

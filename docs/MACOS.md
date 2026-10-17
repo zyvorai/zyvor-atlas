@@ -115,4 +115,4 @@ them on a remote Mac through its agent is not part of this slice.
 2. Volume lifecycle with hard refusals: erase, add/delete volumes, eject (this document). Still to come:
    container resize, local snapshots, a Disks page.
 3. A Mac agent and a remote driver (read-only, above); remote lifecycle operations still to come.
-4. Macs as clients of Atlas storage (NFS/SMB mounts, and the native filesystem if a macFUSE build proves out).
+4. Macs as clients of Atlas storage: NFS/SMB mounts and `atlasctl` are documented in [`MACOS_CLIENT.md`](MACOS_CLIENT.md); the native FUSE mount is a no-go until a spike on a Mac says otherwise.
