@@ -9,6 +9,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Security
+
+- Website: `postcss-selector-parser` forced to >= 7.1.6 (Dependabot #26); synced docs pages updated to 0.6.0.
+
 ## [0.6.0] — 2026-10-16
 
 ### Security
