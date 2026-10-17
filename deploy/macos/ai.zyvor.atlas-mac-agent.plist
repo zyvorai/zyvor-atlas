@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>ai.zyvor.atlas-mac-agent</string>
+  <key>ProgramArguments</key>
+  <array><string>/usr/local/bin/atlas-mac-agent</string></array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>ATLAS_MAC_MODE</key><string>real</string>
+    <key>ATLAS_MAC_BIND</key><string>__BIND__</string>
+    <key>ATLAS_MAC_TOKEN_FILE</key><string>/usr/local/etc/atlas-mac-agent/token</string>
+    <key>ATLAS_MAC_TLS_CERT</key><string>__CERT__</string>
+    <key>ATLAS_MAC_TLS_KEY</key><string>__KEY__</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardErrorPath</key><string>/var/log/atlas-mac-agent.log</string>
+  <key>StandardOutPath</key><string>/var/log/atlas-mac-agent.log</string>
+</dict>
+</plist>

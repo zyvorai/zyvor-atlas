@@ -88,6 +88,55 @@ pub fn macos_driver_from_env() -> Option<Arc<dyn StorageDriver>> {
     settings.enabled.then(|| settings.driver(MACOS_BACKEND_ID))
 }
 
+/// One remote Mac per entry of `ATLAS_MACOS_AGENTS` (`name=https://host:5112,name2=...`), each a
+/// backend `bkd_macos_<name>`. `ATLAS_MACOS_AGENT_TOKEN` (or `_TOKEN_FILE`) is the bearer token sent to
+/// every agent, `ATLAS_MACOS_AGENT_CA_CERT` an extra trusted root. A bad entry is a startup error
+/// rather than a silently missing Mac.
+pub fn macos_agents_from_env() -> Result<Vec<Arc<dyn StorageDriver>>> {
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    let Some(list) = var("ATLAS_MACOS_AGENTS") else {
+        return Ok(Vec::new());
+    };
+    let token = match (var("ATLAS_MACOS_AGENT_TOKEN"), var("ATLAS_MACOS_AGENT_TOKEN_FILE")) {
+        (Some(t), _) => Some(t.trim().to_string()),
+        (None, Some(f)) => Some(
+            std::fs::read_to_string(&f)
+                .map_err(|e| anyhow::anyhow!("ATLAS_MACOS_AGENT_TOKEN_FILE {f}: {e}"))?
+                .trim()
+                .to_string(),
+        ),
+        _ => None,
+    };
+    let ca = match var("ATLAS_MACOS_AGENT_CA_CERT") {
+        Some(f) => Some(
+            std::fs::read(&f).map_err(|e| anyhow::anyhow!("ATLAS_MACOS_AGENT_CA_CERT {f}: {e}"))?,
+        ),
+        None => None,
+    };
+    let mut out: Vec<Arc<dyn StorageDriver>> = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    for entry in list.split(',').map(str::trim).filter(|e| !e.is_empty()) {
+        let (name, url) = entry
+            .split_once('=')
+            .ok_or_else(|| anyhow::anyhow!("ATLAS_MACOS_AGENTS entry {entry:?} is not name=url"))?;
+        let ok = !name.is_empty()
+            && name.len() <= 40
+            && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+        anyhow::ensure!(ok, "ATLAS_MACOS_AGENTS name {name:?} must be lowercase letters, digits or '-'");
+        anyhow::ensure!(seen.insert(name.to_string()), "ATLAS_MACOS_AGENTS lists {name:?} twice");
+        let driver = atlas_driver_macos::RemoteMacosDriver::new(
+            format!("bkd_macos_{}", name.replace('-', "_")),
+            url.trim(),
+            token.clone(),
+            ca.as_deref(),
+            std::time::Duration::from_secs(20),
+        )
+        .map_err(|e| anyhow::anyhow!("ATLAS_MACOS_AGENTS {name}: {e}"))?;
+        out.push(Arc::new(driver));
+    }
+    Ok(out)
+}
+
 /// Builds the atlas-native driver when `ATLAS_NATIVE_ENABLE=1`:
 /// `ATLAS_NATIVE_DRIVER_MODE` (`fake` default, `real`), `ATLAS_NATIVE_ENDPOINTS` (comma-separated
 /// node API base URLs), `ATLAS_NATIVE_TOKEN_FILE`, `ATLAS_NATIVE_CA_CERT`,
@@ -180,7 +229,7 @@ pub async fn attach_macos_driver(
         pool,
         &StorageBackend {
             id: driver.backend_id().into(),
-            name: "macos".into(),
+            name: driver.backend_id().trim_start_matches("bkd_").replace('_', "-"),
             backend_type: BackendType::Macos,
             mode: BackendMode::External,
             status: "active".into(),
@@ -521,6 +570,11 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         attach_macos_driver(&pool, &registry, macos.clone()).await?;
         tracing::info!("macos backend registered ({MACOS_BACKEND_ID})");
     }
+    let macos_agents = macos_agents_from_env()?;
+    for agent in &macos_agents {
+        attach_macos_driver(&pool, &registry, agent.clone()).await?;
+        tracing::info!("macos agent backend registered ({})", agent.backend_id());
+    }
 
     // Start the async job engine (write path) over the same pool + k8s driver.
     // Durable DB poller (ATLAS_JOB_POLL_SECS) keeps queued work alive across channel loss;
@@ -607,6 +661,12 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
                 Err(e) => tracing::warn!("initial macos discovery failed: {e:#}"),
             }
         }
+        for agent in &macos_agents {
+            match atlas_discovery::run_discovery(&state.pool, agent.clone(), None, None).await {
+                Ok(sum) => tracing::info!(?sum, "initial macos agent discovery complete"),
+                Err(e) => tracing::warn!("macos agent {} discovery failed: {e:#}", agent.backend_id()),
+            }
+        }
     }
 
     // Start the monitor/alerts worker (periodic discovery + alert-rule evaluation).
@@ -647,6 +707,9 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
                 macos,
                 state.config.monitor_interval_secs,
             );
+        }
+        for agent in macos_agents.clone() {
+            spawn_rediscovery(state.pool.clone(), agent, state.config.monitor_interval_secs);
         }
         // Protection-schedule worker: periodic snapshots + retention (shares the job engine).
         atlas_jobs::spawn_scheduler(

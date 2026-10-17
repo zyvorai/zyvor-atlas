@@ -76,10 +76,43 @@ that no request field can override:
 In fake mode the same checks run against the recorded fixtures and nothing is executed. Local snapshots,
 container resize and a UI page are not part of this slice.
 
+## A fleet of Macs
+
+Each Mac runs `atlas-mac-agent`, a small read-only HTTP service over the same driver; a central gateway
+(on any OS) polls them. Release archives for macOS (`atlas-mac-agent-<tag>-<target>`) come with each release.
+
+On a Mac (as root; the token is printed once and kept in `/usr/local/etc/atlas-mac-agent/token`):
+
+```bash
+sudo scripts/install-mac-agent.sh ./atlas-mac-agent 0.0.0.0:5112 /path/cert.pem /path/key.pem
+```
+
+The agent refuses to listen on a non-loopback address without a token and TLS. Settings:
+`ATLAS_MAC_BIND` (default `127.0.0.1:5112`), `ATLAS_MAC_MODE` (`fake` default, `real`), `ATLAS_MAC_HOST`,
+`ATLAS_MAC_TOKEN` or `ATLAS_MAC_TOKEN_FILE`, `ATLAS_MAC_TLS_CERT` / `ATLAS_MAC_TLS_KEY`,
+`ATLAS_MAC_ALLOW_DISK_IMAGES`. Endpoints: `GET /health` (open), `GET /v1/discover`, `GET /v1/metrics`
+(bearer token).
+
+On the gateway, list the agents and restart:
+
+```bash
+ATLAS_MACOS_AGENTS=studio=https://studio.lan:5112,laptop=https://laptop.lan:5112
+ATLAS_MACOS_AGENT_TOKEN_FILE=/etc/atlas/mac-token      # sent to every agent; or ATLAS_MACOS_AGENT_TOKEN
+ATLAS_MACOS_AGENT_CA_CERT=/etc/atlas/mac-ca.pem        # optional extra trusted root
+```
+
+Each entry becomes a backend `bkd_macos_<name>` (dashes become underscores) and is rescanned on the monitor
+interval. An unreachable agent is an error in the log, never an empty inventory, and a bad entry stops
+startup. Redirects are not followed, so the token only goes to the configured URL. The same token is used
+for every agent; use one token per fleet.
+
+The lifecycle routes above act only on the Mac the gateway itself runs on (`ATLAS_MACOS_ENABLE`). Running
+them on a remote Mac through its agent is not part of this slice.
+
 ## Roadmap
 
 1. Read-only discovery.
 2. Volume lifecycle with hard refusals: erase, add/delete volumes, eject (this document). Still to come:
    container resize, local snapshots, a Disks page.
-3. A Mac agent and a remote driver, so a central gateway manages many Macs.
+3. A Mac agent and a remote driver (read-only, above); remote lifecycle operations still to come.
 4. Macs as clients of Atlas storage (NFS/SMB mounts, and the native filesystem if a macFUSE build proves out).

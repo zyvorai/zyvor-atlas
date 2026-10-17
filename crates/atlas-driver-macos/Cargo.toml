@@ -12,6 +12,8 @@ atlas-api-types = { workspace = true }
 atlas-driver-core = { workspace = true }
 async-trait = { workspace = true }
 plist = "1"
+reqwest = { workspace = true }
 serde = { workspace = true }
+serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

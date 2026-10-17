@@ -83,6 +83,7 @@ mcp = ["dep:rmcp", "dep:schemars"]
 tonic-prost-build = "0.14"
 
 [dev-dependencies]
+atlas-mac-agent = { workspace = true }
 reqwest = { workspace = true }
 atlas-common = { workspace = true }
 atlas-inventory = { workspace = true }
