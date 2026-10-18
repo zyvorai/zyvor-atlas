@@ -162,6 +162,7 @@ pub trait NativeApi: Send + Sync {
         name: &str,
     ) -> Result<String, DriverError>;
     async fn delete_fs_snapshot(&self, id: &str) -> Result<(), DriverError>;
+    async fn fs_activity(&self, fs_id: &str) -> Result<Vec<serde_json::Value>, DriverError>;
     async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError>;
     async fn lock_fs_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError>;
 }
@@ -573,6 +574,18 @@ impl<A: NativeApi> StorageDriver for NativeDriver<A> {
         match native_snapshot_ref(&req.snapshot_id) {
             NativeRef::Volume(id) => self.api.delete_snapshot(id).await,
             NativeRef::Filesystem(id) => self.api.delete_fs_snapshot(id).await,
+        }
+    }
+
+    async fn filesystem_activity(
+        &self,
+        native_volume_id: &str,
+    ) -> Result<Vec<serde_json::Value>, DriverError> {
+        match native_volume_ref(native_volume_id) {
+            NativeRef::Filesystem(id) => self.api.fs_activity(id).await,
+            NativeRef::Volume(_) => Err(DriverError::Backend(
+                "invalid: activity is tracked for filesystem volumes only".into(),
+            )),
         }
     }
 

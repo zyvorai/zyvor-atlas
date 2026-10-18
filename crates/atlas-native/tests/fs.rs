@@ -321,3 +321,42 @@ fn locked_fs_snapshot_refuses_delete_and_only_extends() {
     assert!(e.lock_fs_snapshot("nope", 60).is_err());
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn filesystem_activity_counts_writes_renames_deletes_and_entropy() {
+    let (e, root) = engine("activity");
+    e.create_fs_as("f".into(), "fs").unwrap();
+    let a = e.fs_mknode("f", ROOT_INO, node("a", NodeType::File)).unwrap().ino;
+    let b = e.fs_mknode("f", ROOT_INO, node("b", NodeType::File)).unwrap().ino;
+
+    // Near-random 8 KiB (what encrypted data looks like) into `a`, zeros into `b`.
+    let mut x = 0x2545_f491_4f6c_dd1d_u64;
+    let random: Vec<u8> = (0..8192)
+        .map(|_| {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            (x >> 24) as u8
+        })
+        .collect();
+    e.write_file("f", a, 0, &random).unwrap();
+    e.write_file("f", b, 0, &[0u8; 4096]).unwrap();
+    e.fs_rename("f", ROOT_INO, "a", ROOT_INO, "a.locked").unwrap();
+    e.fs_unlink("f", ROOT_INO, "b").unwrap();
+
+    let s = e.fs_activity.samples("f");
+    let (mut files, mut renamed, mut deleted, mut bytes, mut ratio) = (0.0, 0.0, 0.0, 0.0, 0.0);
+    for w in &s {
+        files += w.files_modified;
+        renamed += w.files_renamed;
+        deleted += w.files_deleted;
+        bytes += w.bytes_written;
+        ratio = f64::max(ratio, w.high_entropy_ratio);
+    }
+    // The run may straddle a window boundary, so check totals across the windows.
+    assert_eq!((renamed, deleted, bytes), (1.0, 1.0, 12288.0));
+    assert!(files >= 2.0);
+    assert!(ratio > 0.5, "random data should read as high entropy: {ratio}");
+    assert!(e.fs_activity.samples("other").is_empty() || e.fs_activity.samples("other")[0].bytes_written == 0.0);
+    let _ = std::fs::remove_dir_all(root);
+}

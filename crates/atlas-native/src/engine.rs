@@ -320,6 +320,8 @@ pub struct NativeEngine {
     reads: Mutex<std::collections::HashMap<String, u64>>,
     opened_ms: u64,
     pub telemetry: NativeIoCounters,
+    /// Per-filesystem activity windows (ransomware assessment input).
+    pub fs_activity: crate::activity::FsActivity,
 }
 
 impl NativeEngine {
@@ -396,6 +398,7 @@ impl NativeEngine {
             reads: Mutex::new(Default::default()),
             opened_ms: now_ms(),
             telemetry: NativeIoCounters::default(),
+            fs_activity: Default::default(),
         };
         if let Meta::Local { catalog, store, .. } = &engine.meta {
             let mut c = catalog

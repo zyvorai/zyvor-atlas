@@ -294,6 +294,32 @@ impl NativeApi for FakeApi {
             .ok_or_else(|| DriverError::Backend(format!("not found: filesystem snapshot {id}")))
     }
 
+    /// Fixture: quiet history, except a filesystem named `ransomware-drill`, whose last window
+    /// looks like a mass encrypt-and-rename so the detect-and-protect path can be exercised.
+    async fn fs_activity(&self, fs_id: &str) -> Result<Vec<serde_json::Value>, DriverError> {
+        let s = lock(&self.state)?;
+        let Some(fs) = s.filesystems.get(fs_id) else {
+            return Err(DriverError::Backend(format!(
+                "not found: filesystem {fs_id}"
+            )));
+        };
+        let w = |m: f64, r: f64, d: f64, e: f64| {
+            serde_json::json!({
+                "bytes_written": m * 4096.0, "files_modified": m, "files_renamed": r,
+                "files_deleted": d, "high_entropy_ratio": e
+            })
+        };
+        let mut v: Vec<_> = (0..10)
+            .map(|i| w(20.0 + f64::from(i % 3), 1.0, 1.0, 0.05))
+            .collect();
+        v.push(if fs.name == "ransomware-drill" {
+            w(4000.0, 3900.0, 10.0, 0.97)
+        } else {
+            w(21.0, 1.0, 1.0, 0.05)
+        });
+        Ok(v)
+    }
+
     async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
         let mut s = lock(&self.state)?;
         if !s.snapshots.contains_key(id) {

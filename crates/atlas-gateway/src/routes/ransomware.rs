@@ -7,8 +7,15 @@
 //! absolute tells (mass renames, high-entropy rewrites). The verdict never executes anything
 //! (`can_execute: false`): it names the next step, e.g. `POST /snapshots/{id}/lock`.
 
-use axum::{Extension, Json};
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    Extension, Json,
+};
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+
+use atlas_api_types::CreateSnapshotRequest;
 
 use crate::auth::Actor;
 use crate::state::AppState;
@@ -206,7 +213,7 @@ pub(crate) fn assess(req: &AssessRequest) -> Assessment {
 /// `POST /ai/ransomware/assess` — score one workload's recent activity. Read-only.
 pub(crate) async fn ai_ransomware_assess(
     Extension(actor): Extension<Actor>,
-    axum::extract::State(s): axum::extract::State<AppState>,
+    State(s): State<AppState>,
     Json(req): Json<AssessRequest>,
 ) -> AppResult<Json<Assessment>> {
     crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
@@ -225,6 +232,153 @@ pub(crate) async fn ai_ransomware_assess(
         ));
     }
     Ok(Json(assess(&req)))
+}
+
+/// Volume → (its tenant, the native driver, the samples the node recorded for it).
+async fn volume_activity(
+    s: &AppState,
+    actor: &Actor,
+    id: &str,
+) -> AppResult<(
+    String,
+    String,
+    std::sync::Arc<dyn atlas_driver_core::StorageDriver>,
+    Vec<Sample>,
+)> {
+    let vol = atlas_inventory::get_volume(&s.pool, id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("volume {id}")))?;
+    let tenant = atlas_inventory::volume_tenant(&s.pool, id).await?;
+    crate::auth::require_tenant(
+        s.config.auth_required,
+        actor,
+        &tenant,
+        format!("volume {id}"),
+    )?;
+    let driver = super::volumes::native_driver_for_volume(s, id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Validation("ransomware activity is tracked on atlas-native only".into())
+        })?;
+    let native = vol
+        .backend_native_id
+        .clone()
+        .unwrap_or_else(|| id.to_string());
+    let raw = driver
+        .filesystem_activity(&native)
+        .await
+        .map_err(super::volumes::driver_error)?;
+    let samples = raw
+        .into_iter()
+        .map(serde_json::from_value::<Sample>)
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|e| AppError::Driver(format!("bad activity sample from the node: {e}")))?;
+    Ok((tenant, native, driver, samples))
+}
+
+/// `GET /volumes/{id}/ransomware` — assess a filesystem volume from the node's recorded
+/// activity. Read-only.
+pub(crate) async fn volume_ransomware(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Assessment>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
+    let (_, _, _, samples) = volume_activity(&s, &actor, &id).await?;
+    Ok(Json(assess(&AssessRequest {
+        workload: id,
+        samples,
+        sensitivity: 1.0,
+    })))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct ProtectBody {
+    /// How long the protective snapshot is locked; 1 hour to 7 days (default 24 hours), kept short
+    /// because a false positive still pins that capacity.
+    retain_secs: Option<u64>,
+}
+
+const MIN_PROTECT_SECS: u64 = 3600;
+const MAX_PROTECT_SECS: u64 = 7 * 24 * 3600;
+
+/// `POST /volumes/{id}/ransomware/protect` — admin. Re-assesses on the server (the client's view is
+/// never trusted) and, if the verdict is `suspicious` or `likely_ransomware`, takes a snapshot and
+/// retention-locks it. Does nothing, with 409, when activity looks normal.
+pub(crate) async fn protect_volume(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    body: Option<Json<ProtectBody>>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_ADMIN)?;
+    let secs = body.and_then(|b| b.0.retain_secs).unwrap_or(24 * 3600);
+    if !(MIN_PROTECT_SECS..=MAX_PROTECT_SECS).contains(&secs) {
+        return Err(AppError::Validation(format!(
+            "retain_secs must be between {MIN_PROTECT_SECS} and {MAX_PROTECT_SECS}"
+        )));
+    }
+    let (tenant, native, driver, samples) = volume_activity(&s, &actor, &id).await?;
+    let verdict = assess(&AssessRequest {
+        workload: id.clone(),
+        samples,
+        sensitivity: 1.0,
+    });
+    if !matches!(verdict.verdict, "suspicious" | "likely_ransomware") {
+        return Err(AppError::Conflict(format!(
+            "activity on {id} is {}; nothing to protect",
+            verdict.verdict
+        )));
+    }
+    let name = format!(
+        "ransomware-guard-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+    );
+    let snap = driver
+        .create_snapshot(CreateSnapshotRequest {
+            volume_id: native,
+            name: name.clone(),
+        })
+        .await
+        .map_err(super::volumes::driver_error)?;
+    atlas_inventory::snapshots::insert_snapshot(
+        &s.pool,
+        &snap.snapshot_id,
+        &tenant,
+        &id,
+        &name,
+        Some(&snap.backend_native_id),
+        "crash",
+        "ready",
+    )
+    .await?;
+    let until = driver
+        .lock_snapshot(&snap.backend_native_id, secs)
+        .await
+        .map_err(super::volumes::driver_error)?;
+    super::volumes::audit(
+        &s,
+        Some(&tenant),
+        &actor,
+        "snapshot.ransomware_guard",
+        "volume",
+        &id,
+        Some(json!({
+            "snapshot_id": snap.snapshot_id,
+            "retain_until_unix": until,
+            "verdict": verdict.verdict,
+            "risk_score": verdict.risk_score,
+        })),
+    )
+    .await;
+    Ok((
+        StatusCode::CREATED,
+        Json(json!({
+            "snapshot_id": snap.snapshot_id,
+            "retain_until_unix": until,
+            "assessment": verdict,
+        })),
+    ))
 }
 
 #[cfg(test)]

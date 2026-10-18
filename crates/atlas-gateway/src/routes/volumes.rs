@@ -235,7 +235,7 @@ pub(crate) async fn create_volume(
 }
 
 /// The atlas-native driver when `volume_id` lives on that backend.
-async fn native_driver_for_volume(
+pub(super) async fn native_driver_for_volume(
     s: &AppState,
     volume_id: &str,
 ) -> AppResult<Option<std::sync::Arc<dyn StorageDriver>>> {
@@ -252,7 +252,7 @@ async fn native_driver_for_volume(
         .ok_or_else(|| AppError::Unavailable("the atlas-native driver is not enabled".into()))
 }
 
-fn driver_error(e: DriverError) -> AppError {
+pub(super) fn driver_error(e: DriverError) -> AppError {
     match e {
         DriverError::Unreachable(m) => AppError::Unavailable(m),
         DriverError::Backend(m) if m.starts_with("not found") => AppError::NotFound(m),
@@ -262,7 +262,7 @@ fn driver_error(e: DriverError) -> AppError {
     }
 }
 
-async fn audit(
+pub(super) async fn audit(
     s: &AppState,
     tenant: Option<&str>,
     actor: &Actor,

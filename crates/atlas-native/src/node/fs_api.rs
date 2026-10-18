@@ -194,6 +194,11 @@ fn fs_route(
             e.delete_fs(fs)?;
             Ok(Response::text(204, ""))
         }
+        // Activity windows (oldest first, the open one last) for ransomware assessment.
+        ("GET", ["v1", "fs", fs, "activity"]) => Ok(Response::json(
+            200,
+            &json!({ "interval_secs": crate::activity::INTERVAL_SECS, "samples": e.fs_activity.samples(fs) }),
+        )),
         ("GET", ["v1", "fs", fs, "statfs"]) => Ok(Response::json(200, &json!(e.fs_statfs(fs)?))),
         ("GET", ["v1", "fs", fs, "quota"]) => Ok(Response::json(
             200,

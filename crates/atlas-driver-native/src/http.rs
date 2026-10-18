@@ -403,6 +403,15 @@ impl NativeApi for HttpApi {
         self.call(Method::DELETE, &path, None).await.map(drop)
     }
 
+    async fn fs_activity(&self, fs_id: &str) -> Result<Vec<Value>, DriverError> {
+        let path = format!("/v1/fs/{}/activity", path_id(fs_id)?);
+        let b = self.call(Method::GET, &path, None).await?;
+        serde_json::from_slice::<Value>(&b)
+            .ok()
+            .and_then(|v| v["samples"].as_array().cloned())
+            .ok_or_else(|| DriverError::Parse(format!("{path}: missing samples")))
+    }
+
     async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
         let path = format!("/v1/snapshots/{}/lock", path_id(id)?);
         self.lock_call(&path, retain_secs).await

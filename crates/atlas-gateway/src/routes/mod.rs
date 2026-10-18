@@ -237,6 +237,11 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/tenants", get(list_tenants))
         .route("/volumes/{id}/snapshots", post(create_snapshot))
+        .route("/volumes/{id}/ransomware", get(ransomware::volume_ransomware))
+        .route(
+            "/volumes/{id}/ransomware/protect",
+            post(ransomware::protect_volume),
+        )
         .route("/snapshots", get(list_snapshots))
         .route("/snapshots/{id}", axum::routing::delete(delete_snapshot))
         .route("/snapshots/{id}/lock", post(lock_snapshot))

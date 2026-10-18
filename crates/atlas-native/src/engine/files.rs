@@ -438,7 +438,9 @@ impl NativeEngine {
             parent,
             name: name.into(),
             now_ns: now_ns(),
-        })
+        })?;
+        self.fs_activity.record_delete(fs);
+        Ok(())
     }
 
     pub fn fs_rmdir(&self, fs: &str, parent: u64, name: &str) -> Result<(), NativeError> {
@@ -448,7 +450,9 @@ impl NativeEngine {
             parent,
             name: name.into(),
             now_ns: now_ns(),
-        })
+        })?;
+        self.fs_activity.record_delete(fs);
+        Ok(())
     }
 
     pub fn fs_rename(
@@ -467,7 +471,9 @@ impl NativeEngine {
             new_parent,
             new_name: new_name.into(),
             now_ns: now_ns(),
-        })
+        })?;
+        self.fs_activity.record_rename(fs);
+        Ok(())
     }
 
     /// Changes attributes. Truncating into the middle of an extent first rewrites that extent
@@ -553,6 +559,9 @@ impl NativeEngine {
                 .map_err(|_| NativeError::Poisoned("write"))?;
             let fence = self.write_fence()?;
             self.write_locked(&target, offset, data, fence)?;
+        }
+        if !replica {
+            self.fs_activity.record_write(fs, ino, data);
         }
         self.fs_getattr(fs, ino)
     }

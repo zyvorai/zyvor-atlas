@@ -85,6 +85,15 @@ pub trait StorageDriver: Send + Sync {
     async fn delete_snapshot(&self, _req: DeleteSnapshotRequest) -> Result<(), DriverError> {
         Err(DriverError::NotImplemented("delete_snapshot"))
     }
+    /// Recent activity windows (oldest first) of a filesystem volume, for ransomware assessment.
+    /// Each is a JSON object with `bytes_written`, `files_modified`, `files_renamed`,
+    /// `files_deleted` and `high_entropy_ratio`.
+    async fn filesystem_activity(
+        &self,
+        _native_volume_id: &str,
+    ) -> Result<Vec<serde_json::Value>, DriverError> {
+        Err(DriverError::NotImplemented("filesystem_activity"))
+    }
     /// Retention-locks (WORM) a snapshot for `retain_secs` from now and returns the Unix second it
     /// unlocks at. A lock can be extended but never shortened; delete is refused until it expires.
     async fn lock_snapshot(
