@@ -233,6 +233,21 @@ impl HttpApi {
             .map(|c| c.id)
             .map_err(|e| DriverError::Parse(format!("{path}: {e}")))
     }
+
+    /// `POST …/lock {retain_secs}` → the Unix second the lock expires at.
+    async fn lock_call(&self, path: &str, retain_secs: u64) -> Result<u64, DriverError> {
+        let b = self
+            .call(
+                Method::POST,
+                path,
+                Some(Body::Json(json!({ "retain_secs": retain_secs }))),
+            )
+            .await?;
+        serde_json::from_slice::<Value>(&b)
+            .ok()
+            .and_then(|v| v["retain_until_unix"].as_u64())
+            .ok_or_else(|| DriverError::Parse(format!("{path}: missing retain_until_unix")))
+    }
 }
 
 /// Native ids are server-generated UUIDs; anything else is refused before it reaches a path.
@@ -386,5 +401,24 @@ impl NativeApi for HttpApi {
     async fn delete_fs_snapshot(&self, id: &str) -> Result<(), DriverError> {
         let path = format!("/v1/fs-snapshots/{}", path_id(id)?);
         self.call(Method::DELETE, &path, None).await.map(drop)
+    }
+
+    async fn fs_activity(&self, fs_id: &str) -> Result<Vec<Value>, DriverError> {
+        let path = format!("/v1/fs/{}/activity", path_id(fs_id)?);
+        let b = self.call(Method::GET, &path, None).await?;
+        serde_json::from_slice::<Value>(&b)
+            .ok()
+            .and_then(|v| v["samples"].as_array().cloned())
+            .ok_or_else(|| DriverError::Parse(format!("{path}: missing samples")))
+    }
+
+    async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
+        let path = format!("/v1/snapshots/{}/lock", path_id(id)?);
+        self.lock_call(&path, retain_secs).await
+    }
+
+    async fn lock_fs_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
+        let path = format!("/v1/fs-snapshots/{}/lock", path_id(id)?);
+        self.lock_call(&path, retain_secs).await
     }
 }

@@ -106,6 +106,7 @@ fn s3_err(e: StoreError) -> S3Error {
         }
         StoreError::Conflict(m) => custom("ObjectConflict", 409, m),
         StoreError::ReadOnly => s3_error!(AccessDenied, "the bucket is read-only"),
+        StoreError::Locked(m) => S3Error::with_message(S3ErrorCode::AccessDenied, m),
         StoreError::Quota => custom("QuotaExceeded", 507, e.to_string()),
         StoreError::InvalidPart(m) => S3Error::with_message(S3ErrorCode::InvalidPart, m),
         StoreError::TooSmall(_) => {
@@ -650,6 +651,64 @@ impl S3 for Gateway {
             checksum_sha1: actual.checksum_sha1,
             checksum_sha256: actual.checksum_sha256,
             ..Default::default()
+        }))
+    }
+
+    async fn put_object_retention(
+        &self,
+        req: S3Request<PutObjectRetentionInput>,
+    ) -> S3Result<S3Response<PutObjectRetentionOutput>> {
+        let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, true)?;
+        let key = req.input.key;
+        let Some(ObjectLockRetention {
+            mode,
+            retain_until_date: Some(date),
+        }) = req.input.retention
+        else {
+            return Err(s3_error!(
+                MalformedXML,
+                "retention with a RetainUntilDate is required"
+            ));
+        };
+        // Compliance mode only: no role can shorten or remove it, so GOVERNANCE (which the
+        // caller could bypass) is refused rather than silently treated as weaker.
+        if mode.as_ref().map(|m| m.as_str()) != Some(ObjectLockRetentionMode::COMPLIANCE) {
+            return Err(s3_error!(
+                InvalidArgument,
+                "only Mode=COMPLIANCE retention is supported"
+            ));
+        }
+        let until = time::OffsetDateTime::from(date).unix_timestamp();
+        let until = u64::try_from(until)
+            .map_err(|_| s3_error!(InvalidArgument, "RetainUntilDate is before 1970"))?;
+        blocking(move || b.set_retention(&key, until)).await?;
+        Ok(S3Response::new(PutObjectRetentionOutput::default()))
+    }
+
+    async fn get_object_retention(
+        &self,
+        req: S3Request<GetObjectRetentionInput>,
+    ) -> S3Result<S3Response<GetObjectRetentionOutput>> {
+        let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, false)?;
+        let key = req.input.key;
+        let until = blocking(move || b.retention(&key)).await?;
+        if until == 0 {
+            let mut err = S3Error::with_message(
+                S3ErrorCode::Custom("NoSuchObjectLockConfiguration".into()),
+                "the object has no retention".to_string(),
+            );
+            err.set_status_code(http::StatusCode::NOT_FOUND);
+            return Err(err);
+        }
+        let when = time::OffsetDateTime::from_unix_timestamp(until as i64)
+            .map_err(|_| s3_error!(InternalError, "bad retention timestamp"))?;
+        Ok(S3Response::new(GetObjectRetentionOutput {
+            retention: Some(ObjectLockRetention {
+                mode: Some(ObjectLockRetentionMode::from_static(
+                    ObjectLockRetentionMode::COMPLIANCE,
+                )),
+                retain_until_date: Some(Timestamp::from(when)),
+            }),
         }))
     }
 

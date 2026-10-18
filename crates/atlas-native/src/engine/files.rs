@@ -201,6 +201,11 @@ fn attr(c: &Catalog, i: &Inode) -> Attr {
 }
 
 /// Snapshot views (`fs@snap`) only serve reads.
+/// Names the gateways reserve for their own bookkeeping (S3 temp files and upload state).
+fn is_internal_name(name: &str) -> bool {
+    name.starts_with(".atlas_")
+}
+
 fn writable(fs: &str) -> Result<(), NativeError> {
     if fs.contains('@') {
         return Err(NativeError::ReadOnly(format!("{fs} is a snapshot")));
@@ -448,7 +453,11 @@ impl NativeEngine {
             parent,
             name: name.into(),
             now_ns: now_ns(),
-        })
+        })?;
+        if !is_internal_name(name) {
+            self.fs_activity.record_delete(fs);
+        }
+        Ok(())
     }
 
     pub fn fs_rmdir(&self, fs: &str, parent: u64, name: &str) -> Result<(), NativeError> {
@@ -458,7 +467,9 @@ impl NativeEngine {
             parent,
             name: name.into(),
             now_ns: now_ns(),
-        })
+        })?;
+        self.fs_activity.record_delete(fs);
+        Ok(())
     }
 
     pub fn fs_rename(
@@ -477,7 +488,14 @@ impl NativeEngine {
             new_parent,
             new_name: new_name.into(),
             now_ns: now_ns(),
-        })
+        })?;
+        // The S3 gateway writes every object to a `.atlas_*` temp file and renames it into place;
+        // that is how any PUT lands, not a rename of existing data, so it must not look like
+        // mass renaming.
+        if !is_internal_name(name) {
+            self.fs_activity.record_rename(fs);
+        }
+        Ok(())
     }
 
     /// Changes attributes. Truncating into the middle of an extent first rewrites that extent
@@ -563,6 +581,9 @@ impl NativeEngine {
                 .map_err(|_| NativeError::Poisoned("write"))?;
             let fence = self.write_fence()?;
             self.write_locked(&target, offset, data, fence)?;
+        }
+        if !replica {
+            self.fs_activity.record_write(fs, ino, data);
         }
         self.fs_getattr(fs, ino)
     }
@@ -690,7 +711,25 @@ impl NativeEngine {
     }
 
     pub fn delete_fs_snapshot(&self, id: &str) -> Result<(), NativeError> {
-        self.fs_commit(FsOp::DeleteFsSnapshot { id: id.into() })
+        self.fs_commit(FsOp::DeleteFsSnapshot {
+            id: id.into(),
+            now_unix: std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_secs()),
+        })
+    }
+
+    /// Retention-locks a filesystem snapshot for `retain_secs` from now; returns the unlock time.
+    pub fn lock_fs_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, NativeError> {
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_secs());
+        let retain_until_unix = now.saturating_add(retain_secs);
+        self.fs_commit(FsOp::LockFsSnapshot {
+            id: id.into(),
+            retain_until_unix,
+        })?;
+        Ok(retain_until_unix)
     }
 
     /// A writable copy-on-write filesystem from a snapshot, with a caller-chosen id.

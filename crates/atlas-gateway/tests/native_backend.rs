@@ -217,6 +217,59 @@ async fn native_backend_volume_and_snapshot_lifecycle() {
 }
 
 #[tokio::test]
+async fn native_backend_locked_snapshot_refuses_delete() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let (st, created) = send(c.post(format!("{base}/volumes")).json(&json!({
+        "tenant_id": "acme",
+        "name": "vault",
+        "size_bytes": 8_388_608,
+        "kubernetes": { "backend_id": NATIVE_BACKEND_ID }
+    })))
+    .await;
+    assert_eq!(st, 201, "{created}");
+    let vid = created["volume_id"].as_str().unwrap().to_string();
+    let (st, snap) = send(
+        c.post(format!("{base}/volumes/{vid}/snapshots"))
+            .json(&json!({ "name": "immutable" })),
+    )
+    .await;
+    assert_eq!(st, 201, "{snap}");
+    let sid = snap["snapshot_id"].as_str().unwrap().to_string();
+
+    for bad in [0u64, u64::MAX] {
+        let (st, body) = send(
+            c.post(format!("{base}/snapshots/{sid}/lock"))
+                .json(&json!({ "retain_secs": bad })),
+        )
+        .await;
+        assert_eq!(st, 400, "{body}");
+    }
+    let (st, body) = send(
+        c.post(format!("{base}/snapshots/{sid}/lock"))
+            .json(&json!({ "retain_secs": 3600 })),
+    )
+    .await;
+    assert_eq!(st, 200, "{body}");
+    assert!(body["retain_until_unix"].as_u64().unwrap() > 0);
+
+    let (st, body) = send(c.delete(format!("{base}/snapshots/{sid}"))).await;
+    assert_eq!(st, 409, "locked: {body}");
+    let (st, body) = send(
+        c.post(format!("{base}/snapshots/{sid}/lock"))
+            .json(&json!({ "retain_secs": 10 })),
+    )
+    .await;
+    assert_eq!(st, 409, "a lock cannot be shortened: {body}");
+    let (st, body) = send(
+        c.post(format!("{base}/snapshots/nope/lock"))
+            .json(&json!({ "retain_secs": 60 })),
+    )
+    .await;
+    assert_eq!(st, 404, "{body}");
+}
+
+#[tokio::test]
 async fn native_backend_filesystem_snapshot_clone_and_restore() {
     let base = format!("http://{}/api/atlas/v1", spawn().await);
     let c = reqwest::Client::new();
@@ -313,4 +366,52 @@ async fn native_backend_cannot_be_added_at_runtime() {
     )
     .await;
     assert_eq!(st, 400, "{body}");
+}
+
+async fn make_fs(base: &str, c: &reqwest::Client, name: &str) -> String {
+    let (st, created) = send(c.post(format!("{base}/volumes")).json(&json!({
+        "tenant_id": "acme",
+        "name": name,
+        "size_bytes": 1_073_741_824,
+        "kind": "filesystem",
+        "kubernetes": { "backend_id": NATIVE_BACKEND_ID }
+    })))
+    .await;
+    assert_eq!(st, 201, "{created}");
+    created["volume_id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn ransomware_check_and_protect_lock_a_snapshot_only_when_warranted() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let calm = make_fs(&base, &c, "calm").await;
+    let drill = make_fs(&base, &c, "ransomware-drill").await;
+
+    let (st, a) = send(c.get(format!("{base}/volumes/{calm}/ransomware"))).await;
+    assert_eq!(st, 200, "{a}");
+    assert_eq!(a["verdict"], "normal", "{a}");
+    assert_eq!(a["can_execute"], false);
+    let (st, body) = send(c.post(format!("{base}/volumes/{calm}/ransomware/protect"))).await;
+    assert_eq!(st, 409, "normal activity must not snapshot: {body}");
+
+    let (st, a) = send(c.get(format!("{base}/volumes/{drill}/ransomware"))).await;
+    assert_eq!(st, 200, "{a}");
+    assert_eq!(a["verdict"], "likely_ransomware", "{a}");
+
+    let (st, body) = send(
+        c.post(format!("{base}/volumes/{drill}/ransomware/protect"))
+            .json(&json!({ "retain_secs": 60 })),
+    )
+    .await;
+    assert_eq!(st, 400, "retention below an hour is refused: {body}");
+    let (st, body) = send(c.post(format!("{base}/volumes/{drill}/ransomware/protect"))).await;
+    assert_eq!(st, 201, "{body}");
+    let sid = body["snapshot_id"].as_str().unwrap().to_string();
+    assert!(body["retain_until_unix"].as_u64().unwrap() > 0);
+    let (st, body) = send(c.delete(format!("{base}/snapshots/{sid}"))).await;
+    assert_eq!(st, 409, "the protective snapshot is locked: {body}");
+
+    let (st, _) = send(c.get(format!("{base}/volumes/nope/ransomware"))).await;
+    assert_eq!(st, 404);
 }

@@ -636,7 +636,10 @@ mod tests {
             .unwrap_err();
         assert!(matches!(err, MetaError::ReadOnly(_)), "{err:?}");
         let err = h
-            .run(FsOp::DeleteFsSnapshot { id: "r2".into() })
+            .run(FsOp::DeleteFsSnapshot {
+                id: "r2".into(),
+                now_unix: 0,
+            })
             .unwrap_err();
         assert!(matches!(err, MetaError::Invalid(_)), "{err:?}");
         // An increment that doesn't start at the base is refused.

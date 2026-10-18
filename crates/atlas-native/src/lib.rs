@@ -12,6 +12,7 @@
 //! HTTP ops/volume endpoint.
 
 pub mod acl;
+pub mod activity;
 pub mod alloc;
 pub mod checksum;
 pub mod compress;

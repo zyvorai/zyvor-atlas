@@ -9,6 +9,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Security
+
+- `rustls` 0.23.46 (RUSTSEC-2026-0346: `Debug` for client session values exposed TLS secrets).
+
 ### Added
 
 - `docs/RELEASING.md` (tag, ghcr images, archives, visibility); macOS rows in STATUS, ROADMAP, ARCHITECTURE and COMPARISON.

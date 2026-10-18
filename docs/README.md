@@ -18,6 +18,7 @@ duplicated.
 - **[LONGHORN.md](LONGHORN.md)** — read-only Longhorn driver.
 - **[RUSTFS.md](RUSTFS.md)** — history of the now-removed first-party RustFS integration; Ceph RGW is the default object backend today.
 - **[NATIVE_DATA_REDUCTION.md](NATIVE_DATA_REDUCTION.md)** — atlas-native LZ4 compression and extent deduplication: what they do, the savings report, limits.
+- **[WORM.md](WORM.md)** — retention-locked snapshots, S3 object retention and the ransomware assessment/protect flow.
 - **[IO_EBPF.md](IO_EBPF.md)** — `atlas-io`, the optional observe-first eBPF storage I/O sensor.
 
 ## Day-2 operations

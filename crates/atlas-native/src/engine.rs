@@ -342,6 +342,8 @@ pub struct NativeEngine {
     reads: Mutex<std::collections::HashMap<String, u64>>,
     opened_ms: u64,
     pub telemetry: NativeIoCounters,
+    /// Per-filesystem activity windows (ransomware assessment input).
+    pub fs_activity: crate::activity::FsActivity,
     /// Content hash -> a live extent holding those bytes (a hint, rebuilt from the catalog on
     /// first use: every share is re-checked when it is committed).
     dedup_index: Mutex<DedupIndex>,
@@ -427,6 +429,7 @@ impl NativeEngine {
             reads: Mutex::new(Default::default()),
             opened_ms: now_ms(),
             telemetry: NativeIoCounters::default(),
+            fs_activity: Default::default(),
             dedup_index: Mutex::new(DedupIndex::default()),
         };
         if let Meta::Local { catalog, store, .. } = &engine.meta {
@@ -1103,9 +1106,24 @@ impl NativeEngine {
         self.commit(
             MetaCommand::DeleteSnapshot {
                 snapshot_id: snapshot_id.to_string(),
+                now_unix: unix_now(),
             },
             None,
         )
+    }
+
+    /// Retention-locks a snapshot for `retain_secs` from now (WORM). The lock can later be
+    /// extended but never shortened, and `delete_snapshot` is refused until it expires.
+    pub fn lock_snapshot(&self, snapshot_id: &str, retain_secs: u64) -> Result<u64, NativeError> {
+        let retain_until_unix = unix_now().saturating_add(retain_secs);
+        self.commit(
+            MetaCommand::LockSnapshot {
+                snapshot_id: snapshot_id.to_string(),
+                retain_until_unix,
+            },
+            None,
+        )?;
+        Ok(retain_until_unix)
     }
 
     pub fn read_snapshot(
@@ -2080,4 +2098,10 @@ fn load_local(root: &Path, store: &CatalogStore) -> Result<(Catalog, Wal), Nativ
 /// Whether the catalog rejected a commit because an extent it was told to share was freed.
 fn is_stale_share(e: &NativeError) -> bool {
     e.to_string().contains("shared extent")
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
