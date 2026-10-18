@@ -217,6 +217,59 @@ async fn native_backend_volume_and_snapshot_lifecycle() {
 }
 
 #[tokio::test]
+async fn native_backend_locked_snapshot_refuses_delete() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let (st, created) = send(c.post(format!("{base}/volumes")).json(&json!({
+        "tenant_id": "acme",
+        "name": "vault",
+        "size_bytes": 8_388_608,
+        "kubernetes": { "backend_id": NATIVE_BACKEND_ID }
+    })))
+    .await;
+    assert_eq!(st, 201, "{created}");
+    let vid = created["volume_id"].as_str().unwrap().to_string();
+    let (st, snap) = send(
+        c.post(format!("{base}/volumes/{vid}/snapshots"))
+            .json(&json!({ "name": "immutable" })),
+    )
+    .await;
+    assert_eq!(st, 201, "{snap}");
+    let sid = snap["snapshot_id"].as_str().unwrap().to_string();
+
+    for bad in [0u64, u64::MAX] {
+        let (st, body) = send(
+            c.post(format!("{base}/snapshots/{sid}/lock"))
+                .json(&json!({ "retain_secs": bad })),
+        )
+        .await;
+        assert_eq!(st, 400, "{body}");
+    }
+    let (st, body) = send(
+        c.post(format!("{base}/snapshots/{sid}/lock"))
+            .json(&json!({ "retain_secs": 3600 })),
+    )
+    .await;
+    assert_eq!(st, 200, "{body}");
+    assert!(body["retain_until_unix"].as_u64().unwrap() > 0);
+
+    let (st, body) = send(c.delete(format!("{base}/snapshots/{sid}"))).await;
+    assert_eq!(st, 409, "locked: {body}");
+    let (st, body) = send(
+        c.post(format!("{base}/snapshots/{sid}/lock"))
+            .json(&json!({ "retain_secs": 10 })),
+    )
+    .await;
+    assert_eq!(st, 409, "a lock cannot be shortened: {body}");
+    let (st, body) = send(
+        c.post(format!("{base}/snapshots/nope/lock"))
+            .json(&json!({ "retain_secs": 60 })),
+    )
+    .await;
+    assert_eq!(st, 404, "{body}");
+}
+
+#[tokio::test]
 async fn native_backend_filesystem_snapshot_clone_and_restore() {
     let base = format!("http://{}/api/atlas/v1", spawn().await);
     let c = reqwest::Client::new();

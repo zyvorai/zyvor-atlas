@@ -234,6 +234,7 @@ pub fn router(state: AppState) -> Router {
         .route("/volumes/{id}/snapshots", post(create_snapshot))
         .route("/snapshots", get(list_snapshots))
         .route("/snapshots/{id}", axum::routing::delete(delete_snapshot))
+        .route("/snapshots/{id}/lock", post(lock_snapshot))
         .route("/snapshots/{id}/clone", post(clone_snapshot))
         .route("/snapshots/{id}/restore", post(restore_snapshot))
         .route("/volumes/{id}/schedule", post(create_schedule))

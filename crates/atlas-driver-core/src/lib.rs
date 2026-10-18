@@ -85,6 +85,15 @@ pub trait StorageDriver: Send + Sync {
     async fn delete_snapshot(&self, _req: DeleteSnapshotRequest) -> Result<(), DriverError> {
         Err(DriverError::NotImplemented("delete_snapshot"))
     }
+    /// Retention-locks (WORM) a snapshot for `retain_secs` from now and returns the Unix second it
+    /// unlocks at. A lock can be extended but never shortened; delete is refused until it expires.
+    async fn lock_snapshot(
+        &self,
+        _native_snapshot_id: &str,
+        _retain_secs: u64,
+    ) -> Result<u64, DriverError> {
+        Err(DriverError::NotImplemented("lock_snapshot"))
+    }
 
     // ---- block data path (backends whose volumes the gateway can read/write directly) ----
     /// `len` bytes at `offset` of a block volume; never-written bytes read as zeros.

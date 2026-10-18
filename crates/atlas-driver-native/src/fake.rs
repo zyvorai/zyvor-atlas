@@ -26,6 +26,8 @@ struct State {
     filesystems: BTreeMap<String, NativeFs>,
     /// Filesystem snapshot id → the filesystem as it was.
     fs_snapshots: BTreeMap<String, NativeFs>,
+    /// Snapshot id (block or filesystem) → Unix second its retention lock expires at.
+    locks: BTreeMap<String, u64>,
 }
 
 fn lock(m: &Mutex<State>) -> Result<std::sync::MutexGuard<'_, State>, DriverError> {
@@ -199,7 +201,9 @@ impl NativeApi for FakeApi {
     }
 
     async fn delete_snapshot(&self, id: &str) -> Result<(), DriverError> {
-        if lock(&self.state)?.snapshots.remove(id).is_some() {
+        let mut s = lock(&self.state)?;
+        refuse_if_locked(&s, id)?;
+        if s.snapshots.remove(id).is_some() {
             Ok(())
         } else {
             Err(DriverError::Backend(format!("not found: snapshot {id}")))
@@ -282,10 +286,55 @@ impl NativeApi for FakeApi {
     }
 
     async fn delete_fs_snapshot(&self, id: &str) -> Result<(), DriverError> {
-        lock(&self.state)?
-            .fs_snapshots
+        let mut s = lock(&self.state)?;
+        refuse_if_locked(&s, id)?;
+        s.fs_snapshots
             .remove(id)
             .map(|_| ())
             .ok_or_else(|| DriverError::Backend(format!("not found: filesystem snapshot {id}")))
     }
+
+    async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
+        let mut s = lock(&self.state)?;
+        if !s.snapshots.contains_key(id) {
+            return Err(DriverError::Backend(format!("not found: snapshot {id}")));
+        }
+        extend_lock(&mut s, id, retain_secs)
+    }
+
+    async fn lock_fs_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
+        let mut s = lock(&self.state)?;
+        if !s.fs_snapshots.contains_key(id) {
+            return Err(DriverError::Backend(format!(
+                "not found: filesystem snapshot {id}"
+            )));
+        }
+        extend_lock(&mut s, id, retain_secs)
+    }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
+}
+
+fn refuse_if_locked(s: &State, id: &str) -> Result<(), DriverError> {
+    match s.locks.get(id) {
+        Some(until) if *until > unix_now() => Err(DriverError::Backend(format!(
+            "snapshot {id} is retention-locked until {until}"
+        ))),
+        _ => Ok(()),
+    }
+}
+
+fn extend_lock(s: &mut State, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
+    let until = unix_now().saturating_add(retain_secs);
+    if s.locks.get(id).is_some_and(|cur| until < *cur) {
+        return Err(DriverError::Backend(format!(
+            "snapshot {id} is locked longer already; a lock cannot be shortened"
+        )));
+    }
+    s.locks.insert(id.to_string(), until);
+    Ok(until)
 }

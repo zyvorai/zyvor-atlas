@@ -162,6 +162,8 @@ pub trait NativeApi: Send + Sync {
         name: &str,
     ) -> Result<String, DriverError>;
     async fn delete_fs_snapshot(&self, id: &str) -> Result<(), DriverError>;
+    async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError>;
+    async fn lock_fs_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError>;
 }
 
 pub struct NativeDriver<A> {
@@ -574,6 +576,17 @@ impl<A: NativeApi> StorageDriver for NativeDriver<A> {
         }
     }
 
+    async fn lock_snapshot(
+        &self,
+        native_snapshot_id: &str,
+        retain_secs: u64,
+    ) -> Result<u64, DriverError> {
+        match native_snapshot_ref(native_snapshot_id) {
+            NativeRef::Volume(id) => self.api.lock_snapshot(id, retain_secs).await,
+            NativeRef::Filesystem(id) => self.api.lock_fs_snapshot(id, retain_secs).await,
+        }
+    }
+
     async fn read_volume(
         &self,
         volume_id: &str,
@@ -617,6 +630,28 @@ mod tests {
             owner: None,
             kubernetes: None,
         }
+    }
+
+    #[tokio::test]
+    async fn fake_driver_locks_snapshots_against_delete() {
+        let d = FakeNativeDriver::new("bkd_native");
+        let v = d.create_volume(create("vault", 8 << 20)).await.unwrap();
+        let snap = d
+            .create_snapshot(CreateSnapshotRequest {
+                volume_id: v.volume_id,
+                name: "s".into(),
+            })
+            .await
+            .unwrap();
+        let until = d.lock_snapshot(&snap.snapshot_id, 3600).await.unwrap();
+        assert!(d
+            .delete_snapshot(DeleteSnapshotRequest {
+                snapshot_id: snap.snapshot_id.clone(),
+            })
+            .await
+            .is_err());
+        assert!(d.lock_snapshot(&snap.snapshot_id, 10).await.is_err());
+        assert!(d.lock_snapshot(&snap.snapshot_id, 7200).await.unwrap() > until);
     }
 
     #[tokio::test]
