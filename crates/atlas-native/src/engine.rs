@@ -916,9 +916,24 @@ impl NativeEngine {
         self.commit(
             MetaCommand::DeleteSnapshot {
                 snapshot_id: snapshot_id.to_string(),
+                now_unix: unix_now(),
             },
             None,
         )
+    }
+
+    /// Retention-locks a snapshot for `retain_secs` from now (WORM). The lock can later be
+    /// extended but never shortened, and `delete_snapshot` is refused until it expires.
+    pub fn lock_snapshot(&self, snapshot_id: &str, retain_secs: u64) -> Result<u64, NativeError> {
+        let retain_until_unix = unix_now().saturating_add(retain_secs);
+        self.commit(
+            MetaCommand::LockSnapshot {
+                snapshot_id: snapshot_id.to_string(),
+                retain_until_unix,
+            },
+            None,
+        )?;
+        Ok(retain_until_unix)
     }
 
     pub fn read_snapshot(
@@ -1844,4 +1859,10 @@ fn load_local(root: &Path, store: &CatalogStore) -> Result<(Catalog, Wal), Nativ
     }
     wal.raise_floor(catalog.applied_index);
     Ok((catalog, wal))
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }

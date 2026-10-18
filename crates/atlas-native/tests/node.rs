@@ -409,6 +409,22 @@ fn http_api_round_trip_with_auth_and_leader_redirect() {
         201,
     );
     let cv = json(&cl)["id"].as_str().unwrap().to_string();
+
+    // A retention-locked snapshot cannot be deleted over HTTP.
+    c.on_leader(
+        "POST",
+        &format!("/v1/snapshots/{s}/lock"),
+        br#"{"retain_secs":0}"#,
+        400,
+    );
+    let (_, lk) = c.on_leader(
+        "POST",
+        &format!("/v1/snapshots/{s}/lock"),
+        br#"{"retain_secs":3600}"#,
+        200,
+    );
+    assert!(json(&lk)["retain_until_unix"].as_u64().unwrap() > 0);
+    c.on_leader("DELETE", &format!("/v1/snapshots/{s}"), b"", 409);
     let mut want = vec![9u8; 4096];
     want.extend_from_slice(&[0u8; 8192]);
     c.wait_read(&format!("/v1/volumes/{cv}/data?offset=0&len=12288"), &want);

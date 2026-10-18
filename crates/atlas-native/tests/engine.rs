@@ -204,8 +204,11 @@ fn creates_with_a_client_id_are_idempotent() {
     let s = e.create_snapshot_as("snap-1".into(), &v, "s").unwrap();
     e.create_snapshot_as("snap-1".into(), &v, "s").unwrap();
     assert!(e.create_snapshot_as("snap-1".into(), &v, "t").is_err());
-    let c = e.clone_snapshot_as("clone-1".into(), &s, "c", None).unwrap();
-    e.clone_snapshot_as("clone-1".into(), &s, "c", None).unwrap();
+    let c = e
+        .clone_snapshot_as("clone-1".into(), &s, "c", None)
+        .unwrap();
+    e.clone_snapshot_as("clone-1".into(), &s, "c", None)
+        .unwrap();
     assert_eq!(e.volumes().unwrap().len(), 2);
 
     // The repeats took no extra extent references: dropping everything reclaims every extent.
@@ -213,5 +216,40 @@ fn creates_with_a_client_id_are_idempotent() {
     e.delete_snapshot(&s).unwrap();
     e.delete_volume(&v).unwrap();
     assert_eq!(e.gc_once().unwrap().reclaimed, 1);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn locked_snapshot_refuses_delete_and_survives_gc() {
+    let root = test_root("worm");
+    let e = NativeEngine::open(EngineConfig::new(&root), nodes()).unwrap();
+    let v = e.create_volume("vault", 16 * 1024 * 1024).unwrap();
+    e.write(&v, 0, &[7u8; 64]).unwrap();
+    let s = e.create_snapshot(&v, "immutable").unwrap();
+
+    let until = e.lock_snapshot(&s, 3600).unwrap();
+    assert!(e.delete_snapshot(&s).is_err());
+
+    // The source going away must not take a locked snapshot's data with it.
+    e.delete_volume(&v).unwrap();
+    e.gc_once().unwrap();
+    assert_eq!(e.read_snapshot(&s, 0, 64).unwrap(), vec![7u8; 64]);
+
+    // A lock only extends: a shorter retention is refused, a longer one is accepted.
+    assert!(e.lock_snapshot(&s, 10).is_err());
+    assert!(e.lock_snapshot(&s, 7200).unwrap() > until);
+    assert!(e.delete_snapshot(&s).is_err());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn lapsed_lock_allows_delete() {
+    let root = test_root("worm-lapsed");
+    let e = NativeEngine::open(EngineConfig::new(&root), nodes()).unwrap();
+    let v = e.create_volume("v", 16 * 1024 * 1024).unwrap();
+    let s = e.create_snapshot(&v, "s").unwrap();
+    e.lock_snapshot(&s, 1).unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(2100));
+    e.delete_snapshot(&s).unwrap();
     let _ = std::fs::remove_dir_all(root);
 }

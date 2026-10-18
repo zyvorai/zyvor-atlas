@@ -1284,6 +1284,18 @@ fn volume_route(sh: &NodeShared, req: &Request, segs: &[&str]) -> Response {
         ("DELETE", ["v1", "snapshots", id]) => snapshot_engine(sh, id)
             .and_then(|e| e.delete_snapshot(id))
             .map(|()| Response::text(204, "")),
+        ("POST", ["v1", "snapshots", id, "lock"]) => {
+            let body = match body_json(req) {
+                Ok(b) => b,
+                Err(r) => return r,
+            };
+            let Some(secs) = body["retain_secs"].as_u64().filter(|s| *s > 0) else {
+                return Response::text(400, "body must be {\"retain_secs\": positive integer}");
+            };
+            snapshot_engine(sh, id)
+                .and_then(|e| e.lock_snapshot(id, secs))
+                .map(|until| Response::json(200, &json!({ "retain_until_unix": until })))
+        }
         ("POST", ["v1", "snapshots", id, "clone"]) => {
             let body = match body_json(req) {
                 Ok(b) => b,
