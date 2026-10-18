@@ -17,6 +17,7 @@ mod object_store;
 pub(crate) mod observability;
 mod oidc;
 mod protection;
+pub(crate) mod ransomware;
 mod rbd;
 mod rook;
 pub(crate) mod util;
@@ -68,6 +69,10 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/ai/advisor", post(ai_advisor))
         .route("/ai/anomalies", get(ai_anomalies))
+        .route(
+            "/ai/ransomware/assess",
+            post(ransomware::ai_ransomware_assess),
+        )
         .route("/ai/incidents", get(ai_incidents))
         .route("/ai/what-if", post(ai_what_if))
         .route("/backends", get(list_backends).post(create_backend))

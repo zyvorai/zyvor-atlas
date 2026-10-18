@@ -281,6 +281,13 @@ enum Command {
         #[arg(long)]
         force: bool,
     },
+    /// POST /api/atlas/v1/snapshots/{id}/lock  (WORM: cannot be deleted until it expires; atlas-native)
+    LockSnapshot {
+        id: String,
+        /// Retention in seconds from now; a lock can be extended, never shortened.
+        #[arg(long)]
+        retain_secs: u64,
+    },
     /// GET /api/atlas/v1/buckets
     Buckets,
     /// DELETE /api/atlas/v1/buckets/{id}  (--force if it still holds backups)
@@ -878,6 +885,11 @@ async fn main() -> Result<()> {
             "DELETE",
             format!("/api/atlas/v1/snapshots/{id}?force={force}"),
             None,
+        ),
+        Command::LockSnapshot { id, retain_secs } => (
+            "POST",
+            format!("/api/atlas/v1/snapshots/{id}/lock"),
+            Some(serde_json::json!({ "retain_secs": retain_secs })),
         ),
         Command::Buckets => ("GET", "/api/atlas/v1/buckets".to_string(), None),
         Command::DeleteBucket { id, force } => (
