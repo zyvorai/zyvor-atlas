@@ -17,7 +17,7 @@ mod object_store;
 pub(crate) mod observability;
 mod oidc;
 mod protection;
-pub(crate) mod ransomware;
+pub mod ransomware;
 mod rbd;
 mod rook;
 pub(crate) mod util;

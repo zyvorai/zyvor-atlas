@@ -318,22 +318,31 @@ pub(crate) async fn protect_volume(
             "retain_secs must be between {MIN_PROTECT_SECS} and {MAX_PROTECT_SECS}"
         )));
     }
-    let (tenant, native, driver, samples) = volume_activity(&s, &actor, &id).await?;
+    let out = protect(&s, &actor, &id, secs, &["suspicious", "likely_ransomware"]).await?;
+    Ok((StatusCode::CREATED, Json(out)))
+}
+
+/// Assesses `id` and, when the verdict is one of `act_on`, takes a snapshot and retention-locks it.
+async fn protect(
+    s: &AppState,
+    actor: &Actor,
+    id: &str,
+    secs: u64,
+    act_on: &[&str],
+) -> AppResult<Value> {
+    let (tenant, native, driver, samples) = volume_activity(s, actor, id).await?;
     let verdict = assess(&AssessRequest {
-        workload: id.clone(),
+        workload: id.to_string(),
         samples,
         sensitivity: 1.0,
     });
-    if !matches!(verdict.verdict, "suspicious" | "likely_ransomware") {
+    if !act_on.contains(&verdict.verdict) {
         return Err(AppError::Conflict(format!(
             "activity on {id} is {}; nothing to protect",
             verdict.verdict
         )));
     }
-    let name = format!(
-        "ransomware-guard-{}",
-        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
-    );
+    let name = format!("ransomware-guard-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
     let snap = driver
         .create_snapshot(CreateSnapshotRequest {
             volume_id: native,
@@ -345,7 +354,7 @@ pub(crate) async fn protect_volume(
         &s.pool,
         &snap.snapshot_id,
         &tenant,
-        &id,
+        id,
         &name,
         Some(&snap.backend_native_id),
         "crash",
@@ -357,12 +366,12 @@ pub(crate) async fn protect_volume(
         .await
         .map_err(super::volumes::driver_error)?;
     super::volumes::audit(
-        &s,
+        s,
         Some(&tenant),
-        &actor,
+        actor,
         "snapshot.ransomware_guard",
         "volume",
-        &id,
+        id,
         Some(json!({
             "snapshot_id": snap.snapshot_id,
             "retain_until_unix": until,
@@ -371,15 +380,63 @@ pub(crate) async fn protect_volume(
         })),
     )
     .await;
-    Ok((
-        StatusCode::CREATED,
-        Json(json!({
-            "snapshot_id": snap.snapshot_id,
-            "retain_until_unix": until,
-            "assessment": verdict,
-        })),
-    ))
+    Ok(json!({
+        "snapshot_id": snap.snapshot_id,
+        "retain_until_unix": until,
+        "assessment": verdict,
+    }))
 }
+
+/// Opt-in (`ATLAS_RANSOMWARE_AUTOPROTECT=1`): every `ATLAS_RANSOMWARE_INTERVAL_SECS` (default 60)
+/// check each native filesystem volume and, on a `likely_ransomware` verdict only, take and
+/// lock a snapshot for 24 hours. At most one per volume per `COOLDOWN` so a long attack (or a
+/// false positive) cannot pin unbounded capacity.
+pub fn spawn_autoprotect(s: AppState) {
+    if !std::env::var("ATLAS_RANSOMWARE_AUTOPROTECT")
+        .is_ok_and(|v| matches!(v.as_str(), "1" | "true" | "yes"))
+    {
+        return;
+    }
+    let every = std::env::var("ATLAS_RANSOMWARE_INTERVAL_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v >= 10)
+        .unwrap_or(60);
+    tracing::info!(every_secs = every, "ransomware auto-protect enabled");
+    tokio::spawn(async move {
+        let actor = Actor {
+            id: "system:ransomware-guard".into(),
+            role: "admin".into(),
+            tenant_id: "global".into(),
+        };
+        let mut last: std::collections::HashMap<String, std::time::Instant> = Default::default();
+        let mut tick = tokio::time::interval(std::time::Duration::from_secs(every));
+        loop {
+            tick.tick().await;
+            let Ok(vols) = atlas_inventory::list_volumes(&s.pool).await else {
+                continue;
+            };
+            for v in vols {
+                if v.kind != atlas_api_types::VolumeKind::Filesystem
+                    || last.get(&v.id).is_some_and(|t| t.elapsed() < COOLDOWN)
+                {
+                    continue;
+                }
+                match protect(&s, &actor, &v.id, 24 * 3600, &["likely_ransomware"]).await {
+                    Ok(out) => {
+                        tracing::warn!(volume = %v.id, snapshot = %out["snapshot_id"], "ransomware pattern: locked snapshot taken");
+                        last.insert(v.id.clone(), std::time::Instant::now());
+                    }
+                    // Not native, normal activity, or no history yet: nothing to do.
+                    Err(AppError::Conflict(_) | AppError::Validation(_) | AppError::NotFound(_)) => {}
+                    Err(e) => tracing::warn!(volume = %v.id, error = %e, "ransomware check failed"),
+                }
+            }
+        }
+    });
+}
+
+const COOLDOWN: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
 
 #[cfg(test)]
 mod tests {

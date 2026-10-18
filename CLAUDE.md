@@ -115,6 +115,14 @@ replication is pipelined, and checkpoints write only changed records to `catalog
 `tests/metadata_bench.rs` (ignored): a 3-voter group does ~9k creates/s from one proposer and
 ~12k/s from eight on one host; through FUSE creates are still ~270/s (per-op HTTP round trips).
 
+**Retention locks + ransomware assessment** (`docs/WORM.md`): atlas-native block and filesystem
+snapshots can be retention-locked (Raft-enforced, extend-only; `POST /snapshots/{id}/lock`,
+`atlasctl lock-snapshot`), the native S3 gateway supports compliance-mode object retention, and
+native filesystems record per-minute activity windows (writes, renames, deletes, write entropy) behind
+`GET /volumes/{id}/ransomware` and admin `POST …/ransomware/protect` (re-assesses server-side, then
+snapshots + locks); `ATLAS_RANSOMWARE_AUTOPROTECT=1` automates it for `likely_ransomware` only.
+Unit/integration tested; not yet verified against a real encrypting workload on the lab.
+
 **Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor
 Production License v1.0 at the maintainer's explicit request — history in
 [`docs/LICENSING.md`](docs/LICENSING.md)). Don't weaken or remove license notices,
