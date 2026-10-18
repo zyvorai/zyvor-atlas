@@ -327,6 +327,9 @@ pub enum FsOp {
         /// As [`FsOp::InstallFileExtent`]'s.
         #[serde(default, skip_serializing_if = "is_false")]
         replica: bool,
+        /// As [`MetaCommand::InstallExtents`]'s `shared`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shared: Vec<ExtentId>,
     },
     /// Freezes the whole inode table; shares every file extent.
     SnapshotFs {
@@ -697,7 +700,7 @@ impl Catalog {
     }
 
     fn extent_len(&self, eid: &ExtentId) -> u64 {
-        self.extents.get(eid).map_or(0, |m| m.extent.len as u64)
+        self.extents.get(eid).map_or(0, |m| m.extent.len() as u64)
     }
 
     /// Fails if installing `new` (`(logical_offset, len)` pairs) in file `ino` would grow `fs`'s
@@ -1198,7 +1201,7 @@ impl Catalog {
                 replica,
             } => {
                 extent.check()?;
-                self.check_byte_quota(fs, *ino, &[(*logical_offset, extent.len as u64)])?;
+                self.check_byte_quota(fs, *ino, &[(*logical_offset, extent.len() as u64)])?;
                 let i = self.fs_mut(fs)?.inode_mut(*ino)?;
                 let InodeKind::File { size, extents } = &mut i.kind else {
                     return Err(MetaError::IsDir(format!(
@@ -1216,7 +1219,7 @@ impl Catalog {
                 let old_len = old.as_ref().map_or(0, |o| self.extent_len(o));
                 if let Some(u) = self.usage_mut(fs) {
                     u.file_bytes = u.file_bytes.saturating_add(grown);
-                    u.used_bytes = (u.used_bytes + extent.len as u64).saturating_sub(old_len);
+                    u.used_bytes = (u.used_bytes + extent.len() as u64).saturating_sub(old_len);
                 }
                 if let Some(old) = old {
                     self.dec_ref(&old, gc)?;
@@ -1229,13 +1232,15 @@ impl Catalog {
                 size: at_least,
                 now_ns,
                 replica,
+                shared,
             } => {
                 for e in new {
                     e.check()?;
                 }
+                self.check_shared(shared, new)?;
                 let lens: Vec<(u64, u64)> = new
                     .iter()
-                    .map(|e| (e.logical_offset, e.len as u64))
+                    .map(|e| (e.logical_offset, e.len() as u64))
                     .collect();
                 self.check_byte_quota(fs, *ino, &lens)?;
                 let i = self.fs_mut(fs)?.inode_mut(*ino)?;
@@ -1258,7 +1263,7 @@ impl Catalog {
                     self.add_extent_ref(e);
                 }
                 let old_len: u64 = old.iter().map(|o| self.extent_len(o)).sum();
-                let new_len: u64 = new.iter().map(|e| e.len as u64).sum();
+                let new_len: u64 = new.iter().map(|e| e.len() as u64).sum();
                 if let Some(u) = self.usage_mut(fs) {
                     u.file_bytes = u.file_bytes.saturating_add(grown);
                     u.used_bytes = (u.used_bytes + new_len).saturating_sub(old_len);
@@ -1499,8 +1504,10 @@ mod tests {
             extent: ExtentRef {
                 id: id.into(),
                 logical_offset: off,
-                len,
+                payload_len: len,
+                raw_len: 0,
                 checksum: [0; 32],
+                content: None,
                 replicas: vec![ReplicaRef {
                     node_id: "n".into(),
                     device_index: 0,

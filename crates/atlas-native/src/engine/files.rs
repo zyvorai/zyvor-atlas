@@ -47,11 +47,21 @@ pub struct FileLayout {
     pub extents: Vec<LayoutExtent>,
 }
 
+fn is_zero_len(v: &usize) -> bool {
+    *v == 0
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct LayoutExtent {
     pub logical_offset: u64,
+    /// Logical bytes the extent covers.
     pub len: usize,
-    /// Hex SHA-256 of the whole extent.
+    /// Bytes on the devices when the extent is LZ4-compressed (`len` is then the uncompressed
+    /// size); 0 = stored as is. A client that doesn't know the field reads `len` bytes, fails the
+    /// checksum and falls back to the leader.
+    #[serde(default, skip_serializing_if = "is_zero_len")]
+    pub payload_len: usize,
+    /// Hex SHA-256 of the whole stored payload.
     pub checksum: String,
     /// Full copies in the order to try them; for an erasure-coded extent, its shards in shard
     /// order.
@@ -167,7 +177,7 @@ fn attr(c: &Catalog, i: &Inode) -> Attr {
         InodeKind::File { extents, .. } => extents
             .values()
             .filter_map(|e| c.extents.get(e))
-            .map(|m| m.extent.len as u64)
+            .map(|m| m.extent.len() as u64)
             .sum(),
         _ => 0,
     };
@@ -506,7 +516,7 @@ impl NativeEngine {
             let cell = size - size % grid;
             if size > cell {
                 if let Some(ext) = self.with_catalog(|c| target.extent_at(c, cell))?? {
-                    if cell + ext.len as u64 > size {
+                    if cell + ext.len() as u64 > size {
                         let fence = self.write_fence()?;
                         let mut buf = self.read_extent(&ext)?;
                         buf.truncate((size - cell) as usize);
@@ -662,7 +672,8 @@ impl NativeEngine {
                     .collect();
                 LayoutExtent {
                     logical_offset: ext.logical_offset,
-                    len: ext.len,
+                    len: ext.len(),
+                    payload_len: if ext.raw_len > 0 { ext.payload_len } else { 0 },
                     checksum: hex(&ext.checksum),
                     replicas,
                     ec: ext.ec.as_ref().map(|e| LayoutEc {

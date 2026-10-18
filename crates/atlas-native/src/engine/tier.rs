@@ -57,7 +57,7 @@ impl NativeEngine {
                         && !m.tombstoned
                         && e.object.is_none()
                         && !e.replicas.is_empty()
-                        && e.len >= policy.min_bytes
+                        && e.payload_len >= policy.min_bytes
                 })
                 .filter_map(|m| {
                     let e = &m.extent;

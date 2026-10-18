@@ -70,6 +70,8 @@ data-node addresses are `host:port` and resolved on every connect, so DNS names 
 | `metadata.replicas` | 3 | Between 1 and the number of `data_nodes`. |
 | `metadata.erasure` | unset | Reed-Solomon scheme `k+m` (e.g. `4+2`, `8+3`; k up to 32, m up to 8) for new extents; unset keeps replicating. Needs at least k+m data nodes; see [Erasure coding](#erasure-coding). |
 | `metadata.erasure_min_bytes` | 64 KiB | Smaller extents (file tails, small files) are still replicated. |
+| `metadata.dedup` | `false` | Store identical extents once; see [`NATIVE_DATA_REDUCTION.md`](NATIVE_DATA_REDUCTION.md). |
+| `metadata.compression` | `false` | LZ4-compress new extents that shrink by at least 12.5%; see [`NATIVE_DATA_REDUCTION.md`](NATIVE_DATA_REDUCTION.md). |
 | `metadata.extent_bytes` | 4 MiB | Writes are split into extents of this size. |
 | `metadata.tick_ms` | 50 | Raft tick; elections take 10–20 ticks. |
 | `metadata.proposal_timeout_ms` | 5000 | Bounds leader readiness, each proposal and each data-node I/O. |

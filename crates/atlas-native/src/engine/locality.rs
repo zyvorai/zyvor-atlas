@@ -178,7 +178,7 @@ impl NativeEngine {
                     continue;
                 };
                 let ext = &m.extent;
-                let len = ext.len as u64;
+                let len = ext.len() as u64;
                 extents += 1;
                 bytes += len;
                 if ext.object.is_some() {

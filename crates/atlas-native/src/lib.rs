@@ -15,6 +15,7 @@ pub mod acl;
 pub mod activity;
 pub mod alloc;
 pub mod checksum;
+pub mod compress;
 pub mod data_node;
 pub mod device;
 mod durable;

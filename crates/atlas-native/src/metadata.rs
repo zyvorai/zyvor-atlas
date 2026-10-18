@@ -28,8 +28,18 @@ pub struct ReplicaRef {
 pub struct ExtentRef {
     pub id: ExtentId,
     pub logical_offset: u64,
-    pub len: usize,
+    /// Bytes stored on the devices (the compressed payload when `raw_len` is non-zero).
+    #[serde(rename = "len")]
+    pub payload_len: usize,
+    /// Uncompressed length when the payload is LZ4-compressed; 0 = stored as is. Everything below
+    /// the engine's read path (devices, scrub, repair, tiering) works on the payload and
+    /// `checksum` covers the payload; only logical consumers use [`ExtentRef::len`].
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub raw_len: usize,
     pub checksum: [u8; 32],
+    /// SHA-256 of the logical bytes, set when they differ from the payload (compressed extents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<[u8; 32]>,
     /// Full copies; for an erasure-coded extent, shard `i` of `ec` is `replicas[i]`.
     pub replicas: Vec<ReplicaRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -47,10 +57,32 @@ fn is_zero(v: &u64) -> bool {
     *v == 0
 }
 
+fn is_zero_usize(v: &usize) -> bool {
+    *v == 0
+}
+
 impl ExtentRef {
+    /// Logical bytes the extent covers in its volume or file.
+    pub fn len(&self) -> usize {
+        if self.raw_len > 0 {
+            self.raw_len
+        } else {
+            self.payload_len
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// SHA-256 of the logical bytes (the payload checksum when nothing is compressed).
+    pub fn content_sha(&self) -> [u8; 32] {
+        self.content.unwrap_or(self.checksum)
+    }
+
     /// Bytes each replica (or shard) takes on its device.
     pub fn stored_len(&self) -> u64 {
-        self.ec.as_ref().map_or(self.len, |e| e.shard_len) as u64
+        self.ec.as_ref().map_or(self.payload_len, |e| e.shard_len) as u64
     }
 
     /// Checks an extent about to be installed: an erasure-coded one must match its layout, and
@@ -63,7 +95,7 @@ impl ExtentRef {
             )));
         }
         if let Some(ec) = &self.ec {
-            ec.check(self.len, self.replicas.len())?;
+            ec.check(self.payload_len, self.replicas.len())?;
             let mut nodes: Vec<&str> = self.replicas.iter().map(|r| r.node_id.as_str()).collect();
             nodes.sort_unstable();
             if nodes.windows(2).any(|w| w[0] == w[1]) {
@@ -156,6 +188,11 @@ pub enum MetaCommand {
     InstallExtents {
         volume_id: VolumeId,
         extents: Vec<ExtentRef>,
+        /// Ids in `extents` that already exist (content deduplication): they must still be live
+        /// when this applies, or the whole command is rejected and the writer places the data
+        /// afresh. Anything not listed is installed as new.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shared: Vec<ExtentId>,
     },
     CreateSnapshot {
         id: SnapshotId,
@@ -336,10 +373,15 @@ impl Catalog {
                     self.dec_ref(&old_id, &mut gc_candidates)?;
                 }
             }
-            MetaCommand::InstallExtents { volume_id, extents } => {
+            MetaCommand::InstallExtents {
+                volume_id,
+                extents,
+                shared,
+            } => {
                 for e in extents {
                     e.check()?;
                 }
+                self.check_shared(shared, extents)?;
                 let old: Vec<ExtentId> = {
                     let vol = self
                         .volumes
@@ -669,11 +711,38 @@ impl Catalog {
     /// End of the last written byte among `extents`.
     pub fn written_end(&self, extents: &BTreeMap<u64, ExtentId>) -> u64 {
         extents
-            .values()
-            .filter_map(|eid| self.extents.get(eid))
-            .map(|m| m.extent.logical_offset + m.extent.len as u64)
+            .iter()
+            .filter_map(|(at, eid)| self.extents.get(eid).map(|m| at + m.extent.len() as u64))
             .max()
             .unwrap_or(0)
+    }
+
+    /// Rejects a command that claims to share extents (`shared`) that are gone, being freed, or
+    /// no longer the same bytes. Nothing has changed yet when this runs.
+    pub(crate) fn check_shared(
+        &self,
+        shared: &[ExtentId],
+        extents: &[ExtentRef],
+    ) -> Result<(), MetaError> {
+        for id in shared {
+            let live = self
+                .extents
+                .get(id)
+                .filter(|m| !m.tombstoned && m.refs > 0)
+                .ok_or_else(|| MetaError::Invalid(format!("shared extent {id} is gone")))?;
+            let same = extents.iter().any(|e| {
+                e.id == *id
+                    && e.checksum == live.extent.checksum
+                    && e.payload_len == live.extent.payload_len
+                    && e.raw_len == live.extent.raw_len
+            });
+            if !same {
+                return Err(MetaError::Invalid(format!(
+                    "shared extent {id} does not match the catalog"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Takes a reference on `extent`, reserving its device ranges the first time it is seen.

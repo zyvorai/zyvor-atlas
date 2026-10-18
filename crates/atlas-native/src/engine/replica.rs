@@ -140,7 +140,7 @@ fn diff_inode(c: &Catalog, old: Option<&Inode>, new: &Inode) -> Option<DiffInode
                 if before.and_then(|b| b.get(off)) == Some(id) || *off >= *size {
                     continue;
                 }
-                let len = c.extents.get(id).map_or(0, |m| m.extent.len as u64);
+                let len = c.extents.get(id).map_or(0, |m| m.extent.len() as u64);
                 let len = len.min(size - off);
                 if len > 0 {
                     data.push((*off, len));
@@ -416,8 +416,10 @@ mod tests {
                 extent: ExtentRef {
                     id: id.into(),
                     logical_offset: off,
-                    len,
+                    payload_len: len,
+                    raw_len: 0,
                     checksum: [0; 32],
+                content: None,
                     replicas: vec![ReplicaRef {
                         node_id: "n".into(),
                         device_index: 0,

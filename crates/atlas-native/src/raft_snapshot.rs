@@ -326,8 +326,10 @@ mod tests {
             c.add_extent_ref(&ExtentRef {
                 id: format!("e{i:05}"),
                 logical_offset: 0,
-                len: 4096,
+                payload_len: 4096,
+                raw_len: 0,
                 checksum: [1; 32],
+                content: None,
                 replicas: vec![ReplicaRef {
                     node_id: "n1".into(),
                     device_index: 0,
