@@ -121,7 +121,7 @@ snapshots can be retention-locked (Raft-enforced, extend-only; `POST /snapshots/
 native filesystems record per-minute activity windows (writes, renames, deletes, write entropy) behind
 `GET /volumes/{id}/ransomware` and admin `POST …/ransomware/protect` (re-assesses server-side, then
 snapshots + locks); `ATLAS_RANSOMWARE_AUTOPROTECT=1` automates it for `likely_ransomware` only.
-Unit/integration tested; not yet verified against a real encrypting workload on the lab.
+Unit/integration tested; snapshot locks verified live on the lab native cluster (2026-10-18); activity/protect/S3 retention and a real encrypting workload not yet.
 
 **Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor
 Production License v1.0 at the maintainer's explicit request — history in

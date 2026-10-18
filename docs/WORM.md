@@ -70,5 +70,10 @@ pins that capacity). On normal activity it returns 409 and does nothing. It is a
 ## Verification status
 
 Unit and integration tested (engine, Raft catalog, node HTTP, driver fake, gateway, S3 gateway).
-Not yet verified on a live native cluster against a real encrypting workload; `STATUS.md` records
-what has been run on the lab.
+
+Live, 2026-10-18, on the lab k3s (`atlas-native` StatefulSet; only two of three pods could be
+scheduled because the shared node was at its pod limit, which still leaves a Raft quorum): over
+the node HTTP API a block snapshot and a filesystem snapshot were each locked, `DELETE` was refused
+with 409, and a shorter lock was refused with 409. **Not yet run live:** the activity windows,
+`ransomware/protect`, auto-protect and S3 retention (the deployed image predates them), and no
+real encrypting workload has been tried.
