@@ -17,6 +17,7 @@ mod object_store;
 pub(crate) mod observability;
 mod oidc;
 mod protection;
+pub mod ransomware;
 mod rbd;
 mod rook;
 pub(crate) mod util;
@@ -68,6 +69,10 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/ai/advisor", post(ai_advisor))
         .route("/ai/anomalies", get(ai_anomalies))
+        .route(
+            "/ai/ransomware/assess",
+            post(ransomware::ai_ransomware_assess),
+        )
         .route("/ai/incidents", get(ai_incidents))
         .route("/ai/what-if", post(ai_what_if))
         .route("/backends", get(list_backends).post(create_backend))
@@ -232,8 +237,14 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/tenants", get(list_tenants))
         .route("/volumes/{id}/snapshots", post(create_snapshot))
+        .route("/volumes/{id}/ransomware", get(ransomware::volume_ransomware))
+        .route(
+            "/volumes/{id}/ransomware/protect",
+            post(ransomware::protect_volume),
+        )
         .route("/snapshots", get(list_snapshots))
         .route("/snapshots/{id}", axum::routing::delete(delete_snapshot))
+        .route("/snapshots/{id}/lock", post(lock_snapshot))
         .route("/snapshots/{id}/clone", post(clone_snapshot))
         .route("/snapshots/{id}/restore", post(restore_snapshot))
         .route("/volumes/{id}/schedule", post(create_schedule))

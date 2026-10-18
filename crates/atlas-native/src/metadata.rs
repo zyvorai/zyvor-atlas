@@ -94,6 +94,10 @@ pub struct SnapshotMeta {
     /// recorded).
     #[serde(default)]
     pub size_bytes: u64,
+    /// Unix seconds until which the snapshot is retention-locked (WORM): `DeleteSnapshot` is
+    /// refused until then. 0 = unlocked, as in catalogs written before locking existed.
+    #[serde(default)]
+    pub retain_until_unix: u64,
     pub extents: BTreeMap<u64, ExtentId>,
 }
 
@@ -160,6 +164,17 @@ pub enum MetaCommand {
     },
     DeleteSnapshot {
         snapshot_id: SnapshotId,
+        /// The proposer's wall clock (Unix seconds), carried in the entry so every replica
+        /// applies the retention check against the same instant. 0 in entries written before
+        /// locking existed; those predate any lock.
+        #[serde(default)]
+        now_unix: u64,
+    },
+    /// Retention-locks a snapshot until `retain_until_unix`. A lock can only be extended, never
+    /// shortened or removed.
+    LockSnapshot {
+        snapshot_id: SnapshotId,
+        retain_until_unix: u64,
     },
     DeleteVolume {
         volume_id: VolumeId,
@@ -372,11 +387,39 @@ impl Catalog {
                         volume_id: volume_id.clone(),
                         name: name.clone(),
                         size_bytes: vol.size_bytes,
+                        retain_until_unix: 0,
                         extents: vol.extents,
                     },
                 );
             }
-            MetaCommand::DeleteSnapshot { snapshot_id } => {
+            MetaCommand::LockSnapshot {
+                snapshot_id,
+                retain_until_unix,
+            } => {
+                let s = self
+                    .snapshots
+                    .get_mut(snapshot_id)
+                    .ok_or_else(|| MetaError::NotFound(snapshot_id.clone()))?;
+                if *retain_until_unix < s.retain_until_unix {
+                    return Err(MetaError::Invalid(format!(
+                        "snapshot {snapshot_id} is locked until {}; a lock cannot be shortened",
+                        s.retain_until_unix
+                    )));
+                }
+                s.retain_until_unix = *retain_until_unix;
+            }
+            MetaCommand::DeleteSnapshot {
+                snapshot_id,
+                now_unix,
+            } => {
+                if let Some(s) = self.snapshots.get(snapshot_id) {
+                    if s.retain_until_unix > *now_unix {
+                        return Err(MetaError::Invalid(format!(
+                            "snapshot {snapshot_id} is retention-locked until {}",
+                            s.retain_until_unix
+                        )));
+                    }
+                }
                 let s = self
                     .snapshots
                     .remove(snapshot_id)

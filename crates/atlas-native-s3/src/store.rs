@@ -28,6 +28,8 @@ const TEMP_PREFIX: &str = ".atlas_s3_tmp_";
 const UPLOADS_DIR: &str = ".atlas_s3_uploads";
 const META_XATTR: &str = "user.atlas.s3";
 const UPLOAD_XATTR: &str = "user.atlas.s3.upload";
+/// On an object: Unix seconds until which it is retention-locked (decimal, compliance mode).
+const RETAIN_XATTR: &str = "user.atlas.s3.retain";
 /// On the root: when the gateway first served the bucket (decimal ns since the epoch).
 const CREATED_XATTR: &str = "user.atlas.s3.created";
 pub const MAX_KEY_BYTES: usize = 1024;
@@ -52,6 +54,8 @@ pub enum StoreError {
     Conflict(String),
     #[error("the bucket is read-only")]
     ReadOnly,
+    #[error("{0}")]
+    Locked(String),
     #[error("the filesystem's quota is exhausted")]
     Quota,
     #[error("{0}")]
@@ -355,6 +359,49 @@ impl Bucket {
         }
     }
 
+    /// Unix seconds the object is retention-locked until (0 = not locked).
+    fn retained_until(&self, ino: u64) -> Result<u64, StoreError> {
+        match self.ops.getxattr(ino, RETAIN_XATTR) {
+            Ok(v) => Ok(std::str::from_utf8(&v)
+                .ok()
+                .and_then(|s| s.trim().parse().ok())
+                .unwrap_or(0)),
+            Err(libc::ENODATA | libc::ENOENT) => Ok(0),
+            Err(e) => Err(io(e)),
+        }
+    }
+
+    fn refuse_if_retained(&self, ino: u64) -> Result<(), StoreError> {
+        let until = self.retained_until(ino)?;
+        if until > unix_now() {
+            return Err(StoreError::Locked(format!(
+                "the object is retention-locked until {until} (unix seconds)"
+            )));
+        }
+        Ok(())
+    }
+
+    /// The object's retention-lock expiry (0 = none).
+    pub fn retention(&self, key: &str) -> Result<u64, StoreError> {
+        let o = self.head(key)?;
+        self.retained_until(o.ino)
+    }
+
+    /// Locks the object against delete and overwrite until `until`. Only ever extended.
+    pub fn set_retention(&self, key: &str, until: u64) -> Result<(), StoreError> {
+        self.writable()?;
+        let o = self.head(key)?;
+        let cur = self.retained_until(o.ino)?;
+        if until < cur {
+            return Err(StoreError::Locked(format!(
+                "the object is locked until {cur}; retention cannot be shortened"
+            )));
+        }
+        self.ops
+            .setxattr(o.ino, RETAIN_XATTR, until.to_string().as_bytes(), false, false)
+            .map_err(io)
+    }
+
     fn is_marker(&self, dir: u64) -> Result<bool, StoreError> {
         Ok(self.meta::<ObjectMeta>(dir, META_XATTR)?.is_some())
     }
@@ -528,6 +575,7 @@ impl Bucket {
                         "`{name}` is a directory (a prefix of other keys), so it cannot be an object"
                     )));
                 }
+                self.refuse_if_retained(t.ino)?;
             }
             self.ops
                 .rename(parent, &tmp, parent, name)
@@ -612,10 +660,13 @@ impl Bucket {
         let dir = *chain.last().unwrap_or(&ROOT_INO);
         match p.name {
             Some(name) => match self.lookup(dir, name)? {
-                Some(a) if a.kind != NodeType::Dir => match self.ops.unlink(dir, name) {
-                    Ok(()) | Err(libc::ENOENT) => {}
-                    Err(e) => return Err(io(e)),
-                },
+                Some(a) if a.kind != NodeType::Dir => {
+                    self.refuse_if_retained(a.ino)?;
+                    match self.ops.unlink(dir, name) {
+                        Ok(()) | Err(libc::ENOENT) => {}
+                        Err(e) => return Err(io(e)),
+                    }
+                }
                 _ => return Ok(()),
             },
             None => match self.ops.removexattr(dir, META_XATTR) {
@@ -1002,6 +1053,12 @@ impl Walk<'_> {
         }
         Ok(!self.full())
     }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]

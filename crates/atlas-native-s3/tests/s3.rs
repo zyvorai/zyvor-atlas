@@ -641,3 +641,79 @@ fn files_written_through_the_filesystem_are_objects() {
     assert_eq!(probe.created_ns().unwrap(), created);
     assert_ne!(ops.getattr(ROOT_INO).unwrap().ctime_ns, created);
 }
+
+#[test]
+fn retention_locked_objects_refuse_delete_and_overwrite_and_only_extend() {
+    let c = Cluster::start();
+    c.create_fs("vault");
+    let gateway = Gateway::new(vec![c.bucket("vault", "vault", false)], None);
+    let _keep = gateway.clone();
+    let rt = runtime();
+    let addr = serve(&rt, gateway, false);
+    let url = format!("http://{addr}/vault/ledger/2026.csv");
+    let retention = |secs_from_now: i64, mode: &str| {
+        let until = time::OffsetDateTime::now_utc() + time::Duration::seconds(secs_from_now);
+        let until = until
+            .format(&time::format_description::well_known::Rfc3339)
+            .unwrap();
+        format!(
+            "<Retention xmlns=\"http://s3.amazonaws.com/doc/2006-03-01/\"><Mode>{mode}</Mode>\
+             <RetainUntilDate>{until}</RetainUntilDate></Retention>"
+        )
+    };
+    rt.block_on(async {
+        let http = reqwest::Client::new();
+        let put = |body: &'static str| http.put(&url).body(body);
+        assert!(put("v1").send().await.unwrap().status().is_success());
+
+        // No retention yet.
+        let r = http.get(format!("{url}?retention")).send().await.unwrap();
+        assert_eq!(r.status().as_u16(), 404);
+
+        // GOVERNANCE is refused (it could be bypassed); COMPLIANCE is accepted.
+        let r = http
+            .put(format!("{url}?retention"))
+            .body(retention(3600, "GOVERNANCE"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 400, "{}", r.text().await.unwrap());
+        let r = http
+            .put(format!("{url}?retention"))
+            .body(retention(3600, "COMPLIANCE"))
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success(), "{}", r.text().await.unwrap());
+        let r = http.get(format!("{url}?retention")).send().await.unwrap();
+        let xml = r.text().await.unwrap();
+        assert!(xml.contains("COMPLIANCE"), "{xml}");
+
+        // Locked: neither delete nor overwrite works, and the content is unchanged.
+        assert_eq!(http.delete(&url).send().await.unwrap().status().as_u16(), 403);
+        assert_eq!(put("v2").send().await.unwrap().status().as_u16(), 403);
+        assert_eq!(http.get(&url).send().await.unwrap().text().await.unwrap(), "v1");
+
+        // A lock can be extended but never shortened.
+        let r = http
+            .put(format!("{url}?retention"))
+            .body(retention(60, "COMPLIANCE"))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(r.status().as_u16(), 403);
+        let r = http
+            .put(format!("{url}?retention"))
+            .body(retention(7200, "COMPLIANCE"))
+            .send()
+            .await
+            .unwrap();
+        assert!(r.status().is_success());
+        assert_eq!(http.delete(&url).send().await.unwrap().status().as_u16(), 403);
+
+        // Other keys are unaffected.
+        let other = format!("http://{addr}/vault/free.txt");
+        assert!(http.put(&other).body("x").send().await.unwrap().status().is_success());
+        assert!(http.delete(&other).send().await.unwrap().status().is_success());
+    });
+}

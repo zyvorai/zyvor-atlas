@@ -129,6 +129,9 @@ pub struct FsSnapshotMeta {
     pub created_ns: i64,
     /// The filesystem as it was when the snapshot was taken.
     pub tree: FsMeta,
+    /// Unix seconds until which the snapshot is retention-locked (WORM); 0 = unlocked.
+    #[serde(default)]
+    pub retain_until_unix: u64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -334,6 +337,14 @@ pub enum FsOp {
     },
     DeleteFsSnapshot {
         id: SnapshotId,
+        /// The proposer's clock (Unix seconds), so replicas check the lock at the same instant.
+        #[serde(default)]
+        now_unix: u64,
+    },
+    /// Retention-locks a snapshot until `retain_until_unix`; only ever extended.
+    LockFsSnapshot {
+        id: SnapshotId,
+        retain_until_unix: u64,
     },
     /// A new writable filesystem from a snapshot (copy-on-write).
     CloneFs {
@@ -1262,7 +1273,31 @@ impl Catalog {
                 name,
                 now_ns,
             } => self.snapshot_tree(id, fs, name, *now_ns)?,
-            FsOp::DeleteFsSnapshot { id } => {
+            FsOp::LockFsSnapshot {
+                id,
+                retain_until_unix,
+            } => {
+                let s = self
+                    .fs_snapshots
+                    .get_mut(id)
+                    .ok_or_else(|| MetaError::NotFound(format!("filesystem snapshot {id}")))?;
+                if *retain_until_unix < s.retain_until_unix {
+                    return Err(MetaError::Invalid(format!(
+                        "filesystem snapshot {id} is locked until {}; a lock cannot be shortened",
+                        s.retain_until_unix
+                    )));
+                }
+                s.retain_until_unix = *retain_until_unix;
+            }
+            FsOp::DeleteFsSnapshot { id, now_unix } => {
+                if let Some(s) = self.fs_snapshots.get(id) {
+                    if s.retain_until_unix > *now_unix {
+                        return Err(MetaError::Invalid(format!(
+                            "filesystem snapshot {id} is retention-locked until {}",
+                            s.retain_until_unix
+                        )));
+                    }
+                }
                 if let Some(f) = self.filesystems.values().find(|f| {
                     f.replica
                         .as_ref()
@@ -1382,6 +1417,7 @@ impl Catalog {
                 name: name.to_string(),
                 created_ns: now_ns,
                 tree,
+                retain_until_unix: 0,
             },
         );
         Ok(())
@@ -1750,7 +1786,10 @@ mod tests {
             &c.inode(a).unwrap().kind,
             InodeKind::File { extents, .. } if extents[&0] == "e0"
         ));
-        t.ok(FsOp::DeleteFsSnapshot { id: "s".into() });
+        t.ok(FsOp::DeleteFsSnapshot {
+            id: "s".into(),
+            now_unix: 0,
+        });
         assert_eq!(
             t.ok(FsOp::DeleteFs { fs: "c".into() }),
             vec!["e0".to_string()]

@@ -17,6 +17,7 @@ duplicated.
 - **[DISKS.md](DISKS.md)** — raw disk provisioning: device pickers, `POST /zfs/pools/from-device`, `POST /ceph/devices`.
 - **[LONGHORN.md](LONGHORN.md)** — read-only Longhorn driver.
 - **[RUSTFS.md](RUSTFS.md)** — history of the now-removed first-party RustFS integration; Ceph RGW is the default object backend today.
+- **[WORM.md](WORM.md)** — retention-locked snapshots, S3 object retention and the ransomware assessment/protect flow.
 - **[IO_EBPF.md](IO_EBPF.md)** — `atlas-io`, the optional observe-first eBPF storage I/O sensor.
 
 ## Day-2 operations

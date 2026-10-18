@@ -235,7 +235,7 @@ pub(crate) async fn create_volume(
 }
 
 /// The atlas-native driver when `volume_id` lives on that backend.
-async fn native_driver_for_volume(
+pub(super) async fn native_driver_for_volume(
     s: &AppState,
     volume_id: &str,
 ) -> AppResult<Option<std::sync::Arc<dyn StorageDriver>>> {
@@ -252,7 +252,7 @@ async fn native_driver_for_volume(
         .ok_or_else(|| AppError::Unavailable("the atlas-native driver is not enabled".into()))
 }
 
-fn driver_error(e: DriverError) -> AppError {
+pub(super) fn driver_error(e: DriverError) -> AppError {
     match e {
         DriverError::Unreachable(m) => AppError::Unavailable(m),
         DriverError::Backend(m) if m.starts_with("not found") => AppError::NotFound(m),
@@ -262,7 +262,7 @@ fn driver_error(e: DriverError) -> AppError {
     }
 }
 
-async fn audit(
+pub(super) async fn audit(
     s: &AppState,
     tenant: Option<&str>,
     actor: &Actor,
@@ -708,6 +708,60 @@ pub(crate) async fn delete_snapshot(
         &job,
         json!({ "snapshot_id": id, "forced": q.force }),
     ))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct LockBody {
+    retain_secs: u64,
+}
+
+/// Longest retention one call may set (10 years): a lock is irreversible, so it is bounded.
+const MAX_LOCK_SECS: u64 = 10 * 365 * 24 * 3600;
+
+/// `POST /snapshots/{id}/lock {retain_secs}` — retention-lock (WORM) a snapshot (admin). Delete is
+/// refused until the lock expires; it can be extended later, never shortened. atlas-native only.
+pub(crate) async fn lock_snapshot(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    Json(body): Json<LockBody>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_ADMIN)?;
+    if body.retain_secs == 0 || body.retain_secs > MAX_LOCK_SECS {
+        return Err(AppError::Validation(format!(
+            "retain_secs must be between 1 and {MAX_LOCK_SECS}"
+        )));
+    }
+    let snap = atlas_inventory::snapshots::get_snapshot(&s.pool, &id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("snapshot {id}")))?;
+    crate::auth::require_tenant(
+        s.config.auth_required,
+        &actor,
+        &snap.tenant_id,
+        format!("snapshot {id}"),
+    )?;
+    let driver = native_driver_for_volume(&s, &snap.volume_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Validation("snapshot locking is only supported on atlas-native".into())
+        })?;
+    let native = snap.backend_native_id.clone().unwrap_or_else(|| id.clone());
+    let until = driver
+        .lock_snapshot(&native, body.retain_secs)
+        .await
+        .map_err(driver_error)?;
+    audit(
+        &s,
+        Some(&snap.tenant_id),
+        &actor,
+        "snapshot.lock",
+        "snapshot",
+        &id,
+        Some(json!({ "retain_secs": body.retain_secs, "retain_until_unix": until })),
+    )
+    .await;
+    Ok(Json(json!({ "snapshot_id": id, "retain_until_unix": until })))
 }
 
 #[derive(Debug, Deserialize)]

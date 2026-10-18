@@ -104,11 +104,16 @@ configured) stops the new pod at startup, and the rollout keeps the old pods ser
   numbered 1–10000; every part but the last must be at least 5 MiB.
 - **Buckets:** `ListBuckets` (only the buckets the key may use), `HeadBucket`,
   `GetBucketLocation`, `ListObjects` and `ListObjectsV2`.
+- **Object retention:** `PutObjectRetention` / `GetObjectRetention`, `Mode=COMPLIANCE` only.
+  While the retention date is in the future the object cannot be deleted (`DeleteObject`,
+  `DeleteObjects`) or overwritten (`PutObject`, `CopyObject`, multipart completion): `403
+  AccessDenied`. A date can be extended, never shortened, and no S3 call removes it. GOVERNANCE is
+  refused. The date lives in the object's xattr `user.atlas.s3.retain`. See [`WORM.md`](WORM.md).
 - **Auth:** AWS Signature V4 (headers, presigned URLs and streaming payloads), checked by s3s
   against the configured keys; s3s also accepts Signature V2 (untested here). Unsigned requests
   are refused.
 
-Everything else (bucket creation and deletion, versioning, object lock, lifecycle rules, bucket
+Everything else (bucket creation and deletion, versioning, bucket-level object lock configuration, legal hold, lifecycle rules, bucket
 policies and ACLs, tagging, server-side encryption, notifications, website hosting) returns
 `NotImplemented`. Buckets are added and removed in the gateway's bucket list, not over S3.
 

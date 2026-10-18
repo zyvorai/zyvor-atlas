@@ -55,6 +55,7 @@ async fn main() -> anyhow::Result<()> {
     let grpc_tls = tls_cert.clone().zip(tls_key.clone());
     let disable_http = config.disable_http;
     let state = build_state(config, BuildOptions::default()).await?;
+    atlas_gateway::routes::ransomware::spawn_autoprotect(state.clone());
 
     let app = routes::router(state.clone())
         .layer(TraceLayer::new_for_http())
