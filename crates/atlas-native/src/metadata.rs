@@ -184,6 +184,11 @@ pub enum MetaCommand {
     InstallExtents {
         volume_id: VolumeId,
         extents: Vec<ExtentRef>,
+        /// Ids in `extents` that already exist (content deduplication): they must still be live
+        /// when this applies, or the whole command is rejected and the writer places the data
+        /// afresh. Anything not listed is installed as new.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shared: Vec<ExtentId>,
     },
     CreateSnapshot {
         id: SnapshotId,
@@ -353,10 +358,15 @@ impl Catalog {
                     self.dec_ref(&old_id, &mut gc_candidates)?;
                 }
             }
-            MetaCommand::InstallExtents { volume_id, extents } => {
+            MetaCommand::InstallExtents {
+                volume_id,
+                extents,
+                shared,
+            } => {
                 for e in extents {
                     e.check()?;
                 }
+                self.check_shared(shared, extents)?;
                 let old: Vec<ExtentId> = {
                     let vol = self
                         .volumes
@@ -658,11 +668,38 @@ impl Catalog {
     /// End of the last written byte among `extents`.
     pub fn written_end(&self, extents: &BTreeMap<u64, ExtentId>) -> u64 {
         extents
-            .values()
-            .filter_map(|eid| self.extents.get(eid))
-            .map(|m| m.extent.logical_offset + m.extent.len() as u64)
+            .iter()
+            .filter_map(|(at, eid)| self.extents.get(eid).map(|m| at + m.extent.len() as u64))
             .max()
             .unwrap_or(0)
+    }
+
+    /// Rejects a command that claims to share extents (`shared`) that are gone, being freed, or
+    /// no longer the same bytes. Nothing has changed yet when this runs.
+    pub(crate) fn check_shared(
+        &self,
+        shared: &[ExtentId],
+        extents: &[ExtentRef],
+    ) -> Result<(), MetaError> {
+        for id in shared {
+            let live = self
+                .extents
+                .get(id)
+                .filter(|m| !m.tombstoned && m.refs > 0)
+                .ok_or_else(|| MetaError::Invalid(format!("shared extent {id} is gone")))?;
+            let same = extents.iter().any(|e| {
+                e.id == *id
+                    && e.checksum == live.extent.checksum
+                    && e.payload_len == live.extent.payload_len
+                    && e.raw_len == live.extent.raw_len
+            });
+            if !same {
+                return Err(MetaError::Invalid(format!(
+                    "shared extent {id} does not match the catalog"
+                )));
+            }
+        }
+        Ok(())
     }
 
     /// Takes a reference on `extent`, reserving its device ranges the first time it is seen.

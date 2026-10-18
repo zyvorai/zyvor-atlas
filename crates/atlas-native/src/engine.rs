@@ -18,7 +18,7 @@ use crate::{
     device::{BlockStore, FileDevice},
     ec::{EcLayout, EcScheme},
     gc,
-    metadata::{Catalog, ExtentRef, MetaCommand, MetaError, ReplicaRef, SnapshotId, VolumeId},
+    metadata::{Catalog, ExtentId, ExtentRef, MetaCommand, MetaError, ReplicaRef, SnapshotId, VolumeId},
     metrics::PromText,
     namespace::{FsOp, InodeKind},
     object::ObjectStore,
@@ -93,9 +93,10 @@ impl Target<'_> {
                 }
             },
         };
-        Ok(id
-            .and_then(|id| c.extents.get(&id))
-            .map(|m| m.extent.clone()))
+        Ok(id.and_then(|id| c.extents.get(&id)).map(|m| ExtentRef {
+            logical_offset: cell,
+            ..m.extent.clone()
+        }))
     }
 }
 
@@ -169,6 +170,10 @@ pub struct EngineConfig {
     /// LZ4-compress new extents that shrink by at least 12.5% before they are replicated or
     /// erasure-coded ([`crate::compress`]). Existing extents are left as they are.
     pub compression: bool,
+    /// Share identical extents: a write whose content already exists as a live extent of this
+    /// engine references that extent instead of storing a second copy. See
+    /// `docs/NATIVE_DATA_REDUCTION.md` for what that does and does not protect against.
+    pub dedup: bool,
     /// Where tiered extents live ([`NativeEngine::tier_once`]); reads of tiered extents fail
     /// without it.
     pub objects: Option<Arc<dyn ObjectStore>>,
@@ -178,6 +183,18 @@ pub struct EngineConfig {
     /// Key prefix of snapshot exports ([`NativeEngine::export_snapshot`]), shared by every
     /// group of a cluster.
     pub export_prefix: String,
+}
+
+/// See [`NativeEngine::data_reduction`].
+#[derive(Debug, Default, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ReductionStats {
+    pub extents: u64,
+    pub compressed_extents: u64,
+    /// Extents referenced more than once.
+    pub shared_extents: u64,
+    pub logical_bytes: u64,
+    pub referenced_bytes: u64,
+    pub stored_bytes: u64,
 }
 
 /// Extents smaller than this stay replicated by default: their shards would be tiny.
@@ -196,6 +213,7 @@ impl EngineConfig {
             erasure: None,
             erasure_min_bytes: DEFAULT_ERASURE_MIN_BYTES,
             compression: false,
+            dedup: false,
             objects: None,
             object_prefix: "atlas-native/".into(),
             export_prefix: "atlas-native/".into(),
@@ -324,6 +342,15 @@ pub struct NativeEngine {
     reads: Mutex<std::collections::HashMap<String, u64>>,
     opened_ms: u64,
     pub telemetry: NativeIoCounters,
+    /// Content hash -> a live extent holding those bytes (a hint, rebuilt from the catalog on
+    /// first use: every share is re-checked when it is committed).
+    dedup_index: Mutex<DedupIndex>,
+}
+
+#[derive(Debug, Default)]
+struct DedupIndex {
+    built: bool,
+    by_content: std::collections::HashMap<[u8; 32], ExtentId>,
 }
 
 impl NativeEngine {
@@ -400,6 +427,7 @@ impl NativeEngine {
             reads: Mutex::new(Default::default()),
             opened_ms: now_ms(),
             telemetry: NativeIoCounters::default(),
+            dedup_index: Mutex::new(DedupIndex::default()),
         };
         if let Meta::Local { catalog, store, .. } = &engine.meta {
             let mut c = catalog
@@ -572,11 +600,32 @@ impl NativeEngine {
             rest = tail;
         }
         if let [(cell, content)] = cells.as_slice() {
-            return self.install_extent(target, *cell, content, fence);
+            if !self.cfg.dedup {
+                return self.install_extent(target, *cell, content, fence);
+            }
         }
+        self.place_and_commit(target, &cells, fence)
+    }
+
+    /// Places `cells` and commits them, deduplicating against live extents when configured. A
+    /// share that went stale between lookup and commit (its extent was freed meanwhile) is
+    /// rejected by the catalog; the cells are then written without sharing.
+    fn place_and_commit(
+        &self,
+        target: &Target,
+        cells: &[(u64, std::borrow::Cow<[u8]>)],
+        fence: u64,
+    ) -> Result<(), NativeError> {
         let alloc = self.lease()?;
-        let placed = self.place_cells(&cells, fence, &alloc)?;
-        self.commit_cells(target, placed, fence, &alloc)
+        let (placed, shared) = self.place_cells(cells, fence, &alloc, true)?;
+        match self.commit_cells(target, placed, shared, fence, &alloc) {
+            Err(e) if is_stale_share(&e) => {
+                let alloc = self.lease()?;
+                let (placed, _) = self.place_cells(cells, fence, &alloc, false)?;
+                self.commit_cells(target, placed, Vec::new(), fence, &alloc)
+            }
+            r => r,
+        }
     }
 
     /// Writes whole grid cells without holding `write_lock` while their data goes to the data
@@ -612,27 +661,142 @@ impl NativeEngine {
             .map(|(i, chunk)| (offset + i as u64 * grid, chunk.into()))
             .collect();
         let alloc = self.lease()?;
-        let placed = self.place_cells(&cells, fence, &alloc)?;
+        let (placed, shared) = self.place_cells(&cells, fence, &alloc, true)?;
         let _write = self
             .write_lock
             .lock()
             .map_err(|_| NativeError::Poisoned("write"))?;
         self.with_catalog(&in_bounds)??;
-        self.commit_cells(target, placed, fence, &alloc)?;
+        match self.commit_cells(target, placed, shared, fence, &alloc) {
+            Err(e) if is_stale_share(&e) => {
+                let alloc = self.lease()?;
+                let (placed, _) = self.place_cells(&cells, fence, &alloc, false)?;
+                self.commit_cells(target, placed, Vec::new(), fence, &alloc)?;
+            }
+            r => r?,
+        }
         Ok(true)
     }
 
-    /// Places each cell's content (a few at a time) and returns the extents, in cell order.
+    /// Places each cell's content (a few at a time) and returns the extents, in cell order, and
+    /// the ids among them that already existed (deduplicated against live extents).
     fn place_cells(
         &self,
         cells: &[(u64, std::borrow::Cow<[u8]>)],
+        fence: u64,
+        alloc: &inflight::Lease<'_>,
+        dedup: bool,
+    ) -> Result<(Vec<ExtentRef>, Vec<ExtentId>), NativeError> {
+        let cells: Vec<(u64, &[u8])> = cells.iter().map(|(c, d)| (*c, d.as_ref())).collect();
+        if !(dedup && self.cfg.dedup) {
+            return Ok((self.place_new(&cells, fence, alloc)?, Vec::new()));
+        }
+        enum Plan {
+            Existing(Box<ExtentRef>),
+            New,
+            SameAs(usize),
+        }
+        let hashes: Vec<[u8; 32]> = cells.iter().map(|(_, d)| checksum::sha256(d)).collect();
+        let lens: Vec<usize> = cells.iter().map(|(_, d)| d.len()).collect();
+        let found = self.dedup_lookup(&hashes, &lens)?;
+        let mut plan = Vec::with_capacity(cells.len());
+        let mut fresh: Vec<(u64, &[u8])> = Vec::new();
+        let mut first_new: std::collections::HashMap<[u8; 32], usize> = Default::default();
+        for (i, f) in found.into_iter().enumerate() {
+            plan.push(match f {
+                Some(ext) => Plan::Existing(Box::new(ext)),
+                None => match first_new.get(&hashes[i]) {
+                    Some(j) => Plan::SameAs(*j),
+                    None => {
+                        first_new.insert(hashes[i], i);
+                        fresh.push(cells[i]);
+                        Plan::New
+                    }
+                },
+            });
+        }
+        let mut placed_new = self.place_new(&fresh, fence, alloc)?.into_iter();
+        let mut out: Vec<ExtentRef> = Vec::with_capacity(cells.len());
+        let mut shared = Vec::new();
+        for (i, p) in plan.iter().enumerate() {
+            let mut ext = match p {
+                Plan::Existing(e) => {
+                    shared.push(e.id.clone());
+                    self.telemetry.dedup_hit(e.len());
+                    (**e).clone()
+                }
+                Plan::New => {
+                    let e = placed_new.next().ok_or(NativeError::Poisoned("dedup plan"))?;
+                    if let Ok(mut idx) = self.dedup_index.lock() {
+                        idx.by_content.insert(e.content_sha(), e.id.clone());
+                    }
+                    e
+                }
+                Plan::SameAs(j) => {
+                    let e = out[*j].clone();
+                    if shared.contains(&e.id) {
+                        shared.push(e.id.clone());
+                    }
+                    self.telemetry.dedup_hit(e.len());
+                    e
+                }
+            };
+            ext.logical_offset = cells[i].0;
+            out.push(ext);
+        }
+        Ok((out, shared))
+    }
+
+    /// Live extents already holding exactly these bytes, per cell.
+    fn dedup_lookup(
+        &self,
+        hashes: &[[u8; 32]],
+        lens: &[usize],
+    ) -> Result<Vec<Option<ExtentRef>>, NativeError> {
+        let mut idx = self
+            .dedup_index
+            .lock()
+            .map_err(|_| NativeError::Poisoned("dedup index"))?;
+        if !idx.built {
+            let scanned: Vec<([u8; 32], ExtentId)> = self.with_catalog(|c| {
+                c.extents
+                    .values()
+                    .filter(|m| !m.tombstoned && m.refs > 0)
+                    .map(|m| (m.extent.content_sha(), m.extent.id.clone()))
+                    .collect()
+            })?;
+            idx.by_content.extend(scanned);
+            idx.built = true;
+        }
+        let ids: Vec<Option<ExtentId>> = hashes
+            .iter()
+            .map(|h| idx.by_content.get(h).cloned())
+            .collect();
+        drop(idx);
+        self.with_catalog(|c| {
+            ids.iter()
+                .zip(lens)
+                .map(|(id, len)| {
+                    id.as_ref()
+                        .and_then(|id| c.extents.get(id))
+                        .filter(|m| !m.tombstoned && m.refs > 0 && m.extent.len() == *len)
+                        .map(|m| m.extent.clone())
+                })
+                .collect()
+        })
+    }
+
+    /// Writes each cell's content to fresh replicas or shards, in cell order.
+    fn place_new(
+        &self,
+        cells: &[(u64, &[u8])],
         fence: u64,
         alloc: &inflight::Lease<'_>,
     ) -> Result<Vec<ExtentRef>, NativeError> {
         let mut placed_all = Vec::with_capacity(cells.len());
         for window in cells.chunks(WRITE_PARALLELISM) {
             let placed: Vec<Result<ExtentRef, NativeError>> = if window.len() == 1 {
-                vec![self.place_extent(&window[0].1, fence, alloc)]
+                vec![self.place_extent(window[0].1, fence, alloc)]
             } else {
                 std::thread::scope(|s| {
                     let handles: Vec<_> = window
@@ -662,6 +826,7 @@ impl NativeEngine {
         &self,
         target: &Target,
         placed_all: Vec<ExtentRef>,
+        shared: Vec<ExtentId>,
         fence: u64,
         alloc: &inflight::Lease<'_>,
     ) -> Result<(), NativeError> {
@@ -675,6 +840,7 @@ impl NativeEngine {
             Target::Volume(volume_id) => MetaCommand::InstallExtents {
                 volume_id: volume_id.to_string(),
                 extents: placed_all,
+                shared,
             },
             Target::File { fs, ino, replica } => MetaCommand::Fs {
                 op: FsOp::InstallFileExtents {
@@ -684,6 +850,7 @@ impl NativeEngine {
                     size: end,
                     now_ns: now_ns(),
                     replica: *replica,
+                    shared,
                 },
             },
         };
@@ -967,6 +1134,31 @@ impl NativeEngine {
             )
         })??;
         self.read_range(extents, offset, len)
+    }
+
+    /// What compression and sharing save, from the live catalog. `referenced_bytes` counts an
+    /// extent once per reference (volume, file, snapshot, clone), `logical_bytes` once; so their
+    /// ratio is sharing of every kind (snapshots and clones included, not only deduplication),
+    /// while `stored_bytes / logical_bytes` is compression alone. `stored_bytes` is one copy of
+    /// the payload; replicas or erasure coding multiply it.
+    pub fn data_reduction(&self) -> Result<ReductionStats, NativeError> {
+        self.with_catalog(|c| {
+            let mut s = ReductionStats::default();
+            for m in c.extents.values().filter(|m| !m.tombstoned && m.refs > 0) {
+                let len = m.extent.len() as u64;
+                s.extents += 1;
+                s.logical_bytes += len;
+                s.referenced_bytes += len * m.refs;
+                s.stored_bytes += m.extent.payload_len as u64;
+                if m.extent.raw_len > 0 {
+                    s.compressed_extents += 1;
+                }
+                if m.refs > 1 {
+                    s.shared_extents += 1;
+                }
+            }
+            s
+        })
     }
 
     pub fn gc_once(&self) -> Result<gc::GcStats, NativeError> {
@@ -1322,6 +1514,16 @@ impl NativeEngine {
                 "Extent reads served from object storage.",
                 t.object_reads,
             ),
+            (
+                "atlas_native_dedup_hits_total",
+                "Extent writes that referenced an existing identical extent.",
+                t.dedup_hits,
+            ),
+            (
+                "atlas_native_dedup_saved_bytes_total",
+                "Bytes those writes did not have to store.",
+                t.dedup_saved_bytes,
+            ),
         ] {
             p.single(name, "counter", help, v);
         }
@@ -1575,10 +1777,15 @@ impl NativeEngine {
         let first = offset - offset % grid;
         extents
             .range(first..end)
-            .map(|(_, eid)| {
+            .map(|(at, eid)| {
+                // The catalog keeps one ExtentRef per extent id, but a shared extent can sit at
+                // a different offset in each file or volume that references it.
                 c.extents
                     .get(eid)
-                    .map(|m| m.extent.clone())
+                    .map(|m| ExtentRef {
+                        logical_offset: *at,
+                        ..m.extent.clone()
+                    })
                     .ok_or_else(|| NativeError::NotFound(eid.clone()))
             })
             .collect()
@@ -1868,4 +2075,9 @@ fn load_local(root: &Path, store: &CatalogStore) -> Result<(Catalog, Wal), Nativ
     }
     wal.raise_floor(catalog.applied_index);
     Ok((catalog, wal))
+}
+
+/// Whether the catalog rejected a commit because an extent it was told to share was freed.
+fn is_stale_share(e: &NativeError) -> bool {
+    e.to_string().contains("shared extent")
 }

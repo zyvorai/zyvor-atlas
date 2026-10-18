@@ -34,6 +34,9 @@ node:
   # CPU on the write path; incompressible data is stored as is. Applies to extents written from
   # then on; existing extents stay readable either way.
   compression: false
+  # Store identical extents once (docs/NATIVE_DATA_REDUCTION.md). Turn on only after every pod runs
+  # a build that understands shared installs; costs a SHA-256 per extent written.
+  dedup: false
   # Time between the starts of two scrub passes; 0 disables scrub and rebuild.
   repairIntervalSecs: 300
   # How long a pod must fail every request before its extents are rebuilt on other pods.

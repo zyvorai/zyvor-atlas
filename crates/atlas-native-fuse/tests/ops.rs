@@ -108,6 +108,7 @@ impl Cluster {
                     erasure: erasure.map(|e| e.parse().unwrap()),
                     erasure_min_bytes: 64 << 10,
                     compression: false,
+                    dedup: false,
                     rebuild_delay_secs: 60,
                     rebuild_bytes_per_sec: 0,
                     scrub_bytes_per_sec: 0,

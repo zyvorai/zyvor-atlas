@@ -128,6 +128,9 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{- if .Values.node.compression -}}
 {{- $_ := set $cfg.metadata "compression" true -}}
 {{- end -}}
+{{- if .Values.node.dedup -}}
+{{- $_ := set $cfg.metadata "dedup" true -}}
+{{- end -}}
 {{- with .Values.node.erasure -}}
 {{- $km := splitList "+" . -}}
 {{- if ne (len $km) 2 }}{{ fail "node.erasure must look like \"4+2\"" }}{{ end -}}

@@ -6,9 +6,7 @@
 
 use std::path::Path;
 
-use atlas_native::{
-    ec::EcScheme, EngineConfig, FailureDomain, NativeEngine, Node, NodeType,
-};
+use atlas_native::{ec::EcScheme, EngineConfig, FailureDomain, NativeEngine, Node, NodeType};
 
 const EXTENT: usize = 64 << 10;
 
@@ -35,7 +33,9 @@ fn engine(root: &Path, compression: bool, erasure: Option<&str>) -> NativeEngine
 }
 
 fn used(e: &NativeEngine) -> u64 {
-    (1..=6).map(|i| e.device_len(&format!("n{i}")).unwrap()).sum()
+    (1..=6)
+        .map(|i| e.device_len(&format!("n{i}")).unwrap())
+        .sum()
 }
 
 fn text(n: usize) -> Vec<u8> {
@@ -85,7 +85,10 @@ fn compressible_data_takes_less_space_and_reads_back_exactly() {
     let (packed, got_packed) = stored(true, None, &data);
     assert_eq!(got_plain, data);
     assert_eq!(got_packed, data);
-    assert!(packed * 4 < plain, "text should shrink well over 4x: {packed} vs {plain}");
+    assert!(
+        packed * 4 < plain,
+        "text should shrink well over 4x: {packed} vs {plain}"
+    );
 }
 
 #[test]
@@ -143,7 +146,11 @@ fn compressed_extents_survive_reopen_and_scrub_clean() {
     let e = engine(&r, false, None);
     assert_eq!(e.read(&v, 0, data.len()).unwrap(), data);
     let stats = e.repair_once().unwrap();
-    assert_eq!((stats.replicas_repaired, stats.unrecoverable), (0, 0), "{stats:?}");
+    assert_eq!(
+        (stats.replicas_repaired, stats.unrecoverable),
+        (0, 0),
+        "{stats:?}"
+    );
     assert!(stats.extents_checked > 0);
     let _ = std::fs::remove_dir_all(r);
 }

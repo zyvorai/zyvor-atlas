@@ -162,11 +162,14 @@ impl NativeEngine {
             };
             let extents = s
                 .extents
-                .values()
-                .map(|id| {
+                .iter()
+                .map(|(at, id)| {
                     c.extents
                         .get(id)
-                        .map(|m| m.extent.clone())
+                        .map(|m| super::ExtentRef {
+                            logical_offset: *at,
+                            ..m.extent.clone()
+                        })
                         .ok_or_else(|| NativeError::NotFound(id.clone()))
                 })
                 .collect::<Result<Vec<_>, _>>()?;

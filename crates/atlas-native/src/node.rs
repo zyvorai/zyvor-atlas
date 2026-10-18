@@ -132,6 +132,10 @@ pub struct MetadataRole {
     /// coding). Existing extents stay as written and always remain readable.
     #[serde(default)]
     pub compression: bool,
+    /// Share identical extents instead of storing copies (needs every metadata node on a build
+    /// that understands shared installs before it is turned on).
+    #[serde(default)]
+    pub dedup: bool,
     #[serde(default = "default_extent_bytes")]
     pub extent_bytes: usize,
     #[serde(default = "default_tick_ms")]
@@ -657,6 +661,7 @@ impl NativeNode {
                     ecfg.erasure = m.erasure;
                     ecfg.erasure_min_bytes = m.erasure_min_bytes;
                     ecfg.compression = m.compression;
+                    ecfg.dedup = m.dedup;
                     ecfg.catalog_cache_inodes = m.cache_inodes;
                     ecfg.catalog_cache_bytes = m.store_cache_bytes;
                     if let (Some(store), Some(t)) = (&objects, &m.tiering) {
@@ -1203,6 +1208,24 @@ fn snapshot_engine<'a>(sh: &'a NodeShared, id: &str) -> Result<&'a NativeEngine,
 
 fn volume_route(sh: &NodeShared, req: &Request, segs: &[&str]) -> Response {
     let result = match (req.method.as_str(), segs) {
+        // Compression and sharing savings from this node's applied catalog (any replica answers).
+        ("GET", ["v1", "reduction"]) => sh
+            .groups
+            .iter()
+            .map(|g| g.engine.data_reduction())
+            .collect::<Result<Vec<_>, _>>()
+            .map(|groups| {
+                let mut total = crate::engine::ReductionStats::default();
+                for g in &groups {
+                    total.extents += g.extents;
+                    total.compressed_extents += g.compressed_extents;
+                    total.shared_extents += g.shared_extents;
+                    total.logical_bytes += g.logical_bytes;
+                    total.referenced_bytes += g.referenced_bytes;
+                    total.stored_bytes += g.stored_bytes;
+                }
+                Response::json(200, &json!({ "total": total, "groups": groups }))
+            }),
         ("GET", ["v1", "volumes"]) => sh
             .groups
             .iter()

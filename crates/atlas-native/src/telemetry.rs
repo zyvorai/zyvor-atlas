@@ -16,6 +16,8 @@ pub struct NativeIoCounters {
     replicas_repaired: AtomicU64,
     extents_tiered: AtomicU64,
     object_reads: AtomicU64,
+    dedup_hits: AtomicU64,
+    dedup_saved_bytes: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -31,6 +33,9 @@ pub struct NativeIoSnapshot {
     pub replicas_repaired: u64,
     pub extents_tiered: u64,
     pub object_reads: u64,
+    /// Extent writes that referenced an existing identical extent, and the bytes they avoided.
+    pub dedup_hits: u64,
+    pub dedup_saved_bytes: u64,
 }
 
 impl NativeIoCounters {
@@ -41,6 +46,11 @@ impl NativeIoCounters {
     pub fn record_write(&self, bytes: usize) {
         self.writes.fetch_add(1, Ordering::Relaxed);
         self.write_bytes.fetch_add(bytes as u64, Ordering::Relaxed);
+    }
+    pub fn dedup_hit(&self, bytes: usize) {
+        self.dedup_hits.fetch_add(1, Ordering::Relaxed);
+        self.dedup_saved_bytes
+            .fetch_add(bytes as u64, Ordering::Relaxed);
     }
     pub fn checksum_failure(&self) {
         self.checksum_failures.fetch_add(1, Ordering::Relaxed);
@@ -77,6 +87,8 @@ impl NativeIoCounters {
             replicas_repaired: self.replicas_repaired.load(Ordering::Relaxed),
             extents_tiered: self.extents_tiered.load(Ordering::Relaxed),
             object_reads: self.object_reads.load(Ordering::Relaxed),
+            dedup_hits: self.dedup_hits.load(Ordering::Relaxed),
+            dedup_saved_bytes: self.dedup_saved_bytes.load(Ordering::Relaxed),
         }
     }
 }

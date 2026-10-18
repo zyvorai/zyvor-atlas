@@ -324,6 +324,9 @@ pub enum FsOp {
         /// As [`FsOp::InstallFileExtent`]'s.
         #[serde(default, skip_serializing_if = "is_false")]
         replica: bool,
+        /// As [`MetaCommand::InstallExtents`]'s `shared`.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        shared: Vec<ExtentId>,
     },
     /// Freezes the whole inode table; shares every file extent.
     SnapshotFs {
@@ -1218,10 +1221,12 @@ impl Catalog {
                 size: at_least,
                 now_ns,
                 replica,
+                shared,
             } => {
                 for e in new {
                     e.check()?;
                 }
+                self.check_shared(shared, new)?;
                 let lens: Vec<(u64, u64)> = new
                     .iter()
                     .map(|e| (e.logical_offset, e.len() as u64))
