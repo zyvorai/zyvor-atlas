@@ -139,6 +139,7 @@ fn start_node(root: &Path, server: &(String, String), client_ca: &str) -> Native
             replicas: 1,
             erasure: None,
             erasure_min_bytes: 64 << 10,
+            compression: false,
             rebuild_delay_secs: 60,
             rebuild_bytes_per_sec: 0,
             scrub_bytes_per_sec: 0,

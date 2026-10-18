@@ -166,6 +166,9 @@ pub struct EngineConfig {
     /// replicating them (`placement.replicas` still applies to smaller ones).
     pub erasure: Option<EcScheme>,
     pub erasure_min_bytes: usize,
+    /// LZ4-compress new extents that shrink by at least 12.5% before they are replicated or
+    /// erasure-coded ([`crate::compress`]). Existing extents are left as they are.
+    pub compression: bool,
     /// Where tiered extents live ([`NativeEngine::tier_once`]); reads of tiered extents fail
     /// without it.
     pub objects: Option<Arc<dyn ObjectStore>>,
@@ -192,6 +195,7 @@ impl EngineConfig {
             catalog_cache_bytes: DEFAULT_STORE_CACHE_BYTES,
             erasure: None,
             erasure_min_bytes: DEFAULT_ERASURE_MIN_BYTES,
+            compression: false,
             objects: None,
             object_prefix: "atlas-native/".into(),
             export_prefix: "atlas-native/".into(),
@@ -548,7 +552,7 @@ impl NativeEngine {
             let (part, tail) = rest.split_at(n);
             let existing = self.with_catalog(|c| target.extent_at(c, cell))??;
             let content = match existing {
-                Some(ext) if within > 0 || n < ext.len => {
+                Some(ext) if within > 0 || n < ext.len() => {
                     let mut buf = self.read_extent(&ext)?;
                     if buf.len() < within + n {
                         buf.resize(within + n, 0);
@@ -661,10 +665,10 @@ impl NativeEngine {
         fence: u64,
         alloc: &inflight::Lease<'_>,
     ) -> Result<(), NativeError> {
-        let bytes: usize = placed_all.iter().map(|e| e.len).sum();
+        let bytes: usize = placed_all.iter().map(|e| e.len()).sum();
         let end = placed_all
             .iter()
-            .map(|e| e.logical_offset + e.len as u64)
+            .map(|e| e.logical_offset + e.len() as u64)
             .max()
             .unwrap_or(0);
         let cmd = match target {
@@ -710,13 +714,23 @@ impl NativeEngine {
         fence: u64,
         alloc: &inflight::Lease<'_>,
     ) -> Result<ExtentRef, NativeError> {
+        let compressed = self
+            .cfg
+            .compression
+            .then(|| crate::compress::compress(chunk))
+            .flatten();
+        let (payload, raw_len, content) = match &compressed {
+            Some(p) => (p.as_slice(), chunk.len(), Some(checksum::sha256(chunk))),
+            None => (chunk, 0, None),
+        };
         if let Some(scheme) = self
             .cfg
             .erasure
-            .filter(|_| chunk.len() >= self.cfg.erasure_min_bytes)
+            .filter(|_| payload.len() >= self.cfg.erasure_min_bytes)
         {
-            return self.place_shards(scheme, chunk, fence, alloc);
+            return self.place_shards(scheme, payload, raw_len, content, fence, alloc);
         }
+        let chunk = payload;
         let needed = self.cfg.placement.replicas;
         let order = self.placement_order(chunk.len() as u64, |_| false);
         if order.len() < needed {
@@ -762,8 +776,10 @@ impl NativeEngine {
         Ok(ExtentRef {
             id: Uuid::new_v4().to_string(),
             logical_offset: 0,
-            len: chunk.len(),
+            payload_len: chunk.len(),
+            raw_len,
             checksum: checksum::sha256(chunk),
+            content,
             replicas,
             ec: None,
             created_ms: now_ms(),
@@ -777,6 +793,8 @@ impl NativeEngine {
         &self,
         scheme: EcScheme,
         chunk: &[u8],
+        raw_len: usize,
+        content: Option<[u8; 32]>,
         fence: u64,
         alloc: &inflight::Lease<'_>,
     ) -> Result<ExtentRef, NativeError> {
@@ -830,8 +848,10 @@ impl NativeEngine {
         Ok(ExtentRef {
             id: Uuid::new_v4().to_string(),
             logical_offset: 0,
-            len: chunk.len(),
+            payload_len: chunk.len(),
+            raw_len,
             checksum: checksum::sha256(chunk),
+            content,
             replicas: slots.into_iter().flatten().collect(),
             ec: Some(enc.layout),
             created_ms: now_ms(),
@@ -1044,7 +1064,7 @@ impl NativeEngine {
                 bad.push(r.clone());
                 continue;
             };
-            match device.read_exact_at(r.offset, ext.len) {
+            match device.read_exact_at(r.offset, ext.payload_len) {
                 Ok(buf) if checksum::verify(&buf, &ext.checksum) => {
                     st.bytes_read += buf.len() as u64;
                     self.mark_up(node);
@@ -1237,7 +1257,7 @@ impl NativeEngine {
             c.extents
                 .values()
                 .filter(|e| e.extent.object.is_some())
-                .fold((0u64, 0u64), |(n, b), e| (n + 1, b + e.extent.len as u64))
+                .fold((0u64, 0u64), |(n, b), e| (n + 1, b + e.extent.payload_len as u64))
         })?;
         let (applied, volumes, snapshots, extents, free_bytes, free_ranges, sessions, locks) = self
             .with_catalog(|c| {
@@ -1577,7 +1597,7 @@ impl NativeEngine {
             .into_iter()
             .filter_map(|ext| {
                 let start = ext.logical_offset.max(offset);
-                let stop = (ext.logical_offset + ext.len as u64).min(end);
+                let stop = (ext.logical_offset + ext.len() as u64).min(end);
                 (start < stop).then_some((ext, start, stop))
             })
             .collect();
@@ -1675,7 +1695,7 @@ impl NativeEngine {
                 r.insert(ext.id.clone(), now_ms());
             }
         }
-        match self.read_placed(ext) {
+        let payload = match self.read_placed(ext) {
             Err(NativeError::Checksum(id)) => {
                 let now = self.with_catalog(|c| c.extents.get(&id).map(|e| e.extent.clone()))?;
                 match now {
@@ -1684,7 +1704,11 @@ impl NativeEngine {
                 }
             }
             r => r,
+        }?;
+        if ext.raw_len > 0 {
+            return crate::compress::decompress(&payload, ext.raw_len);
         }
+        Ok(payload)
     }
 
     /// A tiered extent from its object.
@@ -1696,7 +1720,7 @@ impl NativeEngine {
             ))
         })?;
         let buf = store.get(key)?;
-        if buf.len() != ext.len || !checksum::verify(&buf, &ext.checksum) {
+        if buf.len() != ext.payload_len || !checksum::verify(&buf, &ext.checksum) {
             self.telemetry.checksum_failure();
             return Err(NativeError::Checksum(ext.id.clone()));
         }
@@ -1736,7 +1760,7 @@ impl NativeEngine {
             let Some(device) = node.devices.get(r.device_index) else {
                 continue;
             };
-            match device.read_exact_at(r.offset, ext.len) {
+            match device.read_exact_at(r.offset, ext.payload_len) {
                 Ok(buf) if checksum::verify(&buf, &ext.checksum) => {
                     self.mark_up(node);
                     if failed {
@@ -1794,7 +1818,7 @@ impl NativeEngine {
             }
         }
         let data = ec.rebuild_data(shards)?;
-        let out = ec.join(&data, ext.len);
+        let out = ec.join(&data, ext.payload_len);
         if !checksum::verify(&out, &ext.checksum) {
             self.telemetry.checksum_failure();
             return Err(NativeError::Checksum(ext.id.clone()));

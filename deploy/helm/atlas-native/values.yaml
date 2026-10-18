@@ -30,6 +30,10 @@ node:
   # pods). Empty: replicate every extent. Applies to extents written from then on.
   erasure: ""
   erasureMinBytes: 65536
+  # LZ4-compress new extents that shrink by at least 12.5% (docs/NATIVE_DATA_REDUCTION.md). Costs
+  # CPU on the write path; incompressible data is stored as is. Applies to extents written from
+  # then on; existing extents stay readable either way.
+  compression: false
   # Time between the starts of two scrub passes; 0 disables scrub and rebuild.
   repairIntervalSecs: 300
   # How long a pod must fail every request before its extents are rebuilt on other pods.

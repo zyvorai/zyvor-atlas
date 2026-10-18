@@ -265,8 +265,10 @@ fn replace_replica_rejects_invalid_moves() {
             extent: atlas_native::metadata::ExtentRef {
                 id: "e".into(),
                 logical_offset: 0,
-                len: 4096,
+                payload_len: 4096,
+                raw_len: 0,
                 checksum: [0; 32],
+                content: None,
                 replicas: vec![r("a", 0), r("b", 0)],
                 ec: None,
                 created_ms: 0,

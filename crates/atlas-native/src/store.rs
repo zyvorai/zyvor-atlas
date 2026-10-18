@@ -756,8 +756,10 @@ mod tests {
         ExtentRef {
             id: id.into(),
             logical_offset: 0,
-            len: 4096,
+            payload_len: 4096,
+            raw_len: 0,
             checksum: [7; 32],
+            content: None,
             replicas: vec![ReplicaRef {
                 node_id: "n1".into(),
                 device_index: 0,

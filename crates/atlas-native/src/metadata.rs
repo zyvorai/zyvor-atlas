@@ -28,8 +28,18 @@ pub struct ReplicaRef {
 pub struct ExtentRef {
     pub id: ExtentId,
     pub logical_offset: u64,
-    pub len: usize,
+    /// Bytes stored on the devices (the compressed payload when `raw_len` is non-zero).
+    #[serde(rename = "len")]
+    pub payload_len: usize,
+    /// Uncompressed length when the payload is LZ4-compressed; 0 = stored as is. Everything below
+    /// the engine's read path (devices, scrub, repair, tiering) works on the payload and
+    /// `checksum` covers the payload; only logical consumers use [`ExtentRef::len`].
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub raw_len: usize,
     pub checksum: [u8; 32],
+    /// SHA-256 of the logical bytes, set when they differ from the payload (compressed extents).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub content: Option<[u8; 32]>,
     /// Full copies; for an erasure-coded extent, shard `i` of `ec` is `replicas[i]`.
     pub replicas: Vec<ReplicaRef>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -47,10 +57,32 @@ fn is_zero(v: &u64) -> bool {
     *v == 0
 }
 
+fn is_zero_usize(v: &usize) -> bool {
+    *v == 0
+}
+
 impl ExtentRef {
+    /// Logical bytes the extent covers in its volume or file.
+    pub fn len(&self) -> usize {
+        if self.raw_len > 0 {
+            self.raw_len
+        } else {
+            self.payload_len
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// SHA-256 of the logical bytes (the payload checksum when nothing is compressed).
+    pub fn content_sha(&self) -> [u8; 32] {
+        self.content.unwrap_or(self.checksum)
+    }
+
     /// Bytes each replica (or shard) takes on its device.
     pub fn stored_len(&self) -> u64 {
-        self.ec.as_ref().map_or(self.len, |e| e.shard_len) as u64
+        self.ec.as_ref().map_or(self.payload_len, |e| e.shard_len) as u64
     }
 
     /// Checks an extent about to be installed: an erasure-coded one must match its layout, and
@@ -63,7 +95,7 @@ impl ExtentRef {
             )));
         }
         if let Some(ec) = &self.ec {
-            ec.check(self.len, self.replicas.len())?;
+            ec.check(self.payload_len, self.replicas.len())?;
             let mut nodes: Vec<&str> = self.replicas.iter().map(|r| r.node_id.as_str()).collect();
             nodes.sort_unstable();
             if nodes.windows(2).any(|w| w[0] == w[1]) {
@@ -628,7 +660,7 @@ impl Catalog {
         extents
             .values()
             .filter_map(|eid| self.extents.get(eid))
-            .map(|m| m.extent.logical_offset + m.extent.len as u64)
+            .map(|m| m.extent.logical_offset + m.extent.len() as u64)
             .max()
             .unwrap_or(0)
     }

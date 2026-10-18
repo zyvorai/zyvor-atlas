@@ -869,6 +869,16 @@ impl Ops {
     /// One whole extent from the first replica whose checksum verifies, or from the data shards
     /// of an erasure-coded one (a missing or bad shard falls back to the leader, which rebuilds).
     fn read_extent_direct(&self, d: &DirectReads, ext: &LayoutExtent) -> Result<Vec<u8>, String> {
+        let payload = self.read_payload_direct(d, ext)?;
+        if ext.payload_len > 0 {
+            return atlas_native::compress::decompress(&payload, ext.len).map_err(|e| e.to_string());
+        }
+        Ok(payload)
+    }
+
+    /// The bytes the devices hold for `ext`: its data, or its LZ4 payload when compressed.
+    fn read_payload_direct(&self, d: &DirectReads, ext: &LayoutExtent) -> Result<Vec<u8>, String> {
+        let stored = if ext.payload_len > 0 { ext.payload_len } else { ext.len };
         if let Some(ec) = &ext.ec {
             let mut out = Vec::with_capacity(ec.data * ec.shard_len);
             for (i, r) in ext.replicas.iter().take(ec.data).enumerate() {
@@ -885,7 +895,7 @@ impl Ops {
                 }
                 out.extend_from_slice(&shard);
             }
-            out.truncate(ext.len);
+            out.truncate(stored);
             if hex(&checksum::sha256(&out)) != ext.checksum {
                 return Err("erasure-coded extent checksum mismatch".into());
             }
@@ -901,7 +911,7 @@ impl Ops {
                 continue;
             };
             let dev = self.data_node(d, &r.node_id, endpoint, r.device_index)?;
-            match dev.read_exact_at(r.offset, ext.len) {
+            match dev.read_exact_at(r.offset, stored) {
                 Ok(buf) if hex(&checksum::sha256(&buf)) == ext.checksum => return Ok(buf),
                 Ok(_) => last = format!("checksum mismatch on {}", r.node_id),
                 Err(e) => last = format!("{}: {e}", r.node_id),

@@ -222,7 +222,7 @@ impl NativeEngine {
                 self.mark_pending(store, name)?;
                 refreshed = now_ms();
             }
-            let sha = hex(&ext.checksum);
+            let sha = hex(&ext.content_sha());
             let blob = self.blob_key(&sha);
             if have.contains(&blob) {
                 st.reused += 1;
@@ -237,7 +237,7 @@ impl NativeEngine {
             st.extents += 1;
             listed.push(ExportExtent {
                 logical_offset: ext.logical_offset,
-                len: ext.len,
+                len: ext.len(),
                 sha256: sha,
             });
             if !progress(st.extents, total) {

@@ -128,6 +128,10 @@ pub struct MetadataRole {
     pub erasure: Option<EcScheme>,
     #[serde(default = "default_erasure_min_bytes")]
     pub erasure_min_bytes: usize,
+    /// LZ4-compress new extents that shrink by at least 12.5% (before replication or erasure
+    /// coding). Existing extents stay as written and always remain readable.
+    #[serde(default)]
+    pub compression: bool,
     #[serde(default = "default_extent_bytes")]
     pub extent_bytes: usize,
     #[serde(default = "default_tick_ms")]
@@ -652,6 +656,7 @@ impl NativeNode {
                     ecfg.extent_bytes = m.extent_bytes;
                     ecfg.erasure = m.erasure;
                     ecfg.erasure_min_bytes = m.erasure_min_bytes;
+                    ecfg.compression = m.compression;
                     ecfg.catalog_cache_inodes = m.cache_inodes;
                     ecfg.catalog_cache_bytes = m.store_cache_bytes;
                     if let (Some(store), Some(t)) = (&objects, &m.tiering) {
