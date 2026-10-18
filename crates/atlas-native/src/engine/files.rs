@@ -191,6 +191,11 @@ fn attr(c: &Catalog, i: &Inode) -> Attr {
 }
 
 /// Snapshot views (`fs@snap`) only serve reads.
+/// Names the gateways reserve for their own bookkeeping (S3 temp files and upload state).
+fn is_internal_name(name: &str) -> bool {
+    name.starts_with(".atlas_")
+}
+
 fn writable(fs: &str) -> Result<(), NativeError> {
     if fs.contains('@') {
         return Err(NativeError::ReadOnly(format!("{fs} is a snapshot")));
@@ -439,7 +444,9 @@ impl NativeEngine {
             name: name.into(),
             now_ns: now_ns(),
         })?;
-        self.fs_activity.record_delete(fs);
+        if !is_internal_name(name) {
+            self.fs_activity.record_delete(fs);
+        }
         Ok(())
     }
 
@@ -472,7 +479,12 @@ impl NativeEngine {
             new_name: new_name.into(),
             now_ns: now_ns(),
         })?;
-        self.fs_activity.record_rename(fs);
+        // The S3 gateway writes every object to a `.atlas_*` temp file and renames it into place;
+        // that is how any PUT lands, not a rename of existing data, so it must not look like
+        // mass renaming.
+        if !is_internal_name(name) {
+            self.fs_activity.record_rename(fs);
+        }
         Ok(())
     }
 

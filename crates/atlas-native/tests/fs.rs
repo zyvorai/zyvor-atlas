@@ -360,3 +360,20 @@ fn filesystem_activity_counts_writes_renames_deletes_and_entropy() {
     assert!(e.fs_activity.samples("other").is_empty() || e.fs_activity.samples("other")[0].bytes_written == 0.0);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn gateway_temp_file_renames_do_not_count_as_mass_renaming() {
+    let (e, root) = engine("activity-internal");
+    e.create_fs_as("f".into(), "fs").unwrap();
+    for i in 0..20 {
+        let tmp = format!(".atlas_s3_tmp_{i}");
+        let ino = e.fs_mknode("f", ROOT_INO, node(&tmp, NodeType::File)).unwrap().ino;
+        e.write_file("f", ino, 0, b"object body").unwrap();
+        e.fs_rename("f", ROOT_INO, &tmp, ROOT_INO, &format!("obj{i}")).unwrap();
+    }
+    let renamed: f64 = e.fs_activity.samples("f").iter().map(|w| w.files_renamed).sum();
+    let modified: f64 = e.fs_activity.samples("f").iter().map(|w| w.files_modified).sum();
+    assert_eq!(renamed, 0.0);
+    assert!(modified >= 20.0, "S3-style writes are still seen as writes");
+    let _ = std::fs::remove_dir_all(root);
+}

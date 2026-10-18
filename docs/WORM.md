@@ -40,8 +40,10 @@ locked **filesystem snapshot**, which they cannot touch.
 filesystems Atlas records the series itself: per minute (kept four hours, in memory, on the node
 that served the operations) the files modified, renamed and deleted, bytes written, and the share
 of sampled written blocks with Shannon entropy above 7.5 bits per byte (encrypted or compressed
-data). Only filesystem operations through the native API (FUSE, NFS and SMB gateways) are counted;
-S3 writes are not yet.
+data). Every write through the native filesystem API is counted, which includes the S3 gateway
+(its writes reach the same API). Renames and deletes of `.atlas_*` names are not counted: the S3
+gateway lands each PUT as a temp file renamed into place, which would otherwise look like mass
+renaming.
 
 ```sh
 GET  /api/atlas/v1/volumes/{id}/ransomware            # operator; read-only verdict
