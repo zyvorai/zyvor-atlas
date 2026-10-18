@@ -133,6 +133,20 @@ fn snapshot_route(
             e.delete_fs_snapshot(id)?;
             Ok(Response::text(204, ""))
         }
+        ("POST", ["v1", "fs-snapshots", id, "lock"]) => {
+            let secs = body_json(req)
+                .ok()
+                .and_then(|b| b["retain_secs"].as_u64())
+                .filter(|s| *s > 0);
+            let Some(secs) = secs else {
+                return Ok(Response::text(
+                    400,
+                    "body must be {\"retain_secs\": positive integer}",
+                ));
+            };
+            let until = e.lock_fs_snapshot(id, secs)?;
+            Ok(Response::json(200, &json!({ "retain_until_unix": until })))
+        }
         ("GET", ["v1", "fs-snapshots", id, "diff"]) => {
             let after = match req.query.get("after") {
                 Some(a) => a.parse().map_err(|_| {

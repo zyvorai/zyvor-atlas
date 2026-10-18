@@ -306,3 +306,18 @@ fn filesystem_grid_is_its_own_and_survives_snapshot_and_clone() {
     assert_eq!(e.read_file("c", ino, 0, 64).unwrap(), model);
     let _ = std::fs::remove_dir_all(root);
 }
+
+#[test]
+fn locked_fs_snapshot_refuses_delete_and_only_extends() {
+    let (e, root) = engine("fs-worm");
+    e.create_fs_as("f".into(), "fs").unwrap();
+    e.snapshot_fs_as("s1".into(), "f", "s1").unwrap();
+
+    let until = e.lock_fs_snapshot("s1", 3600).unwrap();
+    assert!(e.delete_fs_snapshot("s1").is_err());
+    assert!(e.lock_fs_snapshot("s1", 10).is_err());
+    assert!(e.lock_fs_snapshot("s1", 7200).unwrap() > until);
+    assert!(e.delete_fs_snapshot("s1").is_err());
+    assert!(e.lock_fs_snapshot("nope", 60).is_err());
+    let _ = std::fs::remove_dir_all(root);
+}
