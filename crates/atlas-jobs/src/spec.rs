@@ -447,6 +447,15 @@ pub enum JobSpec {
         #[serde(default)]
         reserve_bytes: Option<u64>,
     },
+    /// `diskutil apfs resizeContainer` of an external APFS container.
+    #[serde(rename = "macos.container.resize")]
+    MacosContainerResize {
+        backend_id: String,
+        container: String,
+        /// Must equal `container` byte-for-byte.
+        confirmed_container: String,
+        size_bytes: u64,
+    },
     /// `diskutil apfs deleteVolume`; system-role volumes are refused.
     #[serde(rename = "macos.volume.delete")]
     MacosVolumeDelete {
@@ -554,6 +563,7 @@ impl JobSpec {
             JobSpec::MacosDiskErase { .. } => "macos.disk.erase",
             JobSpec::MacosVolumeAdd { .. } => "macos.volume.add",
             JobSpec::MacosVolumeDelete { .. } => "macos.volume.delete",
+            JobSpec::MacosContainerResize { .. } => "macos.container.resize",
             JobSpec::MacosDiskEject { .. } => "macos.disk.eject",
             JobSpec::RustfsDriveProvision { .. } => "rustfs.drive.provision",
             JobSpec::RustfsInstance { .. } => "rustfs.instance",

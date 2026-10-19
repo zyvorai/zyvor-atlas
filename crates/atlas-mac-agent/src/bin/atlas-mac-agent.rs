@@ -22,11 +22,11 @@ struct Cli {
     #[arg(long, env = "ATLAS_MAC_HOST")]
     host: Option<String>,
     /// Also report mounted disk images (tests only).
-    #[arg(long, env = "ATLAS_MAC_ALLOW_DISK_IMAGES")]
+    #[arg(long, env = "ATLAS_MAC_ALLOW_DISK_IMAGES", value_parser = clap::builder::BoolishValueParser::new(), num_args = 0..=1, default_missing_value = "true")]
     allow_disk_images: bool,
     /// Let the gateway erase, add/delete volumes and eject on this Mac. Needs a token; the refusals
     /// (internal disk, running system, system volumes) still apply and cannot be overridden.
-    #[arg(long, env = "ATLAS_MAC_ALLOW_WRITES")]
+    #[arg(long, env = "ATLAS_MAC_ALLOW_WRITES", value_parser = clap::builder::BoolishValueParser::new(), num_args = 0..=1, default_missing_value = "true")]
     allow_writes: bool,
     #[arg(long, env = "ATLAS_MAC_TLS_CERT")]
     tls_cert: Option<String>,

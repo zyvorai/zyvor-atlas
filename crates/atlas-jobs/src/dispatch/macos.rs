@@ -18,6 +18,7 @@ fn backend_of(spec: &JobSpec) -> Option<&str> {
         JobSpec::MacosDiskErase { backend_id, .. }
         | JobSpec::MacosVolumeAdd { backend_id, .. }
         | JobSpec::MacosVolumeDelete { backend_id, .. }
+        | JobSpec::MacosContainerResize { backend_id, .. }
         | JobSpec::MacosDiskEject { backend_id, .. } => Some(backend_id),
         _ => None,
     }
@@ -59,6 +60,11 @@ pub(crate) async fn dispatch_macos(pool: &AnyPool, spec: JobSpec) -> Result<serd
             anyhow::ensure!(device == confirmed_device, "device confirmation mismatch");
             let out = ops.delete_volume(&device).await?;
             ("delete_volume", device, out)
+        }
+        JobSpec::MacosContainerResize { container, confirmed_container, size_bytes, .. } => {
+            anyhow::ensure!(container == confirmed_container, "container confirmation mismatch");
+            let out = ops.resize_container(&container, size_bytes).await?;
+            ("resize_container", container, out)
         }
         JobSpec::MacosDiskEject { device, .. } => {
             let out = ops.eject(&device).await?;

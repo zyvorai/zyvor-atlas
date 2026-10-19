@@ -162,6 +162,32 @@ async fn lifecycle_runs_on_the_named_mac_and_its_refusals_hold() {
     assert_eq!(last["result"]["operation"], "erase");
     assert!(last["result"]["output"].as_str().unwrap().starts_with("fake: diskutil eraseDisk"));
 
+    // Resize: the boot container is refused (409); an external one is accepted and the job runs.
+    let (st, _) = call(
+        &c,
+        "POST",
+        format!("{base}/macos/containers/disk3/resize?{b}"),
+        Some(json!({ "size_bytes": 1u64 << 40, "confirm_device": "disk3" })),
+    )
+    .await;
+    assert_eq!(st, 409);
+    let (st, _) = call(
+        &c,
+        "POST",
+        format!("{base}/macos/containers/disk7/resize?{b}"),
+        Some(json!({ "size_bytes": 1u64 << 40, "confirm_device": "disk8" })),
+    )
+    .await;
+    assert_eq!(st, 400, "the container must be typed back");
+    let (st, body) = call(
+        &c,
+        "POST",
+        format!("{base}/macos/containers/disk7/resize?{b}"),
+        Some(json!({ "size_bytes": 1u64 << 40, "confirm_device": "disk7" })),
+    )
+    .await;
+    assert_eq!(st, 202, "{body}");
+
     // A bad name is a validation error from the agent, not a 5xx.
     let (st, _) = call(
         &c,

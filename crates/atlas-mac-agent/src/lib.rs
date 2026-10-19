@@ -4,7 +4,7 @@
 //! each agent as a backend (`ATLAS_MACOS_AGENTS`) and polls `GET /v1/discover`.
 //!
 //! Read-only unless the agent is built with [`router_with_ops`] (`ATLAS_MAC_ALLOW_WRITES=1`), which
-//! adds `GET /v1/devices` and `POST /v1/ops/{erase,add-volume,delete-volume,eject}`. The refusals
+//! adds `GET /v1/devices` and `POST /v1/ops/{erase,add-volume,delete-volume,resize-container,eject}`. The refusals
 //! (internal disk, running system, system volumes, disk images) run here, against this Mac's live
 //! layout, whatever the gateway believed; a body with `"dry_run": true` runs them and nothing else.
 //!
@@ -57,6 +57,7 @@ fn build(
             .route("/v1/ops/erase", post(erase))
             .route("/v1/ops/add-volume", post(add_volume))
             .route("/v1/ops/delete-volume", post(delete_volume))
+            .route("/v1/ops/resize-container", post(resize_container))
             .route("/v1/ops/eject", post(eject))
             .with_state(ops);
         app = app.merge(writes);
@@ -172,6 +173,24 @@ async fn add_volume(State(ops): Ops, Json(b): Json<AddVolumeBody>) -> Response {
     } else {
         tracing::info!(container = %b.container, "add volume requested");
         ops.add_volume(&b.container, &b.name, b.quota_bytes, b.reserve_bytes).await
+    };
+    done(r, b.dry_run)
+}
+
+#[derive(Deserialize)]
+struct ResizeBody {
+    container: String,
+    size_bytes: u64,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+async fn resize_container(State(ops): Ops, Json(b): Json<ResizeBody>) -> Response {
+    let r = if b.dry_run {
+        ops.check_resize_container(&b.container, b.size_bytes).await.map(|()| String::new())
+    } else {
+        tracing::info!(container = %b.container, size_bytes = b.size_bytes, "resize requested");
+        ops.resize_container(&b.container, b.size_bytes).await
     };
     done(r, b.dry_run)
 }

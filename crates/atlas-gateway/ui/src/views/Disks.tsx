@@ -10,6 +10,7 @@ import { Badge, FormModal, type FormField } from "../ui/kit";
 import { Table } from "../ui/Table";
 import { ListPage } from "../ui/templates/ListPage";
 import { navCrumbs } from "../nav/routes";
+import MacDisks from "./MacDisks";
 import { fmtBytes, stateKind, timeAgo } from "../lib/format";
 
 const JOB_TYPES = new Set([
@@ -144,6 +145,7 @@ export default function Disks({ embedded = false }: { embedded?: boolean }) {
 
   const content = (
     <>
+      <MacDisks />
       <Table
         soundings
         panelTitle="ZFS pools on this host"

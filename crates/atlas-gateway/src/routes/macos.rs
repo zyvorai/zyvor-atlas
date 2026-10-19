@@ -174,6 +174,41 @@ pub(crate) async fn add_macos_volume(
 }
 
 #[derive(Debug, Deserialize)]
+pub(crate) struct ResizeBody {
+    size_bytes: u64,
+    /// The container typed again by the operator; must equal the one in the path.
+    confirm_device: String,
+}
+
+/// `POST /macos/containers/{container}/resize` — `diskutil apfs resizeContainer` on an external
+/// container. Shrinking cannot go below what the container holds.
+pub(crate) async fn resize_macos_container(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(container): Path<String>,
+    Query(q): Query<BackendQuery>,
+    Json(b): Json<ResizeBody>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    admin(&s, &actor)?;
+    if b.confirm_device != container {
+        return Err(AppError::Validation("confirm_device must equal the container".into()));
+    }
+    let (backend, ops) = ops(&q)?;
+    ops.check_resize_container(&container, b.size_bytes).await.map_err(map_check)?;
+    let spec = JobSpec::MacosContainerResize {
+        backend_id: backend.clone(),
+        container: container.clone(),
+        confirmed_container: b.confirm_device,
+        size_bytes: b.size_bytes,
+    };
+    enqueue(
+        &s, &actor, spec, "macos.container.resize.requested", "container", &container,
+        json!({ "size_bytes": b.size_bytes, "backend": backend }),
+    )
+    .await
+}
+
+#[derive(Debug, Deserialize)]
 pub(crate) struct ConfirmDeviceBody {
     confirm_device: String,
 }

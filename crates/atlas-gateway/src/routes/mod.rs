@@ -164,6 +164,7 @@ pub fn router(state: AppState) -> Router {
         .route("/macos/disks/erase", post(erase_macos_disk))
         .route("/macos/disks/{device}/eject", post(eject_macos_disk))
         .route("/macos/containers/{container}/volumes", post(add_macos_volume))
+        .route("/macos/containers/{container}/resize", post(resize_macos_container))
         .route("/macos/volumes/{device}/delete", post(delete_macos_volume))
         .route("/zfs/devices", get(list_zfs_devices))
         .route("/zfs/pools/from-device", post(create_zfs_pool_from_device))

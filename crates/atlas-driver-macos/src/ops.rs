@@ -1,6 +1,7 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: Apache-2.0
-//! Volume lifecycle on a Mac's **external** disks: erase a disk, add/delete an APFS volume, eject.
+//! Volume lifecycle on a Mac's **external** disks: erase a disk, add/delete an APFS volume, resize a
+//! container, eject.
 //!
 //! Every operation first inspects the live layout and runs a pure refusal function over it. The
 //! refusals are hard: nothing in the request can override them, and the gateway job runs them again
@@ -166,6 +167,35 @@ pub fn refuse_add_volume(
     refuse_disk(whole, info, layout, allow_disk_images)
 }
 
+/// May APFS container `container` be resized to `size_bytes`? The disk rules are those of adding a
+/// volume; on top, the new size may not be below what the container already holds (`diskutil` would
+/// refuse too, but Atlas says so before running anything). Growing past the physical store is left to
+/// `diskutil`, whose error is passed on.
+pub fn refuse_resize_container(
+    container: &str,
+    size_bytes: u64,
+    infos: &HashMap<String, DiskInfo>,
+    layout: &Layout,
+    allow_disk_images: bool,
+) -> Result<(), String> {
+    refuse_add_volume(container, infos, layout, allow_disk_images)?;
+    let c = container_of(layout, container)
+        .ok_or_else(|| format!("{container} is not an APFS container"))?;
+    let used = u64::try_from((c.ceiling - c.free).max(0)).unwrap_or(0);
+    if size_bytes < MIN_CONTAINER_BYTES {
+        return Err(format!("size_bytes must be at least {MIN_CONTAINER_BYTES}"));
+    }
+    if size_bytes < used {
+        return Err(format!(
+            "{container} already holds {used} bytes; it cannot be resized to {size_bytes}"
+        ));
+    }
+    Ok(())
+}
+
+/// APFS containers below this are not useful and `diskutil` rejects most of them.
+pub const MIN_CONTAINER_BYTES: u64 = 64 << 20;
+
 /// May APFS volume `volume` (`disk5s2`) be deleted? Returns the volume.
 pub fn refuse_delete_volume<'a>(
     volume: &str,
@@ -221,6 +251,10 @@ pub fn add_volume_args(
 
 pub fn delete_volume_args(volume: &str) -> Vec<String> {
     ["apfs", "deleteVolume", volume].map(String::from).to_vec()
+}
+
+pub fn resize_container_args(container: &str, size_bytes: u64) -> Vec<String> {
+    ["apfs", "resizeContainer", container, &format!("{size_bytes}B")].map(String::from).to_vec()
 }
 
 pub fn eject_args(whole: &str) -> Vec<String> {
@@ -310,6 +344,16 @@ impl MacosOps {
             .map_err(Self::refused)
     }
 
+    pub async fn check_resize_container(
+        &self,
+        container: &str,
+        size_bytes: u64,
+    ) -> Result<(), DriverError> {
+        let (layout, infos) = self.snapshot().await?;
+        refuse_resize_container(container, size_bytes, &infos, &layout, self.allow_disk_images)
+            .map_err(Self::refused)
+    }
+
     pub async fn check_eject(&self, whole: &str) -> Result<(), DriverError> {
         let (layout, infos) = self.snapshot().await?;
         let info = infos
@@ -337,6 +381,15 @@ impl MacosOps {
     pub async fn delete_volume(&self, volume: &str) -> Result<String, DriverError> {
         self.check_delete_volume(volume).await?;
         self.run(delete_volume_args(volume)).await
+    }
+
+    pub async fn resize_container(
+        &self,
+        container: &str,
+        size_bytes: u64,
+    ) -> Result<String, DriverError> {
+        self.check_resize_container(container, size_bytes).await?;
+        self.run(resize_container_args(container, size_bytes)).await
     }
 
     pub async fn eject(&self, whole: &str) -> Result<String, DriverError> {
@@ -380,6 +433,8 @@ pub trait Lifecycle: Send + Sync {
     async fn check_add_volume(&self, container: &str, name: &str) -> Result<(), DriverError>;
     async fn check_delete_volume(&self, volume: &str) -> Result<(), DriverError>;
     async fn check_eject(&self, whole: &str) -> Result<(), DriverError>;
+    async fn check_resize_container(&self, container: &str, size_bytes: u64) -> Result<(), DriverError>;
+    async fn resize_container(&self, container: &str, size_bytes: u64) -> Result<String, DriverError>;
     async fn erase_disk(&self, whole: &str, name: &str) -> Result<String, DriverError>;
     async fn add_volume(
         &self,
@@ -408,6 +463,12 @@ impl Lifecycle for MacosOps {
     }
     async fn check_eject(&self, whole: &str) -> Result<(), DriverError> {
         MacosOps::check_eject(self, whole).await
+    }
+    async fn check_resize_container(&self, container: &str, size_bytes: u64) -> Result<(), DriverError> {
+        MacosOps::check_resize_container(self, container, size_bytes).await
+    }
+    async fn resize_container(&self, container: &str, size_bytes: u64) -> Result<String, DriverError> {
+        MacosOps::resize_container(self, container, size_bytes).await
     }
     async fn erase_disk(&self, whole: &str, name: &str) -> Result<String, DriverError> {
         MacosOps::erase_disk(self, whole, name).await
@@ -469,6 +530,26 @@ mod tests {
         assert!(refuse_eject("disk6", &i["disk6"], &l, false).is_ok());
         assert!(refuse_add_volume("disk7", &i, &l, false).is_ok());
         assert_eq!(refuse_delete_volume("disk7s2", &i, &l, false).unwrap().name, "Scratch");
+    }
+
+    #[test]
+    fn resize_follows_the_disk_rules_and_never_goes_below_what_is_held() {
+        let (l, i) = state();
+        // The boot container and anything internal are refused whatever the size.
+        assert!(refuse_resize_container("disk3", 1 << 40, &i, &l, true).is_err());
+        // The external container: a sane size passes, below the floor or below what it holds does not.
+        let c = l.containers.iter().find(|c| c.reference == "disk7").unwrap();
+        let used = (c.ceiling - c.free) as u64;
+        assert!(refuse_resize_container("disk7", c.ceiling as u64, &i, &l, false).is_ok());
+        assert!(refuse_resize_container("disk7", 1 << 20, &i, &l, false).unwrap_err().contains("at least"));
+        if used > MIN_CONTAINER_BYTES {
+            assert!(refuse_resize_container("disk7", used - 1, &i, &l, false).unwrap_err().contains("already holds"));
+        }
+        assert!(refuse_resize_container("disk99", 1 << 30, &i, &l, false).is_err());
+        assert_eq!(
+            resize_container_args("disk7", 1 << 30),
+            ["apfs", "resizeContainer", "disk7", "1073741824B"].map(String::from).to_vec()
+        );
     }
 
     #[test]

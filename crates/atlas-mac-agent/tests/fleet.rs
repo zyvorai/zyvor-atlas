@@ -150,6 +150,19 @@ async fn refusals_come_back_from_the_agent_and_cannot_be_dry_run_around() {
 }
 
 #[tokio::test]
+async fn resize_is_refused_on_the_boot_container_and_runs_on_an_external_one() {
+    let url = writable_agent("s3cret").await;
+    let ops = remote(&url, Some("s3cret")).ops();
+    assert!(matches!(
+        ops.resize_container("disk3", 1 << 40).await,
+        Err(DriverError::Backend(m)) if m.starts_with("refused: ")
+    ));
+    ops.check_resize_container("disk7", 1 << 40).await.unwrap_or_else(|e| panic!("{e}"));
+    let out = ops.resize_container("disk7", 1 << 40).await.unwrap();
+    assert!(out.starts_with("fake: diskutil apfs resizeContainer disk7 1099511627776B"), "{out}");
+}
+
+#[tokio::test]
 async fn an_allowed_operation_runs_on_the_agent() {
     let url = writable_agent("s3cret").await;
     let ops = remote(&url, Some("s3cret")).ops();

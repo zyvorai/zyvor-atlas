@@ -53,6 +53,7 @@ Admin only, local to the Mac the gateway runs on, each operation a job with an a
 | `GET /macos/devices` | Whole disks; `erase_refusal` says why Atlas would not erase one. |
 | `POST /macos/disks/erase` `{device, confirm_device, name}` | `diskutil eraseDisk APFS <name> GPT <device>` |
 | `POST /macos/containers/{container}/volumes` `{name, quota_bytes?, reserve_bytes?}` | `diskutil apfs addVolume` |
+| `POST /macos/containers/{container}/resize` `{size_bytes, confirm_device}` | `diskutil apfs resizeContainer` (grow or shrink; never below what the container holds, at least 64 MiB) |
 | `POST /macos/volumes/{device}/delete` `{confirm_device}` | `diskutil apfs deleteVolume` |
 | `POST /macos/disks/{device}/eject` | `diskutil eject` |
 
@@ -73,8 +74,10 @@ that no request field can override:
 - mounted disk images, unless `ATLAS_MACOS_ALLOW_DISK_IMAGES=1` (for throwaway test images);
 - identifiers that are not exactly `diskN` / `diskNsM`.
 
-In fake mode the same checks run against the recorded fixtures and nothing is executed. Local snapshots,
-container resize and a UI page are not part of this slice.
+In fake mode the same checks run against the recorded fixtures and nothing is executed. The Disks page in the console has a
+Mac section (erase, add volume, resize, eject; the target is typed back for destructive actions). Local snapshots
+are not offered: `diskutil apfs` can list and delete snapshots but not create one for a volume, and the only creator
+(`tmutil localsnapshot`) snapshots the whole system.
 
 ## A fleet of Macs
 
@@ -120,13 +123,20 @@ erase an internal or system disk. A body with `"dry_run": true` runs the refusal
 that for its fast 409, and a refusal reaches the caller as 409, a bad name as 400, an unreachable agent as 503.
 Device ids belong to each Mac (`disk4` on one is not `disk4` on another), which is why the backend must be named.
 
-Verified against an in-process agent with fixture data and fake ops (nothing executed): refusals, auth, job
-dispatch, audit. Not yet run against a real Mac's `diskutil` through an agent.
+Verified two ways. Against an in-process agent with fixture data and fake ops: refusals, auth, job dispatch,
+audit. And on a real Mac (macOS 27.2, 2026-10-19), the agent in `real` mode with writes on, against a throwaway
+2 GB disk image: the internal disk, the boot container and a system volume were refused (409); on the image,
+`addVolume` with a quota, `deleteVolume`, `resizeContainer` (shrink to 1 GB and back to 2 GB, with diskutil's own
+fsck passing), `eraseDisk` and `eject` all worked, and a too-small container surfaced diskutil's own error
+(-69493) as a 400. Not verified: a second Mac over the network with TLS, a physical external drive, and the console
+page against a live gateway (it has component tests only).
+
+`ATLAS_MAC_ALLOW_WRITES` and `ATLAS_MAC_ALLOW_DISK_IMAGES` accept `1`/`true`/`yes`.
 
 ## Roadmap
 
 1. Read-only discovery.
 2. Volume lifecycle with hard refusals: erase, add/delete volumes, eject (this document). Still to come:
    container resize, local snapshots, a Disks page.
-3. A Mac agent and a remote driver (read-only above, lifecycle behind `ATLAS_MAC_ALLOW_WRITES`). Still to come: container resize, local snapshots, a Disks page.
+3. A Mac agent and a remote driver (read-only above, lifecycle behind `ATLAS_MAC_ALLOW_WRITES`). Container resize and a Disks page are in. Still to come: local snapshots (see above).
 4. Macs as clients of Atlas storage: NFS/SMB mounts and `atlasctl` are documented in [`MACOS_CLIENT.md`](MACOS_CLIENT.md); the native FUSE mount is a no-go until a spike on a Mac says otherwise.

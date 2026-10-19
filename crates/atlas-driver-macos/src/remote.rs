@@ -203,6 +203,15 @@ impl Lifecycle for RemoteMacosOps {
     async fn check_delete_volume(&self, volume: &str) -> Result<(), DriverError> {
         self.op("delete-volume", serde_json::json!({ "device": volume }), true).await.map(drop)
     }
+    async fn check_resize_container(&self, container: &str, size_bytes: u64) -> Result<(), DriverError> {
+        self.op("resize-container", serde_json::json!({ "container": container, "size_bytes": size_bytes }), true)
+            .await
+            .map(drop)
+    }
+    async fn resize_container(&self, container: &str, size_bytes: u64) -> Result<String, DriverError> {
+        self.op("resize-container", serde_json::json!({ "container": container, "size_bytes": size_bytes }), false)
+            .await
+    }
     async fn check_eject(&self, whole: &str) -> Result<(), DriverError> {
         self.op("eject", serde_json::json!({ "device": whole }), true).await.map(drop)
     }
