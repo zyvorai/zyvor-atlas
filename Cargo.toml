@@ -28,6 +28,7 @@ members = [
     "crates/atlas-native-csi",
     "crates/atlas-native-s3",
     "crates/atlasctl",
+    "crates/atlas-client",
 ]
 resolver = "2"
 
@@ -41,6 +42,7 @@ authors = ["ZyvorAI Labs Private Limited"]
 # Internal crates
 atlas-common = { path = "crates/atlas-common" }
 atlas-api-types = { path = "crates/atlas-api-types" }
+atlas-client = { path = "crates/atlas-client" }
 atlas-driver-core = { path = "crates/atlas-driver-core" }
 atlas-driver-ceph = { path = "crates/atlas-driver-ceph" }
 atlas-driver-nfs = { path = "crates/atlas-driver-nfs" }

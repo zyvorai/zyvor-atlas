@@ -1,0 +1,20 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+[package]
+name = "atlas-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Typed client for the Atlas REST API, for Zyvor products"
+
+[dependencies]
+atlas-api-types = { workspace = true }
+reqwest = { workspace = true, features = ["query"] }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+axum = { workspace = true }
