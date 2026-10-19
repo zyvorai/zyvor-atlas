@@ -28,7 +28,7 @@ async fn status(app: axum::Router, uri: &str, auth: Option<&str>) -> StatusCode 
 #[tokio::test]
 async fn token_gates_everything_but_health() {
     let app = router_with_token(collector(), Some("s3cret-token".into()));
-    for uri in ["/io/rca", "/io/risk", "/io/histograms", "/metrics", "/io/leases"] {
+    for uri in ["/io/rca", "/io/risk", "/io/histograms", "/io/heatmap", "/metrics", "/io/leases"] {
         assert_eq!(status(app.clone(), uri, None).await, StatusCode::UNAUTHORIZED, "{uri}");
         assert_eq!(
             status(app.clone(), uri, Some("Bearer wrong")).await,

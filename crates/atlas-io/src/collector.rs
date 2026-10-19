@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use atlas_api_types::{BioEvent, IoHistogram, IoNative, IoRca, IoSensorHealth, IoWorkload};
 
 use crate::devmap::DeviceMap;
+use crate::heat::{HeatSet, IoHeatmap};
 use crate::hist::HistSet;
 use crate::lease::LeaseTable;
 use crate::rca;
@@ -28,6 +29,7 @@ struct Inner {
     source: Box<dyn IoSource>,
     map: DeviceMap,
     hist: HistSet,
+    heat: HeatSet,
     work: HashMap<(u64, u32, u64), WorkAcc>,
     leases: LeaseTable,
     seen: u64,
@@ -44,6 +46,7 @@ impl Collector {
                 source,
                 map,
                 hist: HistSet::default(),
+                heat: HeatSet::default(),
                 work: HashMap::new(),
                 leases: LeaseTable::default(),
                 seen: 0,
@@ -54,9 +57,11 @@ impl Collector {
     pub fn poll(&self) {
         let mut g = self.inner.lock().expect("collector lock");
         let evs = g.source.poll_events();
+        let now = unix_now();
         for ev in evs {
             g.seen += 1;
             g.hist.record(&ev);
+            g.heat.record(&ev, now);
             Self::record_work(&mut g, &ev);
         }
     }
@@ -89,6 +94,16 @@ impl Collector {
     pub fn histograms(&self) -> Vec<IoHistogram> {
         let g = self.inner.lock().expect("collector lock");
         g.hist.snapshots(|maj, min| {
+            let b = g.map.resolve(maj, min);
+            (b.name, b.volume_id)
+        })
+    }
+
+    /// Per-minute latency columns from the last `minutes` minutes.
+    pub fn heatmap(&self, minutes: u64) -> Vec<IoHeatmap> {
+        let g = self.inner.lock().expect("collector lock");
+        let since = unix_now().saturating_sub(minutes.saturating_mul(crate::heat::COLUMN_SECS));
+        g.heat.snapshots(since, |maj, min| {
             let b = g.map.resolve(maj, min);
             (b.name, b.volume_id)
         })
@@ -164,6 +179,12 @@ impl Collector {
     pub fn seen(&self) -> u64 {
         self.inner.lock().expect("collector lock").seen
     }
+}
+
+fn unix_now() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_secs())
 }
 
 #[cfg(test)]

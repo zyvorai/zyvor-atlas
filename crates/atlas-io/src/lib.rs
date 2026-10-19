@@ -14,6 +14,7 @@
 pub mod bpf;
 pub mod collector;
 pub mod devmap;
+pub mod heat;
 pub mod hist;
 pub mod http;
 pub mod lease;
