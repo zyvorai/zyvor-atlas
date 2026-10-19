@@ -35,7 +35,7 @@ spec:
       hostPID: false
       containers:
         - name: agent
-          image: ghcr.io/zyvorai/atlas-io-agent:0.6.0
+          image: ghcr.io/zyvorai/atlas-io-agent:0.8.0
           imagePullPolicy: IfNotPresent
           args: ["--bind", "0.0.0.0:5111", "--mode", "fake"]
           env:
