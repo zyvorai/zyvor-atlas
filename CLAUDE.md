@@ -123,6 +123,14 @@ native filesystems record per-minute activity windows (writes, renames, deletes,
 snapshots + locks); `ATLAS_RANSOMWARE_AUTOPROTECT=1` automates it for `likely_ransomware` only.
 Unit/integration tested; snapshot locks verified live on the lab native cluster (2026-10-18); activity/protect/S3 retention and a real encrypting workload not yet.
 
+**Data reduction** (`docs/NATIVE_DATA_REDUCTION.md`): atlas-native has opt-in LZ4 compression
+(`compression`) and extent deduplication (`dedup`) in the metadata config; `GET /v1/reduction`
+reports the savings. The checksum covers the stored payload, so scrub/repair/tiering/EC are
+unchanged; the dedup index is only a hint, validated at apply time (a stale share is redone
+unshared). Shared extents can sit at different offsets per reference, so consumers must use the
+map offset. Unit/integration tested; not yet run on the lab, no throughput/CPU numbers, no
+gateway/`atlasctl` surface for the report.
+
 **Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor
 Production License v1.0 at the maintainer's explicit request — history in
 [`docs/LICENSING.md`](docs/LICENSING.md)). Don't weaken or remove license notices,
