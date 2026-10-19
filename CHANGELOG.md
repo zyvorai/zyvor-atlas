@@ -9,6 +9,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.9.0] — 2026-10-19
+
 ### Added
 
 - macOS lifecycle on a remote Mac through its agent: `?backend=bkd_macos_<name>` on the `/macos/*` routes, agent
