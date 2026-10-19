@@ -68,6 +68,32 @@ export const useTenantPolicies = (id: string) =>
 export const useCephMetrics = (prefix?: string) =>
   useApiQuery<MetricSample[]>(["cephMetrics", prefix], `/metrics/ceph${prefix ? "?prefix=" + prefix : ""}`, 8000);
 export const usePolicies = () => useApiQuery<any[]>(["policies"], "/policies", 60000);
+export type MacDevice = {
+  device: string;
+  internal: boolean;
+  bus: string | null;
+  media_name: string | null;
+  smart: string | null;
+  disk_image: boolean;
+  containers: string[];
+  erase_refusal: string | null;
+};
+/** Whole disks of one Mac backend (`bkd_macos` or an agent's `bkd_macos_<name>`). */
+export const useMacDevices = (backend?: string) =>
+  useApiQuery<MacDevice[]>(
+    ["macos-devices", backend],
+    `/macos/devices?backend=${encodeURIComponent(backend ?? "")}`,
+    15000,
+    !!backend,
+  );
+/** Local snapshot dates of one Mac backend (the Mac as a whole; macOS has no per-volume ones). */
+export const useMacSnapshots = (backend?: string) =>
+  useApiQuery<string[]>(
+    ["macos-snapshots", backend],
+    `/macos/snapshots?backend=${encodeURIComponent(backend ?? "")}`,
+    15000,
+    !!backend,
+  );
 export const useBackends = () => useApiQuery<any[]>(["backends"], "/backends", 20000);
 export const useBackendsSummary = () => useApiQuery<any[]>(["backends-summary"], "/backends/summary", 15000);
 

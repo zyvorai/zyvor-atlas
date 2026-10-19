@@ -15,6 +15,7 @@ atlas-driver-k8s = { workspace = true }
 atlas-driver-rgw = { workspace = true }
 atlas-driver-ceph = { workspace = true }
 atlas-driver-zfs = { workspace = true }
+atlas-driver-core = { workspace = true }
 atlas-driver-macos = { workspace = true }
 atlas-discovery = { workspace = true }
 atlas-databridge = { workspace = true }
