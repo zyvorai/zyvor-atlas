@@ -412,6 +412,11 @@ impl NativeApi for HttpApi {
             .ok_or_else(|| DriverError::Parse(format!("{path}: missing samples")))
     }
 
+    async fn reduction(&self) -> Result<Value, DriverError> {
+        let b = self.call(Method::GET, "/v1/reduction", None).await?;
+        serde_json::from_slice(&b).map_err(|e| DriverError::Parse(format!("/v1/reduction: {e}")))
+    }
+
     async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
         let path = format!("/v1/snapshots/{}/lock", path_id(id)?);
         self.lock_call(&path, retain_secs).await
