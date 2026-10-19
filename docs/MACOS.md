@@ -75,9 +75,12 @@ that no request field can override:
 - identifiers that are not exactly `diskN` / `diskNsM`.
 
 In fake mode the same checks run against the recorded fixtures and nothing is executed. The Disks page in the console has a
-Mac section (erase, add volume, resize, eject; the target is typed back for destructive actions). Local snapshots
-are not offered: `diskutil apfs` can list and delete snapshots but not create one for a volume, and the only creator
-(`tmutil localsnapshot`) snapshots the whole system.
+Mac section (erase, add volume, resize, eject; the target is typed back for destructive actions). Local snapshots are of the **Mac as a
+whole**, not of a volume: `diskutil apfs` cannot create one, and the only creator is `tmutil localsnapshot`. They are
+purgeable, so macOS removes them when it needs the space. `GET /macos/snapshots` lists the dates, `POST /macos/snapshots`
+creates one (a job), and `POST /macos/snapshots/{date}/delete` `{confirm_device: <date>}` deletes one; only a date
+`tmutil` currently lists is accepted, so a bad or stale date is refused before anything runs. This can also delete a
+snapshot Time Machine or macOS made.
 
 ## A fleet of Macs
 
@@ -127,8 +130,8 @@ Verified two ways. Against an in-process agent with fixture data and fake ops: r
 audit. And on a real Mac (macOS 27.2, 2026-10-19), the agent in `real` mode with writes on, against a throwaway
 2 GB disk image: the internal disk, the boot container and a system volume were refused (409); on the image,
 `addVolume` with a quota, `deleteVolume`, `resizeContainer` (shrink to 1 GB and back to 2 GB, with diskutil's own
-fsck passing), `eraseDisk` and `eject` all worked, and a too-small container surfaced diskutil's own error
-(-69493) as a 400. Not verified: a second Mac over the network with TLS, a physical external drive, and the console
+fsck passing), `eraseDisk` and `eject` all worked, a local snapshot was created, listed and deleted, and a too-small container surfaced diskutil's own error
+(-69493) as a 400. Not verified: snapshot restore (not offered), a second Mac over the network with TLS, a physical external drive, and the console
 page against a live gateway (it has component tests only).
 
 `ATLAS_MAC_ALLOW_WRITES` and `ATLAS_MAC_ALLOW_DISK_IMAGES` accept `1`/`true`/`yes`.
@@ -138,5 +141,5 @@ page against a live gateway (it has component tests only).
 1. Read-only discovery.
 2. Volume lifecycle with hard refusals: erase, add/delete volumes, eject (this document). Still to come:
    container resize, local snapshots, a Disks page.
-3. A Mac agent and a remote driver (read-only above, lifecycle behind `ATLAS_MAC_ALLOW_WRITES`). Container resize and a Disks page are in. Still to come: local snapshots (see above).
+3. A Mac agent and a remote driver (read-only above, lifecycle behind `ATLAS_MAC_ALLOW_WRITES`). Container resize, local snapshots (Mac-wide) and a Disks page are in.
 4. Macs as clients of Atlas storage: NFS/SMB mounts and `atlasctl` are documented in [`MACOS_CLIENT.md`](MACOS_CLIENT.md); the native FUSE mount is a no-go until a spike on a Mac says otherwise.

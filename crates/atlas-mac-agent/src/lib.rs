@@ -54,6 +54,9 @@ fn build(
     if let Some(ops) = ops {
         let writes = Router::new()
             .route("/v1/devices", get(devices))
+            .route("/v1/snapshots", get(snapshots))
+            .route("/v1/ops/snapshot-create", post(snapshot_create))
+            .route("/v1/ops/snapshot-delete", post(snapshot_delete))
             .route("/v1/ops/erase", post(erase))
             .route("/v1/ops/add-volume", post(add_volume))
             .route("/v1/ops/delete-volume", post(delete_volume))
@@ -173,6 +176,45 @@ async fn add_volume(State(ops): Ops, Json(b): Json<AddVolumeBody>) -> Response {
     } else {
         tracing::info!(container = %b.container, "add volume requested");
         ops.add_volume(&b.container, &b.name, b.quota_bytes, b.reserve_bytes).await
+    };
+    done(r, b.dry_run)
+}
+
+async fn snapshots(State(ops): Ops) -> Response {
+    match ops.list_local_snapshots().await {
+        Ok(d) => Json(d).into_response(),
+        Err(e) => op_fail(e),
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct SnapshotCreateBody {
+    #[serde(default)]
+    dry_run: bool,
+}
+
+async fn snapshot_create(State(ops): Ops, body: Option<Json<SnapshotCreateBody>>) -> Response {
+    let dry_run = body.is_some_and(|Json(b)| b.dry_run);
+    if dry_run {
+        return done(Ok(String::new()), true);
+    }
+    tracing::info!("local snapshot requested");
+    done(ops.create_local_snapshot().await, false)
+}
+
+#[derive(Deserialize)]
+struct SnapshotDeleteBody {
+    date: String,
+    #[serde(default)]
+    dry_run: bool,
+}
+
+async fn snapshot_delete(State(ops): Ops, Json(b): Json<SnapshotDeleteBody>) -> Response {
+    let r = if b.dry_run {
+        ops.check_delete_local_snapshot(&b.date).await.map(|()| String::new())
+    } else {
+        tracing::info!(date = %b.date, "local snapshot delete requested");
+        ops.delete_local_snapshot(&b.date).await
     };
     done(r, b.dry_run)
 }

@@ -447,6 +447,17 @@ pub enum JobSpec {
         #[serde(default)]
         reserve_bytes: Option<u64>,
     },
+    /// `tmutil localsnapshot`: a local snapshot of the Mac (not per volume).
+    #[serde(rename = "macos.snapshot.create")]
+    MacosSnapshotCreate { backend_id: String },
+    /// `tmutil deletelocalsnapshots <date>`; only a date `tmutil` lists is accepted.
+    #[serde(rename = "macos.snapshot.delete")]
+    MacosSnapshotDelete {
+        backend_id: String,
+        date: String,
+        /// Must equal `date` byte-for-byte.
+        confirmed_date: String,
+    },
     /// `diskutil apfs resizeContainer` of an external APFS container.
     #[serde(rename = "macos.container.resize")]
     MacosContainerResize {
@@ -564,6 +575,8 @@ impl JobSpec {
             JobSpec::MacosVolumeAdd { .. } => "macos.volume.add",
             JobSpec::MacosVolumeDelete { .. } => "macos.volume.delete",
             JobSpec::MacosContainerResize { .. } => "macos.container.resize",
+            JobSpec::MacosSnapshotCreate { .. } => "macos.snapshot.create",
+            JobSpec::MacosSnapshotDelete { .. } => "macos.snapshot.delete",
             JobSpec::MacosDiskEject { .. } => "macos.disk.eject",
             JobSpec::RustfsDriveProvision { .. } => "rustfs.drive.provision",
             JobSpec::RustfsInstance { .. } => "rustfs.instance",

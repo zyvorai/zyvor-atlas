@@ -76,6 +76,8 @@ pub(crate) async fn dispatch(
         | JobSpec::MacosVolumeAdd { .. }
         | JobSpec::MacosVolumeDelete { .. }
         | JobSpec::MacosContainerResize { .. }
+        | JobSpec::MacosSnapshotCreate { .. }
+        | JobSpec::MacosSnapshotDelete { .. }
         | JobSpec::MacosDiskEject { .. } => macos::dispatch_macos(pool, spec).await,
         JobSpec::S3BackendSelfTest { .. } => selftest::dispatch_selftest(pool, k8s, spec).await,
         JobSpec::SourceDiscover { .. }

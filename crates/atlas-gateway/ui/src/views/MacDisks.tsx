@@ -6,7 +6,7 @@
 // obviously-refused actions out of reach and makes the destructive ones type the target back.
 import { useState } from "react";
 import { submitJob } from "../api/client";
-import { useBackends, useInvalidate, useMacDevices, type MacDevice } from "../api/hooks";
+import { useBackends, useInvalidate, useMacDevices, useMacSnapshots, type MacDevice } from "../api/hooks";
 import { Badge, FormModal, type FormField } from "../ui/kit";
 import { Table } from "../ui/Table";
 
@@ -14,7 +14,8 @@ type Action =
   | { kind: "erase"; device: string }
   | { kind: "eject"; device: string }
   | { kind: "add"; container: string }
-  | { kind: "resize"; container: string };
+  | { kind: "resize"; container: string }
+  | { kind: "snap-delete"; date: string };
 
 const GIB = 2 ** 30;
 
@@ -35,12 +36,13 @@ export default function MacDisks() {
   const [chosen, setChosen] = useState("");
   const backend = chosen || macs[0]?.id || "";
   const { data: devices } = useMacDevices(backend);
+  const { data: snapshots } = useMacSnapshots(backend);
   const [action, setAction] = useState<Action | null>(null);
   const inv = useInvalidate();
 
   if (!macs.length) return null;
   const q = `?backend=${encodeURIComponent(backend)}`;
-  const refresh = () => inv("macos-devices", "pools", "volumes", "jobs");
+  const refresh = () => inv("macos-devices", "macos-snapshots", "pools", "volumes", "jobs");
   const close = () => setAction(null);
 
   const fieldsFor = (a: Action): FormField[] => {
@@ -60,6 +62,8 @@ export default function MacDisks() {
           { name: "size_gib", label: "New container size (GiB)", type: "number", min: 1, hint: "Cannot go below what the container already holds." },
           confirmField(a.container),
         ];
+      case "snap-delete":
+        return [confirmField(a.date)];
       case "eject":
         return [];
     }
@@ -88,6 +92,15 @@ export default function MacDisks() {
           refresh,
         );
         return;
+      case "snap-delete":
+        await submitJob(
+          "post",
+          `/macos/snapshots/${a.date}/delete${q}`,
+          { confirm_device: v.confirm_device },
+          `delete local snapshot ${a.date}`,
+          refresh,
+        );
+        return;
       case "resize":
         await submitJob(
           "post",
@@ -100,7 +113,7 @@ export default function MacDisks() {
   };
 
   const title = (a: Action | null) =>
-    !a ? "" : { erase: `Erase ${"device" in a ? a.device : ""}`, eject: `Eject ${"device" in a ? a.device : ""}`, add: `Add a volume to ${"container" in a ? a.container : ""}`, resize: `Resize ${"container" in a ? a.container : ""}` }[a.kind];
+    !a ? "" : { erase: `Erase ${"device" in a ? a.device : ""}`, eject: `Eject ${"device" in a ? a.device : ""}`, add: `Add a volume to ${"container" in a ? a.container : ""}`, resize: `Resize ${"container" in a ? a.container : ""}`, "snap-delete": `Delete local snapshot ${"date" in a ? a.date : ""}` }[a.kind];
 
   return (
     <>
@@ -148,6 +161,32 @@ export default function MacDisks() {
           },
         ]}
       />
+      <Table
+        soundings
+        panelTitle="Local snapshots (the whole Mac, purgeable)"
+        rows={(snapshots || []).map((date) => ({ date }))}
+        rowKey={(r: { date: string }) => r.date}
+        empty="No local snapshots."
+        cols={[
+          { h: "Date", f: (r: { date: string }) => r.date, mono: true },
+          {
+            h: "",
+            f: (r: { date: string }) => (
+              <button type="button" className="at-btn danger" onClick={() => setAction({ kind: "snap-delete", date: r.date })}>
+                Delete…
+              </button>
+            ),
+          },
+        ]}
+      />
+      <button
+        type="button"
+        className="at-btn"
+        title="macOS cannot snapshot one volume; this snapshots the Mac (tmutil localsnapshot)"
+        onClick={() => void submitJob("post", `/macos/snapshots${q}`, {}, "create local snapshot", refresh)}
+      >
+        Create local snapshot
+      </button>
       {macs.length > 1 && (
         <label style={{ display: "block", margin: "8px 0" }}>
           Mac{" "}
@@ -165,8 +204,8 @@ export default function MacDisks() {
         onClose={close}
         title={title(action)}
         fields={action && action.kind !== "eject" ? fieldsFor(action) : []}
-        submitLabel={action?.kind === "add" ? "Add volume" : action?.kind === "resize" ? "Resize" : "Erase (destructive)"}
-        danger={action?.kind === "erase"}
+        submitLabel={action?.kind === "add" ? "Add volume" : action?.kind === "resize" ? "Resize" : action?.kind === "snap-delete" ? "Delete snapshot" : "Erase (destructive)"}
+        danger={action?.kind === "erase" || action?.kind === "snap-delete"}
         onSubmit={async (v) => {
           if (action) await submit(action, v);
         }}

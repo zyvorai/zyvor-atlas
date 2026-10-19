@@ -86,6 +86,14 @@ export const useMacDevices = (backend?: string) =>
     15000,
     !!backend,
   );
+/** Local snapshot dates of one Mac backend (the Mac as a whole; macOS has no per-volume ones). */
+export const useMacSnapshots = (backend?: string) =>
+  useApiQuery<string[]>(
+    ["macos-snapshots", backend],
+    `/macos/snapshots?backend=${encodeURIComponent(backend ?? "")}`,
+    15000,
+    !!backend,
+  );
 export const useBackends = () => useApiQuery<any[]>(["backends"], "/backends", 20000);
 export const useBackendsSummary = () => useApiQuery<any[]>(["backends-summary"], "/backends/summary", 15000);
 

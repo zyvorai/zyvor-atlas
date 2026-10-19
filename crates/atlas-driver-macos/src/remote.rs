@@ -212,6 +212,19 @@ impl Lifecycle for RemoteMacosOps {
         self.op("resize-container", serde_json::json!({ "container": container, "size_bytes": size_bytes }), false)
             .await
     }
+    async fn list_local_snapshots(&self) -> Result<Vec<String>, DriverError> {
+        let v = self.call(reqwest::Method::GET, "/v1/snapshots", None).await?;
+        serde_json::from_value(v).map_err(|e| DriverError::Parse(format!("mac agent /v1/snapshots: {e}")))
+    }
+    async fn create_local_snapshot(&self) -> Result<String, DriverError> {
+        self.op("snapshot-create", serde_json::json!({}), false).await
+    }
+    async fn check_delete_local_snapshot(&self, date: &str) -> Result<(), DriverError> {
+        self.op("snapshot-delete", serde_json::json!({ "date": date }), true).await.map(drop)
+    }
+    async fn delete_local_snapshot(&self, date: &str) -> Result<String, DriverError> {
+        self.op("snapshot-delete", serde_json::json!({ "date": date }), false).await
+    }
     async fn check_eject(&self, whole: &str) -> Result<(), DriverError> {
         self.op("eject", serde_json::json!({ "device": whole }), true).await.map(drop)
     }

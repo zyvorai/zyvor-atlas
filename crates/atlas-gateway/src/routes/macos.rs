@@ -208,6 +208,50 @@ pub(crate) async fn resize_macos_container(
     .await
 }
 
+/// `GET /macos/snapshots` — local snapshots of the Mac (dates). Not per volume: macOS cannot make those.
+pub(crate) async fn list_macos_snapshots(
+    State(_s): State<AppState>,
+    Query(q): Query<BackendQuery>,
+) -> AppResult<Json<Value>> {
+    let dates = ops(&q)?.1.list_local_snapshots().await.map_err(map_check)?;
+    Ok(Json(json!(dates)))
+}
+
+/// `POST /macos/snapshots` — `tmutil localsnapshot`. Purgeable: macOS may remove it when space is needed.
+pub(crate) async fn create_macos_snapshot(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Query(q): Query<BackendQuery>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    admin(&s, &actor)?;
+    let (backend, _) = ops(&q)?;
+    let spec = JobSpec::MacosSnapshotCreate { backend_id: backend.clone() };
+    enqueue(&s, &actor, spec, "macos.snapshot.create.requested", "mac", &backend, json!({ "backend": backend })).await
+}
+
+/// `POST /macos/snapshots/{date}/delete` — `tmutil deletelocalsnapshots`; the date is typed back and
+/// must be one `tmutil` currently lists.
+pub(crate) async fn delete_macos_snapshot(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(date): Path<String>,
+    Query(q): Query<BackendQuery>,
+    Json(b): Json<ConfirmDeviceBody>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    admin(&s, &actor)?;
+    if b.confirm_device != date {
+        return Err(AppError::Validation("confirm_device must equal the snapshot date".into()));
+    }
+    let (backend, ops) = ops(&q)?;
+    ops.check_delete_local_snapshot(&date).await.map_err(map_check)?;
+    let spec = JobSpec::MacosSnapshotDelete {
+        backend_id: backend.clone(),
+        date: date.clone(),
+        confirmed_date: b.confirm_device,
+    };
+    enqueue(&s, &actor, spec, "macos.snapshot.delete.requested", "snapshot", &date, json!({ "backend": backend })).await
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct ConfirmDeviceBody {
     confirm_device: String,

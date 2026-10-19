@@ -14,6 +14,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - macOS lifecycle on a remote Mac through its agent: `?backend=bkd_macos_<name>` on the `/macos/*` routes, agent
   write endpoints behind `ATLAS_MAC_ALLOW_WRITES=1` (token required), refusals re-run on the Mac. Tested against an
   in-process agent with fake ops and, on a real Mac, against a throwaway disk image.
+- macOS local snapshots of the Mac as a whole (`/macos/snapshots`, via `tmutil`; macOS cannot snapshot one volume).
 - macOS container resize (`POST /macos/containers/{container}/resize`, agent `resize-container`) and a Mac section on the
   console Disks page (erase, add volume, resize, eject).
 

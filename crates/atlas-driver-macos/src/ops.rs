@@ -13,7 +13,7 @@ use std::collections::HashMap;
 use atlas_driver_core::DriverError;
 
 use crate::parse::{whole_disk_of, ApfsContainer, ApfsVolume, DiskInfo, Layout};
-use crate::{diskutil, parse_info, parse_layout};
+use crate::{diskutil, parse_info, parse_layout, tool};
 
 /// APFS roles that belong to the OS; such volumes are never deleted here.
 const SYSTEM_ROLES: &[&str] = &[
@@ -165,6 +165,26 @@ pub fn refuse_add_volume(
     let whole = container_whole(c)?;
     let info = infos.get(whole).ok_or_else(|| format!("no information for {whole}"))?;
     refuse_disk(whole, info, layout, allow_disk_images)
+}
+
+/// A local snapshot is named by its date, `2026-10-19-151606`. Strict, because it becomes a
+/// `tmutil` argument.
+pub fn valid_snapshot_date(s: &str) -> bool {
+    let b = s.as_bytes();
+    b.len() == 17
+        && b.iter().enumerate().all(|(i, c)| match i {
+            4 | 7 | 10 => *c == b'-',
+            _ => c.is_ascii_digit(),
+        })
+}
+
+/// Dates out of `tmutil listlocalsnapshotdates` output (`Snapshot dates for disk /:` then one per line).
+pub fn parse_snapshot_dates(out: &str) -> Vec<String> {
+    out.lines()
+        .map(str::trim)
+        .filter(|l| valid_snapshot_date(l))
+        .map(String::from)
+        .collect()
 }
 
 /// May APFS container `container` be resized to `size_bytes`? The disk rules are those of adding a
@@ -354,6 +374,50 @@ impl MacosOps {
             .map_err(Self::refused)
     }
 
+    /// Local APFS snapshots of the Mac's boot data volume (`tmutil localsnapshot`). macOS has no
+    /// per-volume way to make one, so this is the Mac as a whole, not an external disk. They are
+    /// purgeable: macOS removes them on its own when space is needed.
+    pub async fn list_local_snapshots(&self) -> Result<Vec<String>, DriverError> {
+        if self.fake {
+            return Ok(Vec::new());
+        }
+        let out = tool("tmutil", &["listlocalsnapshotdates", "/"]).await?;
+        Ok(parse_snapshot_dates(&String::from_utf8_lossy(&out)))
+    }
+
+    pub async fn create_local_snapshot(&self) -> Result<String, DriverError> {
+        if self.fake {
+            return Ok("fake: tmutil localsnapshot".into());
+        }
+        let out = tool("tmutil", &["localsnapshot"]).await?;
+        Ok(String::from_utf8_lossy(&out).trim().to_string())
+    }
+
+    /// Only a date `tmutil` currently lists can be deleted.
+    pub async fn check_delete_local_snapshot(&self, date: &str) -> Result<(), DriverError> {
+        if !valid_snapshot_date(date) {
+            return Err(DriverError::Backend(format!(
+                "{date:?} is not a snapshot date like 2026-10-19-151606"
+            )));
+        }
+        if self.fake {
+            return Ok(());
+        }
+        if !self.list_local_snapshots().await?.iter().any(|d| d == date) {
+            return Err(Self::refused(format!("no local snapshot dated {date}")));
+        }
+        Ok(())
+    }
+
+    pub async fn delete_local_snapshot(&self, date: &str) -> Result<String, DriverError> {
+        self.check_delete_local_snapshot(date).await?;
+        if self.fake {
+            return Ok(format!("fake: tmutil deletelocalsnapshots {date}"));
+        }
+        let out = tool("tmutil", &["deletelocalsnapshots", date]).await?;
+        Ok(String::from_utf8_lossy(&out).trim().to_string())
+    }
+
     pub async fn check_eject(&self, whole: &str) -> Result<(), DriverError> {
         let (layout, infos) = self.snapshot().await?;
         let info = infos
@@ -435,6 +499,11 @@ pub trait Lifecycle: Send + Sync {
     async fn check_eject(&self, whole: &str) -> Result<(), DriverError>;
     async fn check_resize_container(&self, container: &str, size_bytes: u64) -> Result<(), DriverError>;
     async fn resize_container(&self, container: &str, size_bytes: u64) -> Result<String, DriverError>;
+    /// Local snapshots of the Mac itself (not per volume: macOS cannot make those).
+    async fn list_local_snapshots(&self) -> Result<Vec<String>, DriverError>;
+    async fn create_local_snapshot(&self) -> Result<String, DriverError>;
+    async fn check_delete_local_snapshot(&self, date: &str) -> Result<(), DriverError>;
+    async fn delete_local_snapshot(&self, date: &str) -> Result<String, DriverError>;
     async fn erase_disk(&self, whole: &str, name: &str) -> Result<String, DriverError>;
     async fn add_volume(
         &self,
@@ -469,6 +538,18 @@ impl Lifecycle for MacosOps {
     }
     async fn resize_container(&self, container: &str, size_bytes: u64) -> Result<String, DriverError> {
         MacosOps::resize_container(self, container, size_bytes).await
+    }
+    async fn list_local_snapshots(&self) -> Result<Vec<String>, DriverError> {
+        MacosOps::list_local_snapshots(self).await
+    }
+    async fn create_local_snapshot(&self) -> Result<String, DriverError> {
+        MacosOps::create_local_snapshot(self).await
+    }
+    async fn check_delete_local_snapshot(&self, date: &str) -> Result<(), DriverError> {
+        MacosOps::check_delete_local_snapshot(self, date).await
+    }
+    async fn delete_local_snapshot(&self, date: &str) -> Result<String, DriverError> {
+        MacosOps::delete_local_snapshot(self, date).await
     }
     async fn erase_disk(&self, whole: &str, name: &str) -> Result<String, DriverError> {
         MacosOps::erase_disk(self, whole, name).await
@@ -550,6 +631,29 @@ mod tests {
             resize_container_args("disk7", 1 << 30),
             ["apfs", "resizeContainer", "disk7", "1073741824B"].map(String::from).to_vec()
         );
+    }
+
+    #[test]
+    fn snapshot_dates_are_strict_and_parsed_from_tmutil_output() {
+        assert!(valid_snapshot_date("2026-10-19-151606"));
+        for bad in ["", "2026-10-19", "2026-10-19-15160", "2026-10-19-1516060", "2026/10/19-151606", "../../etc", "2026-10-19-15160a", "all"] {
+            assert!(!valid_snapshot_date(bad), "{bad}");
+        }
+        let out = "Snapshot dates for disk /:\n2026-10-19-151606\n2026-10-18-090000\nnot-a-date\n";
+        assert_eq!(parse_snapshot_dates(out), ["2026-10-19-151606", "2026-10-18-090000"]);
+        assert!(parse_snapshot_dates("Snapshot dates for disk /:\n").is_empty());
+    }
+
+    #[tokio::test]
+    async fn fake_snapshots_execute_nothing_and_still_validate() {
+        let ops = MacosOps::fake(false);
+        assert!(ops.list_local_snapshots().await.unwrap().is_empty());
+        assert!(ops.create_local_snapshot().await.unwrap().starts_with("fake: tmutil"));
+        assert!(ops.delete_local_snapshot("2026-10-19-151606").await.is_ok());
+        assert!(matches!(
+            ops.delete_local_snapshot("; rm -rf /").await,
+            Err(DriverError::Backend(m)) if m.contains("not a snapshot date")
+        ));
     }
 
     #[test]

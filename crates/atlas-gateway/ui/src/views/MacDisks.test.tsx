@@ -28,7 +28,7 @@ describe("MacDisks", () => {
   it("offers actions on an external disk and none on the internal one", async () => {
     vi.spyOn(http, "get").mockImplementation(((url: string) =>
       Promise.resolve({
-        data: url.startsWith("/backends") ? [{ id: "bkd_macos_studio", name: "studio" }] : url.startsWith("/macos/devices") ? devices : [],
+        data: url.startsWith("/macos/snapshots") ? ["2026-10-19-151606"] : url.startsWith("/backends") ? [{ id: "bkd_macos_studio", name: "studio" }] : url.startsWith("/macos/devices") ? devices : [],
       })) as never);
     renderView(<MacDisks />);
     await flushQueries();
@@ -36,6 +36,8 @@ describe("MacDisks", () => {
     expect(screen.getByText(/refused by Atlas/)).toBeTruthy();
     expect(screen.getAllByText(/Erase…/)).toHaveLength(1);
     expect(screen.getByText(/Resize \(disk7\)…/)).toBeTruthy();
+    expect(await screen.findByText("2026-10-19-151606")).toBeTruthy();
+    expect(screen.getByText(/Create local snapshot/)).toBeTruthy();
     expect(screen.queryByText(/Resize \(disk3\)…/)).toBeNull();
     expect(http.get).toHaveBeenCalledWith(expect.stringContaining("/macos/devices?backend=bkd_macos_studio"));
   });

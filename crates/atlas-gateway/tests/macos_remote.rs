@@ -188,6 +188,28 @@ async fn lifecycle_runs_on_the_named_mac_and_its_refusals_hold() {
     .await;
     assert_eq!(st, 202, "{body}");
 
+    // Local snapshots of the Mac: list, create (a job), delete needs a valid, typed-back date.
+    let (st, body) = call(&c, "GET", format!("{base}/macos/snapshots?{b}"), None).await;
+    assert_eq!(st, 200, "{body}");
+    let (st, body) = call(&c, "POST", format!("{base}/macos/snapshots?{b}"), None).await;
+    assert_eq!(st, 202, "{body}");
+    let (st, _) = call(
+        &c,
+        "POST",
+        format!("{base}/macos/snapshots/not-a-date/delete?{b}"),
+        Some(json!({ "confirm_device": "not-a-date" })),
+    )
+    .await;
+    assert_eq!(st, 400);
+    let (st, _) = call(
+        &c,
+        "POST",
+        format!("{base}/macos/snapshots/2026-10-19-151606/delete?{b}"),
+        Some(json!({ "confirm_device": "2026-10-19-000000" })),
+    )
+    .await;
+    assert_eq!(st, 400, "the date must be typed back");
+
     // A bad name is a validation error from the agent, not a 5xx.
     let (st, _) = call(
         &c,

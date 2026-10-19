@@ -19,6 +19,8 @@ fn backend_of(spec: &JobSpec) -> Option<&str> {
         | JobSpec::MacosVolumeAdd { backend_id, .. }
         | JobSpec::MacosVolumeDelete { backend_id, .. }
         | JobSpec::MacosContainerResize { backend_id, .. }
+        | JobSpec::MacosSnapshotCreate { backend_id }
+        | JobSpec::MacosSnapshotDelete { backend_id, .. }
         | JobSpec::MacosDiskEject { backend_id, .. } => Some(backend_id),
         _ => None,
     }
@@ -65,6 +67,15 @@ pub(crate) async fn dispatch_macos(pool: &AnyPool, spec: JobSpec) -> Result<serd
             anyhow::ensure!(container == confirmed_container, "container confirmation mismatch");
             let out = ops.resize_container(&container, size_bytes).await?;
             ("resize_container", container, out)
+        }
+        JobSpec::MacosSnapshotCreate { .. } => {
+            let out = ops.create_local_snapshot().await?;
+            ("create_snapshot", "local".to_string(), out)
+        }
+        JobSpec::MacosSnapshotDelete { date, confirmed_date, .. } => {
+            anyhow::ensure!(date == confirmed_date, "snapshot date confirmation mismatch");
+            let out = ops.delete_local_snapshot(&date).await?;
+            ("delete_snapshot", date, out)
         }
         JobSpec::MacosDiskEject { device, .. } => {
             let out = ops.eject(&device).await?;

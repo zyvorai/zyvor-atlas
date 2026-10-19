@@ -163,6 +163,20 @@ async fn resize_is_refused_on_the_boot_container_and_runs_on_an_external_one() {
 }
 
 #[tokio::test]
+async fn snapshots_list_create_and_validate_the_date_on_the_agent() {
+    let url = writable_agent("s3cret").await;
+    let ops = remote(&url, Some("s3cret")).ops();
+    assert!(ops.list_local_snapshots().await.unwrap().is_empty());
+    assert!(ops.create_local_snapshot().await.unwrap().starts_with("fake: tmutil localsnapshot"));
+    ops.check_delete_local_snapshot("2026-10-19-151606").await.unwrap();
+    assert!(ops.delete_local_snapshot("2026-10-19-151606").await.unwrap().contains("deletelocalsnapshots"));
+    assert!(matches!(
+        ops.delete_local_snapshot("not-a-date").await,
+        Err(DriverError::Backend(m)) if m.starts_with("invalid: ")
+    ));
+}
+
+#[tokio::test]
 async fn an_allowed_operation_runs_on_the_agent() {
     let url = writable_agent("s3cret").await;
     let ops = remote(&url, Some("s3cret")).ops();

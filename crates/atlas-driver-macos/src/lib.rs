@@ -223,22 +223,27 @@ pub struct RealMacosDriver {
 /// Run `diskutil <args>` and return stdout. Spawn failure (no `diskutil`, i.e. not a Mac) is
 /// `Unreachable`; a non-zero exit or a hang past the timeout is `Backend`.
 async fn diskutil(args: &[&str]) -> Result<Vec<u8>, DriverError> {
-    let mut cmd = tokio::process::Command::new("diskutil");
+    tool("diskutil", args).await
+}
+
+/// A fixed macOS tool (`diskutil`, `tmutil`) with an argument array, a timeout and no shell.
+pub(crate) async fn tool(program: &str, args: &[&str]) -> Result<Vec<u8>, DriverError> {
+    let mut cmd = tokio::process::Command::new(program);
     cmd.args(args).kill_on_drop(true);
     let output = tokio::time::timeout(COMMAND_TIMEOUT, cmd.output())
         .await
         .map_err(|_| {
             DriverError::Backend(format!(
-                "diskutil {}: no answer within {}s",
+                "{program} {}: no answer within {}s",
                 args.join(" "),
                 COMMAND_TIMEOUT.as_secs()
             ))
         })?
-        .map_err(|e| DriverError::Unreachable(format!("failed to spawn `diskutil`: {e}")))?;
+        .map_err(|e| DriverError::Unreachable(format!("failed to spawn `{program}`: {e}")))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(DriverError::Backend(format!(
-            "diskutil {}: {stderr}",
+            "{program} {}: {stderr}",
             args.join(" ")
         )));
     }
