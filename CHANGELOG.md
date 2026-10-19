@@ -9,13 +9,33 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.8.0] — 2026-10-19
+
 ### Security
 
 - `rustls` 0.23.46 (RUSTSEC-2026-0346: `Debug` for client session values exposed TLS secrets).
 
 ### Added
 
+- **Retention locks and ransomware assessment** (`docs/WORM.md`): Raft-enforced, extend-only retention locks on
+  atlas-native block and filesystem snapshots (`POST /snapshots/{id}/lock`, `atlasctl lock-snapshot`); compliance-mode
+  object retention on the native S3 gateway; per-minute filesystem activity windows behind
+  `GET /volumes/{id}/ransomware` and admin `POST …/ransomware/protect`; opt-in `ATLAS_RANSOMWARE_AUTOPROTECT=1`
+  for `likely_ransomware` only. Snapshot locks are verified on the lab; activity, protect and S3 retention are
+  unit/integration tested only.
+- **Native data reduction** (`docs/NATIVE_DATA_REDUCTION.md`): opt-in LZ4 compression and extent deduplication, the
+  node's `GET /v1/reduction`, the gateway's `GET /native/reduction` and `atlasctl native-reduction`. Not yet run on
+  the lab; no throughput or CPU numbers.
+- `atlas-client` crate: typed Rust client for products (`create_volume`, `list_volumes`, `get_job`, `wait_for_job`).
+- `GET /io/heatmap` on the I/O sensor: per-minute latency columns per device and operation (fake source only).
+- Experimental AI data services companion (`tools/atlas_data`, `docs/AI_DATA_SERVICES.md`): not part of the Rust
+  gateway, its own auth and storage.
+- Docs site pages for WORM, data reduction, AI data services and IO500.
 - `docs/RELEASING.md` (tag, ghcr images, archives, visibility); macOS rows in STATUS, ROADMAP, ARCHITECTURE and COMPARISON.
+
+### Fixed
+
+- The `atlas-native-csi` node test no longer fails on macOS (it reads `/proc` mountinfo, so it runs on Linux only).
 
 ## [0.7.0] — 2026-10-17
 

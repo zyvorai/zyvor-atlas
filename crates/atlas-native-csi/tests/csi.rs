@@ -3,6 +3,7 @@
 
 //! The CSI services over a real Unix socket, against a live in-process cluster (one metadata
 //! node, one data node on localhost).
+#![cfg_attr(not(target_os = "linux"), allow(unused_imports))]
 
 use std::{collections::BTreeMap, net::TcpListener, path::PathBuf, time::Duration};
 
@@ -463,6 +464,9 @@ fn controller_lifecycle_over_the_socket() {
     rt.block_on(server).unwrap();
 }
 
+// Mount detection reads /proc/self/mountinfo, so this is a Linux test: the node plugin only runs
+// there (it mounts through FUSE).
+#[cfg(target_os = "linux")]
 #[test]
 fn node_service_validates_before_mounting() {
     let td = tempfile::tempdir().unwrap();
