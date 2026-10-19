@@ -739,3 +739,10 @@ atlasctl volume-mirror-enable ID --peer PEER | volume-mirror-disable ID
 atlasctl databridge-sources | databridge-plans
 atlasctl databridge-stage PLAN_ID assess|provision|full-load|cdc-start|cdc-stop|cdc-restart|validate|cutover|rollback
 ```
+
+## AI data companion API
+
+The experimental `atlas_data` companion exposes its own authenticated endpoint on
+5120, separate from the Rust REST/gRPC gateway. Its explicit RPC action/argument
+reference, binary chunk routes and compatibility limits are documented in
+[AI_DATA_SERVICES.md](../control-plane/ai-data-services.md). It does not accept gateway JWTs.

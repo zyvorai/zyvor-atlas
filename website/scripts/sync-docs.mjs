@@ -42,6 +42,7 @@ const DOCS = [
   ['MACOS.md', 'control-plane', 'macos', 15, 'macOS disks'],
   ['MACOS_CLIENT.md', 'control-plane', 'macos-client', 16, 'Mac as a client'],
   ['RELEASING.md', 'control-plane', 'releasing', 17, 'Releasing'],
+  ['AI_DATA_SERVICES.md', 'control-plane', 'ai-data-services', 18, 'AI data services (experimental)'],
 
   ['NATIVE_STORAGE.md', 'atlas-native', 'overview', 1, 'Storage overview'],
   ['NATIVE_NODE.md', 'atlas-native', 'node', 2, 'Node'],
@@ -53,6 +54,9 @@ const DOCS = [
   ['NATIVE_CSI.md', 'atlas-native', 'csi', 8, 'CSI driver'],
   ['NATIVE_EDGE.md', 'atlas-native', 'edge', 9, 'Edge'],
   ['NATIVE_REPLICATION.md', 'atlas-native', 'replication', 10, 'Replication'],
+  ['WORM.md', 'atlas-native', 'worm', 11, 'Retention locks and ransomware'],
+  ['NATIVE_DATA_REDUCTION.md', 'atlas-native', 'data-reduction', 12, 'Compression and dedup'],
+  ['IO500.md', 'atlas-native', 'io500', 13, 'IO500 benchmark'],
 
   ['DR.md', 'disaster-recovery', 'dr', 1, 'Disaster recovery (Ceph)'],
   ['NATIVE_REPLICATION.md', 'disaster-recovery', 'native-replication', 2, 'Native replication'],

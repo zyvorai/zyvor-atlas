@@ -71,7 +71,7 @@ const BLOCKS = [
   {
     tag: 'Atlas Native',
     title: 'Run the filesystem yourself.',
-    body: 'Striped, checksummed extents, sharded Raft metadata, 3 replicas or Reed-Solomon k+m, cold extents tiered to S3, and NFS, SMB, S3 and CSI over the same files. One small pod for edge sites.',
+    body: 'Striped, checksummed extents, sharded Raft metadata, 3 replicas or Reed-Solomon k+m, cold extents tiered to S3, and NFS, SMB, S3 and CSI over the same files. Retention-locked snapshots, opt-in LZ4 compression and dedup, and a ransomware assessment (unit-tested; only snapshot locks are lab-verified). One small pod for edge sites.',
     items: ['Erasure coding with a rebuild controller', 'POSIX ACLs and quotas', 'Single-node edge profile'],
     img: '/anim/native-io.svg',
     alt: 'Animated Atlas Native data path',

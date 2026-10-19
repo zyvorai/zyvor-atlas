@@ -119,6 +119,15 @@ PID set emptied on the next rescan, and `podman stop` removed the three pins. Un
 `/sys/fs/bpf` itself the pin failed with `Permission denied` (AppArmor), which is why the pin dir
 is configurable.
 
+## Heatmap
+
+`GET /io/heatmap?minutes=15` (1–60) returns, per (device, op), one log2-µs bucket column per
+minute: when latency moved, not only the distribution since start. Columns are stamped with wall
+time at collection (device timestamps are monotonic), so a poll that lands late attributes its
+events to the minute it ran. Minutes with no I/O are absent. An in-memory hour ring per
+series, reset when the agent restarts, under the same cardinality cap as the histograms. Verified
+with the fake source only; the console does not draw it yet.
+
 ## Authentication and MCP
 
 - `ATLAS_IO_TOKEN` (environment only): when set, every route except `/health` and `/io/health`
