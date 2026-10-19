@@ -29,8 +29,8 @@ use atlas_driver_core::{DriverError, StorageDriver};
 pub mod ops;
 pub mod parse;
 pub mod remote;
-pub use ops::MacosOps;
-pub use remote::RemoteMacosDriver;
+pub use ops::{DeviceRow, Lifecycle, MacosOps};
+pub use remote::{agents_from_env, remote_ops_from_env, RemoteMacosDriver, RemoteMacosOps};
 pub use parse::{
     cluster_id, map_layout, parse_info, parse_layout, whole_disk_of, ApfsContainer, ApfsVolume,
     DiskInfo, Layout, Mapped, Partition,

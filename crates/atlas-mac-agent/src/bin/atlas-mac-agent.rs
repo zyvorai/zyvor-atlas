@@ -4,6 +4,7 @@
 //! unless `--mode real`. A non-loopback bind requires a token and TLS.
 
 use std::net::SocketAddr;
+use std::sync::Arc;
 
 use anyhow::{bail, Result};
 use clap::Parser;
@@ -23,6 +24,10 @@ struct Cli {
     /// Also report mounted disk images (tests only).
     #[arg(long, env = "ATLAS_MAC_ALLOW_DISK_IMAGES")]
     allow_disk_images: bool,
+    /// Let the gateway erase, add/delete volumes and eject on this Mac. Needs a token; the refusals
+    /// (internal disk, running system, system volumes) still apply and cannot be overridden.
+    #[arg(long, env = "ATLAS_MAC_ALLOW_WRITES")]
+    allow_writes: bool,
     #[arg(long, env = "ATLAS_MAC_TLS_CERT")]
     tls_cert: Option<String>,
     #[arg(long, env = "ATLAS_MAC_TLS_KEY")]
@@ -70,7 +75,17 @@ async fn main() -> Result<()> {
         host,
         allow_disk_images: cli.allow_disk_images,
     };
-    let app = atlas_mac_agent::router(settings.driver("bkd_macos"), token);
+    let driver = settings.driver("bkd_macos");
+    let app = if cli.allow_writes {
+        if token.is_none() {
+            bail!("ATLAS_MAC_ALLOW_WRITES needs ATLAS_MAC_TOKEN (or _FILE): write endpoints are never open");
+        }
+        tracing::warn!("lifecycle writes are ENABLED on this Mac (erase, add/delete volume, eject)");
+        atlas_mac_agent::router_with_ops(driver, token, Arc::new(settings.ops()))
+            .map_err(|e| anyhow::anyhow!(e))?
+    } else {
+        atlas_mac_agent::router(driver, token)
+    };
     tracing::info!(bind = %cli.bind, mode = %cli.mode, tls = tls.is_some(), "atlas-mac-agent listening");
     match tls {
         Some((cert, key)) => {

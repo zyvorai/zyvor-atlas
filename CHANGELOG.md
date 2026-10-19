@@ -9,6 +9,12 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- macOS lifecycle on a remote Mac through its agent: `?backend=bkd_macos_<name>` on the `/macos/*` routes, agent
+  write endpoints behind `ATLAS_MAC_ALLOW_WRITES=1` (token required), refusals re-run on the Mac. Tested against an
+  in-process agent with fake ops; not yet against a real Mac.
+
 ## [0.8.0] — 2026-10-19
 
 ### Security

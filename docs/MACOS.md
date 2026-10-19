@@ -106,13 +106,27 @@ interval. An unreachable agent is an error in the log, never an empty inventory,
 startup. Redirects are not followed, so the token only goes to the configured URL. The same token is used
 for every agent; use one token per fleet.
 
-The lifecycle routes above act only on the Mac the gateway itself runs on (`ATLAS_MACOS_ENABLE`). Running
-them on a remote Mac through its agent is not part of this slice.
+### Lifecycle on a remote Mac
+
+The lifecycle routes act on the Mac the gateway runs on by default. Add `?backend=bkd_macos_<name>` (the
+backend id of an `ATLAS_MACOS_AGENTS` entry) to run any of them on that Mac through its agent, including
+`GET /macos/devices`. The job carries the backend id, so it runs on the right Mac and the audit entry records it.
+
+This is **off by default and two-sided**. The agent must be started with `ATLAS_MAC_ALLOW_WRITES=1` and a
+token (it refuses to start with writes and no token, and the write routes do not exist otherwise). It exposes
+`GET /v1/devices` and `POST /v1/ops/{erase,add-volume,delete-volume,eject}`. The refusals above run **on the
+Mac**, against its live layout, for every request, so a gateway that misjudges the layout cannot make the agent
+erase an internal or system disk. A body with `"dry_run": true` runs the refusals only; the gateway route uses
+that for its fast 409, and a refusal reaches the caller as 409, a bad name as 400, an unreachable agent as 503.
+Device ids belong to each Mac (`disk4` on one is not `disk4` on another), which is why the backend must be named.
+
+Verified against an in-process agent with fixture data and fake ops (nothing executed): refusals, auth, job
+dispatch, audit. Not yet run against a real Mac's `diskutil` through an agent.
 
 ## Roadmap
 
 1. Read-only discovery.
 2. Volume lifecycle with hard refusals: erase, add/delete volumes, eject (this document). Still to come:
    container resize, local snapshots, a Disks page.
-3. A Mac agent and a remote driver (read-only, above); remote lifecycle operations still to come.
+3. A Mac agent and a remote driver (read-only above, lifecycle behind `ATLAS_MAC_ALLOW_WRITES`). Still to come: container resize, local snapshots, a Disks page.
 4. Macs as clients of Atlas storage: NFS/SMB mounts and `atlasctl` are documented in [`MACOS_CLIENT.md`](MACOS_CLIENT.md); the native FUSE mount is a no-go until a spike on a Mac says otherwise.

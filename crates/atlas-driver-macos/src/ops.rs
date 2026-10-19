@@ -371,8 +371,66 @@ impl MacosOps {
     }
 }
 
+/// The lifecycle operations, local (`MacosOps`) or on another Mac through its agent
+/// (`RemoteMacosOps`). `check_*` run the refusals only; the operations run them again first.
+#[async_trait::async_trait]
+pub trait Lifecycle: Send + Sync {
+    async fn devices(&self) -> Result<Vec<DeviceRow>, DriverError>;
+    async fn check_erase(&self, whole: &str, name: &str) -> Result<(), DriverError>;
+    async fn check_add_volume(&self, container: &str, name: &str) -> Result<(), DriverError>;
+    async fn check_delete_volume(&self, volume: &str) -> Result<(), DriverError>;
+    async fn check_eject(&self, whole: &str) -> Result<(), DriverError>;
+    async fn erase_disk(&self, whole: &str, name: &str) -> Result<String, DriverError>;
+    async fn add_volume(
+        &self,
+        container: &str,
+        name: &str,
+        quota: Option<u64>,
+        reserve: Option<u64>,
+    ) -> Result<String, DriverError>;
+    async fn delete_volume(&self, volume: &str) -> Result<String, DriverError>;
+    async fn eject(&self, whole: &str) -> Result<String, DriverError>;
+}
+
+#[async_trait::async_trait]
+impl Lifecycle for MacosOps {
+    async fn devices(&self) -> Result<Vec<DeviceRow>, DriverError> {
+        MacosOps::devices(self).await
+    }
+    async fn check_erase(&self, whole: &str, name: &str) -> Result<(), DriverError> {
+        MacosOps::check_erase(self, whole, name).await
+    }
+    async fn check_add_volume(&self, container: &str, name: &str) -> Result<(), DriverError> {
+        MacosOps::check_add_volume(self, container, name).await
+    }
+    async fn check_delete_volume(&self, volume: &str) -> Result<(), DriverError> {
+        MacosOps::check_delete_volume(self, volume).await
+    }
+    async fn check_eject(&self, whole: &str) -> Result<(), DriverError> {
+        MacosOps::check_eject(self, whole).await
+    }
+    async fn erase_disk(&self, whole: &str, name: &str) -> Result<String, DriverError> {
+        MacosOps::erase_disk(self, whole, name).await
+    }
+    async fn add_volume(
+        &self,
+        container: &str,
+        name: &str,
+        quota: Option<u64>,
+        reserve: Option<u64>,
+    ) -> Result<String, DriverError> {
+        MacosOps::add_volume(self, container, name, quota, reserve).await
+    }
+    async fn delete_volume(&self, volume: &str) -> Result<String, DriverError> {
+        MacosOps::delete_volume(self, volume).await
+    }
+    async fn eject(&self, whole: &str) -> Result<String, DriverError> {
+        MacosOps::eject(self, whole).await
+    }
+}
+
 /// One whole disk as the picker shows it. `erase_refusal` is why Atlas will not erase it, if so.
-#[derive(Debug, Clone, serde::Serialize)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct DeviceRow {
     pub device: String,
     pub internal: bool,
