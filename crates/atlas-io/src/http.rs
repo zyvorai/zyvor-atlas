@@ -31,6 +31,7 @@ pub fn router_with_token(collector: Arc<Collector>, token: Option<String>) -> Ro
         .route("/io/health", get(health))
         .route("/io/summary", get(summary))
         .route("/io/histograms", get(histograms))
+        .route("/io/heatmap", get(heatmap))
         .route("/io/workloads", get(workloads))
         .route("/io/rca", get(rca))
         .route("/io/risk", get(risk))
@@ -104,6 +105,18 @@ async fn summary(State(st): State<AppState>) -> impl IntoResponse {
 async fn histograms(State(st): State<AppState>) -> impl IntoResponse {
     st.collector.poll();
     Json(st.collector.histograms())
+}
+
+#[derive(Deserialize)]
+struct HeatQuery {
+    /// How far back to return, in minutes (default 15, at most 60).
+    minutes: Option<u64>,
+}
+
+async fn heatmap(State(st): State<AppState>, Query(q): Query<HeatQuery>) -> impl IntoResponse {
+    st.collector.poll();
+    let minutes = q.minutes.unwrap_or(15).clamp(1, crate::heat::MAX_COLUMNS as u64);
+    Json(st.collector.heatmap(minutes))
 }
 
 async fn workloads(State(st): State<AppState>) -> impl IntoResponse {

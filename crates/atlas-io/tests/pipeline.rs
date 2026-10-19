@@ -35,6 +35,26 @@ async fn http_histograms_and_rca() {
         .clone()
         .oneshot(
             Request::builder()
+                .uri("/io/heatmap?minutes=5")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(res.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(res.into_body(), 1 << 20)
+        .await
+        .unwrap();
+    let v: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+    let series = v.as_array().unwrap();
+    assert!(!series.is_empty(), "the fake source's I/O shows up as heatmap columns");
+    assert_eq!(series[0]["column_secs"], 60);
+    assert!(!series[0]["columns"][0]["buckets"].as_array().unwrap().is_empty());
+
+    let res = app
+        .clone()
+        .oneshot(
+            Request::builder()
                 .uri("/io/rca?volume=vol_vm_web01")
                 .body(Body::empty())
                 .unwrap(),
