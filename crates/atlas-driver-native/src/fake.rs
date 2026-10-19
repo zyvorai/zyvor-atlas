@@ -320,6 +320,14 @@ impl NativeApi for FakeApi {
         Ok(v)
     }
 
+    /// Fixture: the fake stores no data, so there is nothing to reduce; all zeros.
+    async fn reduction(&self) -> Result<serde_json::Value, DriverError> {
+        Ok(serde_json::json!({
+            "extents": 0, "compressed_extents": 0, "shared_extents": 0,
+            "logical_bytes": 0, "referenced_bytes": 0, "stored_bytes": 0
+        }))
+    }
+
     async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError> {
         let mut s = lock(&self.state)?;
         if !s.snapshots.contains_key(id) {
