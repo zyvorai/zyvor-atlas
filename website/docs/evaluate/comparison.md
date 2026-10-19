@@ -103,6 +103,24 @@ The atlas-native roadmap, in order, each phase gated on a published benchmark:
 Status of each step is tracked in `docs/NATIVE_STORAGE.md`. Until a phase's benchmark is
 published, treat atlas-native as behind WEKA on that axis.
 
+## Compared with NetApp ONTAP and Nutanix
+
+Vendor columns are from their public documentation (ONTAP 9.18.1 and AFX release notes, Nutanix
+Unified Storage and Data Lens pages), not tested. They are where each product is **ahead of**
+Atlas today as well as where Atlas differs.
+
+| | **Atlas** | **NetApp ONTAP** | **Nutanix NUS** |
+|---|---|---|---|
+| Tamper-proof snapshots | Retention-locked block and filesystem snapshots on atlas-native, Raft-enforced, extend-only (`docs/WORM.md`); not on Ceph/ZFS | SnapLock, tamper-proof snapshots | Object WORM, immutable snapshots |
+| Ransomware detection | Explainable entropy + rename/delete/burst scorer over native filesystem activity; opt-in auto snapshot-and-lock. Not trained, no S3 signal yet, not lab-verified against real ransomware | Autonomous Ransomware Protection with AI, on by default for new volumes | Data Lens anomaly and user-behaviour detection |
+| S3 object retention | Compliance mode on the native S3 gateway | S3 Object Lock | Objects WORM |
+| Data reduction | Opt-in LZ4 compression and extent dedup on atlas-native, with a per-volume savings report (`docs/NATIVE_DATA_REDUCTION.md`); unit/integration tested only, not lab-run, no throughput or CPU numbers; Ceph/ZFS do their own | Inline dedup, compression, compaction | Dedup, compression, erasure coding |
+| Replication / DR | Snapshot replication, RBD mirroring with failback, verified on two lab clusters | SnapMirror, MetroCluster | Async, NearSync, Sync, Metro |
+| Protocols | Block, POSIX, NFS, SMB, S3 | NFS, SMB, S3, FC, iSCSI, NVMe-oF | Files, Objects, Volumes (iSCSI) |
+| Multi-vendor control plane | Yes: Ceph, ZFS, NFS, Longhorn, WEKA, macOS, native, any S3 | ONTAP (and cloud variants) | Nutanix clusters |
+| Open source, no licence key | Apache-2.0 | No | No |
+| Performance proof | Lab numbers only, no NVMe benchmark | Published vendor benchmarks | Published vendor benchmarks |
+
 ## Other storage MCP servers
 
 Atlas is not the only storage system an AI agent can talk to. As of this writing MinIO ships an

@@ -123,6 +123,14 @@ Atlas storage control plane"). This is a thinner integration than Kryton/Zorvia 
 image list/create/delete for an existing Ceph pool and doesn't go through the `Owner`/
 `product_bindings` mechanism, so there's no `product` id to record for it yet.
 
+## Rust client
+
+Rust products can use `crates/atlas-client` instead of hand-rolling REST calls: `create_volume`
+(with an `Owner`), `list_volumes`, `get_job` and `wait_for_job`, which polls a job to success and
+turns a failed, cancelled or timed-out job into an error carrying the job's own message. It uses
+the gateway's own request/response types, so they cannot drift. Tested against an in-process
+stand-in for the gateway, not a live one. There is no Go client yet.
+
 ## Follow-ups (product repos)
 
 Generate/vendor stubs from `crates/atlas-gateway/proto/atlas.proto` into each product. Atlas does not
