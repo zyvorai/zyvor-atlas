@@ -39,6 +39,11 @@ jobs:
       - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
       - name: Application recovery scenario tests
         run: PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_recovery/tests -v
+      - name: AI data services core and Iceberg scenarios
+        run: |
+          python3 -m pip install -r tools/atlas_data/requirements-iceberg.txt
+          PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_data/tests -v
+          PYTHONPATH=tools python3 examples/data/end_to_end.py
       - name: License headers
         run: ./scripts/check-license-headers.sh
       - name: Migrations parity (migrations/ vs migrations-postgres/)
