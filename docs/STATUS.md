@@ -32,6 +32,7 @@ below is bank or enterprise GA.
 | MCP server (gateway: 27 read-only tools; `atlas-io` agent: 6; opt-in guarded `create_snapshot` and `ack_alert`) | yes, incl. two-phase token, tenant and role tests | lab gateway and BPF agent: remote Host header, `io_risk`, agent bearer auth (`docs/MCP.md`); write tool not enabled on the lab | no | `ATLAS_MCP_WRITE_ENABLE`, `ATLAS_IO_TOKEN` | MCP prompts/resources, more read tools, guarded alert ack |
 | eBPF storage I/O sensor (`atlas-io-agent`) | yes — fake source, histograms, attribution, RCA, fail-open leases, HTTP/Prom, `atlasctl io` | yes — aya/CO-RE block-layer attach, queue time and the Atlas Native maps against a real native cluster, on a kernel 7.0 lab host (`docs/IO_EBPF.md`) | no | live mode (`bpf` feature) | NFS/ZFS/uring probes, cgroup→volume map, Observatory heatmaps |
 | Product integrations beyond gRPC `Owner` | gRPC owner surface yes | | no | | Transiva import, Veyron, GuestKit, PacketWolf, then a small SDK |
+| AI data companion (`tools/atlas_data`): nine AI data workflows | yes, local scenario tests | local HTTP, files, subprocesses and optional real Iceberg/Parquet only; no remote/GPU qualification | no | single process, separate API/auth; see `AI_DATA_SERVICES.md` | native Gryvia controller, inference-engine connectors, source ACL synchronization, HA catalog |
 
 Transiva's owner id on the wire remains `hyper2kvm`. v0.5.0 does not rename it.
 

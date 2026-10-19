@@ -26,3 +26,8 @@ crates/atlas-gateway/ui/coverage/
 
 # IO500 runs (scripts/io500-native-remote.sh)
 /io500-results/
+
+# Python companion bytecode and local environments
+__pycache__/
+*.py[cod]
+.venv/

@@ -91,3 +91,10 @@ deploy-ceph: ## Deploy the real-Ceph gateway: make deploy-ceph H=<host> [U=sus]
 
 help: ## Show targets
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | sort | awk -F':.*## ' '{printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
+
+.PHONY: data-test data-demo
+data-test: ## Test the experimental AI data companion (optional Iceberg test skips without dependency)
+	PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_data/tests -v
+
+data-demo: ## Run all nine AI data workflows against a real local HTTP server
+	PYTHONPATH=tools python3 examples/data/end_to_end.py

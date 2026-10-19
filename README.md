@@ -104,6 +104,15 @@ startup or Native block checksums, measure recovery objectives, and retain clean
 The operator tool uses existing Atlas APIs and supports dependency ordering, bounded hooks,
 and scheduled drills: [Application recovery guide](docs/APPLICATION_RECOVERY.md).
 
+## AI data services (experimental)
+
+The Python companion ships nine workflows together: shared model chunks, data-ready
+job reservations, agent workspace branches, permission-aware discovery, exact-key
+KV storage, immutable dataset releases, application recovery checks, per-job cost
+estimates and optional Apache Iceberg maintenance. It uses a separate authenticated
+API and CLI; external schedulers and serving engines integrate through explicit SDK
+adapters. [Guide and limitations](docs/AI_DATA_SERVICES.md).
+
 ## The console
 
 <div align="center">
