@@ -280,6 +280,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-client"
+version = "0.7.0"
+dependencies = [
+ "atlas-api-types",
+ "axum",
+ "reqwest 0.13.5",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
 name = "atlas-common"
 version = "0.7.0"
 dependencies = [
@@ -5046,6 +5059,7 @@ dependencies = [
  "rustls-platform-verifier",
  "serde",
  "serde_json",
+ "serde_urlencoded",
  "sync_wrapper",
  "tokio",
  "tokio-rustls",
