@@ -94,6 +94,12 @@ pub trait StorageDriver: Send + Sync {
     ) -> Result<Vec<serde_json::Value>, DriverError> {
         Err(DriverError::NotImplemented("filesystem_activity"))
     }
+    /// Compression and sharing savings of the whole backend, as the JSON the node reports
+    /// (`extents`, `compressed_extents`, `shared_extents`, `logical_bytes`, `referenced_bytes`,
+    /// `stored_bytes`). Cluster-wide, not per volume.
+    async fn data_reduction(&self) -> Result<serde_json::Value, DriverError> {
+        Err(DriverError::NotImplemented("data_reduction"))
+    }
     /// Retention-locks (WORM) a snapshot for `retain_secs` from now and returns the Unix second it
     /// unlocks at. A lock can be extended but never shortened; delete is refused until it expires.
     async fn lock_snapshot(

@@ -288,6 +288,8 @@ enum Command {
         #[arg(long)]
         retain_secs: u64,
     },
+    /// GET /api/atlas/v1/native/reduction  (atlas-native compression and sharing savings)
+    NativeReduction,
     /// GET /api/atlas/v1/buckets
     Buckets,
     /// DELETE /api/atlas/v1/buckets/{id}  (--force if it still holds backups)
@@ -891,6 +893,7 @@ async fn main() -> Result<()> {
             format!("/api/atlas/v1/snapshots/{id}/lock"),
             Some(serde_json::json!({ "retain_secs": retain_secs })),
         ),
+        Command::NativeReduction => ("GET", "/api/atlas/v1/native/reduction".to_string(), None),
         Command::Buckets => ("GET", "/api/atlas/v1/buckets".to_string(), None),
         Command::DeleteBucket { id, force } => (
             "DELETE",

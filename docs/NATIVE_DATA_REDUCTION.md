@@ -58,6 +58,11 @@ copy of the stored payload), and the counts of extents, compressed extents and s
 - `stored_bytes` is one copy: replication multiplies it by the replica count, erasure coding by
   `(k+m)/k`.
 
+Through the gateway: `GET /api/atlas/v1/native/reduction` (operator role) or `atlasctl
+native-reduction` returns those counters plus `saved_by_compression_bytes`,
+`saved_by_sharing_bytes`, `compression_ratio` (`logical / stored`, above 1 is better) and
+`sharing_ratio` (`referenced / logical`). It is cluster-wide, not per volume.
+
 Prometheus: `atlas_native_dedup_hits_total` and `atlas_native_dedup_saved_bytes_total`.
 
 ## Limits

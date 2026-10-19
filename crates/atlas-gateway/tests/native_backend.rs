@@ -415,3 +415,14 @@ async fn ransomware_check_and_protect_lock_a_snapshot_only_when_warranted() {
     let (st, _) = send(c.get(format!("{base}/volumes/nope/ransomware"))).await;
     assert_eq!(st, 404);
 }
+
+#[tokio::test]
+async fn native_reduction_report_has_counters_and_ratios() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let (st, r) = send(c.get(format!("{base}/native/reduction"))).await;
+    assert_eq!(st, 200, "{r}");
+    assert_eq!(r["logical_bytes"], 0, "the fixture backend stores nothing: {r}");
+    assert_eq!(r["compression_ratio"], 1.0);
+    assert_eq!(r["sharing_ratio"], 1.0);
+}
