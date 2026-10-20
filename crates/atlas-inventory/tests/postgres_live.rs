@@ -277,3 +277,28 @@ async fn rate_limit_cluster_totals_against_real_postgres() {
 
     pool.close().await;
 }
+
+/// Regression: Postgres used a plain TEXT primary key, so `Admin` and `admin` could coexist while
+/// all lookups match on `lower(username)`. Migration 0036 adds a unique `lower(username)` index.
+#[tokio::test]
+#[ignore]
+async fn console_users_reject_case_variant_duplicates() {
+    let url = lab_database_url();
+    let pool = atlas_inventory::connect(&url).await.expect("connect");
+    atlas_inventory::migrate(&pool, &url).await.expect("migrate");
+
+    let _ = sqlx::query("DELETE FROM console_users WHERE lower(username) = 'casedup'")
+        .execute(&pool)
+        .await;
+    atlas_inventory::users::create(&pool, "CaseDup", "h", "viewer", "global", "test")
+        .await
+        .expect("first create succeeds");
+    let err = atlas_inventory::users::create(&pool, "casedup", "h", "admin", "global", "test")
+        .await
+        .expect_err("case-variant duplicate must be rejected");
+    assert!(err.to_string().contains("already exists"), "got: {err}");
+    let _ = sqlx::query("DELETE FROM console_users WHERE lower(username) = 'casedup'")
+        .execute(&pool)
+        .await;
+    pool.close().await;
+}
