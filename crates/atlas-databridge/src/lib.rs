@@ -55,6 +55,7 @@ pub fn build_connector(
                         database,
                         user,
                         password,
+                        &source.tls_mode,
                     ),
                 )),
                 SourceKind::Mysql | SourceKind::Mariadb => {

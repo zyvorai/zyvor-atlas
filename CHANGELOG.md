@@ -9,6 +9,17 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Fixed
+
+- DataBridge Postgres discovery ignored a source's `tls_mode` and always connected in plaintext
+  (`sslmode=disable`), even for the default `require`. It now honours `disable`, `prefer`, `require`,
+  `verify-ca` and `verify-full`; an unrecognised value is treated as `require`, never plaintext. Credentials are
+  now passed as typed connection fields rather than interpolated into a connection string.
+
+### Added
+
+- `ATLAS_DATABRIDGE_PG_CA_FILE`: an extra PEM bundle of CA certificates to trust for `verify-*` Postgres sources.
+
 ## [0.9.0] — 2026-10-19
 
 ### Added
