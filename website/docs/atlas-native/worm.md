@@ -85,6 +85,21 @@ Unit and integration tested (engine, Raft catalog, node HTTP, driver fake, gatew
 Live, 2026-10-18, on the lab k3s (`atlas-native` StatefulSet; only two of three pods could be
 scheduled because the shared node was at its pod limit, which still leaves a Raft quorum): over
 the node HTTP API a block snapshot and a filesystem snapshot were each locked, `DELETE` was refused
-with 409, and a shorter lock was refused with 409. **Not yet run live:** the activity windows,
-`ransomware/protect`, auto-protect and S3 retention (the deployed image predates them), and no
-real encrypting workload has been tried.
+with 409, and a shorter lock was refused with 409.
+
+Live, 2026-10-26, `deploy/native/lab-verify.sh` (via `scripts/lab-verify-remote.sh`) on the lab
+host: a six-process native cluster (3 metadata + 3 data nodes, compression and dedup on), the S3
+gateway and the Atlas gateway with `ATLAS_RANSOMWARE_AUTOPROTECT=1`, all as plain processes. 27 of
+27 checks passed:
+
+- S3 compliance retention: set, read back, a locked object refused delete and overwrite (403) with
+  its content unchanged, shortening refused, extending accepted, an unlocked object unaffected.
+- Ransomware: after an 8-minute quiet baseline the volume was assessed `normal`; a burst of 60
+  random-byte writes and deletes put entropy 1.0 in two one-minute windows (28 and 32 deletes) and
+  was assessed `likely_ransomware` (`can_execute: false`). Auto-protect then took a locked snapshot
+  that refused deletion (409), `ransomware/protect` locked another, and shortening its lock was
+  refused (409).
+
+**Limits of that run:** the "encryption" is random bytes written through the S3 gateway, not a real
+encrypting program, and the cluster was single-host. A real ransomware workload over a FUSE/NFS
+mount is still untried.
