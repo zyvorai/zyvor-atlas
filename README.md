@@ -97,6 +97,10 @@ Everything below ran on real infrastructure in the Atlas lab. Lab verification i
 
 Compared with a parallel filesystem such as WEKA, including where WEKA is the better choice today: [docs/COMPARISON.md](docs/COMPARISON.md).
 
+### Leaving VMware
+
+Atlas is the storage layer, not a hypervisor, so it sits next to VMware's vSAN rather than replacing the whole hyperconverged stack. VMs move with the rest of the Zyvor suite: [Scout](https://github.com/zyvorai/scout) scores readiness, [h2kvm](https://github.com/zyvorai/zyvor-h2kvm) repairs the guest offline and converts it to qcow2, and the VM lands on Kairon, Machina or KubeVirt with its disks on Atlas-managed Ceph, NFS, ZFS or Native storage. Atlas has no direct disk-import job yet. See [vSAN and migration in COMPARISON.md](docs/COMPARISON.md#compared-with-vmware-vsan-hyperconverged-infrastructure).
+
 ## Application recovery drills
 
 Capture coordinated recovery points, restore into new drill volumes, validate application
