@@ -162,9 +162,11 @@ holds the result.
 
 Limits to state plainly:
 
-- **No direct import into Atlas yet.** h2kvm writes qcow2, and a KubeVirt target brings it in through
-  CDI. There is no Atlas `image.import` job, resume offset or recorded block checksum; that is
-  later Migration Assurance work. `VMWARE_EXIT_DEMO.md` is a rehearsal script that says the same.
+- **Direct import is raw-only and atlas-native-only.** `POST /volumes/{id}/import` streams a raw image
+  into an atlas-native volume, resumes from recorded progress and verifies the volume by reading it back
+  (`IMAGE_IMPORT.md`). h2kvm writes qcow2, which that job cannot read, so convert to raw first. Ceph RBD
+  targets still go through CDI, with no Atlas-side resume offset or recorded checksum. The import has not
+  been run on a real cluster or a large image.
 - **Licence differs.** h2kvm is source-available under the Zyvor Production License: free for
   evaluation and labs, a paid subscription for production. Atlas stays Apache-2.0.
 - **Source coverage is partial.** AWS and Proxmox Backup Server are library modules only, and GCP,
