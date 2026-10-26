@@ -3,7 +3,7 @@
 # atlas-native-s3: S3 gateway for atlas-native filesystems (docs/NATIVE_S3.md). Talks to the cluster
 # over its HTTP API, so unlike the NFS gateway it needs no FUSE and no privileges.
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29 AS builder
+FROM docker.io/library/rust:1.99-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8 AS builder
 WORKDIR /build
 COPY . .
 RUN cargo build --release --locked -p atlas-native-s3 --bin atlas-native-s3
