@@ -38,6 +38,9 @@ Rules: cluster health, pool near-full (75/85%), OSD down, capacity forecast, OSD
   way — verified live: a `bucket.create` quota-set step stuck `running` was freed by cancel before
   the timeout fix landed; `ceph`/`rbd` calls have no equivalent bound and still need this endpoint.
 - **OSD ops** `POST /osds/{id}/out|in|reweight?weight=` (`ceph osd …`). *Real Ceph.*
+- **Safe to stop?** `GET /osds/ok-to-stop?ids=0,1` wraps `ceph osd ok-to-stop` so a node can be checked before
+  it is taken down for maintenance. Read-only; a "no" is a normal answer with Ceph's PG counts. The answer is
+  Ceph's own and was checked only against the fixture driver, not a live cluster.
 - **Dynamic backends** `POST /backends {backend_type:"nfs"|"zfs", server, targets}` — instantiates a live
   driver + discovers it immediately (not just a catalog row).
 

@@ -186,6 +186,10 @@ Run the alert rules on demand (also runs every `ATLAS_MONITOR_INTERVAL_SECS`).
   resume the job engine. Paused jobs stay `queued` (the worker holds them) and drain when resumed.
 - `POST /api/atlas/v1/osds/{osd_id}/out` · `/in` · `/reweight?weight=0.8` — OSD maintenance as async
   jobs (`ceph osd out|in|reweight`); `202 + job id`.
+- `GET /api/atlas/v1/osds/ok-to-stop?ids=0,1` — would stopping these OSDs together leave every placement
+  group available (`ceph osd ok-to-stop`)? Read-only. Returns `{ok_to_stop, osd_ids, detail}`; a `false`
+  answer carries Ceph's PG counts and reason in `detail` rather than being an error. `404` for an OSD that does
+  not exist, `400` for a missing, malformed or oversized (over 64) `ids`. Ask this before taking a node down.
 - `POST /api/atlas/v1/rbd-images/{pool}/{image}/qos?iops=&bps=` — per-image QoS throttle
   (`rbd config image set rbd_qos_*_limit`); `0` clears a cap; `202 + job id` (operator).
 - `POST /api/atlas/v1/rbd-images/{pool}/{image}/resize` `{size_bytes, allow_shrink}` — resize an RBD

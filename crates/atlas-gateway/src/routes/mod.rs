@@ -131,6 +131,7 @@ pub fn router(state: AppState) -> Router {
         .route("/clusters/{id}/capabilities", get(cluster_capabilities))
         .route("/nodes", get(list_nodes))
         .route("/osds", get(list_osds))
+        .route("/osds/ok-to-stop", get(osds_ok_to_stop))
         .route("/osds/{osd_id}/out", post(osd_out))
         .route("/osds/{osd_id}/in", post(osd_in))
         .route("/osds/{osd_id}/reweight", post(osd_reweight))

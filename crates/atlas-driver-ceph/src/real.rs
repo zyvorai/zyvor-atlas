@@ -261,6 +261,9 @@ impl StorageDriver for RealCephDriver {
     async fn ceph_osd_df(&self) -> Result<serde_json::Value, DriverError> {
         ceph_cmd(&["osd", "df"]).await
     }
+    async fn ceph_osd_ok_to_stop(&self, osd_ids: &[i64]) -> Result<serde_json::Value, DriverError> {
+        crate::cmd::ceph_osd_ok_to_stop(osd_ids).await
+    }
 }
 
 fn metric(name: &str, value: f64) -> MetricSample {
