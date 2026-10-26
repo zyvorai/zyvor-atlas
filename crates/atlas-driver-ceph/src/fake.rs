@@ -248,4 +248,31 @@ impl StorageDriver for FakeCephDriver {
             "summary": { "total_kb": kib * 6, "average_utilization": 42.6, "min_var": 0.93, "max_var": 1.11, "dev": 2.8 }
         }))
     }
+
+    /// Fixture model of Ceph's answer for the topology above (osd 0-1 on node01, 2-3 on node02,
+    /// 4-5 on node03, osd.3 already down, three replicas across the hosts): stopping is safe only
+    /// while it leaves at most one host impaired. node02 already is, so stopping osd.2 is fine
+    /// and stopping anything on node01 or node03 is not.
+    async fn ceph_osd_ok_to_stop(&self, osd_ids: &[i64]) -> Result<serde_json::Value, DriverError> {
+        let host_of = |id: i64| match id {
+            0 | 1 => Some("node01"),
+            2 | 3 => Some("node02"),
+            4 | 5 => Some("node03"),
+            _ => None,
+        };
+        let mut impaired = std::collections::BTreeSet::from(["node02"]);
+        for id in osd_ids {
+            let host = host_of(*id)
+                .ok_or_else(|| DriverError::Backend(format!("osd.{id} does not exist")))?;
+            impaired.insert(host);
+        }
+        let ok = impaired.len() <= 1;
+        Ok(serde_json::json!({
+            "ok_to_stop": ok,
+            "osds": osd_ids,
+            "num_ok_pgs": if ok { 289 } else { 192 },
+            "num_not_ok_pgs": if ok { 0 } else { 97 },
+            "bad_become_inactive": [],
+        }))
+    }
 }

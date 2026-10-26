@@ -146,4 +146,9 @@ pub trait StorageDriver: Send + Sync {
     async fn ceph_osd_df(&self) -> Result<serde_json::Value, DriverError> {
         Err(DriverError::NotImplemented("ceph_osd_df"))
     }
+    /// `ceph osd ok-to-stop` — whether stopping these OSDs together leaves every PG available.
+    /// The result carries `ok_to_stop` (bool) and, from Ceph, the PG counts behind the answer.
+    async fn ceph_osd_ok_to_stop(&self, _osd_ids: &[i64]) -> Result<serde_json::Value, DriverError> {
+        Err(DriverError::NotImplemented("ceph_osd_ok_to_stop"))
+    }
 }

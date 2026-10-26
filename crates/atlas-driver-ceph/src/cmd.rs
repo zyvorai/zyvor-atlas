@@ -32,6 +32,58 @@ pub async fn ceph_cmd(args: &[&str]) -> Result<serde_json::Value, DriverError> {
     run_json("ceph", args).await
 }
 
+/// `ceph osd ok-to-stop <ids...>`: whether stopping all of `osd_ids` at once keeps every PG
+/// available. Ceph answers "no" with a non-zero exit status and JSON on stdout, so a refusal is a
+/// normal result here (`ok_to_stop: false`), not an error.
+pub async fn ceph_osd_ok_to_stop(osd_ids: &[i64]) -> Result<serde_json::Value, DriverError> {
+    let ids: Vec<String> = osd_ids.iter().map(|i| i.to_string()).collect();
+    let mut args = vec!["osd", "ok-to-stop"];
+    args.extend(ids.iter().map(String::as_str));
+    let output = cmd("ceph")
+        .args(&args)
+        .arg("--format")
+        .arg("json")
+        .output()
+        .await
+        .map_err(|e| DriverError::Unreachable(format!("failed to spawn `ceph`: {e}")))?;
+    interpret_ok_to_stop(
+        output.status.success(),
+        &output.stdout,
+        &String::from_utf8_lossy(&output.stderr),
+    )
+}
+
+/// Turn the outcome of `ceph osd ok-to-stop` into a result with an explicit `ok_to_stop` flag.
+/// A failure that came with JSON is Ceph saying "not safe"; a failure without it (unknown OSD,
+/// no quorum, no `ceph` access) is a real error and keeps Ceph's own message.
+fn interpret_ok_to_stop(
+    success: bool,
+    stdout: &[u8],
+    stderr: &str,
+) -> Result<serde_json::Value, DriverError> {
+    let parsed: Option<serde_json::Value> = serde_json::from_slice(stdout).ok();
+    match (success, parsed) {
+        (true, Some(mut v)) => {
+            if let Some(o) = v.as_object_mut() {
+                o.entry("ok_to_stop").or_insert(serde_json::Value::Bool(true));
+            }
+            Ok(v)
+        }
+        (false, Some(mut v)) if v.is_object() => {
+            v["ok_to_stop"] = serde_json::Value::Bool(false);
+            if !stderr.trim().is_empty() {
+                v["reason"] = serde_json::Value::String(stderr.trim().to_string());
+            }
+            Ok(v)
+        }
+        (true, None) => Ok(serde_json::json!({ "ok_to_stop": true })),
+        _ => Err(DriverError::Backend(format!(
+            "`ceph osd ok-to-stop` failed: {}",
+            stderr.trim()
+        ))),
+    }
+}
+
 /// Run `rbd <args...> --format json` and parse stdout as JSON.
 pub async fn rbd_cmd(args: &[&str]) -> Result<serde_json::Value, DriverError> {
     run_json("rbd", args).await
@@ -953,8 +1005,39 @@ async fn run_json(bin: &str, args: &[&str]) -> Result<serde_json::Value, DriverE
 
 #[cfg(test)]
 mod tests {
-    use super::{journal_peers_replayed, mirror_promote_blocker};
+    use super::{interpret_ok_to_stop, journal_peers_replayed, mirror_promote_blocker};
     use serde_json::json;
+
+    #[test]
+    fn ok_to_stop_success_carries_the_flag_and_cephs_detail() {
+        let out = br#"{"ok_to_stop":true,"osds":[1],"num_ok_pgs":12,"num_not_ok_pgs":0}"#;
+        let v = interpret_ok_to_stop(true, out, "").unwrap();
+        assert_eq!(v["ok_to_stop"], true);
+        assert_eq!(v["num_ok_pgs"], 12);
+        // Older Ceph omits the flag on success; it is added.
+        assert_eq!(interpret_ok_to_stop(true, b"{}", "").unwrap()["ok_to_stop"], true);
+        assert_eq!(interpret_ok_to_stop(true, b"", "").unwrap()["ok_to_stop"], true);
+    }
+
+    #[test]
+    fn ok_to_stop_refusal_is_a_result_not_an_error() {
+        let out = br#"{"ok_to_stop":false,"osds":[2],"num_ok_pgs":4,"num_not_ok_pgs":9,"bad_become_inactive":["1.a"]}"#;
+        let v = interpret_ok_to_stop(false, out, "Error EBUSY: unsafe to stop osd(s)\n").unwrap();
+        assert_eq!(v["ok_to_stop"], false);
+        assert_eq!(v["num_not_ok_pgs"], 9);
+        assert_eq!(v["reason"], "Error EBUSY: unsafe to stop osd(s)");
+        // Forced false even if the JSON said otherwise on a failing exit.
+        let odd = interpret_ok_to_stop(false, br#"{"ok_to_stop":true}"#, "").unwrap();
+        assert_eq!(odd["ok_to_stop"], false);
+    }
+
+    #[test]
+    fn ok_to_stop_failure_without_json_is_an_error_with_cephs_message() {
+        let e = interpret_ok_to_stop(false, b"", "Error ENOENT: osd.99 does not exist\n").unwrap_err();
+        assert!(e.to_string().contains("osd.99 does not exist"), "{e}");
+        assert!(interpret_ok_to_stop(false, b"not json", "boom").is_err());
+        assert!(interpret_ok_to_stop(false, b"[1,2]", "boom").is_err());
+    }
 
     #[test]
     fn promote_is_clean_only_after_replaying_the_peer_demotion() {

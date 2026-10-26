@@ -11,6 +11,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `GET /osds/ok-to-stop?ids=0,1`: whether stopping the given OSDs together keeps every placement group available
+  (`ceph osd ok-to-stop`), for checking a node before maintenance. Read-only.
 - `POST /volumes/{id}/import` and the `image.import` job: stream a raw disk image over HTTP(S) into an
   atlas-native volume, skipping all-zero blocks, resuming from recorded progress, and verifying the volume by
   reading it back against a caller-supplied SHA-256. Off until `ATLAS_IMPORT_ALLOWED_HOSTS` lists the hosts it

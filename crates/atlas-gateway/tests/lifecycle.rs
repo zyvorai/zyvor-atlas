@@ -195,6 +195,31 @@ async fn qos_enqueues_and_validates() {
     );
 }
 
+/// `GET /osds/ok-to-stop` answers from the Ceph driver and validates its input.
+#[tokio::test]
+async fn osd_ok_to_stop_answers_and_validates() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await.0);
+    let c = reqwest::Client::new();
+    let get = |q: &str| c.get(format!("{base}/osds/ok-to-stop{q}")).send();
+
+    // The fixture cluster already has osd.3 down on node02: stopping osd.2 adds no new failure
+    // domain, stopping anything on another host does.
+    let ok: Value = get("?ids=2").await.unwrap().json().await.unwrap();
+    assert_eq!(ok["ok_to_stop"], true, "{ok}");
+    assert_eq!(ok["osd_ids"], json!([2]));
+    assert_eq!(ok["detail"]["num_not_ok_pgs"], 0);
+
+    let no: Value = get("?ids=0,1").await.unwrap().json().await.unwrap();
+    assert_eq!(no["ok_to_stop"], false, "{no}");
+    assert!(no["detail"]["num_not_ok_pgs"].as_i64().unwrap() > 0);
+
+    // Unknown OSD -> 404; bad or missing ids -> 400.
+    assert_eq!(get("?ids=99").await.unwrap().status(), 404);
+    for bad in ["", "?ids=", "?ids=x", "?ids=-1"] {
+        assert_eq!(get(bad).await.unwrap().status(), 400, "{bad}");
+    }
+}
+
 /// Resize-down is opt-in (allow_shrink), and pool migration validates its destination.
 #[tokio::test]
 async fn resize_down_and_migrate() {

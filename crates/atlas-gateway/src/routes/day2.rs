@@ -100,6 +100,65 @@ pub(crate) struct ReweightQuery {
     weight: Option<f64>,
 }
 
+#[derive(Debug, Deserialize)]
+pub(crate) struct OkToStopQuery {
+    ids: Option<String>,
+}
+
+/// Most OSDs one safety check may name; a host rarely has more.
+const OK_TO_STOP_MAX_IDS: usize = 64;
+
+fn parse_osd_ids(raw: &str) -> AppResult<Vec<i64>> {
+    let mut ids = Vec::new();
+    for part in raw.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let id: i64 = part
+            .parse()
+            .map_err(|_| AppError::Validation(format!("'{part}' is not an OSD id")))?;
+        if id < 0 {
+            return Err(AppError::Validation(format!("OSD id {id} is negative")));
+        }
+        if !ids.contains(&id) {
+            ids.push(id);
+        }
+    }
+    if ids.is_empty() {
+        return Err(AppError::Validation(
+            "ids is required: a comma-separated list of OSD ids, e.g. ids=0,1".into(),
+        ));
+    }
+    if ids.len() > OK_TO_STOP_MAX_IDS {
+        return Err(AppError::Validation(format!(
+            "at most {OK_TO_STOP_MAX_IDS} OSD ids per check"
+        )));
+    }
+    Ok(ids)
+}
+
+/// `GET /osds/ok-to-stop?ids=0,1` — would stopping these OSDs together leave every placement group
+/// available (`ceph osd ok-to-stop`)? Read-only: it changes nothing. Ask this before taking a node
+/// down for maintenance; `ok_to_stop: false` comes with Ceph's PG counts and reason.
+pub(crate) async fn osds_ok_to_stop(
+    State(s): State<AppState>,
+    Query(q): Query<OkToStopQuery>,
+) -> AppResult<Json<Value>> {
+    let ids = parse_osd_ids(q.ids.as_deref().unwrap_or(""))?;
+    let driver = s
+        .driver_for(super::util::CEPH_BACKEND_ID)
+        .ok_or_else(|| AppError::Driver("no ceph driver".into()))?;
+    let detail = driver.ceph_osd_ok_to_stop(&ids).await.map_err(|e| match e {
+        atlas_driver_core::DriverError::Backend(m) if m.contains("does not exist") => {
+            AppError::NotFound(m)
+        }
+        atlas_driver_core::DriverError::Unreachable(m) => AppError::Unavailable(m),
+        other => AppError::Driver(other.to_string()),
+    })?;
+    Ok(Json(json!({
+        "ok_to_stop": detail.get("ok_to_stop").and_then(Value::as_bool).unwrap_or(false),
+        "osd_ids": ids,
+        "detail": detail,
+    })))
+}
+
 /// `POST /osds/{osd_id}/out` — drain an OSD (`ceph osd out`) as an async job (admin).
 pub(crate) async fn osd_out(
     State(s): State<AppState>,
@@ -313,4 +372,24 @@ pub(crate) async fn upgrade_preflight(
     Ok(Json(
         json!({ "ready": ready, "checks": checks, "blockers": blockers }),
     ))
+}
+
+#[cfg(test)]
+mod ok_to_stop_tests {
+    use super::*;
+
+    #[test]
+    fn parses_a_comma_separated_list_without_duplicates() {
+        assert_eq!(parse_osd_ids("0, 1,1,7").unwrap(), vec![0, 1, 7]);
+        assert_eq!(parse_osd_ids("3").unwrap(), vec![3]);
+    }
+
+    #[test]
+    fn rejects_empty_non_numeric_negative_and_oversized_lists() {
+        for bad in ["", " , ", "a", "1,x", "-1", "1.5"] {
+            assert!(parse_osd_ids(bad).is_err(), "{bad:?}");
+        }
+        let many = (0..=OK_TO_STOP_MAX_IDS).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        assert!(parse_osd_ids(&many).is_err());
+    }
 }
