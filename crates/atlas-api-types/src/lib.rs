@@ -852,3 +852,55 @@ pub struct IoLease {
     pub expires_unix: u64,
     pub reason: String,
 }
+
+/// Limits for a dedup-savings estimate. The scan reads real data, so every field is a ceiling.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct DedupEstimateOptions {
+    /// Stop after examining this many bytes of data (block-scan backends).
+    pub max_bytes: u64,
+    /// Block size used for content hashing (block-scan backends).
+    pub block_size: u64,
+    /// Wall-clock ceiling for the whole estimate.
+    pub max_secs: u64,
+}
+
+impl Default for DedupEstimateOptions {
+    fn default() -> Self {
+        Self {
+            max_bytes: 1 << 30,
+            block_size: 64 << 10,
+            max_secs: 300,
+        }
+    }
+}
+
+/// "What would dedup save on this pool?" Read-only; nothing is enabled or changed.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct DedupEstimate {
+    pub backend_id: String,
+    pub pool: String,
+    /// `zdb_simulated_ddt` (ZFS's own simulation) or `block_hash_scan` (Atlas hashed the data).
+    pub method: String,
+    pub block_size: Option<u64>,
+    /// Non-zero bytes examined (block scan only).
+    pub scanned_bytes: Option<u64>,
+    /// All-zero bytes skipped: sparse space dedups and compresses to nothing already.
+    pub zero_bytes: Option<u64>,
+    /// Bytes of distinct blocks among `scanned_bytes` (block scan only).
+    pub unique_bytes: Option<u64>,
+    /// logical / unique. 1.0 means dedup would save nothing.
+    pub dedup_ratio: f64,
+    pub compression_ratio: Option<f64>,
+    /// dedup x compression, the figure to compare with a reduction report.
+    pub combined_ratio: Option<f64>,
+    /// Bytes the pool would shed at `combined_ratio` (or `dedup_ratio` if that is all there is).
+    pub estimated_saved_bytes: Option<u64>,
+    /// Fraction of the pool's data the estimate saw, 0..=1.
+    pub coverage: f64,
+    /// True when `coverage` < 1: duplicates between scanned and unscanned data are invisible, so
+    /// the real saving is at least this.
+    pub lower_bound: bool,
+    /// The scan hit its memory ceiling for distinct blocks and stopped early.
+    pub truncated: bool,
+    pub note: String,
+}

@@ -8,10 +8,11 @@
 use async_trait::async_trait;
 use atlas_api_types::{
     CloneSnapshotRequest, CreateSnapshotRequest, CreateSnapshotResult, CreateVolumeRequest,
-    CreateVolumeResult, DeleteSnapshotRequest, DeleteVolumeRequest, DiscoveryResult,
-    ExpandVolumeRequest, MetricSample, StorageHealth, StoragePool, StorageVolume,
+    CreateVolumeResult, DedupEstimate, DedupEstimateOptions, DeleteSnapshotRequest,
+    DeleteVolumeRequest, DiscoveryResult, ExpandVolumeRequest, MetricSample, StorageHealth, StoragePool, StorageVolume,
 };
 
+pub mod dedup;
 pub mod registry;
 mod tls;
 pub use registry::DriverRegistry;
@@ -99,6 +100,15 @@ pub trait StorageDriver: Send + Sync {
     /// `stored_bytes`). Cluster-wide, not per volume.
     async fn data_reduction(&self) -> Result<serde_json::Value, DriverError> {
         Err(DriverError::NotImplemented("data_reduction"))
+    }
+    /// What dedup (and compression) would save on `pool`, without enabling either. Read-only but
+    /// not free: it reads data, so `opts` bounds bytes and time.
+    async fn estimate_dedup(
+        &self,
+        _pool: &str,
+        _opts: DedupEstimateOptions,
+    ) -> Result<DedupEstimate, DriverError> {
+        Err(DriverError::NotImplemented("estimate_dedup"))
     }
     /// Retention-locks (WORM) a snapshot for `retain_secs` from now and returns the Unix second it
     /// unlocks at. A lock can be extended but never shortened; delete is refused until it expires.

@@ -7,6 +7,7 @@
 //! [`FakeCephDriver`] returns canned fixtures for local dev / tests where no Ceph cluster exists.
 
 mod cmd;
+pub mod dedup;
 mod fake;
 pub mod health_rollup;
 mod real;

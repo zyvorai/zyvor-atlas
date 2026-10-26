@@ -107,6 +107,38 @@ impl StorageDriver for FakeCephDriver {
         &self.backend_id
     }
 
+    async fn estimate_dedup(
+        &self,
+        pool: &str,
+        opts: atlas_api_types::DedupEstimateOptions,
+    ) -> Result<atlas_api_types::DedupEstimate, DriverError> {
+        if !self.list_pools().await?.iter().any(|p| p.name == pool && p.kind == "rbd") {
+            return Err(DriverError::Backend(format!("invalid: '{pool}' is not an RBD pool on this cluster")));
+        }
+        // Fixture data run through the real scanner: eight VM-like images that share a base layer
+        // (identical blocks) plus a unique tail each, and some holes.
+        let bs = opts.block_size.clamp(4 << 10, 16 << 20) as usize;
+        let layer = |seed: u8| -> Vec<u8> {
+            (0..bs).map(|i| (i as u8).wrapping_mul(seed | 1).wrapping_add(seed)).collect()
+        };
+        let mut scanner = atlas_driver_core::dedup::DedupScanner::new(
+            opts.block_size,
+            atlas_driver_core::dedup::DEFAULT_MAX_UNIQUE,
+        );
+        for image in 0..8u8 {
+            for base in 1..=6u8 {
+                scanner.feed(&layer(base));
+            }
+            for tail in 0..2u8 {
+                scanner.feed(&layer(100 + image * 2 + tail));
+            }
+            scanner.feed_zeros(32 * bs as u64);
+        }
+        let total = scanner.examined_bytes();
+        let scan = scanner.finish();
+        Ok(atlas_driver_core::dedup::estimate_from_scan(&self.backend_id, pool, &scan, Some(total)))
+    }
+
     fn is_fixture(&self) -> bool {
         true
     }
