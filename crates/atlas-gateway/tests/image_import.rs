@@ -150,14 +150,16 @@ async fn create_named_volume(c: &reqwest::Client, base: &str, size: u64, name: &
 
 /// Poll the job until it leaves the in-flight states.
 async fn finish(c: &reqwest::Client, base: &str, job: &str) -> Value {
+    let mut last = Value::Null;
     for _ in 0..200 {
         let (_, j) = send(c.get(format!("{base}/jobs/{job}"))).await;
         if matches!(j["state"].as_str(), Some("succeeded" | "failed")) {
             return j;
         }
+        last = j;
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("job {job} did not finish");
+    panic!("job {job} did not finish; last seen: {last}");
 }
 
 /// Env vars are process-wide, so the scenarios that depend on them run one after the other.
@@ -293,17 +295,20 @@ async fn imports_run_beside_other_jobs() {
         jobs.push(acc["job_id"].as_str().unwrap().to_string());
     }
 
+    eprintln!("scenario 2: three imports queued: {jobs:?}");
     // Two imports hold the two slots; the third waits its turn.
     wait_for_state(&c, &base, &jobs[0], "running").await;
     wait_for_state(&c, &base, &jobs[1], "running").await;
     assert_eq!(state_of(&c, &base, &jobs[2]).await, "queued");
 
+    eprintln!("scenario 2: two imports running, third queued");
     // An ordinary job still runs to the end while both imports are in flight.
     let (st, acc) = send(c.post(format!("{base}/rbd-images/nvme/img1/qos?iops=1000"))).await;
     assert_eq!(st, 202, "{acc}");
     let other = finish(&c, &base, acc["job_id"].as_str().unwrap()).await;
     assert!(matches!(other["state"].as_str(), Some("succeeded" | "failed")), "{other}");
     assert_eq!(state_of(&c, &base, &jobs[0]).await, "running");
+    eprintln!("scenario 2: ordinary job finished beside the imports");
 
     // Cancelling a running import fails it and frees its slot for the waiting one.
     let (st, _) = send(c.post(format!("{base}/jobs/{}/cancel", jobs[0]))).await;
@@ -311,7 +316,9 @@ async fn imports_run_beside_other_jobs() {
     let done = finish(&c, &base, &jobs[0]).await;
     assert_eq!(done["state"], "failed", "{done}");
     assert!(done["error"].as_str().unwrap_or("").contains("cancelled"), "{done}");
+    eprintln!("scenario 2: first import cancelled");
     wait_for_state(&c, &base, &jobs[2], "running").await;
+    eprintln!("scenario 2: waiting import took the freed slot");
 
     for j in &jobs[1..] {
         let (st, _) = send(c.post(format!("{base}/jobs/{j}/cancel"))).await;

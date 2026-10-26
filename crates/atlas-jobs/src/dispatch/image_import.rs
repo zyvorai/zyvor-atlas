@@ -11,7 +11,7 @@
 //!
 //! See `docs/IMAGE_IMPORT.md` for the API and its limits.
 
-use std::sync::{Arc, OnceLock};
+use std::sync::Arc;
 use std::time::Duration;
 
 use anyhow::{anyhow, bail, Context, Result};
@@ -28,14 +28,6 @@ pub(crate) const CHUNK: usize = 4 * 1024 * 1024;
 const PROGRESS_EVERY: u64 = 64 * 1024 * 1024;
 /// Give up on a source that sends nothing for this long.
 const READ_TIMEOUT: Duration = Duration::from_secs(60);
-
-static DRIVERS: OnceLock<Arc<DriverRegistry>> = OnceLock::new();
-
-/// Give the job worker access to the gateway's storage drivers. Called once at startup; only
-/// `image.import` needs it, because it writes volume data directly.
-pub fn set_driver_registry(registry: Arc<DriverRegistry>) {
-    let _ = DRIVERS.set(registry);
-}
 
 // ---- the pieces `run` is generic over, so the algorithm is testable without a cluster ----
 
@@ -333,6 +325,7 @@ impl Progress for JobProgress<'_> {
 
 pub(crate) async fn dispatch_image_import(
     pool: &AnyPool,
+    drivers: &Option<Arc<DriverRegistry>>,
     job_id: &str,
     spec: JobSpec,
 ) -> Result<serde_json::Value> {
@@ -348,8 +341,8 @@ pub(crate) async fn dispatch_image_import(
     else {
         bail!("not an image.import job");
     };
-    let driver = DRIVERS
-        .get()
+    let driver = drivers
+        .as_ref()
         .and_then(|r| r.get(&backend_id))
         .ok_or_else(|| anyhow!("storage backend {backend_id} is not available"))?;
     let io = DriverIo { driver, native_id };
