@@ -133,9 +133,13 @@ async fn serve(body: Vec<u8>) -> String {
 }
 
 async fn create_volume(c: &reqwest::Client, base: &str, size: u64) -> String {
+    create_named_volume(c, base, size, "imported-disk").await
+}
+
+async fn create_named_volume(c: &reqwest::Client, base: &str, size: u64, name: &str) -> String {
     let (st, v) = send(c.post(format!("{base}/volumes")).json(&json!({
         "tenant_id": "acme",
-        "name": "imported-disk",
+        "name": name,
         "size_bytes": size,
         "kubernetes": { "backend_id": NATIVE_BACKEND_ID }
     })))
@@ -156,9 +160,14 @@ async fn finish(c: &reqwest::Client, base: &str, job: &str) -> Value {
     panic!("job {job} did not finish");
 }
 
+/// Env vars are process-wide, so the scenarios that depend on them run one after the other.
 #[tokio::test]
 async fn image_import_through_the_gateway() {
-    // Env vars are process-wide, so everything that depends on them runs in this one test.
+    route_and_job().await;
+    imports_run_beside_other_jobs().await;
+}
+
+async fn route_and_job() {
     std::env::remove_var("ATLAS_IMPORT_ALLOWED_HOSTS");
     std::env::set_var("ATLAS_IMPORT_MAX_RETRIES", "0");
     let base = format!("http://{}/api/atlas/v1", spawn().await);
@@ -224,4 +233,89 @@ async fn image_import_through_the_gateway() {
     assert_eq!(st, 404);
     let (st, _) = send(post(json!({"url": url, "sha256": sha(&img), "resume_from_job": acc["job_id"]}))).await;
     assert_eq!(st, 202, "resuming from a failed import of the same volume is allowed");
+}
+
+/// Sends the headers and 1 MiB of a 1 GiB body, then goes quiet, so an import into it stays running.
+async fn stalled_server() -> String {
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        while let Ok((mut sock, _)) = listener.accept().await {
+            tokio::spawn(async move {
+                let mut buf = [0u8; 4096];
+                let _ = sock.read(&mut buf).await;
+                let head = "HTTP/1.1 200 OK\r\nContent-Length: 1073741824\r\nConnection: close\r\n\r\n";
+                let _ = sock.write_all(head.as_bytes()).await;
+                let _ = sock.write_all(&vec![7u8; 1024 * 1024]).await;
+                tokio::time::sleep(Duration::from_secs(3600)).await;
+            });
+        }
+    });
+    format!("127.0.0.1:{}", addr.port())
+}
+
+async fn state_of(c: &reqwest::Client, base: &str, job: &str) -> String {
+    let (_, j) = send(c.get(format!("{base}/jobs/{job}"))).await;
+    j["state"].as_str().unwrap_or("").to_string()
+}
+
+async fn wait_for_state(c: &reqwest::Client, base: &str, job: &str, want: &str) {
+    for _ in 0..100 {
+        if state_of(c, base, job).await == want {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!("job {job} never reached {want}; it is {}", state_of(c, base, job).await);
+}
+
+/// Imports are not held up by, and do not hold up, other jobs; only two run at once; and a running
+/// or waiting import can be cancelled.
+async fn imports_run_beside_other_jobs() {
+    std::env::set_var("ATLAS_IMPORT_ALLOWED_HOSTS", "127.0.0.1");
+    std::env::set_var("ATLAS_IMPORT_MAX_RETRIES", "0");
+    std::env::set_var("ATLAS_IMPORT_CONCURRENCY", "2");
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let host = stalled_server().await;
+    let url = format!("http://{host}/huge.raw");
+    let any_sha = sha(b"irrelevant");
+
+    let mut jobs = Vec::new();
+    for n in 0..3 {
+        let vid = create_named_volume(&c, &base, 4 * 1024 * 1024, &format!("vol-{n}")).await;
+        let (st, acc) = send(
+            c.post(format!("{base}/volumes/{vid}/import"))
+                .json(&json!({ "url": url, "sha256": any_sha })),
+        )
+        .await;
+        assert_eq!(st, 202, "{acc}");
+        jobs.push(acc["job_id"].as_str().unwrap().to_string());
+    }
+
+    // Two imports hold the two slots; the third waits its turn.
+    wait_for_state(&c, &base, &jobs[0], "running").await;
+    wait_for_state(&c, &base, &jobs[1], "running").await;
+    assert_eq!(state_of(&c, &base, &jobs[2]).await, "queued");
+
+    // An ordinary job still runs to the end while both imports are in flight.
+    let (st, acc) = send(c.post(format!("{base}/rbd-images/nvme/img1/qos?iops=1000"))).await;
+    assert_eq!(st, 202, "{acc}");
+    let other = finish(&c, &base, acc["job_id"].as_str().unwrap()).await;
+    assert!(matches!(other["state"].as_str(), Some("succeeded" | "failed")), "{other}");
+    assert_eq!(state_of(&c, &base, &jobs[0]).await, "running");
+
+    // Cancelling a running import fails it and frees its slot for the waiting one.
+    let (st, _) = send(c.post(format!("{base}/jobs/{}/cancel", jobs[0]))).await;
+    assert_eq!(st, 200);
+    let done = finish(&c, &base, &jobs[0]).await;
+    assert_eq!(done["state"], "failed", "{done}");
+    assert!(done["error"].as_str().unwrap_or("").contains("cancelled"), "{done}");
+    wait_for_state(&c, &base, &jobs[2], "running").await;
+
+    for j in &jobs[1..] {
+        let (st, _) = send(c.post(format!("{base}/jobs/{j}/cancel"))).await;
+        assert_eq!(st, 200);
+        assert_eq!(finish(&c, &base, j).await["state"], "failed");
+    }
 }
