@@ -416,6 +416,17 @@ fn import_concurrency() -> usize {
         .unwrap_or(2)
 }
 
+/// Record `job_id` as in flight and return its cancel handle, or `None` if it already is.
+fn register_import(imports: &ImportRegistry, job_id: &str) -> Option<Arc<Notify>> {
+    let mut map = imports.lock().unwrap();
+    if map.contains_key(job_id) {
+        return None;
+    }
+    let cancel = Arc::new(Notify::new());
+    map.insert(job_id.to_string(), cancel.clone());
+    Some(cancel)
+}
+
 /// Run an import on its own task: wait for a slot, execute, settle. The job stays `queued` while it
 /// waits, and the registry entry lets `cancel_job` reach it in either state.
 #[allow(clippy::too_many_arguments)]
@@ -429,11 +440,13 @@ fn spawn_import(
     worker_id: String,
     job_id: String,
 ) {
-    let cancel = Arc::new(Notify::new());
-    imports
-        .lock()
-        .unwrap()
-        .insert(job_id.clone(), cancel.clone());
+    // The same id can be delivered twice (the startup recovery and the enqueue both send it). A
+    // second task would replace this one's cancel handle, so a cancel would reach the task that is
+    // only waiting, not the one that is running. An id already in flight is ignored.
+    let Some(cancel) = register_import(&imports, &job_id) else {
+        tracing::debug!(job = %job_id, "image import already in flight; ignoring duplicate delivery");
+        return;
+    };
     tokio::spawn(async move {
         let outcome = match slots.acquire_owned().await {
             Ok(_slot) => execute_job(&pool, &k8s, &drivers, &job_id, &worker_id, &cancel).await,
@@ -526,4 +539,26 @@ async fn load_request(pool: &AnyPool, job_id: &str) -> Result<serde_json::Value>
         .fetch_one(pool)
         .await?;
     Ok(serde_json::from_str(&s)?)
+}
+
+#[cfg(test)]
+mod import_registry_tests {
+    use super::*;
+
+    #[test]
+    fn a_job_in_flight_is_registered_once() {
+        let imports: ImportRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let first = register_import(&imports, "job_a").expect("first delivery registers");
+        assert!(
+            register_import(&imports, "job_a").is_none(),
+            "a duplicate delivery must not replace the running job's cancel handle"
+        );
+        // The entry still holds the first handle, so a cancel reaches the running task.
+        let held = imports.lock().unwrap().get("job_a").cloned().unwrap();
+        assert!(Arc::ptr_eq(&first, &held));
+        // A different job is unaffected, and an id can be registered again once it has finished.
+        assert!(register_import(&imports, "job_b").is_some());
+        imports.lock().unwrap().remove("job_a");
+        assert!(register_import(&imports, "job_a").is_some());
+    }
 }
