@@ -7,8 +7,10 @@
 // (crates/atlas-gateway/src/mcp.rs), gated behind the `mcp` feature.
 pub(crate) mod ai;
 mod backends;
+mod ceph_devices;
 pub(crate) mod databridge;
 mod day2;
+mod image_import;
 pub(crate) mod dr;
 pub(crate) mod governance;
 pub(crate) mod inventory;
@@ -130,6 +132,7 @@ pub fn router(state: AppState) -> Router {
         .route("/clusters/{id}/capabilities", get(cluster_capabilities))
         .route("/nodes", get(list_nodes))
         .route("/osds", get(list_osds))
+        .route("/osds/ok-to-stop", get(osds_ok_to_stop))
         .route("/osds/{osd_id}/out", post(osd_out))
         .route("/osds/{osd_id}/in", post(osd_in))
         .route("/osds/{osd_id}/reweight", post(osd_reweight))
@@ -137,6 +140,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ceph/status", get(get_ceph_status))
         .route("/ceph/osd-tree", get(get_ceph_osd_tree))
         .route("/ceph/osd-df", get(get_ceph_osd_df))
+        .route("/ceph/devices", get(ceph_devices::get_ceph_devices))
         .route("/ceph/df", get(get_ceph_df))
         .route("/ceph/health-rollup", get(get_ceph_health_rollup))
         .route("/ceph/rook-status", get(get_rook_status))
@@ -184,6 +188,7 @@ pub fn router(state: AppState) -> Router {
                 put(write_volume_data).layer(DefaultBodyLimit::max(volumes::MAX_VOLUME_IO_BYTES)),
             ),
         )
+        .route("/volumes/{id}/import", post(image_import::import_volume_image))
         .route("/volumes/{id}/protection", get(get_volume_protection))
         .route("/rbd-images", get(list_rbd_images).post(create_rbd_image))
         .route(

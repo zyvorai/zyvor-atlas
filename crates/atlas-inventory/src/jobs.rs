@@ -127,6 +127,26 @@ pub async fn set_state(pool: &AnyPool, id: &str, state: &str, progress: i64) -> 
     Ok(())
 }
 
+/// Record mid-flight progress and a partial result without changing the job's state, so a long job
+/// (an image import) can be resumed from what it recorded if it is retried or restarted.
+pub async fn set_progress_result(
+    pool: &AnyPool,
+    id: &str,
+    progress: i64,
+    result: &serde_json::Value,
+) -> Result<()> {
+    sqlx::query(
+        "UPDATE storage_jobs SET progress_percent=$1, result=$2, updated_at=$3 WHERE id=$4",
+    )
+    .bind(progress)
+    .bind(result.to_string())
+    .bind(now_rfc3339(chrono::Utc::now()))
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(())
+}
+
 /// Terminal success: state `succeeded`, 100%, store result.
 pub async fn mark_succeeded(pool: &AnyPool, id: &str, result: &serde_json::Value) -> Result<()> {
     let now = now_rfc3339(chrono::Utc::now());

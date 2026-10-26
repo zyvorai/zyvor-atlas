@@ -4,7 +4,7 @@
 
 This is a presenter script, not a claim that Atlas imports disks. One Windows or Linux VM is discovered, scored, converted, and booted on a Ceph RBD StorageClass. The source VM is not modified. If validation fails, delete the target VM.
 
-Atlas does **not** stream the converted image into RBD. There is no `image.import` job, no resume offset, and no block checksum recorded by Atlas. Saying otherwise is a false demo. Direct import is later Migration Assurance work.
+Atlas does **not** stream the converted image into RBD, and this script does not use the import job. An `image.import` job exists for raw images into atlas-native volumes ([IMAGE_IMPORT.md](IMAGE_IMPORT.md)), with resume and a read-back checksum, but it cannot read qcow2 and does not write to Ceph RBD, so it is not part of this demo. Saying the demo imports into RBD is a false demo.
 
 Budget about 30 minutes. Stop at the step that fails rather than skipping ahead and narrating a result you did not produce.
 

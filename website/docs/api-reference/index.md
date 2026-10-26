@@ -119,6 +119,13 @@ Storage nodes (derived from distinct OSD hosts in the MVP): `[{ "host": "node01"
    "device_class": "hdd", "host": null, "used_bytes": null, "capacity_bytes": null }]
 ```
 
+### `GET /api/atlas/v1/ceph/devices`
+The drives Ceph tracks (`ceph device ls`: device id, host and path, the OSD daemons on it, and its life
+expectancy window), plus a `summary` listing the drives Ceph predicts will fail within 90 days (`at_risk`,
+with `already_due` once the window has passed). A drive with no prediction is not known to be healthy, only
+not known to be failing: predictions need Ceph's device-health module to be on and to have scraped it.
+Read-only.
+
 ### `GET /api/atlas/v1/pools`
 Filters: `?backend=&kind=` (kind in rbd|cephfs_data|cephfs_metadata|rgw|nfs_export|other).
 ```json
@@ -186,6 +193,10 @@ Run the alert rules on demand (also runs every `ATLAS_MONITOR_INTERVAL_SECS`).
   resume the job engine. Paused jobs stay `queued` (the worker holds them) and drain when resumed.
 - `POST /api/atlas/v1/osds/{osd_id}/out` · `/in` · `/reweight?weight=0.8` — OSD maintenance as async
   jobs (`ceph osd out|in|reweight`); `202 + job id`.
+- `GET /api/atlas/v1/osds/ok-to-stop?ids=0,1` — would stopping these OSDs together leave every placement
+  group available (`ceph osd ok-to-stop`)? Read-only. Returns `{ok_to_stop, osd_ids, detail}`; a `false`
+  answer carries Ceph's PG counts and reason in `detail` rather than being an error. `404` for an OSD that does
+  not exist, `400` for a missing, malformed or oversized (over 64) `ids`. Ask this before taking a node down.
 - `POST /api/atlas/v1/rbd-images/{pool}/{image}/qos?iops=&bps=` — per-image QoS throttle
   (`rbd config image set rbd_qos_*_limit`); `0` clears a cap; `202 + job id` (operator).
 - `POST /api/atlas/v1/rbd-images/{pool}/{image}/resize` `{size_bytes, allow_shrink}` — resize an RBD
@@ -267,6 +278,14 @@ Delete the PVC + inventory row (async job). `404` if the volume is unknown.
 { "new_size_bytes": 6442450944 }
 ```
 `400` if not larger than the current size.
+
+### `POST /api/atlas/v1/volumes/{id}/import`
+Stream a raw disk image from an HTTP(S) server into an atlas-native volume and verify it (async job).
+```json
+{ "url": "http://images.internal/disk.raw", "sha256": "<64 hex>", "size_bytes": 42949672960 }
+```
+`403` unless the host is in `ATLAS_IMPORT_ALLOWED_HOSTS`, `400` for a bad URL, checksum or size, `404` for an
+unknown volume. Operator role. See [IMAGE_IMPORT.md](../control-plane/image-import.md).
 
 ### `POST /api/atlas/v1/volumes/{id}/snapshots`
 Create a VolumeSnapshot from the volume's PVC (async job).

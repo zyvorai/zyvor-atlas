@@ -2,6 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 mod databridge;
 mod helpers;
+mod image_import;
 mod object;
 mod rbd;
 mod rook;
@@ -13,19 +14,25 @@ mod zfs;
 use std::sync::Arc;
 
 use anyhow::Result;
+use atlas_driver_core::DriverRegistry;
 use atlas_driver_k8s::K8sDriver;
 use sqlx::AnyPool;
 
 use crate::spec::JobSpec;
 
-#[tracing::instrument(skip(pool, k8s, spec), fields(tenant_id = %tenant_id))]
+#[tracing::instrument(skip(pool, k8s, drivers, spec), fields(job_id = %job_id, tenant_id = %tenant_id))]
 pub(crate) async fn dispatch(
     pool: &AnyPool,
     k8s: &Option<Arc<K8sDriver>>,
+    drivers: &Option<Arc<DriverRegistry>>,
+    job_id: &str,
     tenant_id: &str,
     spec: JobSpec,
 ) -> Result<serde_json::Value> {
     match &spec {
+        JobSpec::ImageImport { .. } => {
+            image_import::dispatch_image_import(pool, drivers, job_id, spec).await
+        }
         JobSpec::RbdCreate { .. }
         | JobSpec::RbdDelete { .. }
         | JobSpec::RbdClone { .. }

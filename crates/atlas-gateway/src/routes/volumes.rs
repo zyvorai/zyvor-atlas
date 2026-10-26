@@ -1006,7 +1006,7 @@ pub(crate) struct VolumeIoParams {
 }
 
 /// The native driver and native id for block I/O on `id`, after the role and tenant checks.
-async fn volume_for_io(
+pub(super) async fn volume_for_io(
     s: &AppState,
     actor: &Actor,
     id: &str,

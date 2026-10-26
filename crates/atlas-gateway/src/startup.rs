@@ -551,6 +551,11 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         },
     );
 
+    // `image.import` writes volume data through the drivers directly; the registry is shared, so
+    // backends registered later are visible to it too.
+    let drivers = Arc::new(registry);
+    jobs.set_driver_registry(drivers.clone());
+
     // Rate limiter (day-2 governance): per-actor requests/min from ATLAS_RATE_LIMIT_RPM (0 = off).
     let rpm: u32 = std::env::var("ATLAS_RATE_LIMIT_RPM")
         .ok()
@@ -566,7 +571,7 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
     let state = AppState {
         pool,
         config: Arc::new(config),
-        drivers: Arc::new(registry),
+        drivers,
         k8s,
         jobs,
         workers: crate::state::WorkerHealth::default(),

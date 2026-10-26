@@ -308,6 +308,24 @@ pub enum JobSpec {
     /// DataBridge (object leg): copy a cloud object store -> Ceph RGW (full | incremental).
     #[serde(rename = "databridge.object.migrate")]
     ObjectMigrate { migration_id: String },
+    /// Stream a raw disk image over HTTP(S) into an atlas-native volume, resumably, then verify the
+    /// volume by reading it back against `sha256`. See `docs/IMAGE_IMPORT.md`.
+    #[serde(rename = "image.import")]
+    ImageImport {
+        volume_id: String,
+        backend_id: String,
+        /// The backend's own id for the volume (what `write_volume` addresses).
+        native_id: String,
+        url: String,
+        /// Lower-case hex SHA-256 of the whole image, which the import must match.
+        sha256: String,
+        /// Expected image length in bytes, when the caller knows it.
+        #[serde(default)]
+        size_bytes: Option<u64>,
+        /// Start after this many bytes already written by an earlier job (chunk-aligned).
+        #[serde(default)]
+        resume_from: u64,
+    },
     /// Delete a backup: remove its S3 manifest + data objects, the RBD snapshot, and the CSI
     /// VolumeSnapshot the backup created (best-effort). The VolumeSnapshot carries the
     /// `pvc-as-source-protection` finalizer — leaving it behind permanently blocks the source
@@ -582,6 +600,7 @@ impl JobSpec {
             JobSpec::RustfsInstance { .. } => "rustfs.instance",
             JobSpec::S3BackendSelfTest { .. } => "s3.backend.selftest",
             JobSpec::CephOsdAddDevice { .. } => "ceph.osd.add_device",
+            JobSpec::ImageImport { .. } => "image.import",
         }
     }
 }

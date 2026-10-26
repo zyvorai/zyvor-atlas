@@ -1,6 +1,6 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
 <!-- SPDX-License-Identifier: Apache-2.0 -->
-# Atlas compared with WEKA
+# Atlas compared with WEKA, vSAN and others
 
 WEKA (WekaFS) is a commercial parallel filesystem built for AI and HPC. Atlas is a storage control
 plane: one API over several backends (Ceph, NFS, ZFS, Longhorn, S3) plus its own data plane,
@@ -105,12 +105,65 @@ Atlas today as well as where Atlas differs.
 | Tamper-proof snapshots | Retention-locked block and filesystem snapshots on atlas-native, Raft-enforced, extend-only (`docs/WORM.md`); not on Ceph/ZFS | SnapLock, tamper-proof snapshots | Object WORM, immutable snapshots |
 | Ransomware detection | Explainable entropy + rename/delete/burst scorer over native filesystem activity; opt-in auto snapshot-and-lock. Lab-verified 2026-10-26 on a synthetic encrypt-and-delete burst (verdict, auto-snapshot, lock refusal); not trained, no S3 signal yet, not tried against real ransomware | Autonomous Ransomware Protection with AI, on by default for new volumes | Data Lens anomaly and user-behaviour detection |
 | S3 object retention | Compliance mode on the native S3 gateway (lab-verified 2026-10-26: locked objects refuse delete and overwrite, retention cannot be shortened) | S3 Object Lock | Objects WORM |
-| Data reduction | Opt-in LZ4 compression and extent dedup on atlas-native, with a per-volume savings report (`docs/NATIVE_DATA_REDUCTION.md`); unit/integration tested only, not lab-run, no throughput or CPU numbers; Ceph/ZFS do their own | Inline dedup, compression, compaction | Dedup, compression, erasure coding |
+| Data reduction | Opt-in LZ4 compression and extent dedup on atlas-native, with a per-volume savings report (`docs/NATIVE_DATA_REDUCTION.md`); unit/integration tested; byte-exact read-back and savings report lab-verified 2026-10-26 on a multi-process cluster (favourable input); single-core LZ4 and SHA-256 costs measured, no end-to-end throughput; Ceph/ZFS do their own | Inline dedup, compression, compaction | Dedup, compression, erasure coding |
 | Replication / DR | Snapshot replication, RBD mirroring with failback, verified on two lab clusters | SnapMirror, MetroCluster | Async, NearSync, Sync, Metro |
 | Protocols | Block, POSIX, NFS, SMB, S3 | NFS, SMB, S3, FC, iSCSI, NVMe-oF | Files, Objects, Volumes (iSCSI) |
 | Multi-vendor control plane | Yes: Ceph, ZFS, NFS, Longhorn, WEKA, macOS, native, any S3 | ONTAP (and cloud variants) | Nutanix clusters |
 | Open source, no licence key | Apache-2.0 | No | No |
 | Performance proof | Lab numbers only, no NVMe benchmark | Published vendor benchmarks | Published vendor benchmarks |
+
+## Compared with VMware vSAN (hyperconverged infrastructure)
+
+vSAN is the storage half of VMware's hyperconverged stack: it pools the local disks of vSphere hosts
+and runs inside the hypervisor. Atlas is only a storage layer and has no hypervisor, so the
+comparison is storage against storage; the compute side is Zeus OS and KubeVirt, Kairon or Machina.
+The vSAN column is general product knowledge of the public feature set, not tested here, and was not
+checked against a current VMware page; verify it before quoting it.
+
+| | **Atlas** | **VMware vSAN** |
+|---|---|---|
+| Where it runs | Beside any hypervisor or Kubernetes: Ceph, NFS, ZFS, Longhorn, macOS, WEKA (read-only), atlas-native, any S3 | Inside the vSphere hypervisor, on vSAN-ready hosts |
+| Compute coupling | None; storage is separate from the VM platform | Tied to vSphere |
+| Pooled local disks | atlas-native across your nodes; or Ceph through Rook | Yes, its core job |
+| Data protection | 3 replicas or Reed-Solomon (4+2, 8+3), SHA-256 checksums per extent and shard | Mirroring and erasure coding by storage policy |
+| Data reduction | Opt-in LZ4 and extent dedup on atlas-native, unit tested only (`NATIVE_DATA_REDUCTION.md`) | Dedup and compression |
+| Snapshots and clones | Copy-on-write, block and filesystem | Yes |
+| Multi-site | Async replication and two-way RBD mirroring, guarded failback; no synchronous stretched cluster | Stretched clusters, synchronous across two sites |
+| Remote and edge sites | Single-node profile, ~26 MB catalog memory | Small clusters on qualified hardware |
+| Protocols | Block, POSIX, NFS, SMB, S3, Kubernetes CSI | vSphere datastores; file services as an add-on |
+| Hardware support | Any Linux host; lab-verified only, no NVMe benchmark | Hardware compatibility list and vendor support |
+| Licence | Apache-2.0, no key | Commercial subscription |
+
+**Choose vSAN** when the estate stays on vSphere and you want one vendor to support compute and
+storage together, or you need a synchronous stretched cluster. **Choose Atlas** when you are leaving
+the hypervisor, want storage that does not depend on it, or run mixed backends and edge sites.
+
+## Leaving VMware: moving the VMs to Atlas-backed storage
+
+Atlas does not read VMware disks. The migration is done by the rest of the Zyvor suite, and Atlas
+holds the result.
+
+| Step | Tool | Notes |
+|---|---|---|
+| Discover and score | [Scout](https://github.com/zyvorai/scout) | RVTools import, readiness and executive report |
+| Export | [Transiva](https://github.com/zyvorai/zyvor-transiva) | Exports VMs, including Nutanix AHV, to disk files |
+| Pick up, repair offline, convert | [h2kvm](https://github.com/zyvorai/zyvor-h2kvm) with GuestKit | From vSphere, ESXi over SSH, Azure, or VMDK, VHD(X), OVA/OVF and raw files; fixes fstab, bootloader, initramfs and drivers before first boot; writes qcow2 and runs `qemu-img check` |
+| Land and run | Kairon with Veyron, Machina, or KubeVirt (legacy target) | h2kvm deploys with `--deploy-kairon` or `--emit-domain-xml`; `--deploy-k8s` for KubeVirt |
+| Store | Atlas | Ceph RBD, CephFS, NFS, ZFS or atlas-native behind a StorageClass |
+
+Limits to state plainly:
+
+- **Direct import is raw-only and atlas-native-only.** `POST /volumes/{id}/import` streams a raw image
+  into an atlas-native volume, resumes from recorded progress and verifies the volume by reading it back
+  (`IMAGE_IMPORT.md`). h2kvm writes qcow2, which that job cannot read, so convert to raw first. Ceph RBD
+  targets still go through CDI, with no Atlas-side resume offset or recorded checksum. The import has not
+  been run on a real cluster or a large image.
+- **Licence differs.** h2kvm is source-available under the Zyvor Production License: free for
+  evaluation and labs, a paid subscription for production. Atlas stays Apache-2.0.
+- **Source coverage is partial.** AWS and Proxmox Backup Server are library modules only, and GCP,
+  Xen, VirtualBox and remote Hyper-V have no pickup code (their disk files work as local files).
+- **Naming.** Some Atlas docs call Transiva the converter and use its old owner id `hyper2kvm`. In
+  the h2kvm repository, h2kvm converts and Transiva exports. See `PRODUCTS.md`.
 
 ## Other storage MCP servers
 

@@ -63,7 +63,7 @@ jobs:
       # — no external service/token, downloadable per-run, not enforced as a gate.
       # taiki-e/install-action's `@<tool-name>` shorthand can't be SHA-pinned (the tool name
       # lives in the ref itself); the documented SHA-pinned form is @<version> + `with: tool:`.
-      - uses: taiki-e/install-action@ab6895351a88b908e96a4697860d4ffea5e57dbe # v2
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2
         with:
           tool: cargo-llvm-cov
       - name: Test + coverage
@@ -191,6 +191,21 @@ jobs:
           name: atlas-ui-dist
           path: crates/atlas-gateway/ui/dist
           retention-days: 7
+
+  website-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: website/.nvmrc
+      # Same bar as the UI audit: the docs site's lockfile must not carry a known-vulnerable
+      # package (Dependabot only bumps direct deps weekly, so transitive ones need this gate).
+      - name: Supply-chain audit (npm audit)
+        run: npm audit --audit-level=low --package-lock-only
 
   docker:
     runs-on: ubuntu-latest

@@ -16,7 +16,8 @@ A release is a `v*` tag on `main`. Two workflows fire on the tag push:
 - **Publish container images** (`docker-publish.yml`): builds, signs (keyless), generates an SBOM and Trivy-scans
   `ghcr.io/zyvorai/atlas` (`Dockerfile`), `atlas-ceph` (`Dockerfile.ceph`) and `atlas-io-agent` (`Dockerfile.io`).
 - **Release** (`release.yml`): GitHub Release with the matching `CHANGELOG.md` section, `atlasctl` and
-  `atlas-mac-agent` archives for common platforms (macOS included), the UI bundle and `SHA256SUMS`.
+  `atlas-mac-agent` archives for common platforms (macOS included), the UI bundle, `SHA256SUMS.txt` and its keyless
+  cosign signature `SHA256SUMS.txt.sigstore.json`.
 
 ## Steps
 
@@ -27,6 +28,23 @@ A release is a `v*` tag on `main`. Two workflows fire on the tag push:
 3. Open the PR, merge it.
 4. Tag the merge commit (`git tag -a vX.Y.Z -m vX.Y.Z`) and push the tag.
 5. Wait for both workflows. Then bump the `atlas-io-agent` image in `deploy/k8s/atlas-io-agent*.yaml` in a follow-up PR; never deploy the floating `:latest`.
+
+## Verifying a release
+
+Download the archives you need together with `SHA256SUMS.txt` and `SHA256SUMS.txt.sigstore.json` from the release
+page, then check the signature and the hashes:
+
+```bash
+cosign verify-blob SHA256SUMS.txt \
+  --bundle SHA256SUMS.txt.sigstore.json \
+  --certificate-identity-regexp 'https://github.com/zyvorai/zyvor-atlas/\.github/workflows/release\.yml@refs/tags/v.*' \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com
+sha256sum --ignore-missing -c SHA256SUMS.txt
+```
+
+Container images are verified with `cosign verify` against `docker-publish.yml`, and their CycloneDX SBOMs are
+attached to the release. The checksum signature starts with the first tag cut after this was added; earlier
+releases carry checksums only.
 
 ## ghcr visibility
 

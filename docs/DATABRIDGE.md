@@ -192,6 +192,28 @@ behind features so a missing lib never breaks the default build:
 
 Build the gateway with, e.g., `cargo build -p atlas-gateway --features atlas-databridge/sqlserver,atlas-databridge/oracle,atlas-databridge/mongodb,atlas-databridge/kafka-lag`.
 
+## Source TLS (Postgres)
+
+A source's `tls_mode` (default `require` through the API) decides how Postgres discovery connects, using
+the libpq `sslmode` names:
+
+| `tls_mode` | Behaviour |
+|---|---|
+| `disable` | Plaintext. |
+| `prefer` | TLS when the server offers it, otherwise plaintext. The certificate is not verified. |
+| `require` | TLS is mandatory. The certificate is not verified. |
+| `verify-ca`, `verify-full` | TLS is mandatory and the certificate chain and host name are verified. `verify-ca` is treated as `verify-full`. |
+
+An unrecognised value is treated as `require`, so a typo cannot downgrade a connection to plaintext. The
+`verify-*` modes trust the platform root store plus, optionally, a PEM bundle named by
+`ATLAS_DATABRIDGE_PG_CA_FILE` (for a private CA). The same `tls_mode` is passed to the full-load and
+validation jobs as `sslmode`.
+
+Checked on 2026-10-26 against a Postgres 14 that accepts only `hostssl` connections, with a private CA and a
+server certificate for `127.0.0.1`: `disable` was refused by the server; `prefer` and `require` connected;
+`verify-full` failed without the CA and connected with it; an unknown mode connected over TLS. A full load and
+CDC run over TLS has not been done.
+
 ## Testing
 - **Fake pipeline (no infra)**: `cargo test --workspace` covers the unit tests plus the gateway
   integration suites — `tests/databridge_pipeline.rs` (Postgres state machine + cutover guard) and
@@ -202,7 +224,7 @@ Build the gateway with, e.g., `cargo build -p atlas-gateway --features atlas-dat
 
   | Engine | Var (value: `host,port,database,user,password`) | Feature |
   |---|---|---|
-  | Postgres | `DATABRIDGE_TEST_PG` (libpq conn string) | *(default)* |
+  | Postgres | `DATABRIDGE_TEST_PG` (libpq conn string); `DATABRIDGE_TEST_PG_TLS` picks the `tls_mode` (default `disable`) | *(default)* |
   | MySQL | `DATABRIDGE_TEST_MYSQL` | *(default)* |
   | MariaDB | `DATABRIDGE_TEST_MARIADB` | *(default)* |
   | MongoDB | `DATABRIDGE_TEST_MONGO` | `mongodb` |

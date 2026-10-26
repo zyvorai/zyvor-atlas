@@ -12,7 +12,7 @@ pub mod health_rollup;
 mod real;
 
 pub use cmd::{
-    ceph_cmd, ceph_osd_op, mirror_promote_blocker, radosgw_admin_json, radosgw_bucket_quota,
+    ceph_cmd, ceph_osd_ok_to_stop, ceph_osd_op, mirror_promote_blocker, radosgw_admin_json, radosgw_bucket_quota,
     rbd_clone, rbd_cmd, rbd_create, rbd_du_image, rbd_enable_journaling, rbd_export_diff,
     rbd_export_diff_child, rbd_flatten, rbd_group_create, rbd_group_image_add,
     rbd_group_image_list, rbd_group_image_remove, rbd_group_remove, rbd_group_snap_create,
