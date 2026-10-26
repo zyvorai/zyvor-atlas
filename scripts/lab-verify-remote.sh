@@ -11,6 +11,7 @@ set -euo pipefail
 HOST="${1:?usage: lab-verify-remote.sh <host> <user> [baseline-minutes]}"
 USER_="${2:?}"
 BASELINE="${3:-8}"
+case "$BASELINE" in ''|*[!0-9]*) echo "baseline-minutes must be an integer" >&2; exit 2 ;; esac
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 SSH="ssh ${USER_}@${HOST}"
 DIR=.deployment/atlas-ci

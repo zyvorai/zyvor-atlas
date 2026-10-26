@@ -194,6 +194,7 @@ echo "baseline verdict: $(echo "$VERD" | python3 -c 'import sys,json;d=json.load
 echo "$VERD" | python3 -c 'import sys,json;d=json.load(sys.stdin);assert d["verdict"] in ("normal",) and d["can_execute"] is False,d' \
   && pass "quiet baseline is assessed normal (can_execute false)" || fail "baseline verdict: $VERD"
 SNAPS_BEFORE=$(curl -sS "$GWURL/snapshots" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))')
+SNAP_IDS_BEFORE=$(curl -sS "$GWURL/snapshots" | python3 -c 'import sys,json;print(" ".join(x["id"] for x in json.load(sys.stdin)))')
 
 echo "--- ransomware: encrypt-and-delete burst"
 for i in $(seq 0 59); do
@@ -229,7 +230,8 @@ for _ in $(seq 1 18); do
 done
 [ "$AUTO" -gt "$SNAPS_BEFORE" ] && pass "auto-protect took a snapshot ($SNAPS_BEFORE -> $AUTO)" || fail "auto-protect took no snapshot"
 grep -q "locked snapshot taken" "$WORK/gw.log" && pass "gateway logged the auto-protect lock" || fail "no auto-protect log line"
-AUTOSNAP=$(curl -sS "$GWURL/snapshots" | python3 -c 'import sys,json;s=json.load(sys.stdin);print(s[-1]["id"])')
+# The snapshot auto-protect added, not "the last in the list" (the API promises no ordering).
+AUTOSNAP=$(curl -sS "$GWURL/snapshots" | python3 -c 'import sys,json;old=set(sys.argv[1].split());print(next(x["id"] for x in json.load(sys.stdin) if x["id"] not in old))' "$SNAP_IDS_BEFORE")
 code=$(curl -sS -o "$WORK/del.out" -w '%{http_code}' -X DELETE "$GWURL/snapshots/$AUTOSNAP")
 [ "$code" = 409 ] && pass "the auto-protect snapshot refuses deletion (409)" || fail "delete locked snapshot -> $code $(cat "$WORK/del.out")"
 
