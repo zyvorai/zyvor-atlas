@@ -7,6 +7,7 @@
 // (crates/atlas-gateway/src/mcp.rs), gated behind the `mcp` feature.
 pub(crate) mod ai;
 mod backends;
+mod ceph_devices;
 pub(crate) mod databridge;
 mod day2;
 mod image_import;
@@ -139,6 +140,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ceph/status", get(get_ceph_status))
         .route("/ceph/osd-tree", get(get_ceph_osd_tree))
         .route("/ceph/osd-df", get(get_ceph_osd_df))
+        .route("/ceph/devices", get(ceph_devices::get_ceph_devices))
         .route("/ceph/df", get(get_ceph_df))
         .route("/ceph/health-rollup", get(get_ceph_health_rollup))
         .route("/ceph/rook-status", get(get_rook_status))

@@ -151,4 +151,9 @@ pub trait StorageDriver: Send + Sync {
     async fn ceph_osd_ok_to_stop(&self, _osd_ids: &[i64]) -> Result<serde_json::Value, DriverError> {
         Err(DriverError::NotImplemented("ceph_osd_ok_to_stop"))
     }
+    /// `ceph device ls -f json` — every drive Ceph tracks, where it sits, which daemons use it and,
+    /// when the device-health module has a prediction, its life expectancy.
+    async fn ceph_device_ls(&self) -> Result<serde_json::Value, DriverError> {
+        Err(DriverError::NotImplemented("ceph_device_ls"))
+    }
 }
