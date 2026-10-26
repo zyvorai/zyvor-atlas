@@ -192,6 +192,21 @@ jobs:
           path: crates/atlas-gateway/ui/dist
           retention-days: 7
 
+  website-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: website/.nvmrc
+      # Same bar as the UI audit: the docs site's lockfile must not carry a known-vulnerable
+      # package (Dependabot only bumps direct deps weekly, so transitive ones need this gate).
+      - name: Supply-chain audit (npm audit)
+        run: npm audit --audit-level=low --package-lock-only
+
   docker:
     runs-on: ubuntu-latest
     steps:
