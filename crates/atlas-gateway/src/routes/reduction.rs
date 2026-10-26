@@ -30,6 +30,18 @@ fn ratio(num: u64, den: u64) -> f64 {
 
 /// Raw node counters plus derived savings. Errors if a counter is missing rather than guessing.
 pub(crate) fn report(raw: &Value) -> AppResult<Value> {
+    // The node reports `{"groups": [...], "total": {...}}`; the totals are the cluster-wide figures.
+    // A grouped report without an object `total` is a node/gateway mismatch: say so instead of
+    // reading the top-level object and reporting a misleading missing counter.
+    let raw = match raw.get("total") {
+        Some(t) if t.is_object() => t,
+        _ if raw.get("groups").is_some() => {
+            return Err(AppError::Driver(
+                "bad reduction report from the node: grouped report has no object total".into(),
+            ))
+        }
+        _ => raw,
+    };
     let logical = counter(raw, "logical_bytes")?;
     let referenced = counter(raw, "referenced_bytes")?;
     let stored = counter(raw, "stored_bytes")?;
@@ -81,6 +93,23 @@ mod tests {
         assert_eq!(r["saved_by_sharing_bytes"], 2000);
         assert_eq!(r["compression_ratio"], 4.0);
         assert_eq!(r["sharing_ratio"], 3.0);
+    }
+
+    #[test]
+    fn reads_the_node_total_from_the_grouped_report() {
+        let r = report(&json!({ "groups": [], "total": raw(1000, 3000, 250) })).unwrap();
+        assert_eq!(r["compression_ratio"], 4.0);
+    }
+
+    #[test]
+    fn grouped_report_without_an_object_total_is_an_error() {
+        assert!(report(&json!({ "groups": [] })).is_err());
+        assert!(report(&json!({ "groups": [], "total": null })).is_err());
+    }
+
+    #[test]
+    fn flat_report_still_works() {
+        assert_eq!(report(&raw(1000, 3000, 250)).unwrap()["sharing_ratio"], 3.0);
     }
 
     #[test]

@@ -121,14 +121,14 @@ snapshots can be retention-locked (Raft-enforced, extend-only; `POST /snapshots/
 native filesystems record per-minute activity windows (writes, renames, deletes, write entropy) behind
 `GET /volumes/{id}/ransomware` and admin `POST …/ransomware/protect` (re-assesses server-side, then
 snapshots + locks); `ATLAS_RANSOMWARE_AUTOPROTECT=1` automates it for `likely_ransomware` only.
-Unit/integration tested; snapshot locks verified live on the lab native cluster (2026-10-18); activity/protect/S3 retention and a real encrypting workload not yet.
+Unit/integration tested; snapshot locks verified live on the lab native cluster (2026-10-18); S3 retention, activity windows, `likely_ransomware` verdict, auto-protect and protect verified live 2026-10-26 (`deploy/native/lab-verify.sh`, 27/27, synthetic random-byte burst); a real encrypting workload not yet.
 
 **Data reduction** (`docs/NATIVE_DATA_REDUCTION.md`): atlas-native has opt-in LZ4 compression
 (`compression`) and extent deduplication (`dedup`) in the metadata config; `GET /v1/reduction`
 reports the savings (also `GET /native/reduction` on the gateway and `atlasctl native-reduction`). The checksum covers the stored payload, so scrub/repair/tiering/EC are
 unchanged; the dedup index is only a hint, validated at apply time (a stale share is redone
 unshared). Shared extents can sit at different offsets per reference, so consumers must use the
-map offset. Unit/integration tested; not yet run on the lab, no throughput/CPU numbers.
+map offset. Unit/integration tested; byte-exact read-back and the savings report verified on a lab multi-process cluster (2026-10-26, favourable synthetic input); no lab throughput/CPU numbers.
 
 **Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor
 Production License v1.0 at the maintainer's explicit request — history in
