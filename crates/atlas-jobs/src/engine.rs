@@ -335,20 +335,25 @@ async fn run_worker(
 ) {
     tracing::info!(%worker_id, "atlas-jobs worker started");
     let import_slots = Arc::new(Semaphore::new(import_concurrency()));
+    let dedup_slots = Arc::new(Semaphore::new(dedup_concurrency()));
     while let Some(job_id) = rx.recv().await {
         // Maintenance pause: hold the job (leave it `queued`, don't mark_running) until resumed.
         while paused.load(Ordering::Relaxed) {
             tokio::time::sleep(Duration::from_millis(500)).await;
         }
-        // An image import can run for hours. It gets its own task, limited to a few at a time, so
-        // it never holds up the snapshots, deletes and resizes queued behind it.
-        if is_import(&pool, &job_id).await {
+        // An image import or a dedup scan can run for hours. Each gets its own task, limited per
+        // kind, so it never holds up the snapshots, deletes and resizes queued behind it.
+        if let Some(kind) = long_kind(&pool, &job_id).await {
+            let slots = match kind {
+                LongKind::Import => import_slots.clone(),
+                LongKind::DedupEstimate => dedup_slots.clone(),
+            };
             spawn_import(
                 pool.clone(),
                 k8s.clone(),
                 tx.clone(),
                 imports.clone(),
-                import_slots.clone(),
+                slots,
                 drivers.clone(),
                 worker_id.clone(),
                 job_id,
@@ -399,12 +404,36 @@ async fn settle(
     }
 }
 
-/// Whether `job_id` is an `image.import`.
-async fn is_import(pool: &AnyPool, job_id: &str) -> bool {
-    matches!(
-        atlas_inventory::jobs::get_job(pool, job_id).await,
-        Ok(Some(j)) if j.job_type == "image.import"
-    )
+/// Job kinds that run on their own task instead of the shared worker.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LongKind {
+    Import,
+    DedupEstimate,
+}
+
+fn long_kind_of(job_type: &str) -> Option<LongKind> {
+    match job_type {
+        "image.import" => Some(LongKind::Import),
+        "dedup.estimate" => Some(LongKind::DedupEstimate),
+        _ => None,
+    }
+}
+
+async fn long_kind(pool: &AnyPool, job_id: &str) -> Option<LongKind> {
+    match atlas_inventory::jobs::get_job(pool, job_id).await {
+        Ok(Some(j)) => long_kind_of(&j.job_type),
+        _ => None,
+    }
+}
+
+/// How many dedup scans may run at once (`ATLAS_DEDUP_CONCURRENCY`, default 1): each one reads the
+/// pool as fast as it can, so two at once mostly compete with client I/O.
+fn dedup_concurrency() -> usize {
+    std::env::var("ATLAS_DEDUP_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or(1)
 }
 
 /// How many imports may run at once (`ATLAS_IMPORT_CONCURRENCY`, default 2).
@@ -444,7 +473,7 @@ fn spawn_import(
     // second task would replace this one's cancel handle, so a cancel would reach the task that is
     // only waiting, not the one that is running. An id already in flight is ignored.
     let Some(cancel) = register_import(&imports, &job_id) else {
-        tracing::debug!(job = %job_id, "image import already in flight; ignoring duplicate delivery");
+        tracing::debug!(job = %job_id, "long job already in flight; ignoring duplicate delivery");
         return;
     };
     tokio::spawn(async move {
@@ -485,6 +514,17 @@ fn import_timeout() -> Duration {
         .unwrap_or(Duration::from_secs(24 * 3600))
 }
 
+/// The ceiling for one job: a day for an import, the scan's own `max_secs` plus a minute for a dedup
+/// estimate (the driver enforces `max_secs` itself; the extra minute lets it report), the shared
+/// default for everything else.
+fn timeout_for(spec: &JobSpec) -> Duration {
+    match spec {
+        JobSpec::ImageImport { .. } => import_timeout(),
+        JobSpec::DedupEstimate { max_secs, .. } => Duration::from_secs(max_secs.saturating_add(60)),
+        _ => job_timeout(),
+    }
+}
+
 async fn execute_job(
     pool: &AnyPool,
     k8s: &Option<Arc<K8sDriver>>,
@@ -505,11 +545,7 @@ async fn execute_job(
     let request = load_request(pool, job_id).await?;
     let spec: JobSpec = serde_json::from_value(request).context("decode job request")?;
     let registry = drivers.get().cloned();
-    let timeout = if matches!(spec, JobSpec::ImageImport { .. }) {
-        import_timeout()
-    } else {
-        job_timeout()
-    };
+    let timeout = timeout_for(&spec);
 
     // Race the dispatch against an operator cancellation. On cancel, the `dispatch` future is
     // dropped — any `tokio::process::Command` it's awaiting on is killed via `kill_on_drop`
@@ -560,5 +596,33 @@ mod import_registry_tests {
         assert!(register_import(&imports, "job_b").is_some());
         imports.lock().unwrap().remove("job_a");
         assert!(register_import(&imports, "job_a").is_some());
+    }
+}
+
+#[cfg(test)]
+mod long_job_tests {
+    use super::*;
+
+    #[test]
+    fn imports_and_dedup_estimates_leave_the_shared_worker() {
+        assert_eq!(long_kind_of("image.import"), Some(LongKind::Import));
+        assert_eq!(long_kind_of("dedup.estimate"), Some(LongKind::DedupEstimate));
+        for quick in ["volume.create", "snapshot.create", "rbd.resize", "zfs.pool.destroy", ""] {
+            assert_eq!(long_kind_of(quick), None, "{quick}");
+        }
+    }
+
+    #[test]
+    fn a_dedup_estimate_is_timed_by_its_own_max_secs() {
+        let spec = |max_secs| JobSpec::DedupEstimate {
+            pool_id: "p".into(),
+            pool_name: "tank".into(),
+            backend_id: "b".into(),
+            max_bytes: 1,
+            block_size: 4096,
+            max_secs,
+        };
+        assert_eq!(timeout_for(&spec(300)), Duration::from_secs(360));
+        assert_eq!(timeout_for(&spec(u64::MAX)), Duration::from_secs(u64::MAX));
     }
 }

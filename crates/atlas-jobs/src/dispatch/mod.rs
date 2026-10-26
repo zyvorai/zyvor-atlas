@@ -1,6 +1,7 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: Apache-2.0
 mod databridge;
+mod dedup;
 mod helpers;
 mod image_import;
 mod object;
@@ -33,6 +34,7 @@ pub(crate) async fn dispatch(
         JobSpec::ImageImport { .. } => {
             image_import::dispatch_image_import(pool, drivers, job_id, spec).await
         }
+        JobSpec::DedupEstimate { .. } => dedup::dispatch_dedup(pool, drivers, job_id, spec).await,
         JobSpec::RbdCreate { .. }
         | JobSpec::RbdDelete { .. }
         | JobSpec::RbdClone { .. }

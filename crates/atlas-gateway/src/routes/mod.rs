@@ -253,7 +253,7 @@ pub fn router(state: AppState) -> Router {
             post(ransomware::protect_volume),
         )
         .route("/native/reduction", get(reduction::native_reduction))
-        .route("/pools/{id}/dedup-estimate", get(dedup::pool_dedup_estimate))
+        .route("/pools/{id}/dedup-estimate", get(dedup::pool_dedup_estimate).post(dedup::start_pool_dedup_estimate))
         .route("/snapshots", get(list_snapshots))
         .route("/snapshots/{id}", axum::routing::delete(delete_snapshot))
         .route("/snapshots/{id}/lock", post(lock_snapshot))

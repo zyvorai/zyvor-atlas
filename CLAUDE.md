@@ -133,7 +133,8 @@ map offset. Unit/integration tested; byte-exact read-back and the savings report
 **Dedup savings estimator** (`docs/DEDUP_ESTIMATE.md`): read-only "what would dedup save" for Ceph RBD
 pools (hashes allocated extents from `rbd export-diff`, bounded by a byte budget, reported as a lower
 bound when partial) and ZFS pools (`zdb -S` simulated dedup table), `GET /pools/{id}/dedup-estimate`
-and `atlasctl dedup-estimate`, admin-only. Unit/integration tested over the fake drivers; not yet run
+and `atlasctl dedup-estimate`, admin-only; `POST` runs it as a `dedup.estimate` background job on its own
+task (not the shared worker), with a heartbeat, cancel, and no retries. Unit/integration tested over the fake drivers; not yet run
 against a live Ceph cluster or a real zpool.
 
 **Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor

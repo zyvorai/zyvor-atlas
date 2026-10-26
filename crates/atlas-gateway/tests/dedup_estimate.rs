@@ -177,3 +177,118 @@ async fn unsupported_pool_kinds_and_unknown_pools_are_refused() {
         404
     );
 }
+
+/// Poll `GET /jobs/{id}` until the job leaves `queued`/`running`.
+async fn finished(c: &reqwest::Client, base: &str, job_id: &str) -> Value {
+    for _ in 0..100 {
+        let j: Value = c
+            .get(format!("{base}/jobs/{job_id}"))
+            .send()
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        if !matches!(j["state"].as_str(), Some("queued" | "running" | "pending")) {
+            return j;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    panic!("job {job_id} did not finish");
+}
+
+#[tokio::test]
+async fn a_background_estimate_runs_as_a_job_and_keeps_its_result() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let id = pool_id(&c, &base, "rbd").await;
+    let r = c
+        .post(format!("{base}/pools/{id}/dedup-estimate"))
+        .json(&serde_json::json!({ "max_bytes": 1048576 }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let accepted: Value = r.json().await.unwrap();
+    let job_id = accepted["job_id"].as_str().unwrap();
+    assert_eq!(accepted["resource"]["pool_id"], id.as_str());
+
+    let job = finished(&c, &base, job_id).await;
+    assert_eq!(job["job_type"], "dedup.estimate", "{job}");
+    assert_eq!(job["state"], "succeeded", "{job}");
+    assert_eq!(job["result"]["method"], "block_hash_scan");
+    assert_eq!(job["result"]["pool_id"], id.as_str());
+    assert!(
+        job["result"]["dedup_ratio"].as_f64().unwrap() > 2.0,
+        "{job}"
+    );
+}
+
+#[tokio::test]
+async fn a_background_estimate_works_for_zfs_with_no_body() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let pools: Value = c
+        .get(format!("{base}/pools"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let zfs = pools
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["kind"] == "zpool")
+        .expect("a zpool");
+    let id = zfs["id"].as_str().unwrap();
+    let r = c
+        .post(format!("{base}/pools/{id}/dedup-estimate"))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(r.status(), 202);
+    let job_id = r.json::<Value>().await.unwrap()["job_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let job = finished(&c, &base, &job_id).await;
+    assert_eq!(job["state"], "succeeded", "{job}");
+    assert_eq!(job["result"]["method"], "zdb_simulated_ddt");
+}
+
+#[tokio::test]
+async fn an_unsupported_pool_is_refused_before_it_is_queued() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let rgw = pool_id(&c, &base, "rgw").await;
+    assert_eq!(
+        c.post(format!("{base}/pools/{rgw}/dedup-estimate"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        400
+    );
+    assert_eq!(
+        c.post(format!("{base}/pools/pool_nope/dedup-estimate"))
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        404
+    );
+    let jobs: Value = c
+        .get(format!("{base}/jobs"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        !jobs.to_string().contains("dedup.estimate"),
+        "a refused request must not leave a job behind: {jobs}"
+    );
+}

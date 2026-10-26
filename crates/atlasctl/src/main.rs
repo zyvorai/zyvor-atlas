@@ -299,6 +299,9 @@ enum Command {
         /// Seconds before giving up (ZFS's `zdb -S` reads every block).
         #[arg(long)]
         max_secs: Option<u64>,
+        /// Queue it as a background job (POST) and print the job; poll it with `atlasctl jobs <id>`.
+        #[arg(long)]
+        background: bool,
     },
     /// GET /api/atlas/v1/buckets
     Buckets,
@@ -904,7 +907,12 @@ async fn main() -> Result<()> {
             Some(serde_json::json!({ "retain_secs": retain_secs })),
         ),
         Command::NativeReduction => ("GET", "/api/atlas/v1/native/reduction".to_string(), None),
-        Command::DedupEstimate { pool_id, max_bytes, max_secs } => {
+        Command::DedupEstimate { pool_id, max_bytes, max_secs, background: true } => (
+            "POST",
+            format!("/api/atlas/v1/pools/{pool_id}/dedup-estimate"),
+            Some(serde_json::json!({ "max_bytes": max_bytes, "max_secs": max_secs })),
+        ),
+        Command::DedupEstimate { pool_id, max_bytes, max_secs, background: false } => {
             let mut params = Vec::new();
             if let Some(b) = max_bytes {
                 params.push(format!("max_bytes={b}"));

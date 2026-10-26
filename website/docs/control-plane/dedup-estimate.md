@@ -19,6 +19,31 @@ GET /api/atlas/v1/pools/{id}/dedup-estimate?max_bytes=&max_secs=&block_size=
 atlasctl dedup-estimate <pool-id> [--max-bytes N] [--max-secs N]
 ```
 
+## As a background job
+
+The `GET` above holds the HTTP request open, which suits a small bounded scan. For a big pool
+(`zdb -S` can take hours) queue it instead:
+
+```
+POST /api/atlas/v1/pools/{id}/dedup-estimate        body (optional): {"max_bytes":…, "max_secs":…, "block_size":…}
+atlasctl dedup-estimate <pool-id> --background
+```
+
+It answers `202` with a job id at once. `GET /jobs/{id}` shows `queued`/`running` and, when done, the
+same estimate in `result` (plus `pool_id`); `POST /jobs/{id}/cancel` stops it and kills the
+`zdb`/`rbd` process. Details:
+
+- It runs on its own task, not the shared job worker, so a multi-hour scan never holds up volume,
+  snapshot or DR jobs. One scan runs at a time (`ATLAS_DEDUP_CONCURRENCY`); the rest wait `queued`.
+  At most 8 are queued or running at once, beyond which the request gets `409`.
+- It is never retried: a failed or timed-out scan is not worth repeating on its own.
+- A heartbeat touches the job every minute while the scan runs, so the stale-job reclaim (15 minutes)
+  does not start a second copy. There is no percentage: the driver reports only at the end, so
+  `progress_percent` stays 0 until it finishes and `result` shows `{"phase":"scanning","elapsed_secs":…}`.
+- The job times out at the request's `max_secs` plus a minute.
+- Unsupported pool kinds (anything but RBD and zpool) and unknown pools are refused with `400`/`404`
+  when you ask, not after waiting in the queue.
+
 Limits are ceilings: `max_bytes` defaults to 1 GiB and is capped at 256 GiB, `max_secs` defaults to
 300 and is capped at 3600, `block_size` defaults to 64 KiB (clamped to 4 KiB to 16 MiB).
 
@@ -69,3 +94,7 @@ malformed streams), the `zdb -S` summary parser, and the gateway route against t
 ZFS drivers. **Not yet run against a live Ceph cluster or a real zpool.** The `zdb -S` sample used
 by the parser follows the OpenZFS `zdb(8)` documentation, not a captured run, and
 `rbd export-diff` of an image head (no snapshot) is used as documented but unconfirmed on the lab.
+
+The job path is integration tested through the gateway (queued, run, result kept, refused before
+queueing). That a running scan does not block other jobs rests on the engine routing it to its own
+task, which is unit tested; it has not been exercised with a genuinely slow scan.
