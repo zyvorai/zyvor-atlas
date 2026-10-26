@@ -68,5 +68,11 @@ Prometheus: `atlas_native_dedup_hits_total` and `atlas_native_dedup_saved_bytes_
 ## Limits
 
 No data reduction for Ceph, ZFS or other backends (they do their own). No inline compression of
-metadata. Lab numbers and a CPU/throughput measurement are not recorded yet; the tests check byte
-exactness and that device usage drops, not performance.
+metadata.
+
+Lab, 2026-10-26 (`deploy/native/lab-verify.sh`, six-process cluster, compression and dedup on):
+12 copies of a ~266 KiB, very compressible text object read back byte-exact, and the node reported
+269,500 logical bytes, 3,234,000 referenced (sharing 12.0x) and 10,020 stored (compression 26.9x);
+the gateway's `/native/reduction` agreed. That input is deliberately favourable, so the ratios show
+the mechanism works, not what real data will save. A CPU/throughput measurement on the lab is not
+recorded; the tests check byte exactness and that device usage drops, not performance.

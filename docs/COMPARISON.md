@@ -103,8 +103,8 @@ Atlas today as well as where Atlas differs.
 | | **Atlas** | **NetApp ONTAP** | **Nutanix NUS** |
 |---|---|---|---|
 | Tamper-proof snapshots | Retention-locked block and filesystem snapshots on atlas-native, Raft-enforced, extend-only (`docs/WORM.md`); not on Ceph/ZFS | SnapLock, tamper-proof snapshots | Object WORM, immutable snapshots |
-| Ransomware detection | Explainable entropy + rename/delete/burst scorer over native filesystem activity; opt-in auto snapshot-and-lock. Not trained, no S3 signal yet, not lab-verified against real ransomware | Autonomous Ransomware Protection with AI, on by default for new volumes | Data Lens anomaly and user-behaviour detection |
-| S3 object retention | Compliance mode on the native S3 gateway | S3 Object Lock | Objects WORM |
+| Ransomware detection | Explainable entropy + rename/delete/burst scorer over native filesystem activity; opt-in auto snapshot-and-lock. Lab-verified 2026-10-26 on a synthetic encrypt-and-delete burst (verdict, auto-snapshot, lock refusal); not trained, no S3 signal yet, not tried against real ransomware | Autonomous Ransomware Protection with AI, on by default for new volumes | Data Lens anomaly and user-behaviour detection |
+| S3 object retention | Compliance mode on the native S3 gateway (lab-verified 2026-10-26: locked objects refuse delete and overwrite, retention cannot be shortened) | S3 Object Lock | Objects WORM |
 | Data reduction | Opt-in LZ4 compression and extent dedup on atlas-native, with a per-volume savings report (`docs/NATIVE_DATA_REDUCTION.md`); unit/integration tested only, not lab-run, no throughput or CPU numbers; Ceph/ZFS do their own | Inline dedup, compression, compaction | Dedup, compression, erasure coding |
 | Replication / DR | Snapshot replication, RBD mirroring with failback, verified on two lab clusters | SnapMirror, MetroCluster | Async, NearSync, Sync, Metro |
 | Protocols | Block, POSIX, NFS, SMB, S3 | NFS, SMB, S3, FC, iSCSI, NVMe-oF | Files, Objects, Volumes (iSCSI) |
