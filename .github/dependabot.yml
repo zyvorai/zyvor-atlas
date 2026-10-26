@@ -5,11 +5,12 @@ updates:
   - package-ecosystem: cargo
     directory: "/"
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       cargo-dependencies:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    versioning-strategy: increase
     labels: ["dependencies", "rust"]
     commit-message:
       prefix: "chore(deps)"
@@ -17,11 +18,12 @@ updates:
   - package-ecosystem: npm
     directory: "/crates/atlas-gateway/ui"
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       ui-dependencies:
         patterns: ["*"]
         update-types: ["minor", "patch"]
+    versioning-strategy: increase
     labels: ["dependencies", "ui"]
     commit-message:
       prefix: "chore(deps)"
@@ -29,10 +31,11 @@ updates:
   - package-ecosystem: npm
     directory: "/website"
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       website-dependencies:
         patterns: ["*"]
+    versioning-strategy: increase
     labels: ["dependencies", "docs"]
     commit-message:
       prefix: "chore(deps)"
@@ -40,7 +43,7 @@ updates:
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
-      interval: weekly
+      interval: daily
     groups:
       # codeql-action init/autobuild/analyze must move in lockstep (see codeql.yml).
       codeql-action:
@@ -52,7 +55,7 @@ updates:
   - package-ecosystem: docker
     directory: "/"
     schedule:
-      interval: weekly
+      interval: daily
     labels: ["dependencies", "docker"]
     commit-message:
       prefix: "chore(deps)"
@@ -60,7 +63,7 @@ updates:
   - package-ecosystem: docker
     directory: "/deploy/databridge/connect"
     schedule:
-      interval: weekly
+      interval: daily
     labels: ["dependencies", "docker"]
     commit-message:
       prefix: "chore(deps)"
