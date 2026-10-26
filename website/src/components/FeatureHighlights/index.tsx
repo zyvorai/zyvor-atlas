@@ -31,6 +31,22 @@ const FeatureList: FeatureItem[] = [
     cta: 'Native roadmap status',
   },
   {
+    eyebrow: 'Data protection',
+    title: 'Locked means locked.',
+    description:
+      'Retention-locked snapshots that refuse delete and shorter locks, S3 compliance retention, and an explainable ransomware assessment that can take a locked snapshot for you. Lab-verified 27 of 27 on a synthetic burst; a real encrypting workload is still to come.',
+    to: '/docs/atlas-native/worm',
+    cta: 'Retention and ransomware',
+  },
+  {
+    eyebrow: 'Efficiency',
+    title: 'Store less, know exactly how much.',
+    description:
+      'Opt-in LZ4 compression and extent dedup on Atlas Native, with a per-volume savings report. Reads stay byte-exact; the report separates compression from sharing so snapshots and clones are not passed off as dedup.',
+    to: '/docs/atlas-native/data-reduction',
+    cta: 'Data reduction',
+  },
+  {
     eyebrow: 'DataBridge',
     title: 'Cloud to edge, on Ceph.',
     description:
