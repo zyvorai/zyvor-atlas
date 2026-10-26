@@ -82,9 +82,10 @@ attempt starts from zero.
   have the converter emit raw.
 - **atlas-native volumes only.** Ceph RBD, NFS and ZFS volumes are not supported; RBD would need a job pod with
   the Ceph tools.
-- **It runs on the job worker.** Atlas has one worker, so a long import holds back every other job until it
-  finishes. The job timeout for imports is a day (`ATLAS_IMPORT_TIMEOUT_SECS`) instead of two hours. A
-  dedicated import worker is the fix and is not built.
+- **Imports run beside the job worker, two at a time.** An import never holds up other jobs, and a third
+  waits as `queued` until a slot is free (`ATLAS_IMPORT_CONCURRENCY`, default 2). An import can be cancelled
+  while it runs or waits. Its timeout is a day (`ATLAS_IMPORT_TIMEOUT_SECS`) instead of two hours. The slots
+  are per gateway process, not shared between replicas.
 - **A failed import leaves the volume as it is.** That is what makes resuming possible. Delete the volume to
   discard the partial data. Nothing stops two imports into the same volume at once.
 - **Single stream.** One HTTP connection, in order. There is no parallel or ranged transfer.

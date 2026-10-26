@@ -14,7 +14,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - `POST /volumes/{id}/import` and the `image.import` job: stream a raw disk image over HTTP(S) into an
   atlas-native volume, skipping all-zero blocks, resuming from recorded progress, and verifying the volume by
   reading it back against a caller-supplied SHA-256. Off until `ATLAS_IMPORT_ALLOWED_HOSTS` lists the hosts it
-  may fetch from. Raw images and atlas-native volumes only; see `docs/IMAGE_IMPORT.md`.
+  may fetch from. Raw images and atlas-native volumes only; see `docs/IMAGE_IMPORT.md`. Imports run beside the
+  job worker (`ATLAS_IMPORT_CONCURRENCY`, default 2) so a long import never holds up other jobs.
 - `ATLAS_DATABRIDGE_PG_CA_FILE`: an extra PEM bundle of CA certificates to trust for `verify-*` Postgres sources.
 
 ### Fixed

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: Apache-2.0
+use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -8,7 +9,7 @@ use anyhow::{anyhow, Context, Result};
 use atlas_api_types::JobRecord;
 use atlas_driver_k8s::K8sDriver;
 use sqlx::AnyPool;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{mpsc, Notify, Semaphore};
 
 use crate::spec::JobSpec;
 
@@ -18,6 +19,10 @@ struct RunningJob {
     id: String,
     cancel: Arc<Notify>,
 }
+
+/// Cancel signals of the `image.import` jobs in flight or waiting for a slot, by job id. Imports run
+/// beside the main worker, so there can be several.
+type ImportRegistry = Arc<Mutex<HashMap<String, Arc<Notify>>>>;
 
 /// Handle used by the gateway to enqueue jobs.
 #[derive(Clone)]
@@ -32,6 +37,8 @@ pub struct JobEngine {
     /// directly instead of waiting out `job_timeout()` (see that function's doc comment: with no
     /// operator override, one wedged job blocks every other job on the gateway for up to 2 hours).
     current: Arc<Mutex<Option<RunningJob>>>,
+    /// Cancel handles of running or waiting `image.import` jobs (see [`ImportRegistry`]).
+    imports: ImportRegistry,
 }
 
 /// Tunables for the durable queue poller. Defaults match production; tests pass zeros to disable.
@@ -67,6 +74,7 @@ impl JobEngine {
         let (tx, rx) = mpsc::unbounded_channel::<String>();
         let paused = Arc::new(AtomicBool::new(false));
         let current = Arc::new(Mutex::new(None));
+        let imports: ImportRegistry = Arc::new(Mutex::new(HashMap::new()));
         let worker_id = format!(
             "{}-{}",
             std::env::var("HOSTNAME").unwrap_or_else(|_| "gateway".into()),
@@ -76,6 +84,7 @@ impl JobEngine {
         let worker_tx = tx.clone();
         let worker_paused = paused.clone();
         let worker_current = current.clone();
+        let worker_imports = imports.clone();
         let worker_id_clone = worker_id.clone();
         tokio::spawn(async move {
             run_worker(
@@ -85,6 +94,7 @@ impl JobEngine {
                 worker_tx,
                 worker_paused,
                 worker_current,
+                worker_imports,
                 worker_id_clone,
             )
             .await
@@ -122,6 +132,7 @@ impl JobEngine {
             paused,
             worker_id,
             current,
+            imports,
         }
     }
 
@@ -216,6 +227,7 @@ impl JobEngine {
                 .filter(|r| r.id == job_id)
                 .map(|r| r.cancel.clone())
         };
+        let cancel = cancel.or_else(|| self.imports.lock().unwrap().get(job_id).cloned());
         if let Some(cancel) = cancel {
             cancel.notify_one();
             return Ok(true);
@@ -293,6 +305,7 @@ async fn run_poller(
 /// The worker loop: one job at a time (storage ops are cheap to serialize and this keeps ordering
 /// simple). A failing job with retry budget left is re-queued with exponential backoff; otherwise it
 /// is marked `failed`. It never takes down the worker.
+#[allow(clippy::too_many_arguments)]
 async fn run_worker(
     pool: AnyPool,
     k8s: Option<Arc<K8sDriver>>,
@@ -300,13 +313,29 @@ async fn run_worker(
     tx: mpsc::UnboundedSender<String>,
     paused: Arc<AtomicBool>,
     current: Arc<Mutex<Option<RunningJob>>>,
+    imports: ImportRegistry,
     worker_id: String,
 ) {
     tracing::info!(%worker_id, "atlas-jobs worker started");
+    let import_slots = Arc::new(Semaphore::new(import_concurrency()));
     while let Some(job_id) = rx.recv().await {
         // Maintenance pause: hold the job (leave it `queued`, don't mark_running) until resumed.
         while paused.load(Ordering::Relaxed) {
             tokio::time::sleep(Duration::from_millis(500)).await;
+        }
+        // An image import can run for hours. It gets its own task, limited to a few at a time, so
+        // it never holds up the snapshots, deletes and resizes queued behind it.
+        if is_import(&pool, &job_id).await {
+            spawn_import(
+                pool.clone(),
+                k8s.clone(),
+                tx.clone(),
+                imports.clone(),
+                import_slots.clone(),
+                worker_id.clone(),
+                job_id,
+            );
+            continue;
         }
         let cancel = Arc::new(Notify::new());
         *current.lock().unwrap() = Some(RunningJob {
@@ -315,31 +344,84 @@ async fn run_worker(
         });
         let outcome = execute_job(&pool, &k8s, &job_id, &worker_id, &cancel).await;
         *current.lock().unwrap() = None;
-        if let Err(e) = outcome {
-            let err = format!("{e:#}");
-            match atlas_inventory::jobs::retry_budget(&pool, &job_id).await {
-                Ok((count, max)) if count < max => {
-                    // Exponential backoff capped at 64s: 2^(attempt), attempt in [0, 6].
-                    let secs = 1u64 << (count.clamp(0, 6) as u32);
-                    let _ =
-                        atlas_inventory::jobs::bump_retry(&pool, &job_id, secs as i64).await;
-                    tracing::warn!(job = %job_id, "job failed, retry {}/{max} in {secs}s: {err}", count + 1);
-                    // Fast wake after backoff; the durable poller also picks up when due.
-                    let tx = tx.clone();
-                    let id = job_id.clone();
-                    tokio::spawn(async move {
-                        tokio::time::sleep(Duration::from_secs(secs)).await;
-                        let _ = tx.send(id);
-                    });
-                }
-                _ => {
-                    tracing::warn!(job = %job_id, "job failed: {err}");
-                    let _ = atlas_inventory::jobs::mark_failed(&pool, &job_id, &err).await;
-                }
+        settle(&pool, &tx, &job_id, outcome).await;
+    }
+    tracing::warn!("atlas-jobs worker channel closed");
+}
+
+/// What to do with a finished job: nothing on success; on failure, re-queue it with exponential
+/// backoff while it has retry budget left, otherwise mark it `failed`.
+async fn settle(
+    pool: &AnyPool,
+    tx: &mpsc::UnboundedSender<String>,
+    job_id: &str,
+    outcome: Result<()>,
+) {
+    if let Err(e) = outcome {
+        let err = format!("{e:#}");
+        match atlas_inventory::jobs::retry_budget(pool, job_id).await {
+            Ok((count, max)) if count < max => {
+                // Exponential backoff capped at 64s: 2^(attempt), attempt in [0, 6].
+                let secs = 1u64 << (count.clamp(0, 6) as u32);
+                let _ = atlas_inventory::jobs::bump_retry(pool, job_id, secs as i64).await;
+                tracing::warn!(job = %job_id, "job failed, retry {}/{max} in {secs}s: {err}", count + 1);
+                // Fast wake after backoff; the durable poller also picks up when due.
+                let tx = tx.clone();
+                let id = job_id.to_string();
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_secs(secs)).await;
+                    let _ = tx.send(id);
+                });
+            }
+            _ => {
+                tracing::warn!(job = %job_id, "job failed: {err}");
+                let _ = atlas_inventory::jobs::mark_failed(pool, job_id, &err).await;
             }
         }
     }
-    tracing::warn!("atlas-jobs worker channel closed");
+}
+
+/// Whether `job_id` is an `image.import`.
+async fn is_import(pool: &AnyPool, job_id: &str) -> bool {
+    matches!(
+        atlas_inventory::jobs::get_job(pool, job_id).await,
+        Ok(Some(j)) if j.job_type == "image.import"
+    )
+}
+
+/// How many imports may run at once (`ATLAS_IMPORT_CONCURRENCY`, default 2).
+fn import_concurrency() -> usize {
+    std::env::var("ATLAS_IMPORT_CONCURRENCY")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|n| *n >= 1)
+        .unwrap_or(2)
+}
+
+/// Run an import on its own task: wait for a slot, execute, settle. The job stays `queued` while it
+/// waits, and the registry entry lets `cancel_job` reach it in either state.
+fn spawn_import(
+    pool: AnyPool,
+    k8s: Option<Arc<K8sDriver>>,
+    tx: mpsc::UnboundedSender<String>,
+    imports: ImportRegistry,
+    slots: Arc<Semaphore>,
+    worker_id: String,
+    job_id: String,
+) {
+    let cancel = Arc::new(Notify::new());
+    imports
+        .lock()
+        .unwrap()
+        .insert(job_id.clone(), cancel.clone());
+    tokio::spawn(async move {
+        let outcome = match slots.acquire_owned().await {
+            Ok(_slot) => execute_job(&pool, &k8s, &job_id, &worker_id, &cancel).await,
+            Err(e) => Err(anyhow!("import slots closed: {e}")),
+        };
+        imports.lock().unwrap().remove(&job_id);
+        settle(&pool, &tx, &job_id, outcome).await;
+    });
 }
 
 /// Ceiling on a single job's dispatch — the worker loop is single-threaded and serializes every job
