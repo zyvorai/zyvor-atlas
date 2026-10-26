@@ -43,6 +43,7 @@ const DOCS = [
   ['MACOS_CLIENT.md', 'control-plane', 'macos-client', 16, 'Mac as a client'],
   ['RELEASING.md', 'control-plane', 'releasing', 17, 'Releasing'],
   ['AI_DATA_SERVICES.md', 'control-plane', 'ai-data-services', 18, 'AI data services (experimental)'],
+  ['IMAGE_IMPORT.md', 'control-plane', 'image-import', 19, 'Image import'],
 
   ['NATIVE_STORAGE.md', 'atlas-native', 'overview', 1, 'Storage overview'],
   ['NATIVE_NODE.md', 'atlas-native', 'node', 2, 'Node'],

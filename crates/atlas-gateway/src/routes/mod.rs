@@ -9,6 +9,7 @@ pub(crate) mod ai;
 mod backends;
 pub(crate) mod databridge;
 mod day2;
+mod image_import;
 pub(crate) mod dr;
 pub(crate) mod governance;
 pub(crate) mod inventory;
@@ -184,6 +185,7 @@ pub fn router(state: AppState) -> Router {
                 put(write_volume_data).layer(DefaultBodyLimit::max(volumes::MAX_VOLUME_IO_BYTES)),
             ),
         )
+        .route("/volumes/{id}/import", post(image_import::import_volume_image))
         .route("/volumes/{id}/protection", get(get_volume_protection))
         .route("/rbd-images", get(list_rbd_images).post(create_rbd_image))
         .route(

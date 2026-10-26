@@ -613,6 +613,7 @@ dependencies = [
  "atlas-policy",
  "chrono",
  "hex",
+ "reqwest 0.13.5",
  "serde",
  "serde_json",
  "sha2 0.11.1",

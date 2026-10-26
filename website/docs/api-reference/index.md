@@ -268,6 +268,14 @@ Delete the PVC + inventory row (async job). `404` if the volume is unknown.
 ```
 `400` if not larger than the current size.
 
+### `POST /api/atlas/v1/volumes/{id}/import`
+Stream a raw disk image from an HTTP(S) server into an atlas-native volume and verify it (async job).
+```json
+{ "url": "http://images.internal/disk.raw", "sha256": "<64 hex>", "size_bytes": 42949672960 }
+```
+`403` unless the host is in `ATLAS_IMPORT_ALLOWED_HOSTS`, `400` for a bad URL, checksum or size, `404` for an
+unknown volume. Operator role. See [IMAGE_IMPORT.md](../control-plane/image-import.md).
+
 ### `POST /api/atlas/v1/volumes/{id}/snapshots`
 Create a VolumeSnapshot from the volume's PVC (async job).
 ```json

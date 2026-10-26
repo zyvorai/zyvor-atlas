@@ -360,6 +360,16 @@ fn job_timeout() -> Duration {
         .unwrap_or(Duration::from_secs(2 * 3600))
 }
 
+/// Ceiling for an `image.import` job. A multi-terabyte image takes far longer than any other job,
+/// and the import resumes from what it recorded if it is cut short, so it gets a day by default.
+fn import_timeout() -> Duration {
+    std::env::var("ATLAS_IMPORT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .map(Duration::from_secs)
+        .unwrap_or(Duration::from_secs(24 * 3600))
+}
+
 async fn execute_job(
     pool: &AnyPool,
     k8s: &Option<Arc<K8sDriver>>,
@@ -378,6 +388,11 @@ async fn execute_job(
     // Reload the raw request payload (get_job doesn't return it).
     let request = load_request(pool, job_id).await?;
     let spec: JobSpec = serde_json::from_value(request).context("decode job request")?;
+    let timeout = if matches!(spec, JobSpec::ImageImport { .. }) {
+        import_timeout()
+    } else {
+        job_timeout()
+    };
 
     // Race the dispatch against an operator cancellation. On cancel, the `dispatch` future is
     // dropped — any `tokio::process::Command` it's awaiting on is killed via `kill_on_drop`
@@ -391,10 +406,10 @@ async fn execute_job(
             Ok(())
         }
         r = tokio::time::timeout(
-            job_timeout(),
-            crate::dispatch::dispatch(pool, k8s, &job.tenant_id, spec),
+            timeout,
+            crate::dispatch::dispatch(pool, k8s, job_id, &job.tenant_id, spec),
         ) => {
-            let result = r.map_err(|_| anyhow!("job exceeded the {:?} timeout", job_timeout()))??;
+            let result = r.map_err(|_| anyhow!("job exceeded the {timeout:?} timeout"))??;
             atlas_inventory::jobs::mark_succeeded(pool, job_id, &result).await?;
             Ok(())
         }

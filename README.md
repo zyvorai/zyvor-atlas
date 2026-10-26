@@ -99,7 +99,7 @@ Compared with a parallel filesystem such as WEKA, including where WEKA is the be
 
 ### Leaving VMware
 
-Atlas is the storage layer, not a hypervisor, so it sits next to VMware's vSAN rather than replacing the whole hyperconverged stack. VMs move with the rest of the Zyvor suite: [Scout](https://github.com/zyvorai/scout) scores readiness, [h2kvm](https://github.com/zyvorai/zyvor-h2kvm) repairs the guest offline and converts it to qcow2, and the VM lands on Kairon, Machina or KubeVirt with its disks on Atlas-managed Ceph, NFS, ZFS or Native storage. Atlas has no direct disk-import job yet. See [vSAN and migration in COMPARISON.md](docs/COMPARISON.md#compared-with-vmware-vsan-hyperconverged-infrastructure).
+Atlas is the storage layer, not a hypervisor, so it sits next to VMware's vSAN rather than replacing the whole hyperconverged stack. VMs move with the rest of the Zyvor suite: [Scout](https://github.com/zyvorai/scout) scores readiness, [h2kvm](https://github.com/zyvorai/zyvor-h2kvm) repairs the guest offline and converts it to qcow2, and the VM lands on Kairon, Machina or KubeVirt with its disks on Atlas-managed Ceph, NFS, ZFS or Native storage. For raw images, an `image.import` job streams the disk into an atlas-native volume with resume and a read-back checksum ([IMAGE_IMPORT.md](docs/IMAGE_IMPORT.md)); it does not read qcow2 or write to Ceph RBD. See [vSAN and migration in COMPARISON.md](docs/COMPARISON.md#compared-with-vmware-vsan-hyperconverged-infrastructure).
 
 ## Application recovery drills
 
