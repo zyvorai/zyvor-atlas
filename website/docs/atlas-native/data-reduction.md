@@ -77,5 +77,37 @@ Prometheus: `atlas_native_dedup_hits_total` and `atlas_native_dedup_saved_bytes_
 ## Limits
 
 No data reduction for Ceph, ZFS or other backends (they do their own). No inline compression of
-metadata. Lab numbers and a CPU/throughput measurement are not recorded yet; the tests check byte
-exactness and that device usage drops, not performance.
+metadata. The tests check byte exactness and that device usage drops; the only performance numbers
+are the single-core primitive costs below. There is no end-to-end write or read measurement and no
+run on a cluster.
+
+## What the primitives cost
+
+`cargo run --release -p atlas-native --example reduction_bench` times the per-extent work that
+reduction adds, on one thread, in memory, for 4 MiB extents of four kinds of data. It leaves out
+replication, erasure coding, devices and the network, so it bounds the CPU cost and says nothing
+about throughput through a running cluster.
+
+Measured on 2026-10-26 on one Apple-silicon laptop (12 cores, one used), Rust 1.99.1, release
+build, three runs within about 3% of each other:
+
+| Data | Stored size | LZ4 compress MiB/s | LZ4 decompress MiB/s | SHA-256 MiB/s |
+|---|---|---|---|---|
+| zeros | 0.4% | 29,000 | 111,000 | 3,300 |
+| log lines | 24.3% | 1,900 | 9,600 | 3,300 |
+| fixed-width records | 79.2% | 1,200 | 4,900 | 3,300 |
+| random (kept raw) | 100% | 15,900 (the failed attempt) | not applicable | 3,300 |
+
+Reading it:
+
+- **Compression** costs roughly 1.2 to 1.9 GiB/s of one core on data that shrinks, so one core can
+  keep up with about 10 Gbit/s of such writes before replication or erasure coding. The fixed-width
+  records still saved 20.8%, which clears the 12.5% threshold; data that saves less is stored raw.
+- **Incompressible data** is detected quickly (about 15 GiB/s), so leaving `compression` on for
+  encrypted or already-compressed data adds little CPU.
+- **Decompression** is several times faster than compression, so reads are cheaper than writes.
+- **Dedup** adds one SHA-256 per extent written, about 3.3 GiB/s of one core here, whatever the
+  data. Extents are also checksummed once per write for integrity, so enabling dedup roughly
+  doubles the hashing work on the write path.
+- The hardware has dedicated SHA instructions. A CPU without them will hash more slowly, so measure
+  on the target machine before sizing.
