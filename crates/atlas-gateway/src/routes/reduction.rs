@@ -30,6 +30,8 @@ fn ratio(num: u64, den: u64) -> f64 {
 
 /// Raw node counters plus derived savings. Errors if a counter is missing rather than guessing.
 pub(crate) fn report(raw: &Value) -> AppResult<Value> {
+    // The node reports `{"groups": [...], "total": {...}}`; the totals are the cluster-wide figures.
+    let raw = raw.get("total").filter(|t| t.is_object()).unwrap_or(raw);
     let logical = counter(raw, "logical_bytes")?;
     let referenced = counter(raw, "referenced_bytes")?;
     let stored = counter(raw, "stored_bytes")?;
@@ -81,6 +83,12 @@ mod tests {
         assert_eq!(r["saved_by_sharing_bytes"], 2000);
         assert_eq!(r["compression_ratio"], 4.0);
         assert_eq!(r["sharing_ratio"], 3.0);
+    }
+
+    #[test]
+    fn reads_the_node_total_from_the_grouped_report() {
+        let r = report(&json!({ "groups": [], "total": raw(1000, 3000, 250) })).unwrap();
+        assert_eq!(r["compression_ratio"], 4.0);
     }
 
     #[test]
