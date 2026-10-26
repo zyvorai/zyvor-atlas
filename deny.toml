@@ -37,6 +37,14 @@ ignore = [
     # (RUSTSEC-2024-0388, RUSTSEC-2025-0012, RUSTSEC-2025-0134) were removed rather than kept "just
     # in case": an ignore for a crate that's no longer built only hides a future regression.)
     "RUSTSEC-2024-0384",
+    # crypto-bigint 0.5.5 (RUSTSEC-2026-0387, timing variability in constant-time operations) via
+    # p256/p384 0.13 -> jsonwebtoken and openidconnect. It is fixed only in >=0.7.6, and that crate
+    # copy is pinned by elliptic-curve 0.13, so there is no in-place upgrade. Atlas signs its own
+    # tokens with HMAC secrets (EncodingKey::from_secret); the elliptic curves are used only to
+    # verify identity-provider tokens against public keys, where secret-dependent timing does not
+    # arise. The 0.7.x copy used by rsa/sqlx is updated to 0.7.9 in Cargo.lock. Re-check when
+    # jsonwebtoken or openidconnect move to elliptic-curve 0.14.
+    "RUSTSEC-2026-0387",
 ]
 
 [licenses]
