@@ -119,6 +119,13 @@ Storage nodes (derived from distinct OSD hosts in the MVP): `[{ "host": "node01"
    "device_class": "hdd", "host": null, "used_bytes": null, "capacity_bytes": null }]
 ```
 
+### `GET /api/atlas/v1/ceph/devices`
+The drives Ceph tracks (`ceph device ls`: device id, host and path, the OSD daemons on it, and its life
+expectancy window), plus a `summary` listing the drives Ceph predicts will fail within 90 days (`at_risk`,
+with `already_due` once the window has passed). A drive with no prediction is not known to be healthy, only
+not known to be failing: predictions need Ceph's device-health module to be on and to have scraped it.
+Read-only.
+
 ### `GET /api/atlas/v1/pools`
 Filters: `?backend=&kind=` (kind in rbd|cephfs_data|cephfs_metadata|rgw|nfs_export|other).
 ```json

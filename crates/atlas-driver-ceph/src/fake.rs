@@ -275,4 +275,27 @@ impl StorageDriver for FakeCephDriver {
             "bad_become_inactive": [],
         }))
     }
+
+    /// One drive per OSD above. `life_expectancy_*` are empty when Ceph has no prediction; the
+    /// stamp dates are far enough out or in the past to keep the fixture independent of today.
+    async fn ceph_device_ls(&self) -> Result<serde_json::Value, DriverError> {
+        let dev = |id: &str, host: &str, osd: i64, min: &str, max: &str| {
+            serde_json::json!({
+                "devid": id,
+                "location": [{ "host": host, "dev": "nvme0n1", "path": "/dev/nvme0n1" }],
+                "daemons": [format!("osd.{osd}")],
+                "life_expectancy_min": min,
+                "life_expectancy_max": max,
+                "life_expectancy_stamp": if min.is_empty() { "" } else { "2026-10-01T00:00:00.000000+0000" },
+            })
+        };
+        Ok(serde_json::json!([
+            dev("INTEL_SSDPE2KX040T8_PHLJ0001", "node01", 0, "", ""),
+            dev("INTEL_SSDPE2KX040T8_PHLJ0002", "node01", 1, "2099-01-01T00:00:00.000000+0000", "2100-01-01T00:00:00.000000+0000"),
+            dev("SAMSUNG_MZQL23T8HCLS_S64E0001", "node02", 2, "", ""),
+            dev("SAMSUNG_MZQL23T8HCLS_S64E0002", "node02", 3, "2020-01-01T00:00:00.000000+0000", "2020-06-01T00:00:00.000000+0000"),
+            dev("MICRON_7450_MTFDKCC3T8TFR_0001", "node03", 4, "", ""),
+            dev("MICRON_7450_MTFDKCC3T8TFR_0002", "node03", 5, "", ""),
+        ]))
+    }
 }

@@ -220,6 +220,32 @@ async fn osd_ok_to_stop_answers_and_validates() {
     }
 }
 
+/// `GET /ceph/devices` lists the drives and flags the ones predicted to fail soon.
+#[tokio::test]
+async fn ceph_devices_flag_drives_predicted_to_fail() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await.0);
+    let c = reqwest::Client::new();
+    let body: Value = c
+        .get(format!("{base}/ceph/devices"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(body["devices"].as_array().unwrap().len(), 6, "{body}");
+    let s = &body["summary"];
+    assert_eq!(s["total"], 6);
+    assert_eq!(s["with_prediction"], 2);
+    assert_eq!(s["without_prediction"], 4);
+    // Only the drive whose predicted window has passed is at risk; the one dated 2099 is not.
+    let at_risk = s["at_risk"].as_array().unwrap();
+    assert_eq!(at_risk.len(), 1, "{s}");
+    assert_eq!(at_risk[0]["devid"], "SAMSUNG_MZQL23T8HCLS_S64E0002");
+    assert_eq!(at_risk[0]["already_due"], true);
+    assert_eq!(at_risk[0]["daemons"][0], "osd.3");
+}
+
 /// Resize-down is opt-in (allow_shrink), and pool migration validates its destination.
 #[tokio::test]
 async fn resize_down_and_migrate() {
