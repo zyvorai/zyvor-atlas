@@ -2,11 +2,12 @@
 // SPDX-License-Identifier: Apache-2.0
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::time::Duration;
 
 use anyhow::{anyhow, Context, Result};
 use atlas_api_types::JobRecord;
+use atlas_driver_core::DriverRegistry;
 use atlas_driver_k8s::K8sDriver;
 use sqlx::AnyPool;
 use tokio::sync::{mpsc, Notify, Semaphore};
@@ -24,6 +25,10 @@ struct RunningJob {
 /// beside the main worker, so there can be several.
 type ImportRegistry = Arc<Mutex<HashMap<String, Arc<Notify>>>>;
 
+/// The storage drivers jobs that write volume data go through. Set once, after the engine starts,
+/// because the gateway builds its driver registry after the engine; jobs read it when they run.
+type DriverCell = Arc<OnceLock<Arc<DriverRegistry>>>;
+
 /// Handle used by the gateway to enqueue jobs.
 #[derive(Clone)]
 pub struct JobEngine {
@@ -39,6 +44,7 @@ pub struct JobEngine {
     current: Arc<Mutex<Option<RunningJob>>>,
     /// Cancel handles of running or waiting `image.import` jobs (see [`ImportRegistry`]).
     imports: ImportRegistry,
+    drivers: DriverCell,
 }
 
 /// Tunables for the durable queue poller. Defaults match production; tests pass zeros to disable.
@@ -75,6 +81,7 @@ impl JobEngine {
         let paused = Arc::new(AtomicBool::new(false));
         let current = Arc::new(Mutex::new(None));
         let imports: ImportRegistry = Arc::new(Mutex::new(HashMap::new()));
+        let drivers: DriverCell = Arc::new(OnceLock::new());
         let worker_id = format!(
             "{}-{}",
             std::env::var("HOSTNAME").unwrap_or_else(|_| "gateway".into()),
@@ -85,6 +92,7 @@ impl JobEngine {
         let worker_paused = paused.clone();
         let worker_current = current.clone();
         let worker_imports = imports.clone();
+        let worker_drivers = drivers.clone();
         let worker_id_clone = worker_id.clone();
         tokio::spawn(async move {
             run_worker(
@@ -95,6 +103,7 @@ impl JobEngine {
                 worker_paused,
                 worker_current,
                 worker_imports,
+                worker_drivers,
                 worker_id_clone,
             )
             .await
@@ -133,7 +142,14 @@ impl JobEngine {
             worker_id,
             current,
             imports,
+            drivers,
         }
+    }
+
+    /// Give jobs that write volume data (`image.import`) the storage drivers. Call once, after the
+    /// driver registry exists; a later call is ignored.
+    pub fn set_driver_registry(&self, registry: Arc<DriverRegistry>) {
+        let _ = self.drivers.set(registry);
     }
 
     /// Pause or resume job execution (maintenance mode). Paused jobs stay `queued` until resumed.
@@ -314,6 +330,7 @@ async fn run_worker(
     paused: Arc<AtomicBool>,
     current: Arc<Mutex<Option<RunningJob>>>,
     imports: ImportRegistry,
+    drivers: DriverCell,
     worker_id: String,
 ) {
     tracing::info!(%worker_id, "atlas-jobs worker started");
@@ -332,6 +349,7 @@ async fn run_worker(
                 tx.clone(),
                 imports.clone(),
                 import_slots.clone(),
+                drivers.clone(),
                 worker_id.clone(),
                 job_id,
             );
@@ -342,7 +360,7 @@ async fn run_worker(
             id: job_id.clone(),
             cancel: cancel.clone(),
         });
-        let outcome = execute_job(&pool, &k8s, &job_id, &worker_id, &cancel).await;
+        let outcome = execute_job(&pool, &k8s, &drivers, &job_id, &worker_id, &cancel).await;
         *current.lock().unwrap() = None;
         settle(&pool, &tx, &job_id, outcome).await;
     }
@@ -400,12 +418,14 @@ fn import_concurrency() -> usize {
 
 /// Run an import on its own task: wait for a slot, execute, settle. The job stays `queued` while it
 /// waits, and the registry entry lets `cancel_job` reach it in either state.
+#[allow(clippy::too_many_arguments)]
 fn spawn_import(
     pool: AnyPool,
     k8s: Option<Arc<K8sDriver>>,
     tx: mpsc::UnboundedSender<String>,
     imports: ImportRegistry,
     slots: Arc<Semaphore>,
+    drivers: DriverCell,
     worker_id: String,
     job_id: String,
 ) {
@@ -416,7 +436,7 @@ fn spawn_import(
         .insert(job_id.clone(), cancel.clone());
     tokio::spawn(async move {
         let outcome = match slots.acquire_owned().await {
-            Ok(_slot) => execute_job(&pool, &k8s, &job_id, &worker_id, &cancel).await,
+            Ok(_slot) => execute_job(&pool, &k8s, &drivers, &job_id, &worker_id, &cancel).await,
             Err(e) => Err(anyhow!("import slots closed: {e}")),
         };
         imports.lock().unwrap().remove(&job_id);
@@ -455,6 +475,7 @@ fn import_timeout() -> Duration {
 async fn execute_job(
     pool: &AnyPool,
     k8s: &Option<Arc<K8sDriver>>,
+    drivers: &DriverCell,
     job_id: &str,
     worker_id: &str,
     cancel: &Notify,
@@ -470,6 +491,7 @@ async fn execute_job(
     // Reload the raw request payload (get_job doesn't return it).
     let request = load_request(pool, job_id).await?;
     let spec: JobSpec = serde_json::from_value(request).context("decode job request")?;
+    let registry = drivers.get().cloned();
     let timeout = if matches!(spec, JobSpec::ImageImport { .. }) {
         import_timeout()
     } else {
@@ -489,7 +511,7 @@ async fn execute_job(
         }
         r = tokio::time::timeout(
             timeout,
-            crate::dispatch::dispatch(pool, k8s, job_id, &job.tenant_id, spec),
+            crate::dispatch::dispatch(pool, k8s, &registry, job_id, &job.tenant_id, spec),
         ) => {
             let result = r.map_err(|_| anyhow!("job exceeded the {timeout:?} timeout"))??;
             atlas_inventory::jobs::mark_succeeded(pool, job_id, &result).await?;

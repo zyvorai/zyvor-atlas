@@ -15,7 +15,6 @@ mod engine;
 mod scheduler;
 mod spec;
 
-pub use dispatch::set_driver_registry;
 pub use engine::{recover, recover_since, JobEngine, JobEngineOptions};
 pub use scheduler::spawn_scheduler;
 pub use spec::{JobSpec, OwnerRef};
