@@ -780,6 +780,18 @@ pub fn rbd_export_diff_child(
         .map_err(|e| DriverError::Unreachable(format!("failed to spawn `rbd`: {e}")))
 }
 
+/// Spawn `rbd export-diff pool/image -` of the image head (no snapshot), stdout piped. Read-only;
+/// the caller reads at most what it needs and then kills the child.
+pub fn rbd_export_diff_head_child(pool: &str, image: &str) -> Result<tokio::process::Child, DriverError> {
+    let spec = format!("{pool}/{image}");
+    cmd("rbd")
+        .args(["export-diff", &spec, "-"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| DriverError::Unreachable(format!("failed to spawn `rbd`: {e}")))
+}
+
 /// Spawn `rbd import-diff - pool/image` with stdin piped, for streaming a diff into it (e.g. from
 /// an S3 download) without buffering. The caller writes to `child.stdin`, drops it, then `wait()`s.
 pub fn rbd_import_diff_child(

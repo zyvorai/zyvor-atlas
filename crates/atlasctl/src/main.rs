@@ -290,6 +290,16 @@ enum Command {
     },
     /// GET /api/atlas/v1/native/reduction  (atlas-native compression and sharing savings)
     NativeReduction,
+    /// GET /api/atlas/v1/pools/{id}/dedup-estimate  (what dedup would save; reads data, admin only)
+    DedupEstimate {
+        pool_id: String,
+        /// Stop after examining this many bytes (block-scan backends such as Ceph).
+        #[arg(long)]
+        max_bytes: Option<u64>,
+        /// Seconds before giving up (ZFS's `zdb -S` reads every block).
+        #[arg(long)]
+        max_secs: Option<u64>,
+    },
     /// GET /api/atlas/v1/buckets
     Buckets,
     /// DELETE /api/atlas/v1/buckets/{id}  (--force if it still holds backups)
@@ -894,6 +904,17 @@ async fn main() -> Result<()> {
             Some(serde_json::json!({ "retain_secs": retain_secs })),
         ),
         Command::NativeReduction => ("GET", "/api/atlas/v1/native/reduction".to_string(), None),
+        Command::DedupEstimate { pool_id, max_bytes, max_secs } => {
+            let mut params = Vec::new();
+            if let Some(b) = max_bytes {
+                params.push(format!("max_bytes={b}"));
+            }
+            if let Some(t) = max_secs {
+                params.push(format!("max_secs={t}"));
+            }
+            let qs = if params.is_empty() { String::new() } else { format!("?{}", params.join("&")) };
+            ("GET", format!("/api/atlas/v1/pools/{pool_id}/dedup-estimate{qs}"), None)
+        }
         Command::Buckets => ("GET", "/api/atlas/v1/buckets".to_string(), None),
         Command::DeleteBucket { id, force } => (
             "DELETE",

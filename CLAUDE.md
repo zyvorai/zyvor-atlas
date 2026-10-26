@@ -130,6 +130,12 @@ unchanged; the dedup index is only a hint, validated at apply time (a stale shar
 unshared). Shared extents can sit at different offsets per reference, so consumers must use the
 map offset. Unit/integration tested; byte-exact read-back and the savings report verified on a lab multi-process cluster (2026-10-26, favourable synthetic input); no lab throughput/CPU numbers.
 
+**Dedup savings estimator** (`docs/DEDUP_ESTIMATE.md`): read-only "what would dedup save" for Ceph RBD
+pools (hashes allocated extents from `rbd export-diff`, bounded by a byte budget, reported as a lower
+bound when partial) and ZFS pools (`zdb -S` simulated dedup table), `GET /pools/{id}/dedup-estimate`
+and `atlasctl dedup-estimate`, admin-only. Unit/integration tested over the fake drivers; not yet run
+against a live Ceph cluster or a real zpool.
+
 **Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor
 Production License v1.0 at the maintainer's explicit request — history in
 [`docs/LICENSING.md`](docs/LICENSING.md)). Don't weaken or remove license notices,

@@ -57,6 +57,7 @@ const DOCS = [
   ['NATIVE_REPLICATION.md', 'atlas-native', 'replication', 10, 'Replication'],
   ['WORM.md', 'atlas-native', 'worm', 11, 'Retention locks and ransomware'],
   ['NATIVE_DATA_REDUCTION.md', 'atlas-native', 'data-reduction', 12, 'Compression and dedup'],
+  ['DEDUP_ESTIMATE.md', 'control-plane', 'dedup-estimate', 20, 'Dedup savings estimator'],
   ['IO500.md', 'atlas-native', 'io500', 13, 'IO500 benchmark'],
 
   ['DR.md', 'disaster-recovery', 'dr', 1, 'Disaster recovery (Ceph)'],

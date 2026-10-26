@@ -26,6 +26,7 @@ use atlas_api_types::{
 use atlas_driver_core::{DriverError, StorageDriver};
 
 mod cmd;
+pub mod dedup;
 pub use cmd::{
     cluster_id, inspect_device, list_pool_datasets, list_whole_disks, list_zpool_names,
     non_root_datasets, pool_id, root_volume_id, wipe_device, zpool_create, zpool_destroy,
@@ -115,6 +116,16 @@ impl FakeZfsDriver {
 impl StorageDriver for FakeZfsDriver {
     fn backend_id(&self) -> &str {
         &self.backend_id
+    }
+
+    async fn estimate_dedup(
+        &self,
+        pool: &str,
+        _opts: atlas_api_types::DedupEstimateOptions,
+    ) -> Result<atlas_api_types::DedupEstimate, DriverError> {
+        // Fixture: the recorded `zdb -S` output run through the real parser.
+        let sim = dedup::parse_zdb_simulation(dedup::SAMPLE_ZDB_OUTPUT)?;
+        Ok(dedup::estimate(&self.backend_id, pool, sim, None))
     }
 
     async fn discover(&self) -> Result<DiscoveryResult, DriverError> {
@@ -342,6 +353,37 @@ impl RealZfsDriver {
 impl StorageDriver for RealZfsDriver {
     fn backend_id(&self) -> &str {
         &self.backend_id
+    }
+
+    async fn estimate_dedup(
+        &self,
+        pool: &str,
+        opts: atlas_api_types::DedupEstimateOptions,
+    ) -> Result<atlas_api_types::DedupEstimate, DriverError> {
+        // Only pools this driver was configured with: the name goes straight to `zdb`.
+        if !self.zpools.iter().any(|p| p == pool) {
+            return Err(DriverError::Backend(format!("not found: unknown zpool '{pool}'")));
+        }
+        let run = tokio::process::Command::new("zdb")
+            .args(["-S", pool])
+            .kill_on_drop(true)
+            .output();
+        let output = tokio::time::timeout(std::time::Duration::from_secs(opts.max_secs.max(1)), run)
+            .await
+            .map_err(|_| {
+                DriverError::Backend(format!(
+                    "zdb -S {pool} did not finish within {}s; it reads every block, so raise max_secs for a large pool",
+                    opts.max_secs
+                ))
+            })?
+            .map_err(|e| DriverError::Unreachable(format!("failed to spawn `zdb`: {e}")))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+            return Err(DriverError::Backend(format!("zdb -S {pool}: {stderr}")));
+        }
+        let sim = dedup::parse_zdb_simulation(&String::from_utf8_lossy(&output.stdout))?;
+        let alloc = self.zpool_list().await.ok().and_then(|m| m.get(pool).map(|c| c.alloc_bytes.max(0) as u64));
+        Ok(dedup::estimate(&self.backend_id, pool, sim, alloc))
     }
 
     async fn discover(&self) -> Result<DiscoveryResult, DriverError> {
