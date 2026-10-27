@@ -84,15 +84,20 @@ random data, the memory ceiling), the RBD diff-stream parser (writes, zero range
 malformed streams), the `zdb -S` summary parser, and the gateway route against the fake Ceph and
 ZFS drivers.
 
-**Ceph, checked against a real cluster (2026-10-27).** On Rook Ceph 19.2.3 (Squid; a single OSD
+**Ceph, checked against a real cluster (2026-10-27).** On Rook Ceph 19.2.x (Squid; a single OSD
 on an LVM volume over a loop-backed file, so a functional check, not a performance one),
 `rbd export-diff pool/image -` of an image head with no snapshot exits 0 and emits the documented
 `rbd diff v1` stream (`s` size record, one `w` record, `e` terminator). Fed through the scanner, a
 1 MiB image holding 64 KiB blocks A B A C, one zero block and A again gave exactly the expected
-327,680 bytes scanned, 65,536 zero, 196,608 distinct (3 blocks) and no compression on random
-data. Not covered: the gateway driving a real `rbd` end to end (the lab host has no `rbd` CLI;
-the stream was captured in the Rook toolbox and replayed through the scanner), pool-level image
-listing, large or multi-image pools, and any throughput figure.
+327,680 bytes scanned, 65,536 zero, 196,608 distinct (3 blocks) and no compression on random data.
+
+Running it through the deployed real-Ceph gateway (`atlas-gateway-ceph`, bundled Squid `rbd`)
+found two bugs the fake driver could not show, both fixed: `rbd du <pool>` reads the pool as an
+image in the default pool (it needs `--pool`), and Squid's `rbd du` JSON names images `name`, not
+`image`. After the fixes both `GET` and the background `POST` (a `dedup.estimate` job, ending
+`succeeded` at 100%) returned an estimate for a pool holding a CSI volume and the test image.
+Not covered: pools with many images, large data, concurrent client I/O, and any throughput
+figure.
 
 **ZFS is still unverified.** There is no zpool on the lab, so the `zdb -S` sample used by the
 parser follows the OpenZFS `zdb(8)` documentation, not a captured run.

@@ -182,9 +182,12 @@ impl StorageDriver for RealCephDriver {
             atlas_driver_core::dedup::DEFAULT_MAX_UNIQUE,
         );
         let mut stopped = false;
+        // True only when every image's stream was read to its end.
+        let mut complete = true;
         for image in images {
             let spent = scanner.examined_bytes();
             if stopped || spent >= opts.max_bytes || std::time::Instant::now() >= deadline {
+                complete = false;
                 break;
             }
             let mut child = rbd_export_diff_head_child(pool, &image)?;
@@ -207,6 +210,13 @@ impl StorageDriver for RealCephDriver {
             }
         }
         let scan = scanner.finish();
+        // `rbd du` counts at object granularity, far above the extents `export-diff` emits, so
+        // measuring a finished scan against it would flag a complete read as a lower bound.
+        let total = if complete && !scan.truncated {
+            scan.scanned_bytes + scan.zero_bytes
+        } else {
+            total
+        };
         let mut est = atlas_driver_core::dedup::estimate_from_scan(&self.backend_id, pool, &scan, Some(total));
         est.note.push_str(" Read from the live images' export-diff streams, so it is not crash-consistent.");
         Ok(est)
