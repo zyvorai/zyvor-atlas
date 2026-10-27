@@ -125,5 +125,8 @@ estimate on pools with dedup off. Not covered: large pools (`zdb -S` reads every
 with compression on, and any timing figure.
 
 The job path is integration tested through the gateway (queued, run, result kept, refused before
-queueing). That a running scan does not block other jobs rests on the engine routing it to its own
-task, which is unit tested; it has not been exercised with a genuinely slow scan.
+queueing). Two engine tests use a driver whose scan never finishes, like `zdb -S` on a huge pool:
+a quick job on the shared worker completes while that scan is still `running`, and cancelling the
+scan drops the driver call (which is what kills `zdb`/`rbd`). The heartbeat is tested too: it
+writes the scanning note on its interval and stops when the job ends. Not exercised: a multi-hour
+scan on a real pool, and the stale-job reclaim racing a real heartbeat.
