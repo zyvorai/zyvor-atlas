@@ -108,8 +108,21 @@ image in the default pool (it needs `--pool`), and Squid's `rbd du` JSON names i
 Not covered: pools with many images, large data, concurrent client I/O, and any throughput
 figure.
 
-**ZFS is still unverified.** There is no zpool on the lab, so the `zdb -S` sample used by the
-parser follows the OpenZFS `zdb(8)` documentation, not a captured run.
+**ZFS, checked against real OpenZFS 2.4.1 (2026-10-27).** On the lab host (`zfsutils-linux`,
+file-backed pools), `zdb -S <pool>` printed the documented `Simulated DDT histogram` followed by
+`dedup = 3.00, compress = 1.00, copies = 1.00, dedup * compress / copies = 3.00`, which the
+parser reads unchanged. The data was one 8 MiB random file copied five times plus one distinct
+8 MiB file (48 MiB referenced, 16 MiB unique): the pool with `dedup=off` held 48.2 MiB and the
+gateway, running the real driver as root, answered `dedup_ratio` 3.0 and
+`estimated_saved_bytes` 33,703,253 (two thirds of the allocation), both from `GET` and as a
+background job; an unknown pool gives `404`.
+
+Two things this showed. The gateway needs the rights `zdb` needs (root, or `/dev/zfs` and the
+pool's devices), as it does for `zpool`. And on a pool that already has `dedup=on` the simulation
+reports the pool's existing ratio (3.00 there, equal to `zpool get dedupratio`), so the saving is
+taken off space that is already deduplicated and overstates what is left to gain: use the
+estimate on pools with dedup off. Not covered: large pools (`zdb -S` reads every block), a pool
+with compression on, and any timing figure.
 
 The job path is integration tested through the gateway (queued, run, result kept, refused before
 queueing). That a running scan does not block other jobs rests on the engine routing it to its own
