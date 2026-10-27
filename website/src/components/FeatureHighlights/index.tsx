@@ -11,6 +11,8 @@ type FeatureItem = {
   description: ReactNode;
   to: string;
   cta: string;
+  to2?: string;
+  cta2?: string;
 };
 
 const FeatureList: FeatureItem[] = [
@@ -42,9 +44,11 @@ const FeatureList: FeatureItem[] = [
     eyebrow: 'Efficiency',
     title: 'Store less, know exactly how much.',
     description:
-      'Opt-in LZ4 compression and extent dedup on Atlas Native, with a per-volume savings report. Reads stay byte-exact; the report separates compression from sharing so snapshots and clones are not passed off as dedup.',
+      'Opt-in LZ4 compression and extent dedup on Atlas Native, with a per-volume savings report that separates compression from sharing. And before you change anything, a read-only estimator tells you what dedup would save on a Ceph or ZFS pool. Checked on a real Rook Ceph and a real zpool, small data so far.',
     to: '/docs/atlas-native/data-reduction',
     cta: 'Data reduction',
+    to2: '/docs/control-plane/dedup-estimate',
+    cta2: 'Dedup estimator',
   },
   {
     eyebrow: 'DataBridge',
@@ -72,18 +76,25 @@ const FeatureList: FeatureItem[] = [
   },
 ];
 
-function Feature({eyebrow, title, description, to, cta}: FeatureItem) {
+function Feature({eyebrow, title, description, to, cta, to2, cta2, light}: FeatureItem & {light: boolean}) {
   return (
-    <article className={styles.band}>
+    <article className={light ? `${styles.band} ${styles.light}` : styles.band}>
       <div className={styles.inner}>
         <p className={styles.eyebrow}>{eyebrow}</p>
         <Heading as="h2" className={styles.title}>
           {title}
         </Heading>
         <p className={styles.copy}>{description}</p>
-        <Link className={styles.link} to={to}>
-          {cta} →
-        </Link>
+        <div className={styles.links}>
+          <Link className={styles.link} to={to}>
+            {cta} <span aria-hidden="true">›</span>
+          </Link>
+          {to2 && cta2 && (
+            <Link className={styles.link} to={to2}>
+              {cta2} <span aria-hidden="true">›</span>
+            </Link>
+          )}
+        </div>
       </div>
     </article>
   );
@@ -92,8 +103,8 @@ function Feature({eyebrow, title, description, to, cta}: FeatureItem) {
 export default function FeatureHighlights(): ReactNode {
   return (
     <section className={styles.features} aria-label="Capabilities">
-      {FeatureList.map((props) => (
-        <Feature key={props.title} {...props} />
+      {FeatureList.map((props, i) => (
+        <Feature key={props.title} light={i % 2 === 1} {...props} />
       ))}
     </section>
   );

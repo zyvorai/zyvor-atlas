@@ -29,7 +29,13 @@
   --ifm-font-family-base: -apple-system, BlinkMacSystemFont, 'SF Pro Display',
     'SF Pro Text', 'Segoe UI', Roboto, system-ui, sans-serif;
   --ifm-heading-font-weight: 600;
-  --ifm-line-height-base: 1.65;
+  --ifm-line-height-base: 1.6;
+  --ifm-font-color-base: #1d1d1f;
+  --ifm-link-color: #0066cc;
+  --ifm-background-color: #ffffff;
+  --ifm-global-radius: 12px;
+  --ifm-code-border-radius: 8px;
+  --ifm-toc-border-color: rgba(0, 0, 0, 0.08);
 
   /* Generous, Apple-esque section rhythm — used by hero/section wrappers
      in src/pages, not by Infima directly. */
@@ -47,6 +53,11 @@
   --ifm-color-primary-lighter: #52a6ff;
   --ifm-color-primary-lightest: #85c0ff;
   --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+  --ifm-font-color-base: #f5f5f7;
+  --ifm-link-color: #2997ff;
+  --ifm-background-color: #000000;
+  --ifm-background-surface-color: #1d1d1f;
+  --ifm-toc-border-color: rgba(255, 255, 255, 0.12);
 }
 
 /* The hero band itself stays pure black with white text regardless of
@@ -89,11 +100,13 @@
  * always dark regardless of the page's light/dark theme.
  * ------------------------------------------------------------------- */
 .navbar {
-  height: 4.5rem;
+  height: 3.25rem;
+  padding-block: 0;
   box-shadow: none;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.12);
-  backdrop-filter: saturate(180%) blur(12px);
-  background: rgba(0, 0, 0, 0.82);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(22, 22, 23, 0.8);
 }
 
 .navbar__brand,
@@ -102,8 +115,15 @@
   color: #f5f5f7;
 }
 
-.navbar__link:hover {
+.navbar__link {
+  font-size: 0.8125rem;
+  opacity: 0.85;
+}
+
+.navbar__link:hover,
+.navbar__link--active {
   color: #ffffff;
+  opacity: 1;
 }
 
 .navbar__brand {
@@ -202,4 +222,172 @@ article .markdown li {
 
 .theme-doc-markdown {
   max-width: 46rem;
+}
+
+/* ---------------------------------------------------------------------
+ * Apple-style polish: calm surfaces, soft radii, hairline borders.
+ * ------------------------------------------------------------------- */
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+a {
+  text-decoration: none;
+}
+
+article .markdown a:hover,
+.footer__link-item:hover {
+  text-decoration: underline;
+}
+
+/* Docs pages */
+article .markdown h1 {
+  font-size: clamp(2.2rem, 4.5vw, 3.25rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.08;
+}
+
+article .markdown h2 {
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  padding-top: 0.5rem;
+}
+
+article .markdown > p:first-of-type {
+  font-size: 1.25rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+}
+
+article .markdown table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 14px;
+  overflow: hidden;
+  font-size: 0.95rem;
+}
+
+article .markdown table th,
+article .markdown table td {
+  border: 0;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  padding: 0.7rem 1rem;
+}
+
+article .markdown table tr:last-child td {
+  border-bottom: 0;
+}
+
+article .markdown table tr {
+  background: transparent !important;
+}
+
+article .markdown table th {
+  background: var(--ifm-color-emphasis-100);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ifm-color-emphasis-700);
+}
+
+article .markdown code:not(pre code) {
+  border: 0;
+  border-radius: 6px;
+  background: var(--ifm-color-emphasis-100);
+  padding: 0.12em 0.4em;
+}
+
+article .markdown pre,
+div[class*='codeBlockContainer'] {
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+.alert {
+  border: 0;
+  border-left: 0;
+  border-radius: 16px;
+  background: var(--ifm-color-emphasis-100);
+  color: var(--ifm-font-color-base);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .alert {
+  background: #1d1d1f;
+}
+
+.pagination-nav__link {
+  border: 0;
+  border-radius: 18px;
+  background: var(--ifm-color-emphasis-100);
+  transition: background 0.2s ease;
+}
+
+.pagination-nav__link:hover {
+  background: var(--ifm-color-emphasis-200);
+}
+
+.table-of-contents__link--active {
+  font-weight: 600;
+}
+
+.theme-doc-sidebar-container {
+  border-right-color: var(--ifm-toc-border-color) !important;
+}
+
+.menu__link:hover {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  background: rgba(0, 113, 227, 0.1);
+  color: var(--ifm-color-primary);
+}
+
+/* Footer: apple.com's quiet light-grey legal footer */
+.footer {
+  background: #f5f5f7;
+  color: #6e6e73;
+  font-size: 0.8125rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.footer .footer__title {
+  color: #1d1d1f;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.footer .footer__link-item {
+  color: #424245;
+}
+
+.footer .footer__copyright {
+  color: #6e6e73;
+}
+
+[data-theme='dark'] .footer {
+  background: #161617;
+  color: #86868b;
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme='dark'] .footer .footer__title {
+  color: #f5f5f7;
+}
+
+[data-theme='dark'] .footer .footer__link-item {
+  color: #a1a1a6;
 }
