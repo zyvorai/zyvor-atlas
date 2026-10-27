@@ -134,8 +134,8 @@ map offset. Unit/integration tested; byte-exact read-back and the savings report
 pools (hashes allocated extents from `rbd export-diff`, bounded by a byte budget, reported as a lower
 bound when partial) and ZFS pools (`zdb -S` simulated dedup table), `GET /pools/{id}/dedup-estimate`
 and `atlasctl dedup-estimate`, admin-only; `POST` runs it as a `dedup.estimate` background job on its own
-task (not the shared worker), with a heartbeat, cancel, and no retries. Unit/integration tested over the fake drivers; a real `rbd export-diff` of an image head
-(Rook Ceph 19.2.3, 2026-10-27) parses to the expected figures; not yet run through the gateway on real Ceph or against a real zpool.
+task (not the shared worker), with a heartbeat, cancel, and no retries. Unit/integration tested over the fake drivers; verified on a real Rook Ceph 19.2.x (2026-10-27) through the
+deployed gateway, sync and as a job, small data only (it found two `rbd du` bugs); not yet run against a real zpool.
 
 **Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor
 Production License v1.0 at the maintainer's explicit request — history in
