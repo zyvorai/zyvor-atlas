@@ -34,7 +34,9 @@ export default function Reveal({children, className, delay = 0}: RevealProps) {
           observer.disconnect();
         }
       },
-      {threshold: 0.15},
+      // A tall wrapper (the feature bands) can never show 15% of itself in a short window, so
+      // trigger as soon as any of it enters instead of by area.
+      {threshold: 0, rootMargin: '0px 0px -8% 0px'},
     );
     observer.observe(node);
     return () => observer.disconnect();
