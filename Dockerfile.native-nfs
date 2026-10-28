@@ -14,7 +14,7 @@ RUN cargo build --release --locked -p atlas-native-fuse --features fuse \
 # Ganesha 9.14 or later: older releases answer the GET_DIR_DELEGATION that recent Linux clients
 # send with NFS4ERR_OP_ILLEGAL instead of NFS4ERR_NOTSUPP, which the client turns into EREMOTEIO
 # on directory reads. Debian testing has it; Ubuntu 26.04 ships 6.5.
-FROM docker.io/library/debian:testing@sha256:f35963177a0584848d5222b3d2b4f4ebcc6434d39db0a709c3088237ef619cbf AS runtime
+FROM docker.io/library/debian:testing@sha256:fe4be93b807e7d05dccdaf54931173d9368b349f91a8170dadd787213aa3bf19 AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 # Ganesha finds the filesystem under each export through /etc/mtab. NFSv3 needs rpcbind (which
 # looks its port up in /etc/services, from netbase) and rpc.statd (nfs-common) for NLM locks.
