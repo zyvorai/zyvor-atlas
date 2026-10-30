@@ -37,8 +37,8 @@ use axum::{Extension, Json};
 use crate::{
     auth::{require_role, tenant_scope, Actor, ROLE_OPERATOR},
     routes::ai::{
-        compute_advisor, compute_anomalies, compute_incidents, compute_what_if, fetch_io_risk,
-        io_agent_from_env, io_unavailable, AdvisorMode, WhatIfRequest,
+        compute_advisor, compute_anomalies, compute_incidents, compute_what_if, fetch_io_ai, fetch_io_risk,
+        io_agent_from_env, io_ai_unavailable, io_unavailable, AdvisorMode, WhatIfRequest,
     },
     routes::{dr, observability, volume_groups, volumes},
     state::AppState,
@@ -326,6 +326,28 @@ impl AtlasMcp {
         let view = match io_agent_from_env() {
             Some((url, timeout)) => fetch_io_risk(&url, timeout).await,
             None => io_unavailable("ATLAS_IO_AGENT_URL is not configured"),
+        };
+        Ok(ToolJson(json!(view)))
+    }
+
+    #[tool(
+        description = "Heuristic I/O shape per device from the optional atlas-io agent: large_write \
+                        (checkpoint-like), bulk_read, small_read, mixed or unknown, with average \
+                        request sizes, p99 latency and a finding when the shape's latency \
+                        expectation is missed. Names a shape, never a job. Fails open: an \
+                        unreachable or unconfigured agent is status \"unavailable\". Read-only. \
+                        Requires an operator-or-higher token."
+    )]
+    async fn io_ai(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        require_role(self.state.config.auth_required, &actor, ROLE_OPERATOR)
+            .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
+        let view = match io_agent_from_env() {
+            Some((url, timeout)) => fetch_io_ai(&url, timeout).await,
+            None => io_ai_unavailable("ATLAS_IO_AGENT_URL is not configured"),
         };
         Ok(ToolJson(json!(view)))
     }
