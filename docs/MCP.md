@@ -97,7 +97,7 @@ Tokens are held in process memory and die with the gateway.
 - **Prompt injection** via data an agent reads (alert titles, device names, job text): tools return
   data only, the skill tells the agent to treat it as untrusted, and the only write paths (`create_snapshot`, `ack_alert`) need a
   human-approved confirmation of the exact arguments.
-- **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens. A tool-scoped token also cannot be used outside MCP.
+- **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens. A tool-scoped token also cannot be used outside MCP. Mint one with `atlasctl issue-token agent-1 --role viewer --tool ceph_nvme --tool io_ai` (admin; repeat `--tool`).
   Never give an agent an admin token.
 - **Fan-out**: advisory tools run in local mode so an agent call cannot trigger an outbound LLM
   request; the gateway's agent fetch is bounded (timeout, 256 KiB, no redirects) and fails open to
