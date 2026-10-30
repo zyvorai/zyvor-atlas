@@ -159,7 +159,7 @@ The current release is Apache-2.0 (older tags used other licenses, see the [CHAN
 
 ## License and support
 
-Free and open source under the [Apache License 2.0](LICENSE) ([NOTICE](NOTICE)). **Zyvor Enterprise** adds supported releases, deployment and upgrade guidance, priority incident triage, a named technical contact and 24x7 critical intake: [plans](docs/SUBSCRIPTION-MODEL.md) · [pricing](https://zyvor.dev/pricing?utm_source=github&utm_medium=atlas&utm_campaign=readme_license) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
+Free and open source under the [Apache License 2.0](LICENSE) ([NOTICE](NOTICE)). **Zyvor Enterprise** adds supported releases, deployment and upgrade guidance, priority incident triage, a named technical contact and 24x7 critical intake: [plans and list rates](docs/SUBSCRIPTION-MODEL.md) · [pricing](https://zyvor.dev/pricing?utm_source=github&utm_medium=atlas&utm_campaign=readme_license) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), under the [CLA](CLA.md) and [DCO](DCO.md) (`git commit -s`), governed by the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues: [SECURITY.md](SECURITY.md).
 
