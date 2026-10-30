@@ -11,6 +11,13 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `atlas-native` (`rdma` feature): `RemoteDevice::with_rdma(gid, |session| ...)` opens a connection, upgrades it to RDMA and gives
+  the closure a typed `append`/`read` session. It reports `Unsupported` when the node has RDMA off, so callers can use TCP. SoftRoCE-verified only.
+
+### Security
+
+- A data node no longer upgrades a TLS connection to RDMA, and `with_rdma` refuses a TLS client: RDMA traffic is not encrypted, so
+  the upgrade would have silently dropped the configured TLS. (The RDMA server upgrade is off by default and needs `ATLAS_NATIVE_RDMA=1`.) The refusal itself has no automated test yet.
 - `atlasctl io-ai`: the gateway's `GET /api/atlas/v1/io/ai` (heuristic I/O shapes) from the CLI.
 - `atlas_data`: `prefix_digests(token_ids, block_size)` (chained per-block prefix digests) and
   `KVAdapter.put_blocks` / `longest_prefix` for engine-side prefix caching over the KV cache. Engine-neutral;
