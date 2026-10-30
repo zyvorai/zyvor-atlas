@@ -286,6 +286,22 @@ async fn ceph_add_device_requires_kubernetes() {
     assert_eq!(resp.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
 }
 
+#[tokio::test]
+async fn nvmeof_namespace_requires_confirm_and_kubernetes() {
+    let base = format!("http://{}/api/atlas/v1", spawn(false).await);
+    let c = reqwest::Client::new();
+    let body = |confirm: bool| {
+        json!({ "tenant_id": "tenant_default", "name": "ns1", "storage_class": "nvmeof",
+                "size_bytes": 1073741824, "confirm": confirm })
+    };
+    let url = format!("{base}/ceph/nvmeof/namespaces");
+    let r = c.post(&url).json(&body(false)).send().await.unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::BAD_REQUEST);
+    // No Kubernetes cluster is attached: refuse cleanly rather than pretend to provision.
+    let r = c.post(&url).json(&body(true)).send().await.unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
+}
+
 // ---- GET /zfs/devices: the Disks UI's device picker, not just a blind text field ----
 
 #[tokio::test]

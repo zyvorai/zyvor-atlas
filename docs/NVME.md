@@ -38,6 +38,20 @@ PVC from an `nvmeof.csi.ceph.com` StorageClass, and deleting that PVC deletes th
 namespace. So Atlas does not offer to map an existing RBD volume into a subsystem: Rook has no
 supported path for it.
 
+### Provisioning a namespace: `POST /ceph/nvmeof/namespaces`
+
+Creates a new namespace by creating a PVC from one of the listed NVMe-oF StorageClasses. Admin
+only, `confirm: true` required, audited. Body: `tenant_id`, `name` (the PVC), `storage_class`,
+`size_bytes` (1 to 64 TiB), optional `namespace` (default `default`). A class that is not an
+`nvmeof.csi.ceph.com` class is refused. It runs as the ordinary `volume.create` job (tenant quota,
+cordon and idempotency apply) with `volumeMode: Block` and `ReadWriteOnce`; the volume then shows in
+inventory and `DELETE /volumes/{id}` removes it, which per Rook also removes the RBD image and the
+namespace. CLI: `atlasctl ceph-nvmeof-create <name> --storage-class <sc> --size-gib N --yes`. There
+is deliberately no MCP tool: like disk operations, this is a human action.
+
+Not verified live: the block mode and access mode are assumptions about the Ceph-CSI NVMe-oF
+driver, and Atlas does not yet read back the subsystem NQN or host connection details.
+
 ## OSD object store and versions: `GET /ceph/osd-objectstore`
 
 What each OSD reports in `ceph osd metadata`: object store and Ceph version, with counts and a
