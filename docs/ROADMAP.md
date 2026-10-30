@@ -335,8 +335,9 @@ upstream, so Atlas only observes it.
   (Rook `CephNVMeOFGateway` CRs, pods, StorageClasses); each has an `atlasctl` command and an MCP tool.
 - Disks picker tags devices `nvme|ssd|hdd`; `POST /ceph/devices` takes `db_device`, `db_size_mb`,
   `wal_size_mb`, `osds_per_device`.
-- Not done: live verification on Rook with real NVMe; NVMe-oF writes (no supported way to map an
-  existing RBD volume); anything Crimson-specific.
+- `POST /ceph/nvmeof/namespaces` provisions a new NVMe-oF namespace as a PVC (admin, `confirm`).
+- Not done: live verification on Rook with real NVMe; exporting an existing RBD volume over NVMe-oF
+  (no supported way); reading back the subsystem NQN; anything Crimson-specific.
 
 ## ⏭ Slice 3+ — Enterprise & product integration
 - Product integrations: Veyron (VM datastores), Transiva (direct-to-RBD migration; owner id `hyper2kvm`), GuestKit
