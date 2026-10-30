@@ -16,6 +16,9 @@ path = "src/bin/atlas-native-node.rs"
 io-uring = ["dep:io-uring"]
 # Tier cold extents to an S3-compatible bucket (Ceph RGW, MinIO, ...) through atlas-driver-rgw.
 s3 = ["dep:atlas-driver-rgw", "dep:tokio", "dep:anyhow"]
+# RDMA (RoCE/InfiniBand) building blocks over libibverbs (Linux only); see src/rdma.rs. Off by
+# default: the data path stays TCP/TLS until this is wired in and measured.
+rdma = ["dep:ibverbs"]
 
 [dependencies]
 anyhow = { workspace = true, optional = true }
@@ -35,6 +38,7 @@ webpki = { package = "rustls-webpki", version = "0.103", default-features = fals
 
 [target.'cfg(target_os = "linux")'.dependencies]
 io-uring = { version = "0.7", optional = true }
+ibverbs = { version = "0.9", optional = true }
 
 [dev-dependencies]
 tempfile.workspace = true
