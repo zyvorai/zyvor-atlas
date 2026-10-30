@@ -170,6 +170,10 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/ceph/devices", post(add_ceph_device))
         .route(
+            "/ceph/nvmeof/namespaces",
+            post(ceph_nvmeof::create_nvmeof_namespace),
+        )
+        .route(
             "/ceph/nodes/{node_name}/devices",
             get(list_ceph_node_devices),
         )

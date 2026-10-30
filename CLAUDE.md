@@ -144,9 +144,11 @@ CPU/RAM rule of thumb, a configurable heuristic) and `GET /ceph/nvmeof` (Rook `C
 CRs, pods and NVMe-oF StorageClasses), each with an `atlasctl` command and an MCP tool; the
 Disks device picker tags devices `nvme|ssd|hdd`; `POST /ceph/devices` takes `db_device`,
 `db_size_mb`, `wal_size_mb` and `osds_per_device` for BlueStore DB/WAL on a separate device.
+`POST /ceph/nvmeof/namespaces` (admin, `confirm`, REST/CLI only) provisions a new NVMe-oF namespace
+as a PVC from an NVMe-oF StorageClass.
 Unit tested over the fake driver and passing the lab CI gates; **not yet run against a live Rook
 cluster or real NVMe hardware**, so the `ceph device get-health-metrics` JSON shape and Rook's
-`config` keys are unverified assumptions. NVMe-oF stays read-only: Rook creates namespaces from PVCs
+`config` keys are unverified assumptions. NVMe-oF only provisions new namespaces: Rook creates them from PVCs
 of an `nvmeof.csi.ceph.com` StorageClass (experimental, Ceph Tentacle or later), so there is no
 supported way to map an existing RBD volume. Atlas does nothing Crimson-specific.
 
