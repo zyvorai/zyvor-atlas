@@ -11,7 +11,7 @@ RUN cargo build --release --locked -p atlas-native-fuse --features fuse --bin at
 
 # ---- runtime ----
 # MLPerf Storage documents Ubuntu 24.04 with Python 3.12 as its tested platform.
-FROM docker.io/library/ubuntu:24.04 AS runtime
+FROM docker.io/library/ubuntu:25.10 AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 # Branch or tag of github.com/mlcommons/storage. Pin a release tag for a reproducible image.
 ARG MLPERF_REF=main
