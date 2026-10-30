@@ -131,6 +131,75 @@ impl AtlasMcp {
     }
 
     #[tool(
+        description = "Wear and health of the NVMe drives Ceph tracks (percentage used, media errors, \
+                        spare, temperature) from its device-health SMART scrapes. Read-only. \
+                        Requires an operator-or-higher token."
+    )]
+    async fn ceph_nvme(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::ceph_nvme::get_ceph_nvme(State(self.state.clone())).await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Rook NVMe-oF gateways (CephNVMeOFGateway): instances, pod readiness, high-availability \
+                        findings, and the NVMe-oF StorageClasses. Reports `installed: false` when the cluster \
+                        has no such CRD, and fails when no Kubernetes cluster is attached. Read-only. \
+                        Requires an operator-or-higher token."
+    )]
+    async fn ceph_nvmeof(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::ceph_nvmeof::get_ceph_nvmeof(
+                State(self.state.clone()),
+                axum::extract::Query(Default::default()),
+            )
+            .await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Each OSD's reported object store and Ceph version (`ceph osd metadata`), with counts \
+                        and a mixed-versions flag. Read-only. Requires an operator-or-higher token."
+    )]
+    async fn ceph_osd_objectstore(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::ceph_objectstore::get_ceph_osd_objectstore(State(self.state.clone())).await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Whether hosts with NVMe drives have the CPU and RAM of the sizing rule of thumb \
+                        (default 10 cores per NVMe device, 16 GiB plus 5 GiB per OSD), against Kubernetes \
+                        node capacity; hosts it cannot match are `unknown`. Heuristic, read-only. \
+                        Requires an operator-or-higher token."
+    )]
+    async fn ceph_sizing(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::ceph_sizing::get_ceph_sizing(State(self.state.clone())).await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
         description = "Cluster and per-pool capacity, usage and object counts (`ceph df`). Read-only. \
                         Requires an operator-or-higher token."
     )]

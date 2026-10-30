@@ -454,7 +454,7 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     let tools = op.list_tools(Default::default()).await.unwrap();
     let names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     for n in [
-        "ceph_status", "ceph_df", "ceph_osd_tree", "databridge_plans",
+        "ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans",
         "databridge_cdc_streams", "list_policies", "list_audit",
     ] {
         assert!(names.contains(&n), "tools: {names:?}");
@@ -464,7 +464,7 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     let tree_text = text_of(&tree);
     assert!(tree_text.contains("\"status\":\"ok\""), "{tree_text}");
     assert!(tree_text.contains("\"osds_not_serving\":1"), "fake tree has one down OSD: {tree_text}");
-    for n in ["ceph_status", "ceph_df", "databridge_plans", "databridge_cdc_streams", "list_policies"] {
+    for n in ["ceph_status", "ceph_df", "ceph_nvme", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_policies"] {
         let r = op.call_tool(CallToolRequestParams::new(n)).await.unwrap();
         assert_eq!(r.is_error, Some(false), "{n}: {}", text_of(&r));
     }
@@ -477,7 +477,7 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     op.cancel().await.unwrap();
 
     let viewer = connect(addr, secret, "viewer").await;
-    for n in ["ceph_status", "ceph_df", "ceph_osd_tree", "databridge_plans", "databridge_cdc_streams", "list_audit"] {
+    for n in ["ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_audit"] {
         let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
         assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
     }

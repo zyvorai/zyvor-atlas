@@ -166,4 +166,15 @@ pub trait StorageDriver: Send + Sync {
     async fn ceph_device_ls(&self) -> Result<serde_json::Value, DriverError> {
         Err(DriverError::NotImplemented("ceph_device_ls"))
     }
+    /// `ceph device get-health-metrics <devid>` — the SMART scrapes Ceph's device-health module
+    /// holds for one drive, keyed by scrape timestamp. For NVMe each scrape carries
+    /// `nvme_smart_health_information_log` (wear, media errors, spare, temperature).
+    /// `ceph osd metadata` — a list with one object per OSD (`id`, `hostname`, `osd_objectstore`,
+    /// `ceph_version`, ...). Which keys are present varies by Ceph release.
+    async fn ceph_osd_metadata(&self) -> Result<serde_json::Value, DriverError> {
+        Err(DriverError::NotImplemented("ceph_osd_metadata"))
+    }
+    async fn ceph_device_health(&self, _devid: &str) -> Result<serde_json::Value, DriverError> {
+        Err(DriverError::NotImplemented("ceph_device_health"))
+    }
 }

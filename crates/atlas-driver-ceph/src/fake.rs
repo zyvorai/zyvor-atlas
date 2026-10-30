@@ -330,4 +330,57 @@ impl StorageDriver for FakeCephDriver {
             dev("MICRON_7450_MTFDKCC3T8TFR_0002", "node03", 5, "", ""),
         ]))
     }
+
+    /// One entry per OSD, on the same hosts as the `ceph device ls` fixture. `osd.5` runs a newer
+    /// patch release, as during a rolling upgrade.
+    async fn ceph_osd_metadata(&self) -> Result<serde_json::Value, DriverError> {
+        let osd = |id: i64, host: &str, version: &str| {
+            serde_json::json!({
+                "id": id,
+                "hostname": host,
+                "osd_objectstore": "bluestore",
+                "ceph_version": format!("ceph version {version} (squid)"),
+            })
+        };
+        Ok(serde_json::json!([
+            osd(0, "node01", "19.2.0"),
+            osd(1, "node01", "19.2.0"),
+            osd(2, "node02", "19.2.0"),
+            osd(3, "node02", "19.2.0"),
+            osd(4, "node03", "19.2.0"),
+            osd(5, "node03", "19.2.1"),
+        ]))
+    }
+
+    /// One scrape per drive in the `ceph device ls` fixture. Two are unhealthy on purpose: the
+    /// Samsung `…0002` is worn out with media errors, the Micron `…0002` is below its spare floor.
+    async fn ceph_device_health(&self, devid: &str) -> Result<serde_json::Value, DriverError> {
+        let (used, spare, media_errors, warning) = match devid {
+            "SAMSUNG_MZQL23T8HCLS_S64E0002" => (92, 90, 3, 0),
+            "MICRON_7450_MTFDKCC3T8TFR_0002" => (12, 8, 0, 1),
+            "INTEL_SSDPE2KX040T8_PHLJ0001"
+            | "INTEL_SSDPE2KX040T8_PHLJ0002"
+            | "SAMSUNG_MZQL23T8HCLS_S64E0001"
+            | "MICRON_7450_MTFDKCC3T8TFR_0001" => (7, 100, 0, 0),
+            other => {
+                return Err(DriverError::Backend(format!(
+                    "no health metrics for device {other}"
+                )))
+            }
+        };
+        Ok(serde_json::json!({
+            "20261026-000000": {
+                "device": { "protocol": "NVMe", "type": "nvme" },
+                "nvme_smart_health_information_log": {
+                    "critical_warning": warning,
+                    "temperature": 38,
+                    "available_spare": spare,
+                    "available_spare_threshold": 10,
+                    "percentage_used": used,
+                    "data_units_written": 1_234_567,
+                    "media_errors": media_errors,
+                },
+            }
+        }))
+    }
 }
