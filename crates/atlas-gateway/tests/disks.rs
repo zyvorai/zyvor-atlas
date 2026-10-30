@@ -302,6 +302,17 @@ async fn nvmeof_namespace_requires_confirm_and_kubernetes() {
     assert_eq!(r.status(), reqwest::StatusCode::SERVICE_UNAVAILABLE);
 }
 
+#[tokio::test]
+async fn io_ai_reports_unavailable_without_an_agent_never_fine() {
+    let base = format!("http://{}/api/atlas/v1", spawn(false).await);
+    let r = reqwest::Client::new().get(format!("{base}/io/ai")).send().await.unwrap();
+    assert_eq!(r.status(), reqwest::StatusCode::OK);
+    let v: Value = r.json().await.unwrap();
+    assert_eq!(v["status"], "unavailable");
+    assert_eq!(v["devices"], json!([]));
+    assert!(v["detail"].as_str().unwrap().contains("ATLAS_IO_AGENT_URL"));
+}
+
 // ---- GET /zfs/devices: the Disks UI's device picker, not just a blind text field ----
 
 #[tokio::test]

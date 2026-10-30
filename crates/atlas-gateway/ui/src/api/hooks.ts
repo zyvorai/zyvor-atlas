@@ -8,7 +8,8 @@ import type {
   ActivityEvent, AlertRecord, AuditRow, BackupRecord, CephNodeDevice, ClusterHealthState, JobRecord, MetricForecast, MetricHistoryPoint, MetricSample, MetricsSummary, Osd,
   SnapshotSchedule, StorageBucket, StorageCluster, StoragePool, StorageSnapshot, StorageVolume,
   TenantPolicy, TenantQuota, VolumeProtectionStatus, ZfsBlockDevice,
-  MigrationSource, MigrationPlan, EdgeDbCluster, CdcStream, ValidationRun, ObjectMigration
+  MigrationSource, MigrationPlan, EdgeDbCluster, CdcStream, ValidationRun, ObjectMigration,
+  IoAiReport, NvmeReport, ObjectStoreReport, SizingReport
 } from "./types";
 
 const g = async <T,>(path: string): Promise<T> => (await http.get<T>(path)).data;
@@ -171,3 +172,10 @@ export function useInvalidate() {
   const qc = useQueryClient();
   return (...keys: string[]) => keys.forEach((k) => qc.invalidateQueries({ queryKey: [k] }));
 }
+
+// Fast storage (NVMe health, host sizing, object stores, AI I/O shapes). Slow-moving, so refreshed lazily.
+export const useCephNvme = () => useApiQuery<NvmeReport>(["ceph-nvme"], "/ceph/nvme", 30000);
+export const useCephSizing = () => useApiQuery<SizingReport>(["ceph-sizing"], "/ceph/sizing", 60000);
+export const useCephObjectStore = () =>
+  useApiQuery<ObjectStoreReport>(["ceph-osd-objectstore"], "/ceph/osd-objectstore", 60000);
+export const useIoAi = () => useApiQuery<IoAiReport>(["io-ai"], "/io/ai", 15000);

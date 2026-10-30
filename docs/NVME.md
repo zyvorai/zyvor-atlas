@@ -52,6 +52,14 @@ is deliberately no MCP tool: like disk operations, this is a human action.
 Not verified live: the block mode and access mode are assumptions about the Ceph-CSI NVMe-oF
 driver, and Atlas does not yet read back the subsystem NQN or host connection details.
 
+## Console: Fast storage
+
+The console's **Fast storage** page (Infrastructure, operator) shows these reports in one place: NVMe wear, spare
+and media errors per drive, hosts against the sizing rule of thumb, the OSD object store and version mix, and the
+atlas-io agent's I/O shapes. It is read-only and reads the same endpoints as above plus `GET /io/ai`, which returns
+the agent's heuristic shapes (`status: "unavailable"` when `ATLAS_IO_AGENT_URL` is unset or the agent is
+unreachable; the page then says the I/O layer was not assessed, never that it is healthy).
+
 ## OSD object store and versions: `GET /ceph/osd-objectstore`
 
 What each OSD reports in `ceph osd metadata`: object store and Ceph version, with counts and a
