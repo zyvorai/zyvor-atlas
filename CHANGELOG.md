@@ -13,6 +13,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 - MLPerf Storage harness for atlas-native (`Dockerfile.mlperf`, `deploy/mlperf/mlperf-run.sh`, `docs/MLPERF.md`). Written
   but not yet built or run; no result and no submission.
+- `atlas_data`: `DataReadyGate.wait_ready()` and `python3 -m atlas_data gate-wait JOB` block until a job's data is
+  staged (Kubernetes init-container use); only "not ready" is retried and a timeout exits non-zero.
 - `POST /ceph/nvmeof/namespaces` (admin, `confirm`) and `atlasctl ceph-nvmeof-create`: provision a new NVMe-oF namespace as a
   PVC from an `nvmeof.csi.ceph.com` StorageClass, as the ordinary `volume.create` job. REST and CLI only; not yet run on a
   live Rook cluster.

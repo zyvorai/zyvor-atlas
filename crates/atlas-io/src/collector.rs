@@ -6,6 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use atlas_api_types::{BioEvent, IoHistogram, IoNative, IoRca, IoSensorHealth, IoWorkload};
 
+use crate::aishape;
 use crate::devmap::DeviceMap;
 use crate::heat::{HeatSet, IoHeatmap};
 use crate::hist::HistSet;
@@ -149,6 +150,11 @@ impl Collector {
             s.device = g.map.resolve(s.major, s.minor).name;
         }
         Some(n)
+    }
+
+    /// Per-device I/O shape (checkpoint-like writes, bulk reads, small reads); see [`aishape`].
+    pub fn ai_shapes(&self) -> Vec<aishape::IoShape> {
+        aishape::classify(&self.histograms())
     }
 
     pub fn rca(&self, volume: Option<&str>) -> Vec<IoRca> {

@@ -213,6 +213,23 @@ async fn get_json(app: axum::Router, uri: &str) -> serde_json::Value {
 }
 
 #[tokio::test]
+async fn ai_route_names_a_shape_per_device_with_its_evidence() {
+    let c = Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab());
+    let app = router(c);
+    let v = get_json(app, "/io/ai").await;
+    let shapes = v.as_array().expect("an array of per-device shapes");
+    assert!(!shapes.is_empty());
+    for s in shapes {
+        assert!(
+            ["large_write", "bulk_read", "small_read", "mixed", "unknown"]
+                .contains(&s["shape"].as_str().unwrap()),
+            "{s}"
+        );
+        assert!(s["evidence"].as_array().unwrap().len() >= 2, "{s}");
+    }
+}
+
+#[tokio::test]
 async fn risk_route_scores_rca_and_capacity() {
     let c = Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab());
     let app = router(c);

@@ -356,6 +356,7 @@ async fn mcp_dr_job_and_io_risk_read_tools() {
     let names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     for n in [
         "io_risk",
+        "io_ai",
         "dr_status",
         "dr_preflight",
         "list_dr_mirrors",
@@ -396,6 +397,8 @@ async fn mcp_dr_job_and_io_risk_read_tools() {
     let io_text = text_of(&io);
     assert!(io_text.contains("\"status\":\"unavailable\""), "{io_text}");
     assert!(io_text.contains("\"level\":null"), "{io_text}");
+    let ai = text_of(&op.call_tool(CallToolRequestParams::new("io_ai")).await.unwrap());
+    assert!(ai.contains("\"status\":\"unavailable\"") && ai.contains("\"devices\":[]"), "{ai}");
 
     // Unknown ids are caller errors, not internal ones.
     let missing = op
@@ -415,7 +418,7 @@ async fn mcp_dr_job_and_io_risk_read_tools() {
     op.cancel().await.unwrap();
 
     let viewer = connect(addr, secret, "viewer").await;
-    for n in ["dr_status", "list_jobs", "io_risk"] {
+    for n in ["dr_status", "list_jobs", "io_risk", "io_ai"] {
         let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
         assert!(
             r.is_err() || r.unwrap().is_error == Some(true),
