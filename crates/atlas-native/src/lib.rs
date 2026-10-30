@@ -43,6 +43,8 @@ pub mod tls;
 pub mod tracked;
 #[cfg(all(target_os = "linux", feature = "io-uring"))]
 pub mod uring;
+#[cfg(all(target_os = "linux", feature = "rdma"))]
+pub mod rdma;
 pub mod wal;
 
 pub use alloc::{FreeList, FreeRange};
