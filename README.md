@@ -40,6 +40,8 @@
 | Edge sites have one small box and no storage team | The Native edge profile: one pod, small caches, replication or snapshot export back to the core |
 | Tenants share storage with no guardrails | Per-tenant quotas, rate limiting, OIDC/SSO, Vault-backed secrets and token revocation |
 | Databases must move from the cloud to the edge | DataBridge: discovery, full load, CDC and cutover onto edge databases on Ceph |
+| NVMe drives wear out or hosts are undersized, and nobody sees it | Read-only NVMe health, BlueStore DB/WAL on a separate device, NVMe-oF namespaces as PVCs, and a **Fast storage** console page ([NVMe guide](docs/NVME.md)) |
+| AI training and inference jobs hit storage in patterns generic dashboards miss | Heuristic AI I/O shapes per device, data-ready job gating and an MLPerf Storage harness ([AI data services](docs/AI_DATA_SERVICES.md)) |
 | You want to try it without a storage cluster | `make run` starts the gateway against a fake driver so you can click through the whole console |
 
 ![Capabilities at a glance: Intent, Drivers, Data, Native, Day 2](docs/ux/readme-capabilities.jpg)
@@ -54,7 +56,7 @@ Products call stable Atlas APIs, and the `StorageDriver` trait maps the intent t
 
 ## Agent-ready operations
 
-Atlas speaks the [Model Context Protocol](https://modelcontextprotocol.io) so an AI agent can look at your storage the way an operator would, with the same roles and tenant limits as the REST API. The gateway's MCP endpoint (`/api/atlas/v1/mcp`) exposes 32 **read-only** tools: inventory, the Ops Advisor (risk, incidents, anomalies, what-if), eBPF-backed I/O risk, Ceph status, DR status and preflight, DataBridge, the audit trail, jobs and snapshots. The `atlas-io` node agent serves its own authenticated `/mcp` with six I/O tools. The only writes are opt-in (`ATLAS_MCP_WRITE_ENABLE=1`): `create_snapshot` and `ack_alert` (record that an operator saw an alert), each two-phase with a single-use, five-minute confirmation token bound to the caller and arguments, and audited. Failover, delete, restore, disk wipe and token minting are never exposed. MCP can never trigger a call to an external LLM. [MCP guide →](docs/MCP.md) · [Ops Advisor →](docs/AI_ADVISOR.md) · [I/O risk →](docs/IO_RISK.md) · [Agent pack →](examples/agent)
+Atlas speaks the [Model Context Protocol](https://modelcontextprotocol.io) so an AI agent can look at your storage the way an operator would, with the same roles and tenant limits as the REST API. The gateway's MCP endpoint (`/api/atlas/v1/mcp`) exposes 32 **read-only** tools: inventory, the Ops Advisor (risk, incidents, anomalies, what-if), eBPF-backed I/O risk, Ceph status, DR status and preflight, DataBridge, the audit trail, jobs and snapshots. The `atlas-io` node agent serves its own authenticated `/mcp` with six I/O tools. The only writes are opt-in (`ATLAS_MCP_WRITE_ENABLE=1`): `create_snapshot` and `ack_alert` (record that an operator saw an alert), each two-phase with a single-use, five-minute confirmation token bound to the caller and arguments, and audited. Failover, delete, restore, disk wipe and token minting are never exposed. An admin can mint a **scoped agent token** limited to named tools: it works only on the MCP edge, never on REST, gRPC or `/metrics`, and denied calls are audited. MCP can never trigger a call to an external LLM. [MCP guide →](docs/MCP.md) · [Ops Advisor →](docs/AI_ADVISOR.md) · [I/O risk →](docs/IO_RISK.md) · [Agent pack →](examples/agent)
 
 ## Run the filesystem yourself
 
@@ -117,6 +119,10 @@ estimates and optional Apache Iceberg maintenance. It uses a separate authentica
 API and CLI; external schedulers and serving engines integrate through explicit SDK
 adapters. [Guide and limitations](docs/AI_DATA_SERVICES.md).
 
+## Built for AI workloads (honest status)
+
+What exists today: heuristic I/O shape labels per device from the eBPF sensor (`GET /io/ai`, the `io_ai` MCP tool, a Fast storage console page), a data-ready gate for Kubernetes init containers, an MLPerf Storage harness image, and an optional RDMA transport foundation for the native data node. What does not: no GPUDirect Storage, no RDMA NIC or throughput measurement, no MLPerf submission, no vLLM connector run. Heuristics are labelled as heuristics and never change a risk score. [Status →](docs/STATUS.md) · [MLPerf harness →](docs/MLPERF.md)
+
 ## The console
 
 <div align="center">
@@ -159,7 +165,7 @@ The current release is Apache-2.0 (older tags used other licenses, see the [CHAN
 
 ## License and support
 
-Free and open source under the [Apache License 2.0](LICENSE) ([NOTICE](NOTICE)). **Zyvor Enterprise** adds supported releases, deployment and upgrade guidance, priority incident triage, a named technical contact and 24x7 critical intake: [plans](docs/SUBSCRIPTION-MODEL.md) · [pricing](https://zyvor.dev/pricing?utm_source=github&utm_medium=atlas&utm_campaign=readme_license) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
+Free and open source under the [Apache License 2.0](LICENSE) ([NOTICE](NOTICE)). **Zyvor Enterprise** adds supported releases, deployment and upgrade guidance, priority incident triage, a named technical contact and 24x7 critical intake: [plans and list rates](docs/SUBSCRIPTION-MODEL.md) · [pricing](https://zyvor.dev/pricing?utm_source=github&utm_medium=atlas&utm_campaign=readme_license) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), under the [CLA](CLA.md) and [DCO](DCO.md) (`git commit -s`), governed by the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues: [SECURITY.md](SECURITY.md).
 

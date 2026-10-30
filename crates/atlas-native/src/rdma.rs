@@ -11,7 +11,6 @@
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
-use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 /// How long a round trip may take before it is reported as timed out.
@@ -206,7 +205,7 @@ impl Write for RdmaStream<'_, '_> {
 /// carries the one-time exchange of queue-pair endpoints (JSON) and is left untouched afterwards.
 /// `gid_index` selects the GID table entry, as in [`loopback_roundtrip`].
 pub fn with_stream<R>(
-    control: &mut TcpStream,
+    control: &mut (impl Read + Write),
     gid_index: u32,
     f: impl FnOnce(&mut RdmaStream<'_, '_>) -> io::Result<R>,
 ) -> io::Result<R> {
@@ -227,6 +226,9 @@ pub fn with_stream<R>(
         .set_max_send_wr(2)
         // 7 = retry indefinitely when the peer has no receive posted yet.
         .set_rnr_retry(7)
+        // ACK timeout 4.096 µs * 2^14 (~67 ms); the library default (~65 µs) is shorter than the
+        // time the peer may need to bring its own queue pair up.
+        .set_timeout(14)
         .build()?;
 
     // Both ends write their endpoint and then read the peer's; the messages are tiny, so the
@@ -258,6 +260,11 @@ pub fn with_stream<R>(
     for slot in 0..DEPTH {
         stream.repost(slot)?;
     }
+    // Barrier: neither side sends before the other has its queue pair connected and receives
+    // posted, so the first send never meets a queue pair that is not ready.
+    control.write_all(&[1])?;
+    let mut ready = [0u8; 1];
+    control.read_exact(&mut ready)?;
     f(&mut stream)
 }
 
@@ -286,7 +293,7 @@ mod tests {
     #[test]
     #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
     fn two_endpoints_exchange_a_megabyte_each_way() {
-        use std::net::TcpListener;
+        use std::net::{TcpListener, TcpStream};
         let gid: u32 = std::env::var("ATLAS_RDMA_GID_INDEX")
             .ok()
             .and_then(|v| v.parse().ok())
