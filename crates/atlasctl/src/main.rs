@@ -96,6 +96,8 @@ enum Command {
     CephOsdObjectstore,
     /// GET /api/atlas/v1/ceph/sizing — NVMe hosts against the CPU/RAM rule of thumb
     CephSizing,
+    /// GET /api/atlas/v1/io/ai — heuristic AI I/O shape per device, via the gateway's atlas-io agent
+    IoAi,
     /// GET /api/atlas/v1/ceph/df — cluster + per-pool capacity/usage/objects
     CephDf,
     /// GET /api/atlas/v1/metrics/history — persisted capacity/IO/job time-series (--minutes)
@@ -714,6 +716,7 @@ async fn main() -> Result<()> {
         ),
         Command::CephOsdObjectstore => ("GET", "/api/atlas/v1/ceph/osd-objectstore".to_string(), None),
         Command::CephSizing => ("GET", "/api/atlas/v1/ceph/sizing".to_string(), None),
+        Command::IoAi => ("GET", "/api/atlas/v1/io/ai".to_string(), None),
         Command::CephDf => ("GET", "/api/atlas/v1/ceph/df".to_string(), None),
         Command::Policies => ("GET", "/api/atlas/v1/policies".to_string(), None),
         Command::ScheduleSnapshots {

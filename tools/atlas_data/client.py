@@ -146,6 +146,27 @@ class Client:
         return self.call("jobs.status", job=job)
 
 
+def prefix_digests(token_ids, block_size):
+    """Chained digests of the full token blocks of a prompt, as prefix caches key them.
+
+    Digest i covers every token up to the end of block i (it folds in digest i-1), so two prompts
+    share digest i only if they share all of the first i+1 blocks. A trailing partial block gets
+    no digest: it cannot be reused until it fills. Token ids must be the exact ids the engine
+    prefilled; text similarity is not a compatibility test.
+    """
+    require(isinstance(block_size, int) and not isinstance(block_size, bool) and 0 < block_size <= 4096,
+            "block_size must be 1..4096")
+    require(isinstance(token_ids, (list, tuple)) and all(isinstance(t, int) and not isinstance(t, bool)
+                                                       and 0 <= t < 2**32 for t in token_ids),
+            "token ids must be unsigned 32-bit integers")
+    digests, previous = [], b""
+    for start in range(0, len(token_ids) - block_size + 1, block_size):
+        block = token_ids[start:start + block_size]
+        previous = hashlib.sha256(previous + b"".join(t.to_bytes(4, "big") for t in block)).digest()
+        digests.append(previous.hex())
+    return digests
+
+
 class KVAdapter:
     """Portable exact-key byte-block adapter; serving engines must serialize their own tensors.
 
@@ -167,3 +188,23 @@ class KVAdapter:
             if exc.status == 404:
                 return None
             raise
+
+    def put_blocks(self, digests, blocks, ttl=3600):
+        """Stores one serialized block per prefix digest (same length, same order)."""
+        require(len(digests) == len(blocks), "one block per digest")
+        for digest, block in zip(digests, blocks):
+            self.put(digest, block, ttl)
+
+    def longest_prefix(self, digests):
+        """Cached blocks for the longest leading run of `digests`; stops at the first miss.
+
+        Blocks after a miss are not looked up: a prefix cache is only valid as an unbroken
+        prefix. The caller prefills the rest. Returns the list of blocks (possibly empty).
+        """
+        found = []
+        for digest in digests:
+            block = self.get(digest)
+            if block is None:
+                break
+            found.append(block)
+        return found

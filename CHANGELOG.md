@@ -11,6 +11,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `atlasctl io-ai`: the gateway's `GET /api/atlas/v1/io/ai` (heuristic I/O shapes) from the CLI.
+- `atlas_data`: `prefix_digests(token_ids, block_size)` (chained per-block prefix digests) and
+  `KVAdapter.put_blocks` / `longest_prefix` for engine-side prefix caching over the KV cache. Engine-neutral;
+  unit tested with a fake client, not run against an inference engine.
 - `atlas-native` data node: with the `rdma` feature and `ATLAS_NATIVE_RDMA=1`, a client can send `RdmaUpgrade { gid_index }`
   on an ordinary connection; the node answers `RdmaReady` and serves the same request protocol over an RDMA queue pair
   (server side only; the client pool still uses TCP). Off by default; refused with an error otherwise. Verified on

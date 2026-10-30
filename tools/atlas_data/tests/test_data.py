@@ -18,7 +18,7 @@ import urllib.request
 
 from atlas_data import Actor, DataError, Store
 from atlas_data.api import Server, Service, decode
-from atlas_data.client import Client, KVAdapter
+from atlas_data.client import Client, KVAdapter, prefix_digests
 from atlas_data.core import sha
 from atlas_data.iceberg import Iceberg
 from atlas_data.recovery import Recovery
@@ -311,6 +311,43 @@ class KVAndCostTests(Fixture):
         self.store.rate(ADMIN, "transfer_bytes", 10**12)
         self.failure(400, self.store.charge, ADMIN, "huge", "job", "transfer_bytes", 2**53)
 
+
+
+class PrefixBlockTests(unittest.TestCase):
+    def test_digests_chain_and_share_only_a_common_prefix(self):
+        a = prefix_digests(list(range(10)), 4)
+        b = prefix_digests([0, 1, 2, 3, 4, 5, 6, 7, 99, 98, 97, 96], 4)
+        self.assertEqual(len(a), 2)  # the trailing partial block gets no digest
+        self.assertEqual(a, b[:2])
+        self.assertNotEqual(b[1], prefix_digests([9, 9, 9, 9, 4, 5, 6, 7], 4)[1])
+        self.assertEqual(prefix_digests([1, 2, 3], 4), [])
+
+    def test_digests_reject_bad_input(self):
+        for tokens, size in (([1, -1], 1), ([True], 1), ("abc", 1), ([1], 0), ([1], True), ([2**32], 1)):
+            with self.assertRaises(DataError):
+                prefix_digests(tokens, size)
+
+    def test_longest_prefix_stops_at_the_first_miss(self):
+        class Fake:
+            def __init__(self):
+                self.blocks = {}
+
+            def call(self, op, compatibility, data=None, ttl=None):
+                key = compatibility["prefix"]
+                if op == "kv.put":
+                    self.blocks[key] = data
+                    return {}
+                if key not in self.blocks:
+                    raise DataError("missing", 404)
+                return {"data": self.blocks[key]}
+
+        adapter = KVAdapter(Fake(), "m", "t", "none", "f16")
+        digests = prefix_digests(list(range(16)), 4)
+        adapter.put_blocks(digests[:2] + digests[3:], [b"b0", b"b1", b"b3"])
+        self.assertEqual(adapter.longest_prefix(digests), [b"b0", b"b1"])  # b3 is after the gap
+        self.assertEqual(adapter.longest_prefix([]), [])
+        with self.assertRaises(DataError):
+            adapter.put_blocks(digests, [b"x"])
 
 
 class RecoveryTests(Fixture):

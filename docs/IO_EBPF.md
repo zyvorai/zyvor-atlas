@@ -143,6 +143,7 @@ for small reads). It cannot see periodicity, file names or which framework issue
 never names a job and never triggers an action. The thresholds are heuristics, not measurements.
 The gateway shows it as `io_ai` in the Ops Advisor (informational, no effect on the score) and in
 the `io_ai` MCP tool.
+Through the gateway the same view is `GET /api/atlas/v1/io/ai` (operator; `unavailable` without a configured agent, never a healthy reading) and `atlasctl io-ai`; `atlasctl io ai` talks to the agent directly.
 
 `GET /io/risk` and the `atlas_io_risk_level` metric reduce the RCA (and an optional,
 caller-supplied capacity signal) to healthy / elevated / critical, and the gateway's Ops Advisor
