@@ -11,6 +11,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `atlasctl issue-token --tool NAME` (repeatable): mint a tool-scoped agent token from the CLI.
 - `atlas-native` (`rdma` feature): `RemoteDevice::with_rdma(gid, |session| ...)` opens a connection, upgrades it to RDMA and gives
   the closure a typed `append`/`read` session. It reports `Unsupported` when the node has RDMA off, so callers can use TCP. SoftRoCE-verified only.
 
