@@ -75,6 +75,23 @@ enum Command {
     CephNvme,
     /// GET /api/atlas/v1/ceph/nvmeof — Rook NVMe-oF gateways, their pods and NVMe-oF StorageClasses
     CephNvmeof,
+    /// POST /api/atlas/v1/ceph/nvmeof/namespaces — provision a new NVMe-oF namespace: a PVC from an
+    /// NVMe-oF StorageClass (admin; `--yes` confirms)
+    CephNvmeofCreate {
+        name: String,
+        /// An `nvmeof.csi.ceph.com` StorageClass (see `ceph-nvmeof`).
+        #[arg(long)]
+        storage_class: String,
+        /// Size in GiB.
+        #[arg(long, default_value_t = 2)]
+        size_gib: i64,
+        #[arg(long, default_value = "default")]
+        namespace: String,
+        #[arg(long, default_value = "tenant_default")]
+        tenant: String,
+        #[arg(long)]
+        yes: bool,
+    },
     /// GET /api/atlas/v1/ceph/osd-objectstore — each OSD's object store and Ceph version
     CephOsdObjectstore,
     /// GET /api/atlas/v1/ceph/sizing — NVMe hosts against the CPU/RAM rule of thumb
@@ -673,6 +690,25 @@ async fn main() -> Result<()> {
         Command::CephDevices => ("GET", "/api/atlas/v1/ceph/devices".to_string(), None),
         Command::CephNvme => ("GET", "/api/atlas/v1/ceph/nvme".to_string(), None),
         Command::CephNvmeof => ("GET", "/api/atlas/v1/ceph/nvmeof".to_string(), None),
+        Command::CephNvmeofCreate {
+            name,
+            storage_class,
+            size_gib,
+            namespace,
+            tenant,
+            yes,
+        } => (
+            "POST",
+            "/api/atlas/v1/ceph/nvmeof/namespaces".to_string(),
+            Some(serde_json::json!({
+                "tenant_id": tenant,
+                "name": name,
+                "namespace": namespace,
+                "storage_class": storage_class,
+                "size_bytes": size_gib * 1024 * 1024 * 1024,
+                "confirm": yes,
+            })),
+        ),
         Command::CephOsdObjectstore => ("GET", "/api/atlas/v1/ceph/osd-objectstore".to_string(), None),
         Command::CephSizing => ("GET", "/api/atlas/v1/ceph/sizing".to_string(), None),
         Command::CephDf => ("GET", "/api/atlas/v1/ceph/df".to_string(), None),
