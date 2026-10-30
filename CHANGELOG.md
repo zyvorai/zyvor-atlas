@@ -11,6 +11,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- Ceph NVMe (`docs/NVME.md`): read-only `GET /ceph/nvme`, `/ceph/osd-objectstore`, `/ceph/sizing`, `/ceph/nvmeof`
+  with `atlasctl` commands and MCP tools; Ops Advisor rules for worn NVMe drives and undersized NVMe hosts; device
+  class in the Disks picker; `POST /ceph/devices` accepts `db_device`, `db_size_mb`, `wal_size_mb`, `osds_per_device`.
+  Not yet run against a live Rook cluster.
 - `GET /osds/ok-to-stop?ids=0,1`: whether stopping the given OSDs together keeps every placement group available
   (`ceph osd ok-to-stop`), for checking a node before maintenance. Read-only.
 - `GET /ceph/devices`: the drives Ceph tracks with their failure predictions, and a summary of those expected to
