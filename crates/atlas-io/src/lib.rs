@@ -10,6 +10,7 @@
 //!
 //! Enforcement (`write_freeze` leases) is time-limited and fails open.
 
+pub mod aishape;
 #[cfg(all(feature = "bpf", target_os = "linux"))]
 pub mod bpf;
 pub mod collector;

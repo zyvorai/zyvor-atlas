@@ -568,6 +568,8 @@ enum IoCommand {
         #[arg(long)]
         volume: Option<String>,
     },
+    /// GET /io/ai — heuristic I/O shape per device (checkpoint-like writes, bulk reads, small reads)
+    Ai,
     /// GET /io/coverage
     Coverage,
     /// GET /io/native — kernel-aggregated Atlas Native I/O and recent slow requests
@@ -601,6 +603,7 @@ async fn io_request(
             )
             .await;
         }
+        IoCommand::Ai => "/io/ai",
         IoCommand::Coverage => "/io/coverage",
         IoCommand::Native => "/io/native",
         IoCommand::Leases => "/io/leases",

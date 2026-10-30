@@ -34,6 +34,7 @@ pub fn router_with_token(collector: Arc<Collector>, token: Option<String>) -> Ro
         .route("/io/heatmap", get(heatmap))
         .route("/io/workloads", get(workloads))
         .route("/io/rca", get(rca))
+        .route("/io/ai", get(ai_shapes))
         .route("/io/risk", get(risk))
         .route("/io/leases", get(leases).post(grant_lease))
         .route("/io/coverage", get(coverage))
@@ -127,6 +128,12 @@ async fn workloads(State(st): State<AppState>) -> impl IntoResponse {
 #[derive(Deserialize)]
 struct RcaQuery {
     volume: Option<String>,
+}
+
+/// Read-only I/O shape per device: heuristic, every verdict lists the numbers behind it.
+async fn ai_shapes(State(st): State<AppState>) -> impl IntoResponse {
+    st.collector.poll();
+    Json(st.collector.ai_shapes())
 }
 
 async fn rca(State(st): State<AppState>, Query(q): Query<RcaQuery>) -> impl IntoResponse {
