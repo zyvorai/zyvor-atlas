@@ -259,6 +259,7 @@ fn mint(secret: &str, role: &str) -> String {
         exp,
         jti: String::new(),
         tenant_id: "global".into(),
+        tools: Vec::new(),
     };
     encode(
         &Header::default(),

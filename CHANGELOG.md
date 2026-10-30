@@ -11,8 +11,14 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+
+- Scoped agent tokens: `POST /auth/tokens` accepts `tools`, minting a token valid only on the MCP edge and only for
+  those tools (the role still applies; refused on REST, gRPC and `/metrics`). Denied calls are audited as
+  `mcp.tool.denied`. Agent-safety scenario tests in `tests/mcp_agent.rs`.
+
 - Console page **Fast storage** (NVMe wear, host sizing, OSD object store and version mix, I/O shapes) and
   `GET /io/ai` (operator) returning the atlas-io agent's heuristic I/O shapes, `unavailable` without an agent.
+
 - `atlas-native` feature `rdma` (off by default, Linux): `rdma::device_names()` and a self-connected reliable-connection
   round trip over `libibverbs`, plus `rdma::with_stream`: a `Read`/`Write` byte stream over a reliable-connection queue pair
   between two endpoints (queue-pair endpoints exchanged as JSON over a TCP side channel). Foundation for an RDMA data-node
