@@ -36,6 +36,7 @@ import {
   Timer,
   Users,
   Wrench,
+  Zap,
 } from "lucide-react";
 import type { NavRole } from "../lib/auth";
 import Overview from "../views/Overview";
@@ -60,6 +61,7 @@ import SettingsView from "../views/Settings";
 import ApiDocs from "../views/ApiDocs";
 import { Backends, Cluster, Kubernetes, Metrics, Policies } from "../views/Simple";
 import Disks from "../views/Disks";
+import FastStorage from "../views/FastStorage";
 import Maintenance from "../views/Maintenance";
 import DR from "../views/DR";
 import Sources from "../views/databridge/Sources";
@@ -160,6 +162,7 @@ export const MODULES: NavModule[] = [
   { id: "kubernetes", codename: "talos", label: "Kubernetes", path: "/kubernetes", icon: Boxes, section: "INFRASTRUCTURE", minRole: "operator", element: Kubernetes },
   { id: "cluster", codename: "oracle", label: "Cluster", path: "/cluster", icon: Database, section: "INFRASTRUCTURE", minRole: "operator", element: Cluster },
   { id: "ceph", codename: "kraken", label: "Ceph", path: "/ceph", icon: Aperture, section: "INFRASTRUCTURE", minRole: "operator", pinned: true, topPrimary: true, shortcut: "C", element: Ceph },
+  { id: "fast-storage", codename: "boreas", label: "Fast storage", path: "/fast-storage", icon: Zap, section: "INFRASTRUCTURE", minRole: "operator", element: FastStorage },
   { id: "maintenance", codename: "hestia", label: "Maintenance", path: "/maintenance", icon: Wrench, section: "INFRASTRUCTURE", minRole: "operator", element: Maintenance },
   { id: "dr", codename: "styx", label: "Disaster Recovery", path: "/dr", icon: GitBranch, section: "INFRASTRUCTURE", minRole: "admin", element: DR },
   { id: "disks", codename: "vulcan", label: "Disks", path: "/disks", icon: Disc, section: "INFRASTRUCTURE", minRole: "admin", element: Disks },

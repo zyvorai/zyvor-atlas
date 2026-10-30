@@ -446,6 +446,20 @@ pub(crate) async fn ai_advisor(
     ))
 }
 
+/// `GET /io/ai` — the optional atlas-io agent's heuristic I/O shapes (checkpoint-like writes, bulk
+/// reads, small reads) per device, for the console. Operator-only and read-only; an unconfigured or
+/// unreachable agent is `unavailable`, never "fine".
+pub(crate) async fn get_io_ai(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+) -> AppResult<Json<IoAiView>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
+    Ok(Json(match io_agent_from_env() {
+        Some((url, timeout)) => fetch_io_ai(&url, timeout).await,
+        None => io_ai_unavailable("ATLAS_IO_AGENT_URL is not configured"),
+    }))
+}
+
 /// `GET /ai/anomalies` — robust local anomaly detection over persisted Atlas metrics. Uses a
 /// median/MAD baseline so a previous spike cannot drag the baseline toward itself.
 pub(crate) async fn ai_anomalies(

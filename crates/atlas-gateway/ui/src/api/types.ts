@@ -456,3 +456,64 @@ export interface ObjectMigration {
   job_id?: string | null;
   created_at?: string | null;
 }
+
+// ---- Fast storage: NVMe health, host sizing, object stores, AI I/O shapes ----
+export interface NvmeDrive {
+  devid: string;
+  host: string;
+  dev: string;
+  daemons?: string[];
+  scraped: boolean;
+  wear_percent?: number | null;
+  available_spare_percent?: number | null;
+  media_errors?: number | null;
+  temperature_c?: number | null;
+  critical_warning?: number | null;
+  concerns: string[];
+  error?: string;
+}
+export interface NvmeReport {
+  summary: { total: number; scraped: number; with_concerns: number; worn_at_percent: number; truncated: boolean };
+  devices: NvmeDrive[];
+}
+export interface SizingHost {
+  host: string;
+  nvme_devices: number;
+  osds: number;
+  needs_cpu_cores: number;
+  needs_memory_gib: number;
+  status: "ok" | "undersized" | "unknown";
+  node?: string;
+  has_cpu_cores?: number;
+  has_memory_gib?: number;
+  shortfalls?: string[];
+}
+export interface SizingReport {
+  thresholds: { cores_per_nvme_device: number; ram_base_gib: number; ram_per_osd_gib: number; note: string };
+  summary: { hosts: number; undersized: number; unknown: number };
+  hosts: SizingHost[];
+}
+export interface ObjectStoreReport {
+  summary: {
+    total: number;
+    by_objectstore: Record<string, number>;
+    by_version: Record<string, number>;
+    mixed_versions: boolean;
+  };
+  osds: { id: number; hostname?: string | null; osd_objectstore?: string | null; ceph_version?: string | null }[];
+}
+export type IoShapeName = "large_write" | "bulk_read" | "small_read" | "mixed" | "unknown";
+export interface IoAiDevice {
+  device: string;
+  shape: IoShapeName;
+  avg_read_bytes: number;
+  avg_write_bytes: number;
+  p99_read_us: number;
+  p99_write_us: number;
+  finding: string | null;
+}
+export interface IoAiReport {
+  status: "ok" | "unavailable";
+  devices: IoAiDevice[];
+  detail: string | null;
+}

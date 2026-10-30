@@ -83,6 +83,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/ai/incidents", get(ai_incidents))
         .route("/ai/what-if", post(ai_what_if))
+        .route("/io/ai", get(get_io_ai))
         .route("/backends", get(list_backends).post(create_backend))
         .route("/backends/summary", get(backends_summary))
         .route("/backends/{id}", delete(delete_backend))
