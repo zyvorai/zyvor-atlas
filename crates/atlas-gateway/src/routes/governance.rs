@@ -144,6 +144,11 @@ pub(crate) struct IssueTokenBody {
     /// Tenant this token is scoped to on read endpoints (default `"global"`).
     #[serde(default)]
     tenant_id: Option<String>,
+    /// MCP tool allowlist for an agent token. Omitted or empty mints an ordinary token. A
+    /// non-empty list makes the token MCP-only: it can call just these tools (the role still
+    /// applies on top) and is refused on REST, gRPC and `/metrics`.
+    #[serde(default)]
+    tools: Option<Vec<String>>,
     /// Lifetime in seconds (default 3600, capped at 90 days).
     #[serde(default)]
     ttl_secs: Option<u64>,
@@ -512,6 +517,32 @@ pub(crate) async fn delete_user(
     Ok(Json(json!({ "deleted": username })))
 }
 
+/// At most this many tools in one scope, each a plausible MCP tool name.
+const MAX_SCOPE_TOOLS: usize = 64;
+
+/// Checks a requested tool scope: bounded, `[a-z0-9_]` names only, duplicates dropped. It does not
+/// check the names against the live tool list: an unknown name simply grants nothing.
+fn validate_tool_scope(tools: &[String]) -> AppResult<Vec<String>> {
+    if tools.len() > MAX_SCOPE_TOOLS {
+        return Err(AppError::Validation(format!(
+            "at most {MAX_SCOPE_TOOLS} tools per scoped token"
+        )));
+    }
+    let mut out: Vec<String> = Vec::new();
+    for t in tools {
+        let ok = !t.is_empty()
+            && t.len() <= 64
+            && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if !ok {
+            return Err(AppError::Validation(format!("invalid tool name '{t}'")));
+        }
+        if !out.contains(t) {
+            out.push(t.clone());
+        }
+    }
+    Ok(out)
+}
+
 /// `POST /auth/tokens` — mint a scoped service-account JWT for a product (admin). The shared secret
 /// never leaves Atlas; the caller receives only the signed token + its claims.
 pub(crate) async fn issue_token(
@@ -533,12 +564,14 @@ pub(crate) async fn issue_token(
     // Cap the lifetime so a leaked token has a bounded blast radius.
     const MAX_TTL: u64 = 90 * 24 * 3600;
     let ttl_secs = body.ttl_secs.unwrap_or(3600).clamp(60, MAX_TTL);
-    let (token, exp, jti) = crate::auth::mint_token(
+    let tools = validate_tool_scope(body.tools.as_deref().unwrap_or(&[]))?;
+    let (token, exp, jti) = crate::auth::mint_scoped_token(
         &s.config.jwt_secret,
         &body.subject,
         &role,
         tenant_id,
         ttl_secs,
+        &tools,
     )?;
     let _ = atlas_inventory::audit::record(
         &s.pool,
@@ -548,7 +581,8 @@ pub(crate) async fn issue_token(
         "service_account",
         &body.subject,
         "ok",
-        Some(json!({ "role": role, "tenant_id": tenant_id, "ttl_secs": ttl_secs, "jti": jti })),
+        Some(json!({ "role": role, "tenant_id": tenant_id, "ttl_secs": ttl_secs, "jti": jti,
+                     "tools": tools })),
         None,
     )
     .await;
@@ -556,7 +590,8 @@ pub(crate) async fn issue_token(
         StatusCode::CREATED,
         Json(json!({
             "token": token, "jti": jti, "subject": body.subject, "role": role, "tenant_id": tenant_id,
-            "level": crate::auth::role_level(&role), "expires_at": exp, "ttl_secs": ttl_secs
+            "level": crate::auth::role_level(&role), "expires_at": exp, "ttl_secs": ttl_secs,
+            "tools": tools
         })),
     ))
 }

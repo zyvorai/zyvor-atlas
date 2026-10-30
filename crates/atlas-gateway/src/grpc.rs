@@ -68,6 +68,12 @@ pub fn service(
                     }
                 } else {
                     match crate::auth::decode_token(token, &secret, secret_previous.as_deref()) {
+                        // A scoped agent token is MCP-only (see `Claims::tools`).
+                        Ok(data) if !data.claims.tools.is_empty() => {
+                            return Err(Status::permission_denied(
+                                "this token is scoped to MCP tools and is not valid on gRPC",
+                            ))
+                        }
                         Ok(data) => GrpcActor {
                             id: data.claims.sub,
                             role: data.claims.role,

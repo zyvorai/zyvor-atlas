@@ -65,6 +65,14 @@ the auth scheme. It lists no tools and exposes no inventory or tenant data; thos
 
 Detailed Hermes walkthrough: [HERMES_AGENT.md](HERMES_AGENT.md).
 
+**Least privilege per agent.** An admin can mint a token limited to named tools with
+`POST /auth/tokens {"subject": "...", "role": "operator", "tools": ["ceph_nvme", "ops_advisor"]}`
+([API.md](API.md#post-apiatlasv1authtokens)). Such a token lists and calls only those tools, is
+refused on every non-MCP route, and every refused call is audited as `mcp.tool.denied`. The
+per-actor rate limit (`ATLAS_RATE_LIMIT_RPM`) already covers MCP calls, and a distinct subject gets
+its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
+`crates/atlas-gateway/src/mcp.rs`), so new tools are covered automatically.
+
 ## Configuration
 
 | Variable | Where | Meaning |
@@ -89,7 +97,7 @@ Tokens are held in process memory and die with the gateway.
 - **Prompt injection** via data an agent reads (alert titles, device names, job text): tools return
   data only, the skill tells the agent to treat it as untrusted, and the only write paths (`create_snapshot`, `ack_alert`) need a
   human-approved confirmation of the exact arguments.
-- **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens.
+- **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens. A tool-scoped token also cannot be used outside MCP.
   Never give an agent an admin token.
 - **Fan-out**: advisory tools run in local mode so an agent call cannot trigger an outbound LLM
   request; the gateway's agent fetch is bounded (timeout, 256 KiB, no redirects) and fails open to

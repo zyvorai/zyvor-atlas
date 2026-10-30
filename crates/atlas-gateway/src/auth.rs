@@ -32,6 +32,12 @@ pub struct Claims {
     pub jti: String,
     #[serde(default = "default_tenant")]
     pub tenant_id: String,
+    /// MCP tool allowlist. Empty means an ordinary, unscoped token. A non-empty list makes this a
+    /// scoped agent token: it may call only these MCP tools, and is refused on every other route
+    /// (REST, gRPC, `/metrics`), because a list that only the MCP edge honours would be bypassed
+    /// by using the same token elsewhere. A scope narrows the role; it never widens it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<String>,
 }
 
 fn default_tenant() -> String {
@@ -44,6 +50,8 @@ pub struct Actor {
     pub id: String,
     pub role: String,
     pub tenant_id: String,
+    /// See [`Claims::tools`]; empty = unscoped.
+    pub tools: Vec<String>,
 }
 
 impl Actor {
@@ -52,7 +60,19 @@ impl Actor {
             id: "anonymous".into(),
             role: "viewer".into(),
             tenant_id: default_tenant(),
+            tools: Vec::new(),
         }
+    }
+
+    /// True for a scoped agent token (see [`Claims::tools`]).
+    pub fn is_scoped(&self) -> bool {
+        !self.tools.is_empty()
+    }
+
+    /// Whether this actor may call the MCP tool `name`: always for an unscoped actor, otherwise
+    /// only when listed.
+    pub fn may_call_tool(&self, name: &str) -> bool {
+        self.tools.is_empty() || self.tools.iter().any(|t| t == name)
     }
 
     pub fn level(&self) -> u8 {
@@ -87,6 +107,19 @@ pub fn mint_token(
     tenant_id: &str,
     ttl_secs: u64,
 ) -> atlas_common::AppResult<(String, usize, String)> {
+    mint_scoped_token(secret, subject, role, tenant_id, ttl_secs, &[])
+}
+
+/// [`mint_token`] with an MCP tool allowlist (see [`Claims::tools`]); an empty slice mints an
+/// ordinary unscoped token.
+pub fn mint_scoped_token(
+    secret: &str,
+    subject: &str,
+    role: &str,
+    tenant_id: &str,
+    ttl_secs: u64,
+    tools: &[String],
+) -> atlas_common::AppResult<(String, usize, String)> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| atlas_common::AppError::Internal(e.to_string()))?
@@ -99,6 +132,7 @@ pub fn mint_token(
         exp,
         jti: jti.clone(),
         tenant_id: tenant_id.to_string(),
+        tools: tools.to_vec(),
     };
     let token = encode(
         &Header::default(),
@@ -206,6 +240,7 @@ pub async fn auth_middleware(
                 id: "bootstrap".into(),
                 role: "admin".into(),
                 tenant_id: default_tenant(),
+                tools: Vec::new(),
             }
         } else {
             match decode_token(
@@ -229,12 +264,25 @@ pub async fn auth_middleware(
                         id: data.claims.sub,
                         role: data.claims.role,
                         tenant_id: data.claims.tenant_id,
+                        tools: data.claims.tools,
                     }
                 }
                 Err(e) => return unauthorized(&format!("invalid token: {e}")),
             }
         }
     };
+
+    // A scoped agent token is valid only on the MCP edge (`/mcp`, or the full path when the layer
+    // sees it unstripped); everywhere else it is refused, not silently given its role's reach.
+    if actor.is_scoped() {
+        let path = req.uri().path();
+        let on_mcp = ["/mcp", "/api/atlas/v1/mcp"]
+            .iter()
+            .any(|p| path == *p || path.strip_prefix(*p).is_some_and(|r| r.starts_with('/')));
+        if !on_mcp {
+            return forbidden("this token is scoped to MCP tools and is not valid on this route");
+        }
+    }
 
     // Rate limit per actor (day-2 governance; disabled unless ATLAS_RATE_LIMIT_RPM > 0).
     if !state.rate.allow(&actor.id) {
@@ -335,6 +383,14 @@ fn unauthorized(msg: &str) -> Response {
     (
         StatusCode::UNAUTHORIZED,
         Json(json!({ "error": { "code": "AUTH_ERROR", "message": msg } })),
+    )
+        .into_response()
+}
+
+fn forbidden(msg: &str) -> Response {
+    (
+        StatusCode::FORBIDDEN,
+        Json(json!({ "error": { "code": "FORBIDDEN", "message": msg } })),
     )
         .into_response()
 }
