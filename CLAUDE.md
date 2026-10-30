@@ -137,6 +137,19 @@ and `atlasctl dedup-estimate`, admin-only; `POST` runs it as a `dedup.estimate` 
 task (not the shared worker), with a heartbeat, cancel, and no retries. Unit/integration tested over the fake drivers; verified on a real Rook Ceph 19.2.x (2026-10-27) through the
 deployed gateway, sync and as a job, small data only (it found two `rbd du` bugs); and on real OpenZFS 2.4.1 (`zdb -S`, small file-backed pools, dedup-off pool gave the expected 3.0x); not run on a large pool.
 
+**Ceph NVMe** (`docs/NVME.md`): read-only `GET /ceph/nvme` (wear, spare, media errors per NVMe drive
+from Ceph's device-health SMART scrapes; feeds the Ops Advisor), `GET /ceph/osd-objectstore` (each
+OSD's reported object store and Ceph version), `GET /ceph/sizing` (hosts with NVMe drives vs a
+CPU/RAM rule of thumb, a configurable heuristic) and `GET /ceph/nvmeof` (Rook `CephNVMeOFGateway`
+CRs, pods and NVMe-oF StorageClasses), each with an `atlasctl` command and an MCP tool; the
+Disks device picker tags devices `nvme|ssd|hdd`; `POST /ceph/devices` takes `db_device`,
+`db_size_mb`, `wal_size_mb` and `osds_per_device` for BlueStore DB/WAL on a separate device.
+Unit tested over the fake driver and passing the lab CI gates; **not yet run against a live Rook
+cluster or real NVMe hardware**, so the `ceph device get-health-metrics` JSON shape and Rook's
+`config` keys are unverified assumptions. NVMe-oF stays read-only: Rook creates namespaces from PVCs
+of an `nvmeof.csi.ceph.com` StorageClass (experimental, Ceph Tentacle or later), so there is no
+supported way to map an existing RBD volume. Atlas does nothing Crimson-specific.
+
 **Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor
 Production License v1.0 at the maintainer's explicit request — history in
 [`docs/LICENSING.md`](docs/LICENSING.md)). Don't weaken or remove license notices,
