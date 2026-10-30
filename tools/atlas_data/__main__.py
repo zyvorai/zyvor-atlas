@@ -11,6 +11,7 @@ import sys
 from .api import serve
 from .client import Client
 from .core import DataError, Store
+from .integrations import DataReadyGate
 
 
 def main(argv=None):
@@ -42,6 +43,11 @@ def main(argv=None):
     worker.add_argument("job")
     worker.add_argument("node")
     worker.add_argument("cache", type=Path)
+    gate = commands.add_parser("gate-wait", help="block until a job's data is staged (Kubernetes init container)")
+    gate.add_argument("job")
+    gate.add_argument("--timeout", type=int, default=600)
+    gate.add_argument("--interval", type=int, default=5)
+    gate.add_argument("--out", type=Path, help="also write the node selection JSON here (for the workload to read)")
     args = p.parse_args(argv)
     try:
         if args.command == "serve":
@@ -65,6 +71,10 @@ def main(argv=None):
                                      revision=args.revision, files=client.upload(args.directory))
             elif args.command == "export":
                 result = client.download(args.artifact, args.directory)
+            elif args.command == "gate-wait":
+                result = DataReadyGate(client).wait_ready(args.job, args.timeout, args.interval)
+                if args.out:
+                    args.out.write_text(json.dumps(result, indent=2))
             else:
                 result = client.stage(args.job, args.node, args.cache)
         print(json.dumps(result, indent=2))
