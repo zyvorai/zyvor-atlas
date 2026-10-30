@@ -272,7 +272,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-api-types"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "chrono",
  "serde",
@@ -281,7 +281,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-client"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "atlas-api-types",
  "axum",
@@ -294,7 +294,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-common"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "axum",
@@ -314,7 +314,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-databridge"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -349,7 +349,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-discovery"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "atlas-api-types",
@@ -362,7 +362,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-ceph"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -375,7 +375,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-core"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -390,7 +390,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-k8s"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -405,7 +405,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-longhorn"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -416,7 +416,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-macos"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -431,7 +431,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-native"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -448,7 +448,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-nfs"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -461,7 +461,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-rgw"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "atlas-driver-core",
@@ -479,7 +479,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-weka"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -492,7 +492,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-driver-zfs"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-api-types",
@@ -505,7 +505,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-gateway"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "argon2",
@@ -564,7 +564,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-inventory"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "atlas-api-types",
@@ -578,7 +578,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-io"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "atlas-api-types",
@@ -598,7 +598,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-jobs"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -627,7 +627,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-mac-agent"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "atlas-api-types",
@@ -647,7 +647,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-monitor"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "atlas-api-types",
@@ -667,7 +667,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-native"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "atlas-driver-rgw",
@@ -691,7 +691,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-native-csi"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "atlas-native",
  "atlas-native-fuse",
@@ -715,7 +715,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-native-fuse"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "atlas-native",
  "clap",
@@ -735,7 +735,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-native-s3"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "async-trait",
  "atlas-driver-rgw",
@@ -764,7 +764,7 @@ dependencies = [
 
 [[package]]
 name = "atlas-policy"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "atlas-api-types",
  "serde",
@@ -772,7 +772,7 @@ dependencies = [
 
 [[package]]
 name = "atlasctl"
-version = "0.9.0"
+version = "0.10.0"
 dependencies = [
  "anyhow",
  "clap",

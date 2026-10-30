@@ -9,6 +9,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.10.0] — 2026-10-30
+
 ### Added
 
 - `atlas-native` (`rdma` feature): `RemoteDevice::with_rdma(gid, |session| ...)` opens a connection, upgrades it to RDMA and gives
