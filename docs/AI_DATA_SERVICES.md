@@ -173,6 +173,23 @@ them. There is no unauthenticated mode. `/healthz` contains only service health/
    pin it. Trusted workers must report loss/eviction; Atlas cannot remotely prove that
    an administrator has not removed cached files after verification.
 
+`DataReadyGate.wait_ready()` (and `python3 -m atlas_data gate-wait JOB --timeout 600 --out /gate/selection.json`)
+blocks until `ready()` succeeds. Only "data not ready" is retried; a refused credential or an unknown job fails at once, and a
+timeout exits non-zero, so a pod fails visibly instead of starting compute without its data. Used as an init container, it holds
+the workload back until a trusted worker has staged and verified the job's artifacts:
+
+```yaml
+initContainers:
+  - name: wait-for-data
+    image: <image with tools/atlas_data and ATLAS_DATA_TOKEN from a Secret>
+    command: ["python3", "-m", "atlas_data", "--url", "https://atlas-data:5120", "gate-wait", "job-123", "--out", "/gate/selection.json"]
+    volumeMounts: [{name: gate, mountPath: /gate}]
+```
+
+This is an example, not a shipped admission webhook: it waits, it does not place. The scheduler still has to put the pod on the
+node in `selection.json` (for example by reading it in a submission hook), and nothing here has run on a cluster; the wait logic
+is covered by unit tests with a scripted client and clock.
+
 `tools/atlas_data/integrations.py` provides `DataReadyGate` and `CostCollector`.
 The caller is responsible for matching node IDs to Kubernetes hostnames, checking
 compute capacity in Gryvia, and mounting the cache into its workload. Cache capacity

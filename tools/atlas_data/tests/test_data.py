@@ -443,5 +443,59 @@ class IcebergTests(Fixture):
         self.assertEqual(len(ice.rows(ADMIN, "metrics")), 2)
 
 
+class GateWaitTests(unittest.TestCase):
+    """`DataReadyGate.wait_ready` against a scripted client and clock: no sleeping, no server."""
+
+    class Scripted:
+        def __init__(self, answers):
+            self.answers, self.calls = list(answers), 0
+
+        def call(self, action, **arguments):
+            self.calls += 1
+            answer = self.answers.pop(0) if self.answers else self.answers_last
+            if isinstance(answer, Exception):
+                raise answer
+            return answer
+
+    NOT_READY = {"data_ready": False, "node": "n1", "artifacts": [], "expires_at": 0}
+    READY = {"data_ready": True, "node": "n1", "artifacts": ["a1"], "expires_at": 99}
+
+    def gate(self, answers):
+        from atlas_data.integrations import DataReadyGate
+        client = self.Scripted(answers)
+        client.answers_last = answers[-1]
+        return DataReadyGate(client), client
+
+    def test_waits_through_not_ready_then_returns_the_node_selector(self):
+        gate, client = self.gate([self.NOT_READY, self.NOT_READY, self.READY])
+        slept = []
+        got = gate.wait_ready("job1", timeout=60, interval=5, sleep=slept.append, clock=lambda: 0)
+        self.assertEqual(got["node_selector"], {"kubernetes.io/hostname": "n1"})
+        self.assertEqual(got["artifact_ids"], ["a1"])
+        self.assertEqual((client.calls, slept), (3, [5, 5]))
+
+    def test_times_out_with_504_instead_of_starting_without_data(self):
+        gate, client = self.gate([self.NOT_READY])
+        now = [0]
+        def sleep(s):
+            now[0] += s
+        with self.assertRaises(DataError) as ctx:
+            gate.wait_ready("job1", timeout=12, interval=5, sleep=sleep, clock=lambda: now[0])
+        self.assertEqual(ctx.exception.status, 504)
+        self.assertLessEqual(now[0], 12)
+
+    def test_other_errors_are_not_retried(self):
+        gate, client = self.gate([DataError("unknown job", 404)])
+        with self.assertRaises(DataError) as ctx:
+            gate.wait_ready("nope", timeout=60, interval=5, sleep=lambda s: None, clock=lambda: 0)
+        self.assertEqual((ctx.exception.status, client.calls), (404, 1))
+
+    def test_bad_timing_arguments_are_refused(self):
+        gate, _ = self.gate([self.READY])
+        for kwargs in ({"timeout": 0}, {"interval": 0}):
+            with self.assertRaises(DataError):
+                gate.wait_ready("job1", **kwargs)
+
+
 if __name__ == "__main__":
     unittest.main()

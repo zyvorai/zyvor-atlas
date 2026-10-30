@@ -14,6 +14,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - Scoped agent tokens: `POST /auth/tokens` accepts `tools`, minting a token valid only on the MCP edge and only for
   those tools (the role still applies; refused on REST, gRPC and `/metrics`). Denied calls are audited as
   `mcp.tool.denied`. Agent-safety scenario tests in `tests/mcp_agent.rs`.
+- `atlas_data`: `DataReadyGate.wait_ready()` and `python3 -m atlas_data gate-wait JOB` block until a job's data is
+  staged (Kubernetes init-container use); only "not ready" is retried and a timeout exits non-zero.
 - `POST /ceph/nvmeof/namespaces` (admin, `confirm`) and `atlasctl ceph-nvmeof-create`: provision a new NVMe-oF namespace as a
   PVC from an `nvmeof.csi.ceph.com` StorageClass, as the ordinary `volume.create` job. REST and CLI only; not yet run on a
   live Rook cluster.

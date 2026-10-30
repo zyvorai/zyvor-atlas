@@ -58,6 +58,12 @@ from the agent's `GET /io/risk` ([IO_RISK.md](IO_RISK.md)):
 - Informational only: it never changes `risk_score` or the runbook, and `can_execute` stays false.
 - Fails open to *unavailable*: an unreachable, slow, oversized or malformed agent response gives
   `status: "unavailable"` plus a warning, never `healthy`. Unset URL means no `io_risk` field.
+- The same agent URL adds an `io_ai` block from `GET /io/ai`: a heuristic I/O shape per device
+  (`large_write`, `bulk_read`, `small_read`, `mixed`, `unknown`) with request sizes, p99 latency and a
+  finding when the shape's latency expectation is missed. It is informational: it adds a warning but
+  never changes `risk_score`. Shape names are whitelisted and the finding text is written by the
+  gateway, so nothing free-form from the agent reaches the advisor or an LLM. See
+  [IO_EBPF.md](IO_EBPF.md).
 - The agent's output is untrusted: the level and verdicts are whitelisted, device names are
   sanitized and capped at 8, redirects are not followed, and none of it is sent to the LLM provider.
 - If the agent has `ATLAS_IO_TOKEN` set, give the gateway the same value as

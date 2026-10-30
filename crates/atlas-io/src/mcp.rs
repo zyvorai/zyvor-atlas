@@ -62,6 +62,17 @@ impl IoMcp {
         Ok(ToolJson(json!(self.collector.health())))
     }
 
+    #[tool(
+        description = "Heuristic I/O shape per device (large_write like a checkpoint, bulk_read, \
+                        small_read, mixed, unknown) with the numbers behind each verdict and a \
+                        finding when the shape's latency expectation is missed. Names a shape, \
+                        never a job."
+    )]
+    async fn io_ai(&self) -> Result<ToolJson<Value>, McpError> {
+        self.collector.poll();
+        Ok(ToolJson(json!(self.collector.ai_shapes())))
+    }
+
     #[tool(description = "Per-(device, op) latency histograms with p50/p99 and queue time.")]
     async fn io_histograms(&self) -> Result<ToolJson<Value>, McpError> {
         self.collector.poll();
