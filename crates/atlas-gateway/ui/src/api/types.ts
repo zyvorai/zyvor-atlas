@@ -302,6 +302,7 @@ export interface CephNodeDevice {
   empty?: boolean;
   type?: string;
   rotational?: boolean;
+  class?: "nvme" | "ssd" | "hdd";
   [key: string]: unknown;
 }
 

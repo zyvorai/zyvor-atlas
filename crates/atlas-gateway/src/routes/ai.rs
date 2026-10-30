@@ -66,6 +66,8 @@ struct AdvisorEvidence {
     degraded_objects: f64,
     unfound_objects: f64,
     alert_titles: Vec<String>,
+    /// NVMe drives with a wear/error concern, one `devid: reason` line each (see `ceph_nvme`).
+    nvme_attention: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -333,7 +335,8 @@ pub(crate) async fn compute_advisor(
     let alerts = atlas_inventory::alerts::list(&s.pool, Some("open")).await?;
     let failed_jobs_15m = recent_failed_jobs(&s.pool).await?;
 
-    let evidence = build_evidence(&metrics, &forecast, &alerts, failed_jobs_15m);
+    let mut evidence = build_evidence(&metrics, &forecast, &alerts, failed_jobs_15m);
+    evidence.nvme_attention = super::ceph_nvme::attention(s).await;
     let (risk_score, mut actions) = assess(&evidence);
     actions.sort_by_key(|a| a.priority);
     let risk_level = risk_level(risk_score);
@@ -1064,6 +1067,7 @@ fn build_evidence(
             .take(MAX_ALERTS)
             .map(|a| a.title.clone())
             .collect(),
+        nvme_attention: Vec::new(),
     }
 }
 
@@ -1156,6 +1160,19 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
             "Investigate failed jobs",
             format!("{} job(s) failed in the last 15 minutes", e.failed_jobs_15m),
             "/api/atlas/v1/jobs",
+        ));
+    }
+    if !e.nvme_attention.is_empty() {
+        score += 15 + (e.nvme_attention.len().saturating_sub(1).min(3) as u16 * 5);
+        actions.push(action(
+            2,
+            "Replace or relieve worn NVMe drives",
+            format!(
+                "{} NVMe drive(s) show wear or errors: {}",
+                e.nvme_attention.len(),
+                e.nvme_attention.iter().take(3).cloned().collect::<Vec<_>>().join(" | ")
+            ),
+            "/api/atlas/v1/ceph/nvme",
         ));
     }
     if actions.is_empty() {
@@ -1504,7 +1521,21 @@ mod tests {
             degraded_objects: 0.0,
             unfound_objects: 0.0,
             alert_titles: vec![],
+            nvme_attention: vec![],
         }
+    }
+
+    #[test]
+    fn worn_nvme_drives_raise_risk_and_point_at_the_nvme_report() {
+        let (calm, _) = assess(&evidence());
+        let flagged = AdvisorEvidence {
+            nvme_attention: vec!["SAMSUNG_0002: 92% of rated endurance used".into()],
+            ..evidence()
+        };
+        let (score, actions) = assess(&flagged);
+        assert!(score > calm);
+        let a = actions.iter().find(|a| a.inspect == "/api/atlas/v1/ceph/nvme").unwrap();
+        assert!(a.rationale.contains("SAMSUNG_0002"));
     }
 
     #[test]

@@ -326,6 +326,10 @@ pub(crate) async fn dispatch_rook(
             node_name,
             device_path,
             confirmed_device_path,
+            db_device,
+            db_size_mb,
+            wal_size_mb,
+            osds_per_device,
         } => {
             anyhow::ensure!(
                 device_path == confirmed_device_path,
@@ -335,8 +339,22 @@ pub(crate) async fn dispatch_rook(
             let device_basename = device_path.trim_start_matches("/dev/").to_string();
 
             // Idempotent — safe to re-run on every retry: no-ops if the device is already listed.
-            k8s.add_ceph_cluster_device(&namespace, &cluster_name, &node_name, &device_basename)
-                .await?;
+            let opts = atlas_driver_k8s::rook::CephDeviceOptions {
+                metadata_device: db_device
+                    .as_deref()
+                    .map(|d| d.trim_start_matches("/dev/").to_string()),
+                database_size_mb: db_size_mb,
+                wal_size_mb,
+                osds_per_device,
+            };
+            k8s.add_ceph_cluster_device(
+                &namespace,
+                &cluster_name,
+                &node_name,
+                &device_basename,
+                &opts,
+            )
+            .await?;
 
             // One-shot check, not a blocking loop: is there NOW a Ceph OSD backed by this exact
             // device on this exact host? Rook's reconciliation can take minutes and this job

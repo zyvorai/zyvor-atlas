@@ -63,7 +63,7 @@ export default function Disks({ embedded = false }: { embedded?: boolean }) {
     .filter((d) => d.empty && !d.filesystem)
     .map((d) => ({
       value: `/dev/${d.name}`,
-      label: `/dev/${d.name}${d.size ? ` · ${fmtBytes(d.size)}` : ""} · empty`,
+      label: `/dev/${d.name}${d.class ? ` · ${d.class.toUpperCase()}` : ""}${d.size ? ` · ${fmtBytes(d.size)}` : ""} · empty`,
     }));
 
   const fields = (vals: Record<string, string>): FormField[] => {

@@ -17,7 +17,7 @@ curl -sS -X POST http://127.0.0.1:5110/api/atlas/v1/ai/advisor \
 The response contains:
 
 - a bounded `risk_score` and `risk_level`;
-- evidence from capacity, the 14-day forecast, recovery counters, open alerts, and recent failures;
+- evidence from capacity, the 14-day forecast, recovery counters, open alerts, recent failures, and NVMe wear (drives at 80% or more of rated endurance, media errors, spare at its threshold or a critical-warning flag, from Ceph's device-health scrapes, see `GET /ceph/nvme`; skipped when Ceph has no scrapes);
 - prioritized actions pointing only to read-only Atlas endpoints;
 - `can_execute: false`, an explicit automation safety boundary.
 

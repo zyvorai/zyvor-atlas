@@ -305,7 +305,7 @@ pub(crate) async fn list_ceph_node_devices(
         .k8s
         .as_ref()
         .unwrap()
-        .get_local_devices(&namespace, &node_name)
+        .get_local_devices_classified(&namespace, &node_name)
         .await
         .map_err(|e| AppError::Driver(e.to_string()))?
         .unwrap_or_default();
@@ -319,6 +319,80 @@ pub(crate) struct AddCephDeviceBody {
     confirm: bool,
     namespace: Option<String>,
     cluster_name: Option<String>,
+    /// Put this OSD's RocksDB (and WAL) on a separate, faster device, e.g. `/dev/nvme1n1`.
+    db_device: Option<String>,
+    db_size_mb: Option<u64>,
+    wal_size_mb: Option<u64>,
+    osds_per_device: Option<u32>,
+}
+
+/// Largest DB/WAL size accepted, in MB (4 TiB): a typo guard, not a Ceph limit.
+const MAX_DB_WAL_MB: u64 = 4 * 1024 * 1024;
+const MAX_OSDS_PER_DEVICE: u32 = 16;
+
+/// Shape checks on the BlueStore layout fields, independent of any cluster state.
+fn validate_layout(body: &AddCephDeviceBody) -> Result<(), String> {
+    if body.db_device.is_none() && (body.db_size_mb.is_some() || body.wal_size_mb.is_some()) {
+        return Err("db_size_mb and wal_size_mb need db_device".into());
+    }
+    for (name, v) in [("db_size_mb", body.db_size_mb), ("wal_size_mb", body.wal_size_mb)] {
+        if v.is_some_and(|v| v == 0 || v > MAX_DB_WAL_MB) {
+            return Err(format!("{name} must be between 1 and {MAX_DB_WAL_MB}"));
+        }
+    }
+    if body
+        .osds_per_device
+        .is_some_and(|n| n == 0 || n > MAX_OSDS_PER_DEVICE)
+    {
+        return Err(format!("osds_per_device must be between 1 and {MAX_OSDS_PER_DEVICE}"));
+    }
+    if let Some(db) = &body.db_device {
+        atlas_common::device::validate_raw_device_path(db)
+            .map_err(|e| format!("db_device: {e}"))?;
+        if db == &body.device_path {
+            return Err("db_device must differ from device_path".into());
+        }
+    }
+    Ok(())
+}
+
+/// Whether `db` (bare name) may hold the DB of a new OSD on this node, given Rook's discovery data
+/// and the node's current entry in the CephCluster CR. A shared DB device is by design not empty
+/// once one OSD uses it, so it is accepted when it is either reported empty, or is already the
+/// `metadataDevice` of another device on this node. It is refused when it is a rotational disk
+/// (defeats the purpose), unknown to discovery, or itself listed as an OSD data device.
+fn check_db_device(
+    db: &str,
+    node: Option<&atlas_driver_k8s::rook::CephClusterNodeSpec>,
+    discovery: &[Value],
+) -> Result<(), String> {
+    let entry = discovery
+        .iter()
+        .find(|d| d.get("name").and_then(Value::as_str) == Some(db))
+        .ok_or_else(|| format!("db_device {db} is not visible to Rook's discovery on this node"))?;
+    if atlas_driver_k8s::rook::classify_device(entry) == "hdd" {
+        return Err(format!("db_device {db} is a rotational disk; refusing to put an OSD DB on it"));
+    }
+    if node.is_some_and(|n| n.devices.iter().any(|d| d.name == db)) {
+        return Err(format!("db_device {db} is already an OSD data device on this node"));
+    }
+    let empty = entry.get("empty").and_then(Value::as_bool).unwrap_or(false)
+        && !entry
+            .get("filesystem")
+            .and_then(Value::as_str)
+            .is_some_and(|f| !f.is_empty());
+    let already_shared = node.is_some_and(|n| {
+        n.devices
+            .iter()
+            .any(|d| d.config.get("metadataDevice").map(String::as_str) == Some(db))
+    });
+    if !empty && !already_shared {
+        return Err(format!(
+            "db_device {db} is not reported empty by Rook's discovery and is not already a shared \
+             metadataDevice on this node"
+        ));
+    }
+    Ok(())
 }
 
 /// `POST /ceph/devices` — claim a raw, unformatted disk on a specific Kubernetes node as a new
@@ -337,6 +411,7 @@ pub(crate) async fn add_ceph_device(
     }
     atlas_common::device::validate_raw_device_path(&body.device_path)
         .map_err(AppError::Validation)?;
+    validate_layout(&body).map_err(AppError::Validation)?;
     require_k8s(&s)?;
 
     let namespace = body
@@ -398,12 +473,32 @@ pub(crate) async fn add_ceph_device(
         Err(e) => return Err(AppError::Driver(e.to_string())),
     }
 
+    if let Some(db) = &body.db_device {
+        let discovery = k8s
+            .get_local_devices(&namespace, &body.node_name)
+            .await
+            .map_err(|e| AppError::Driver(e.to_string()))?
+            .ok_or_else(|| {
+                AppError::Unavailable(format!(
+                    "cannot verify db_device {db}: Rook device discovery has no data for node {}",
+                    body.node_name
+                ))
+            })?;
+        let node = storage.nodes.iter().find(|n| n.name == body.node_name);
+        check_db_device(db.trim_start_matches("/dev/"), node, &discovery)
+            .map_err(AppError::Validation)?;
+    }
+
     let spec = JobSpec::CephOsdAddDevice {
         namespace,
         cluster_name,
         node_name: body.node_name.clone(),
         device_path: body.device_path.clone(),
         confirmed_device_path: body.device_path.clone(),
+        db_device: body.db_device.clone(),
+        db_size_mb: body.db_size_mb,
+        wal_size_mb: body.wal_size_mb,
+        osds_per_device: body.osds_per_device,
     };
     let job_id = ids::job_id();
     let job = s
@@ -424,13 +519,19 @@ pub(crate) async fn add_ceph_device(
         "node",
         &body.node_name,
         "accepted",
-        Some(json!({ "device": body.device_path })),
+        Some(json!({
+            "device": body.device_path,
+            "db_device": body.db_device,
+            "db_size_mb": body.db_size_mb,
+            "wal_size_mb": body.wal_size_mb,
+            "osds_per_device": body.osds_per_device,
+        })),
         None,
     )
     .await;
     Ok(accepted(
         &job,
-        json!({ "node": body.node_name, "device": body.device_path }),
+        json!({ "node": body.node_name, "device": body.device_path, "db_device": body.db_device }),
     ))
 }
 
@@ -463,4 +564,83 @@ pub(crate) async fn delete_ceph_object_store(
         .await
         .map_err(AppError::from)?;
     Ok(accepted(&job, json!({ "name": name })))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use atlas_driver_k8s::rook::{CephClusterDeviceSpec, CephClusterNodeSpec};
+
+    fn body() -> AddCephDeviceBody {
+        AddCephDeviceBody {
+            node_name: "n1".into(),
+            device_path: "/dev/sdb".into(),
+            confirm: true,
+            namespace: None,
+            cluster_name: None,
+            db_device: None,
+            db_size_mb: None,
+            wal_size_mb: None,
+            osds_per_device: None,
+        }
+    }
+
+    fn node(devices: Vec<CephClusterDeviceSpec>) -> CephClusterNodeSpec {
+        CephClusterNodeSpec { name: "n1".into(), devices, extra: Default::default() }
+    }
+
+    fn dev(name: &str, db: Option<&str>) -> CephClusterDeviceSpec {
+        let mut config = std::collections::BTreeMap::new();
+        if let Some(db) = db {
+            config.insert("metadataDevice".to_string(), db.to_string());
+        }
+        CephClusterDeviceSpec { name: name.into(), config, extra: Default::default() }
+    }
+
+    #[test]
+    fn layout_fields_are_bounded_and_need_a_db_device() {
+        assert!(validate_layout(&body()).is_ok());
+        let sizes_alone = AddCephDeviceBody { db_size_mb: Some(1024), ..body() };
+        assert!(validate_layout(&sizes_alone).is_err());
+        let zero = AddCephDeviceBody { db_device: Some("/dev/nvme1n1".into()), db_size_mb: Some(0), ..body() };
+        assert!(validate_layout(&zero).is_err());
+        let huge = AddCephDeviceBody { osds_per_device: Some(99), ..body() };
+        assert!(validate_layout(&huge).is_err());
+        let ok = AddCephDeviceBody {
+            db_device: Some("/dev/nvme1n1".into()),
+            db_size_mb: Some(61440),
+            wal_size_mb: Some(2048),
+            osds_per_device: Some(2),
+            ..body()
+        };
+        assert!(validate_layout(&ok).is_ok());
+    }
+
+    #[test]
+    fn db_device_must_be_a_safe_distinct_whole_disk() {
+        let same = AddCephDeviceBody { db_device: Some("/dev/sdb".into()), ..body() };
+        assert!(validate_layout(&same).is_err());
+        let boot = AddCephDeviceBody { db_device: Some("/dev/sda".into()), ..body() };
+        assert!(validate_layout(&boot).is_err(), "the first-disk refusal applies to the DB device too");
+        let part = AddCephDeviceBody { db_device: Some("/dev/nvme1n1p1".into()), ..body() };
+        assert!(validate_layout(&part).is_err());
+    }
+
+    #[test]
+    fn db_device_checks_against_discovery_and_the_cr() {
+        let disc = vec![
+            json!({"name": "nvme1n1", "empty": true, "rotational": false}),
+            json!({"name": "nvme2n1", "empty": false, "filesystem": "LVM2_member", "rotational": false}),
+            json!({"name": "sdc", "empty": true, "rotational": true}),
+            json!({"name": "sdd", "empty": true, "rotational": false}),
+        ];
+        assert!(check_db_device("nvme1n1", None, &disc).is_ok(), "empty flash device");
+        assert!(check_db_device("nvme9n1", None, &disc).is_err(), "unknown to discovery");
+        assert!(check_db_device("sdc", None, &disc).is_err(), "rotational");
+        assert!(check_db_device("nvme2n1", None, &disc).is_err(), "in use and not a shared DB device");
+        let shared = node(vec![dev("sde", Some("nvme2n1"))]);
+        assert!(check_db_device("nvme2n1", Some(&shared), &disc).is_ok(), "already a shared metadataDevice");
+        let as_data = node(vec![dev("sdd", None)]);
+        assert!(check_db_device("sdd", Some(&as_data), &disc).is_err(), "already an OSD data device");
+    }
 }

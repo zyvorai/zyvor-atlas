@@ -432,6 +432,16 @@ pub enum JobSpec {
         node_name: String,
         device_path: String,
         confirmed_device_path: String,
+        /// BlueStore layout (see `CephDeviceOptions`). All `serde(default)` so jobs queued before
+        /// these fields existed still deserialize as a plain co-located OSD.
+        #[serde(default)]
+        db_device: Option<String>,
+        #[serde(default)]
+        db_size_mb: Option<u64>,
+        #[serde(default)]
+        wal_size_mb: Option<u64>,
+        #[serde(default)]
+        osds_per_device: Option<u32>,
     },
     /// `zpool destroy` a ZFS pool Atlas itself provisioned. Local-host-only like
     /// `ZfsPoolCreateFromDevice`. Refuses a pool that holds any dataset besides its root, never

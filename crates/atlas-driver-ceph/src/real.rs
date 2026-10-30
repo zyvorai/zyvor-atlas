@@ -267,6 +267,9 @@ impl StorageDriver for RealCephDriver {
     async fn ceph_device_ls(&self) -> Result<serde_json::Value, DriverError> {
         ceph_cmd(&["device", "ls"]).await
     }
+    async fn ceph_device_health(&self, devid: &str) -> Result<serde_json::Value, DriverError> {
+        ceph_cmd(&["device", "get-health-metrics", devid]).await
+    }
 }
 
 fn metric(name: &str, value: f64) -> MetricSample {
