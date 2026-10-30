@@ -24,6 +24,46 @@ fn phase_of(obj: &DynamicObject) -> Option<String> {
         .map(|s| s.to_string())
 }
 
+/// CPU and memory a Kubernetes node reports as hardware capacity (not allocatable).
+#[derive(Debug, Clone, PartialEq, serde::Serialize)]
+pub struct NodeCapacity {
+    pub node: String,
+    pub cpu_cores: f64,
+    pub memory_gib: f64,
+}
+
+/// A Kubernetes CPU quantity (`16`, `0.5`, `3920m`) in cores.
+pub fn parse_cpu_cores(q: &str) -> Option<f64> {
+    let q = q.trim();
+    match q.strip_suffix('m') {
+        Some(milli) => milli.parse::<f64>().ok().map(|v| v / 1000.0),
+        None => q.parse::<f64>().ok(),
+    }
+    .filter(|v| v.is_finite() && *v >= 0.0)
+}
+
+/// A Kubernetes memory quantity (`65536Ki`, `64Gi`, `64G`, `1073741824`) in GiB. Exponent forms
+/// (`1e9`) are not accepted.
+pub fn parse_memory_gib(q: &str) -> Option<f64> {
+    let q = q.trim();
+    let split = q.find(|c: char| !(c.is_ascii_digit() || c == '.')).unwrap_or(q.len());
+    let (num, unit) = q.split_at(split);
+    let n: f64 = num.parse().ok()?;
+    let bytes = n * match unit {
+        "" => 1.0,
+        "Ki" => 1024.0,
+        "Mi" => 1024f64.powi(2),
+        "Gi" => 1024f64.powi(3),
+        "Ti" => 1024f64.powi(4),
+        "k" | "K" => 1e3,
+        "M" => 1e6,
+        "G" => 1e9,
+        "T" => 1e12,
+        _ => return None,
+    };
+    (bytes.is_finite() && bytes >= 0.0).then_some(bytes / 1024f64.powi(3))
+}
+
 /// A pod reduced to the fields a status view needs.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct PodBrief {
@@ -266,6 +306,25 @@ impl K8sDriver {
             Err(K8sError::Api(kube::Error::Api(e))) if e.code == 404 => Ok(None),
             Err(e) => Err(e),
         }
+    }
+
+    /// Hardware capacity of the Kubernetes node a Ceph host runs on, trying the host name as-is
+    /// and with dots turned into dashes. `None` when no node matches or it reports no capacity.
+    pub async fn node_capacity(&self, host: &str) -> Result<Option<NodeCapacity>, K8sError> {
+        let dashed = host.replace('.', "-");
+        let candidates: &[&str] = if dashed == host { &[host] } else { &[host, &dashed] };
+        for name in candidates {
+            let Some(node) = self.get_node(name).await? else {
+                continue;
+            };
+            let cap = node.status.and_then(|s| s.capacity).unwrap_or_default();
+            let cpu = cap.get("cpu").and_then(|q| parse_cpu_cores(&q.0));
+            let mem = cap.get("memory").and_then(|q| parse_memory_gib(&q.0));
+            if let (Some(cpu_cores), Some(memory_gib)) = (cpu, mem) {
+                return Ok(Some(NodeCapacity { node: (*name).to_string(), cpu_cores, memory_gib }));
+            }
+        }
+        Ok(None)
     }
 
     /// Pods in `ns` matching a label selector, reduced to what a status view needs.
@@ -527,6 +586,21 @@ pub fn upsert_device(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_kubernetes_cpu_and_memory_quantities() {
+        assert_eq!(parse_cpu_cores("16"), Some(16.0));
+        assert_eq!(parse_cpu_cores("3920m"), Some(3.92));
+        assert_eq!(parse_cpu_cores("0.5"), Some(0.5));
+        assert_eq!(parse_cpu_cores("lots"), None);
+        assert_eq!(parse_memory_gib("1048576Ki"), Some(1.0));
+        assert_eq!(parse_memory_gib("64Gi"), Some(64.0));
+        assert_eq!(parse_memory_gib("1073741824"), Some(1.0));
+        assert!((parse_memory_gib("64G").unwrap() - 59.6046).abs() < 1e-3);
+        assert_eq!(parse_memory_gib("1e9"), None);
+        assert_eq!(parse_memory_gib(""), None);
+        assert_eq!(parse_memory_gib("12Zi"), None);
+    }
 
     #[test]
     fn storage_spec_reads_rooks_camel_case_keys() {

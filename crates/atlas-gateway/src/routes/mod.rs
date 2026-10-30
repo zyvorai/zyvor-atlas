@@ -10,6 +10,8 @@ mod backends;
 mod ceph_devices;
 pub(crate) mod ceph_nvme;
 pub(crate) mod ceph_nvmeof;
+pub(crate) mod ceph_objectstore;
+pub(crate) mod ceph_sizing;
 pub(crate) mod databridge;
 mod day2;
 mod image_import;
@@ -145,6 +147,8 @@ pub fn router(state: AppState) -> Router {
         .route("/ceph/devices", get(ceph_devices::get_ceph_devices))
         .route("/ceph/nvme", get(ceph_nvme::get_ceph_nvme))
         .route("/ceph/nvmeof", get(ceph_nvmeof::get_ceph_nvmeof))
+        .route("/ceph/osd-objectstore", get(ceph_objectstore::get_ceph_osd_objectstore))
+        .route("/ceph/sizing", get(ceph_sizing::get_ceph_sizing))
         .route("/ceph/df", get(get_ceph_df))
         .route("/ceph/health-rollup", get(get_ceph_health_rollup))
         .route("/ceph/rook-status", get(get_rook_status))

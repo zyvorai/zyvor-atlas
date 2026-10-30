@@ -36,6 +36,25 @@ PVC from an `nvmeof.csi.ceph.com` StorageClass, and deleting that PVC deletes th
 namespace. So Atlas does not offer to map an existing RBD volume into a subsystem: Rook has no
 supported path for it.
 
+## OSD object store and versions: `GET /ceph/osd-objectstore`
+
+What each OSD reports in `ceph osd metadata`: object store and Ceph version, with counts and a
+`mixed_versions` flag for rolling upgrades. Keys an OSD does not report are `null` and counted as
+`unknown`. Atlas infers nothing from these about the OSD implementation. CLI:
+`atlasctl ceph-osd-objectstore`; MCP: `ceph_osd_objectstore`.
+
+## Sizing: `GET /ceph/sizing`
+
+For each host with NVMe drives, compares Kubernetes node capacity with a rule of thumb for
+IOPS-optimized NVMe clusters: 10 CPU cores per NVMe device, and 16 GiB of RAM plus 5 GiB per OSD.
+These are heuristics from Red Hat sizing guidance quoted to us, not requirements, and not checked
+against a primary source. Override them with `ATLAS_SIZING_CORES_PER_NVME`,
+`ATLAS_SIZING_RAM_BASE_GIB` and `ATLAS_SIZING_RAM_PER_OSD_GIB`. A host is `ok`, `undersized` (with
+the shortfalls listed) or `unknown`: with no Kubernetes cluster attached, or when no node matches
+the Ceph host name (tried as-is and with dots turned into dashes), nothing is judged. Capacity is
+the node's hardware capacity, not what is left for Ceph. CLI: `atlasctl ceph-sizing`; MCP:
+`ceph_sizing`; the Ops Advisor flags undersized hosts.
+
 ## Crimson
 
 Crimson is a Seastar-based rewrite of `ceph-osd`. The Red Hat article (January 2021) calls it

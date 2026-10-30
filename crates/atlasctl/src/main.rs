@@ -75,6 +75,10 @@ enum Command {
     CephNvme,
     /// GET /api/atlas/v1/ceph/nvmeof — Rook NVMe-oF gateways, their pods and NVMe-oF StorageClasses
     CephNvmeof,
+    /// GET /api/atlas/v1/ceph/osd-objectstore — each OSD's object store and Ceph version
+    CephOsdObjectstore,
+    /// GET /api/atlas/v1/ceph/sizing — NVMe hosts against the CPU/RAM rule of thumb
+    CephSizing,
     /// GET /api/atlas/v1/ceph/df — cluster + per-pool capacity/usage/objects
     CephDf,
     /// GET /api/atlas/v1/metrics/history — persisted capacity/IO/job time-series (--minutes)
@@ -656,6 +660,8 @@ async fn main() -> Result<()> {
         Command::CephDevices => ("GET", "/api/atlas/v1/ceph/devices".to_string(), None),
         Command::CephNvme => ("GET", "/api/atlas/v1/ceph/nvme".to_string(), None),
         Command::CephNvmeof => ("GET", "/api/atlas/v1/ceph/nvmeof".to_string(), None),
+        Command::CephOsdObjectstore => ("GET", "/api/atlas/v1/ceph/osd-objectstore".to_string(), None),
+        Command::CephSizing => ("GET", "/api/atlas/v1/ceph/sizing".to_string(), None),
         Command::CephDf => ("GET", "/api/atlas/v1/ceph/df".to_string(), None),
         Command::Policies => ("GET", "/api/atlas/v1/policies".to_string(), None),
         Command::ScheduleSnapshots {

@@ -68,6 +68,8 @@ struct AdvisorEvidence {
     alert_titles: Vec<String>,
     /// NVMe drives with a wear/error concern, one `devid: reason` line each (see `ceph_nvme`).
     nvme_attention: Vec<String>,
+    /// Hosts with NVMe drives that fall short of the CPU/RAM rule of thumb (see `ceph_sizing`).
+    sizing_attention: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -337,6 +339,7 @@ pub(crate) async fn compute_advisor(
 
     let mut evidence = build_evidence(&metrics, &forecast, &alerts, failed_jobs_15m);
     evidence.nvme_attention = super::ceph_nvme::attention(s).await;
+    evidence.sizing_attention = super::ceph_sizing::attention(s).await;
     let (risk_score, mut actions) = assess(&evidence);
     actions.sort_by_key(|a| a.priority);
     let risk_level = risk_level(risk_score);
@@ -1068,6 +1071,7 @@ fn build_evidence(
             .map(|a| a.title.clone())
             .collect(),
         nvme_attention: Vec::new(),
+        sizing_attention: Vec::new(),
     }
 }
 
@@ -1173,6 +1177,20 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
                 e.nvme_attention.iter().take(3).cloned().collect::<Vec<_>>().join(" | ")
             ),
             "/api/atlas/v1/ceph/nvme",
+        ));
+    }
+    if !e.sizing_attention.is_empty() {
+        // A rule of thumb, not a measurement: it adds less than a failing drive does.
+        score += 10;
+        actions.push(action(
+            3,
+            "Check CPU and RAM on NVMe hosts",
+            format!(
+                "{} host(s) fall short of the NVMe sizing rule of thumb: {}",
+                e.sizing_attention.len(),
+                e.sizing_attention.iter().take(3).cloned().collect::<Vec<_>>().join(" | ")
+            ),
+            "/api/atlas/v1/ceph/sizing",
         ));
     }
     if actions.is_empty() {
@@ -1522,6 +1540,7 @@ mod tests {
             unfound_objects: 0.0,
             alert_titles: vec![],
             nvme_attention: vec![],
+            sizing_attention: vec![],
         }
     }
 
@@ -1536,6 +1555,18 @@ mod tests {
         assert!(score > calm);
         let a = actions.iter().find(|a| a.inspect == "/api/atlas/v1/ceph/nvme").unwrap();
         assert!(a.rationale.contains("SAMSUNG_0002"));
+    }
+
+    #[test]
+    fn undersized_nvme_hosts_add_a_modest_sizing_action() {
+        let (calm, _) = assess(&evidence());
+        let flagged = AdvisorEvidence {
+            sizing_attention: vec!["node01: 8.0 CPU cores, rule of thumb asks for 20.0".into()],
+            ..evidence()
+        };
+        let (score, actions) = assess(&flagged);
+        assert_eq!(score, calm + 10);
+        assert!(actions.iter().any(|a| a.inspect == "/api/atlas/v1/ceph/sizing"));
     }
 
     #[test]

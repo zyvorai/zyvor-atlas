@@ -8,7 +8,7 @@ decide when and where to post it. Keep claims factual: other storage vendors als
 
 ## One-line description
 
-Atlas: Apache-2.0 storage control plane (Ceph, NFS, ZFS, Longhorn, native filesystem). MCP server with 29
+Atlas: Apache-2.0 storage control plane (Ceph, NFS, ZFS, Longhorn, native filesystem). MCP server with 31
 read-only tools (inventory, Ops Advisor, eBPF I/O risk, Ceph, DR, DataBridge, jobs, audit) and two opt-in,
 audited, two-phase writes (`create_snapshot`, `ack_alert`); self-hosted, bearer-JWT auth, tenant-scoped.
 

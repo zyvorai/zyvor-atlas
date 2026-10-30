@@ -299,6 +299,27 @@ impl StorageDriver for FakeCephDriver {
         ]))
     }
 
+    /// One entry per OSD, on the same hosts as the `ceph device ls` fixture. `osd.5` runs a newer
+    /// patch release, as during a rolling upgrade.
+    async fn ceph_osd_metadata(&self) -> Result<serde_json::Value, DriverError> {
+        let osd = |id: i64, host: &str, version: &str| {
+            serde_json::json!({
+                "id": id,
+                "hostname": host,
+                "osd_objectstore": "bluestore",
+                "ceph_version": format!("ceph version {version} (squid)"),
+            })
+        };
+        Ok(serde_json::json!([
+            osd(0, "node01", "19.2.0"),
+            osd(1, "node01", "19.2.0"),
+            osd(2, "node02", "19.2.0"),
+            osd(3, "node02", "19.2.0"),
+            osd(4, "node03", "19.2.0"),
+            osd(5, "node03", "19.2.1"),
+        ]))
+    }
+
     /// One scrape per drive in the `ceph device ls` fixture. Two are unhealthy on purpose: the
     /// Samsung `…0002` is worn out with media errors, the Micron `…0002` is below its spare floor.
     async fn ceph_device_health(&self, devid: &str) -> Result<serde_json::Value, DriverError> {
