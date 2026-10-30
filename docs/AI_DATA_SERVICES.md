@@ -212,6 +212,17 @@ actual token prefix; text similarity is not a valid compatibility test. Hot-cach
 budget is 64 MiB per subject, capped by service capacity; disk reclamation is explicit
 GC after its upload grace period, so eviction is not immediate disk reclamation.
 
+### Prefix blocks
+
+`prefix_digests(token_ids, block_size)` returns the chained SHA-256 digest of each full token
+block, the keying prefix caches use: digest *i* covers all tokens up to block *i*, so prompts
+share it only when they share that whole prefix. `KVAdapter.put_blocks(digests, blocks)` stores
+one serialized block per digest and `KVAdapter.longest_prefix(digests)` returns the cached
+blocks of the longest unbroken leading run, stopping at the first miss. It is engine-neutral and
+stdlib-only: the serving runtime still produces and consumes the block bytes, and nothing here
+says a hit makes inference faster. Unit tested with a fake client; not run against vLLM or any
+engine.
+
 ## Recovery and cost evidence
 
 A recovery profile is a server-side allowlisted argv array, for example:
