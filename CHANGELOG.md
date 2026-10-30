@@ -11,6 +11,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- MLPerf Storage harness for atlas-native (`Dockerfile.mlperf`, `deploy/mlperf/mlperf-run.sh`, `docs/MLPERF.md`). Written
+  but not yet built or run; no result and no submission.
 
 - Scoped agent tokens: `POST /auth/tokens` accepts `tools`, minting a token valid only on the MCP edge and only for
   those tools (the role still applies; refused on REST, gRPC and `/metrics`). Denied calls are audited as

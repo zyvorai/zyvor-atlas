@@ -1,0 +1,29 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+# atlas-mlperf: MLPerf Storage (MLCommons) runner for atlas-native filesystems (docs/MLPERF.md).
+# Mounts a filesystem with atlas-native-mount and runs the unmodified upstream `mlpstorage`
+# benchmark on it. MLPerf Storage is a separate program (Apache-2.0); nothing in Atlas links it.
+# ---- builder ----
+FROM docker.io/library/rust:1.99-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8 AS builder
+WORKDIR /build
+COPY . .
+RUN cargo build --release --locked -p atlas-native-fuse --features fuse --bin atlas-native-mount
+
+# ---- runtime ----
+# MLPerf Storage documents Ubuntu 24.04 with Python 3.12 as its tested platform.
+FROM docker.io/library/ubuntu:24.04 AS runtime
+ARG DEBIAN_FRONTEND=noninteractive
+# Branch or tag of github.com/mlcommons/storage. Pin a release tag for a reproducible image.
+ARG MLPERF_REF=main
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl git fuse3 util-linux openssh-client libopenmpi-dev openmpi-common openmpi-bin \
+    && rm -rf /var/lib/apt/lists/*
+# uv creates the benchmark's virtualenv from its lockfile on first use.
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:/opt/storage:${PATH}"
+RUN git clone https://github.com/mlcommons/storage.git /opt/storage \
+    && cd /opt/storage && git checkout "$MLPERF_REF" \
+    && mlpstorage --help >/dev/null
+COPY --from=builder /build/target/release/atlas-native-mount /usr/local/bin/atlas-native-mount
+COPY deploy/mlperf/mlperf-run.sh /usr/local/bin/mlperf-run
+ENTRYPOINT ["/usr/local/bin/mlperf-run"]

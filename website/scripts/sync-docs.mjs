@@ -60,6 +60,7 @@ const DOCS = [
   ['NATIVE_DATA_REDUCTION.md', 'atlas-native', 'data-reduction', 12, 'Compression and dedup'],
   ['DEDUP_ESTIMATE.md', 'control-plane', 'dedup-estimate', 20, 'Dedup savings estimator'],
   ['IO500.md', 'atlas-native', 'io500', 13, 'IO500 benchmark'],
+  ['MLPERF.md', 'atlas-native', 'mlperf', 14, 'MLPerf Storage harness'],
 
   ['DR.md', 'disaster-recovery', 'dr', 1, 'Disaster recovery (Ceph)'],
   ['NATIVE_REPLICATION.md', 'disaster-recovery', 'native-replication', 2, 'Native replication'],
