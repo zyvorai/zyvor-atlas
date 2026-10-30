@@ -148,6 +148,10 @@ enum Command {
         role: String,
         #[arg(long, default_value_t = 3600)]
         ttl_secs: u64,
+        /// Scope the token to this MCP tool (repeat for several). A scoped token works only on the
+        /// MCP edge, never on REST, gRPC or /metrics.
+        #[arg(long = "tool")]
+        tools: Vec<String>,
     },
     /// POST /api/atlas/v1/rbd-usage/refresh — recompute used_bytes via rbd du
     RefreshUsage,
@@ -614,6 +618,16 @@ async fn io_request(
     get_print(client, token, &format!("{base}{path}")).await
 }
 
+/// Body of `POST /auth/tokens`. `tools` is sent only when non-empty: an absent field mints an
+/// ordinary, unscoped token, while any value scopes it to the MCP edge.
+fn issue_token_body(subject: &str, role: &str, ttl_secs: u64, tools: &[String]) -> serde_json::Value {
+    let mut body = serde_json::json!({ "subject": subject, "role": role, "ttl_secs": ttl_secs });
+    if !tools.is_empty() {
+        body["tools"] = serde_json::json!(tools);
+    }
+    body
+}
+
 async fn get_print(client: &reqwest::Client, token: Option<&str>, url: &str) -> Result<()> {
     let mut req = client.get(url);
     if let Some(t) = token {
@@ -755,10 +769,11 @@ async fn main() -> Result<()> {
             subject,
             role,
             ttl_secs,
+            tools,
         } => (
             "POST",
             "/api/atlas/v1/auth/tokens".to_string(),
-            Some(serde_json::json!({ "subject": subject, "role": role, "ttl_secs": ttl_secs })),
+            Some(issue_token_body(subject, role, *ttl_secs, tools)),
         ),
         Command::RefreshUsage => ("POST", "/api/atlas/v1/rbd-usage/refresh".to_string(), None),
         Command::RbdImages { pool } => (
@@ -1266,4 +1281,18 @@ async fn main() -> Result<()> {
         anyhow::bail!("request failed: HTTP {status}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_token_is_scoped_only_when_tools_are_given() {
+        let plain = issue_token_body("svc", "viewer", 60, &[]);
+        assert!(plain.get("tools").is_none());
+        let scoped = issue_token_body("agent", "viewer", 60, &["ceph_nvme".into(), "io_ai".into()]);
+        assert_eq!(scoped["tools"], serde_json::json!(["ceph_nvme", "io_ai"]));
+        assert_eq!(scoped["role"], "viewer");
+    }
 }
