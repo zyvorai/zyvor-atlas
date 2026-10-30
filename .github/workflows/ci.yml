@@ -36,7 +36,7 @@ jobs:
       # curl.h ships with the system SDK there).
       - name: Install protoc + cmake + libcurl
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
       - name: Application recovery scenario tests
         run: PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_recovery/tests -v
       - name: AI data services core and Iceberg scenarios
@@ -146,7 +146,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
       - name: Install protoc
         run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:
           key: postgres-test
       - name: atlas-gateway integration suite against Postgres
