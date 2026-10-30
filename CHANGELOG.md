@@ -11,6 +11,12 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `atlas-native` data node: with the `rdma` feature and `ATLAS_NATIVE_RDMA=1`, a client can send `RdmaUpgrade { gid_index }`
+  on an ordinary connection; the node answers `RdmaReady` and serves the same request protocol over an RDMA queue pair
+  (server side only; the client pool still uses TCP). Off by default; refused with an error otherwise. Verified on
+  SoftRoCE only (append + read back, 200 kB), no RDMA NIC and no throughput numbers. `with_stream` now waits for a
+  ready barrier on the control channel and uses a longer ACK timeout, because the first send could otherwise reach a peer
+  queue pair that was not up yet.
 - MLPerf Storage harness for atlas-native (`Dockerfile.mlperf`, `deploy/mlperf/mlperf-run.sh`, `docs/MLPERF.md`). Written
   but not yet built or run; no result and no submission.
 
