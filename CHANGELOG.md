@@ -11,6 +11,9 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- Scoped agent tokens: `POST /auth/tokens` accepts `tools`, minting a token valid only on the MCP edge and only for
+  those tools (the role still applies; refused on REST, gRPC and `/metrics`). Denied calls are audited as
+  `mcp.tool.denied`. Agent-safety scenario tests in `tests/mcp_agent.rs`.
 - `POST /ceph/nvmeof/namespaces` (admin, `confirm`) and `atlasctl ceph-nvmeof-create`: provision a new NVMe-oF namespace as a
   PVC from an `nvmeof.csi.ceph.com` StorageClass, as the ordinary `volume.create` job. REST and CLI only; not yet run on a
   live Rook cluster.

@@ -16,9 +16,10 @@ use rmcp::{
         wrapper::{Json as ToolJson, Parameters},
     },
     model::{
-        ErrorData as McpError, GetPromptRequestParams, GetPromptResponse, ListPromptsResult,
-        ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams,
-        ReadResourceResponse, ServerCapabilities, ServerConfig,
+        CallToolRequestParams, CallToolResponse, ErrorData as McpError, GetPromptRequestParams,
+        GetPromptResponse, ListPromptsResult, ListResourcesResult, ListToolsResult,
+        PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResponse,
+        ServerCapabilities, ServerConfig,
     },
     service::{RequestContext, RoleServer},
     tool, tool_handler, tool_router,
@@ -461,8 +462,64 @@ impl AtlasMcp {
 
 // `router = self.tool_router`: the macro's default is `Self::tool_router()`, which would ignore the
 // per-instance router that conditionally includes the guarded write tools.
+//
+// `call_tool` and `list_tools` are written out (the macro skips methods that already exist) so a
+// scoped agent token (`Actor::tools`) is enforced at one chokepoint for every tool, present and
+// future, instead of in each tool body.
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for AtlasMcp {
+    async fn call_tool(
+        &self,
+        request: CallToolRequestParams,
+        context: RequestContext<RoleServer>,
+    ) -> Result<CallToolResponse, McpError> {
+        let actor = actor_from(&context)?;
+        if !actor.may_call_tool(&request.name) {
+            let _ = atlas_inventory::audit::record(
+                &self.state.pool,
+                Some(&actor.tenant_id),
+                &actor.id,
+                "mcp.tool.denied",
+                "mcp_tool",
+                &request.name,
+                "denied",
+                None,
+                None,
+            )
+            .await;
+            return Err(McpError::invalid_request(
+                format!("tool '{}' is not permitted for this token", request.name),
+                None,
+            ));
+        }
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        self.tool_router.call(tcc).await
+    }
+
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ListToolsResult, McpError> {
+        let actor = actor_from(&context)?;
+        let supports_cache_hints = context
+            .protocol_version()
+            .is_some_and(|v| v >= rmcp::model::ProtocolVersion::V_2026_07_28);
+        Ok(ListToolsResult {
+            result_type: Some(rmcp::model::ResultType::COMPLETE),
+            tools: self
+                .tool_router
+                .list_all()
+                .into_iter()
+                .filter(|t| actor.may_call_tool(&t.name))
+                .collect(),
+            meta: None,
+            next_cursor: None,
+            ttl_ms: supports_cache_hints.then_some(0),
+            cache_scope: supports_cache_hints.then_some(rmcp::model::CacheScope::Public),
+        })
+    }
+
     fn get_info(&self) -> ServerConfig {
         let mut info = ServerConfig::default();
         info.capabilities = ServerCapabilities::builder()
