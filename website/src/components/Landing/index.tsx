@@ -71,11 +71,20 @@ const BLOCKS = [
   {
     tag: 'Atlas Native',
     title: 'Run the filesystem yourself.',
-    body: 'Striped, checksummed extents, sharded Raft metadata, 3 replicas or Reed-Solomon k+m, cold extents tiered to S3, and NFS, SMB, S3 and CSI over the same files. Retention-locked snapshots, opt-in LZ4 compression and dedup, and a ransomware assessment (unit-tested; only snapshot locks are lab-verified). One small pod for edge sites.',
+    body: 'Striped, checksummed extents, sharded Raft metadata, 3 replicas or Reed-Solomon k+m, cold extents tiered to S3, and NFS, SMB, S3 and CSI over the same files. Opt-in LZ4 compression and dedup with an honest savings report, and one small pod for edge sites.',
     items: ['Erasure coding with a rebuild controller', 'POSIX ACLs and quotas', 'Single-node edge profile'],
     img: '/anim/native-io.svg',
     alt: 'Animated Atlas Native data path',
     to: '/docs/',
+  },
+  {
+    tag: 'Data protection',
+    title: 'Tamper-proof by design.',
+    body: 'Lock a snapshot and nobody can delete or shorten it, admins included: the lock is enforced in the Raft catalog. S3 objects get compliance-mode retention. When the activity windows look like encrypt-and-delete, Atlas calls it likely ransomware, explains why, and can take a locked snapshot on its own. Checked live on a multi-process cluster: 27 of 27 checks, with a synthetic burst, not yet a real encrypting workload.',
+    items: ['Retention-locked block and filesystem snapshots', 'S3 compliance retention that refuses delete and overwrite', 'Read-only verdict with opt-in auto-protect'],
+    img: '/anim/tamper-proof.svg',
+    alt: 'A burst of high-entropy writes is flagged, a locked snapshot is taken, and deleting it is refused',
+    to: '/docs/atlas-native/worm',
   },
   {
     tag: 'Agent-ready operations',

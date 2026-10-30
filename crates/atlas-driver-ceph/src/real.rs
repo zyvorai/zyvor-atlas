@@ -9,7 +9,8 @@ use atlas_api_types::{
 };
 use atlas_driver_core::{DriverError, StorageDriver};
 
-use crate::cmd::{ceph_cmd, rbd_cmd, rbd_du_pool};
+use crate::cmd::{ceph_cmd, rbd_cmd, rbd_du_pool, rbd_export_diff_head_child, rbd_list};
+use crate::dedup::{scan_export_diff, ScanEnd};
 
 /// Live Ceph backend accessed through the `ceph`/`rbd` CLIs.
 pub struct RealCephDriver {
@@ -159,6 +160,66 @@ impl RealCephDriver {
 impl StorageDriver for RealCephDriver {
     fn backend_id(&self) -> &str {
         &self.backend_id
+    }
+
+    async fn estimate_dedup(
+        &self,
+        pool: &str,
+        opts: atlas_api_types::DedupEstimateOptions,
+    ) -> Result<atlas_api_types::DedupEstimate, DriverError> {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(opts.max_secs.max(1));
+        // Only RBD pools hold images; `pool` goes into `rbd` as an argument, not a shell string.
+        let known = self.list_pools().await?;
+        if !known.iter().any(|p| p.name == pool && p.kind == "rbd") {
+            return Err(DriverError::Backend(format!("invalid: '{pool}' is not an RBD pool on this cluster")));
+        }
+        let used: std::collections::HashMap<String, i64> = rbd_du_pool(pool).await?.into_iter().collect();
+        let total: u64 = used.values().map(|&u| u.max(0) as u64).sum();
+        let mut images = rbd_list(pool).await?;
+        images.sort_by_key(|i| std::cmp::Reverse(used.get(i).copied().unwrap_or(0)));
+        let mut scanner = atlas_driver_core::dedup::DedupScanner::new(
+            opts.block_size,
+            atlas_driver_core::dedup::DEFAULT_MAX_UNIQUE,
+        );
+        let mut stopped = false;
+        // True only when every image's stream was read to its end.
+        let mut complete = true;
+        for image in images {
+            let spent = scanner.examined_bytes();
+            if stopped || spent >= opts.max_bytes || std::time::Instant::now() >= deadline {
+                complete = false;
+                break;
+            }
+            let mut child = rbd_export_diff_head_child(pool, &image)?;
+            let mut out = child
+                .stdout
+                .take()
+                .ok_or_else(|| DriverError::Backend("rbd export-diff: no stdout".into()))?;
+            let left = deadline.saturating_duration_since(std::time::Instant::now());
+            let scan = tokio::time::timeout(
+                left,
+                scan_export_diff(&mut out, &mut scanner, opts.max_bytes - spent, opts.block_size),
+            )
+            .await;
+            // The scan usually stops before the stream ends; reap the exporter either way.
+            let _ = child.kill().await;
+            match scan {
+                Ok(Ok(ScanEnd::Complete)) => {}
+                Ok(Ok(ScanEnd::Budget | ScanEnd::Truncated)) | Err(_) => stopped = true,
+                Ok(Err(e)) => return Err(e),
+            }
+        }
+        let scan = scanner.finish();
+        // `rbd du` counts at object granularity, far above the extents `export-diff` emits, so
+        // measuring a finished scan against it would flag a complete read as a lower bound.
+        let total = if complete && !scan.truncated {
+            scan.scanned_bytes + scan.zero_bytes
+        } else {
+            total
+        };
+        let mut est = atlas_driver_core::dedup::estimate_from_scan(&self.backend_id, pool, &scan, Some(total));
+        est.note.push_str(" Read from the live images' export-diff streams, so it is not crash-consistent.");
+        Ok(est)
     }
 
     async fn discover(&self) -> Result<DiscoveryResult, DriverError> {

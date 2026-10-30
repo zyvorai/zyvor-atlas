@@ -17,7 +17,7 @@ COPY crates/atlas-gateway/ui/ ./
 RUN npm run build
 
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29 AS builder
+FROM docker.io/library/rust:1.99-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8 AS builder
 # protoc for gRPC; cmake for vendored librdkafka (kafka-lag). Match Dockerfile features so real
 # MongoDB discovery/CDC and precise lag work on the Ceph gateway image too.
 RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler cmake \
@@ -30,7 +30,7 @@ RUN cargo build --release -p atlas-gateway -p atlasctl \
     --features atlas-gateway/mcp,atlas-databridge/mongodb,atlas-databridge/sqlserver,atlas-databridge/oracle,atlas-databridge/kafka-lag
 
 # ---- runtime (debian + ceph squid client) ----
-FROM docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime
+FROM docker.io/library/debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime
 # zfsutils-linux/util-linux/setcap: same raw-disk provisioning tooling as `Dockerfile` (Disks page,
 # helm `disks.enabled`) — see the long comment there for the file-capabilities rationale and
 # docs/DISKS.md. zfsutils-linux is in Debian's `contrib` component.

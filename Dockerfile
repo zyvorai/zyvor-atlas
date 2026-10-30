@@ -14,7 +14,7 @@ COPY crates/atlas-gateway/ui/ ./
 RUN npm run build
 
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:e12566d5abc17a0da741628782cdb504b68b8961f5bfcf677936bf3e8b32de29 AS builder
+FROM docker.io/library/rust:1.99-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8 AS builder
 # protoc for the gRPC crates; cmake for the vendored librdkafka (kafka-lag feature).
 RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler cmake && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
@@ -27,7 +27,7 @@ RUN cargo build --release -p atlas-gateway -p atlasctl \
     --features atlas-gateway/mcp,atlas-databridge/mongodb,atlas-databridge/sqlserver,atlas-databridge/oracle,atlas-databridge/kafka-lag
 
 # ---- runtime ----
-FROM docker.io/library/debian:bookworm-slim@sha256:7c7b2c966bc9ee8cedfeef67e0e279108992c77681fa595db4a9d65c06ccc587 AS runtime
+FROM docker.io/library/debian:bookworm-slim@sha256:7ff6ba31527b9e336162fa061746c366c4b2032f4d2cff2078bea43f78efe3f8 AS runtime
 # ceph/rbd CLIs are only needed when ATLAS_CEPH_DRIVER_MODE=real against a real cluster.
 # zfsutils-linux (zpool/zfs) + util-linux (lsblk/wipefs/findmnt) are only exercised when
 # ATLAS_ZFS_DRIVER_MODE=real against a raw host disk (see docs/DISKS.md) — the container still

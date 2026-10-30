@@ -610,22 +610,33 @@ pub fn mirror_promote_blocker(
     None
 }
 
-/// Actual used (allocated) bytes of every image in a pool (`rbd du pool --format json`), as
-/// `(image_name, used_size)` pairs. Used to enrich `rbd ls -l` (which has no `used_size` field).
+/// Actual used (allocated) bytes of every image in a pool (`rbd du --pool <pool> --format json`),
+/// as `(image_name, used_size)` pairs. Used to enrich `rbd ls -l` (which has no `used_size` field).
+/// The pool goes in `--pool`: a bare positional is an image spec in the default pool (`rbd`).
 pub async fn rbd_du_pool(pool: &str) -> Result<Vec<(String, i64)>, DriverError> {
-    let v = rbd_cmd(&["du", pool]).await?;
-    Ok(v.get("images")
+    let v = rbd_cmd(&["du", "--pool", pool]).await?;
+    Ok(parse_du_images(&v))
+}
+
+/// Per-image `(name, used_size)` from `rbd du --format json`. Squid names the image `name`;
+/// `image` is what `rbd ls -l` uses, so accept both.
+fn parse_du_images(v: &serde_json::Value) -> Vec<(String, i64)> {
+    v.get("images")
         .and_then(|a| a.as_array())
         .map(|a| {
             a.iter()
                 .filter_map(|img| {
-                    let name = img.get("image").and_then(|n| n.as_str())?.to_string();
+                    let name = img
+                        .get("name")
+                        .or_else(|| img.get("image"))
+                        .and_then(|n| n.as_str())?
+                        .to_string();
                     let used = img.get("used_size").and_then(|u| u.as_i64())?;
                     Some((name, used))
                 })
                 .collect()
         })
-        .unwrap_or_default())
+        .unwrap_or_default()
 }
 
 /// Actual used (allocated) bytes of an RBD image (`rbd du pool/image --format json`).
@@ -772,6 +783,18 @@ pub fn rbd_export_diff_child(
     snap: &str,
 ) -> Result<tokio::process::Child, DriverError> {
     let spec = format!("{pool}/{image}@{snap}");
+    cmd("rbd")
+        .args(["export-diff", &spec, "-"])
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| DriverError::Unreachable(format!("failed to spawn `rbd`: {e}")))
+}
+
+/// Spawn `rbd export-diff pool/image -` of the image head (no snapshot), stdout piped. Read-only;
+/// the caller reads at most what it needs and then kills the child.
+pub fn rbd_export_diff_head_child(pool: &str, image: &str) -> Result<tokio::process::Child, DriverError> {
+    let spec = format!("{pool}/{image}");
     cmd("rbd")
         .args(["export-diff", &spec, "-"])
         .stdout(std::process::Stdio::piped())
@@ -1005,8 +1028,26 @@ async fn run_json(bin: &str, args: &[&str]) -> Result<serde_json::Value, DriverE
 
 #[cfg(test)]
 mod tests {
-    use super::{interpret_ok_to_stop, journal_peers_replayed, mirror_promote_blocker};
+    use super::{
+        interpret_ok_to_stop, journal_peers_replayed, mirror_promote_blocker, parse_du_images,
+    };
     use serde_json::json;
+
+    #[test]
+    fn du_images_accept_the_squid_name_key_and_the_older_image_key() {
+        // Captured from `rbd du --pool rbd-nvme-prod --format json` on Ceph 19.2.3.
+        let squid = json!({"images":[
+            {"name":"csi-vol-8ae5","id":"15295d","provisioned_size":1073741824,"used_size":50331648},
+            {"name":"dedup-live","id":"132379","provisioned_size":1048576,"used_size":1048576}],
+            "total_provisioned_size":1074790400,"total_used_size":51380224});
+        assert_eq!(
+            parse_du_images(&squid),
+            vec![("csi-vol-8ae5".to_string(), 50331648), ("dedup-live".to_string(), 1048576)]
+        );
+        let older = json!({"images":[{"image":"a","used_size":7}]});
+        assert_eq!(parse_du_images(&older), vec![("a".to_string(), 7)]);
+        assert!(parse_du_images(&json!({})).is_empty());
+    }
 
     #[test]
     fn ok_to_stop_success_carries_the_flag_and_cephs_detail() {

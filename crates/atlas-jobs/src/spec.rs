@@ -326,6 +326,18 @@ pub enum JobSpec {
         #[serde(default)]
         resume_from: u64,
     },
+    /// Estimate what dedup (and compression) would save on a pool, without enabling either. Reads
+    /// data and can run for hours, so it is a long job: its own task, one at a time by default,
+    /// and no retries. See `docs/DEDUP_ESTIMATE.md`.
+    #[serde(rename = "dedup.estimate")]
+    DedupEstimate {
+        pool_id: String,
+        pool_name: String,
+        backend_id: String,
+        max_bytes: u64,
+        block_size: u64,
+        max_secs: u64,
+    },
     /// Delete a backup: remove its S3 manifest + data objects, the RBD snapshot, and the CSI
     /// VolumeSnapshot the backup created (best-effort). The VolumeSnapshot carries the
     /// `pvc-as-source-protection` finalizer — leaving it behind permanently blocks the source
@@ -611,6 +623,7 @@ impl JobSpec {
             JobSpec::S3BackendSelfTest { .. } => "s3.backend.selftest",
             JobSpec::CephOsdAddDevice { .. } => "ceph.osd.add_device",
             JobSpec::ImageImport { .. } => "image.import",
+            JobSpec::DedupEstimate { .. } => "dedup.estimate",
         }
     }
 }
