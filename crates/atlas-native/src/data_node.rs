@@ -84,6 +84,11 @@ enum Request {
     /// The highest fence accepted from each metadata group. Older nodes drop the connection,
     /// which is how a client avoids sending a group they would silently treat as group 0.
     Fences,
+    /// Switch this connection to RDMA: the node replies `RdmaReady`, then both ends exchange
+    /// queue-pair endpoints over this connection and carry on, with the same protocol, over RDMA.
+    /// Needs the `rdma` feature and `ATLAS_NATIVE_RDMA=1` on the node; otherwise the node answers
+    /// with an error and the connection stays as it was.
+    RdmaUpgrade { gid_index: u32 },
 }
 
 fn is_zero(v: &usize) -> bool {
@@ -117,6 +122,7 @@ enum Response {
     Fenced {
         current: u64,
     },
+    RdmaReady,
     Error {
         message: String,
     },
@@ -511,7 +517,31 @@ fn accept_loop(listener: TcpListener, shared: &Arc<Shared>) {
     }
 }
 
+/// Whether this node may switch connections to RDMA: built with the `rdma` feature on Linux and
+/// switched on by the operator with `ATLAS_NATIVE_RDMA=1`. Off by default; the data path stays
+/// TCP/TLS unless asked.
+fn rdma_enabled() -> bool {
+    cfg!(all(feature = "rdma", target_os = "linux"))
+        && std::env::var("ATLAS_NATIVE_RDMA").is_ok_and(|v| v == "1")
+}
+
 fn serve(mut stream: Conn, sh: &Shared) {
+    // After a successful `RdmaUpgrade` the same request loop continues over an RDMA stream whose
+    // queue-pair endpoints were exchanged over this connection. A nested upgrade is refused.
+    if let Some(_gid_index) = serve_requests(&mut stream, sh, true) {
+        #[cfg(all(feature = "rdma", target_os = "linux"))]
+        {
+            let _ = crate::rdma::with_stream(&mut stream, _gid_index, |rdma| {
+                serve_requests(rdma, sh, false);
+                Ok(())
+            });
+        }
+    }
+}
+
+/// The request loop, generic over the byte stream. Returns the GID index when the client asked
+/// to switch to RDMA (and the node agreed); `None` when the connection ended.
+fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bool) -> Option<u32> {
     while let Ok(req) = read_header::<Request>(&mut stream) {
         let result = match req {
             Request::Append {
@@ -594,11 +624,32 @@ fn serve(mut stream: Conn, sh: &Shared) {
                 },
                 &[],
             ),
+            Request::RdmaUpgrade { gid_index } => {
+                if allow_upgrade && rdma_enabled() {
+                    if write_message(&mut stream, &Response::RdmaReady, &[]).is_err() {
+                        return None;
+                    }
+                    return Some(gid_index);
+                }
+                let message = if allow_upgrade {
+                    "RDMA is not enabled on this node"
+                } else {
+                    "RDMA is already in use on this connection"
+                };
+                write_message(
+                    &mut stream,
+                    &Response::Error {
+                        message: message.into(),
+                    },
+                    &[],
+                )
+            }
         };
         if result.is_err() {
-            return;
+            return None;
         }
     }
+    None
 }
 
 /// Idle connections a [`RemoteDevice`] keeps open for reuse.
@@ -952,5 +1003,75 @@ mod tests {
         huge.extend_from_slice(b"{}");
         assert!(read_header::<Request>(&mut huge.as_slice()).is_err());
         assert!(read_payload(&mut [].as_slice(), MAX_PAYLOAD + 1).is_err());
+    }
+    fn start_node() -> (tempfile::TempDir, DataNodeServer) {
+        let dir = tempfile::tempdir().unwrap();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let node = DataNodeServer::start("n1", dir.path(), listener).unwrap();
+        (dir, node)
+    }
+
+    /// A client that asks for RDMA on a node where it is off (the default, and always the case
+    /// without the `rdma` feature) gets a clean error, and the connection keeps working over TCP.
+    #[test]
+    fn an_rdma_upgrade_is_refused_cleanly_when_not_enabled() {
+        if rdma_enabled() {
+            return; // the node would agree; covered by the ignored RDMA test
+        }
+        let (_dir, node) = start_node();
+        let mut tcp = TcpStream::connect(node.local_addr()).unwrap();
+        write_message(&mut tcp, &Request::RdmaUpgrade { gid_index: 1 }, &[]).unwrap();
+        match read_header::<Response>(&mut tcp).unwrap() {
+            Response::Error { message } => assert!(message.contains("not enabled"), "{message}"),
+            other => panic!("expected an error, got {other:?}"),
+        }
+        write_message(&mut tcp, &Request::Devices, &[]).unwrap();
+        assert!(matches!(
+            read_header::<Response>(&mut tcp).unwrap(),
+            Response::Devices { count: 1 }
+        ));
+    }
+
+    /// The node serves the same protocol over RDMA after an upgrade: append and read back through
+    /// a queue pair on the host's RDMA device (SoftRoCE is enough). `cargo test -p atlas-native
+    /// --features rdma --lib -- --ignored rdma`.
+    #[cfg(all(feature = "rdma", target_os = "linux"))]
+    #[test]
+    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
+    fn node_serves_requests_over_rdma_after_an_upgrade() {
+        std::env::set_var("ATLAS_NATIVE_RDMA", "1");
+        let gid: u32 = std::env::var("ATLAS_RDMA_GID_INDEX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let (_dir, node) = start_node();
+        let mut tcp = TcpStream::connect(node.local_addr()).unwrap();
+        write_message(&mut tcp, &Request::RdmaUpgrade { gid_index: gid }, &[]).unwrap();
+        assert!(matches!(
+            read_header::<Response>(&mut tcp).unwrap(),
+            Response::RdmaReady
+        ));
+        let payload: Vec<u8> = (0..200_000u32).map(|i| (i % 249) as u8).collect();
+        let back = crate::rdma::with_stream(&mut tcp, gid, |s| {
+            write_message(
+                s,
+                &Request::Append { fence: 1, len: payload.len() as u64, device: 0, group: 0 },
+                &payload,
+            )?;
+            let Response::Appended { offset } = read_header::<Response>(s)? else {
+                return Err(io::Error::other("append was not acknowledged"));
+            };
+            write_message(
+                s,
+                &Request::Read { offset, len: payload.len() as u64, device: 0 },
+                &[],
+            )?;
+            let Response::Data { len } = read_header::<Response>(s)? else {
+                return Err(io::Error::other("read returned no data"));
+            };
+            read_payload(s, len)
+        })
+        .expect("requests over RDMA");
+        assert_eq!(back, payload);
     }
 }
