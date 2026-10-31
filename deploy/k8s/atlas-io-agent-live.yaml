@@ -38,7 +38,7 @@ spec:
         - { name: tracefs, hostPath: { path: /sys/kernel/tracing } }
       containers:
         - name: agent
-          image: ghcr.io/zyvorai/atlas-io-agent:0.9.0
+          image: ghcr.io/zyvorai/atlas-io-agent:0.10.0
           imagePullPolicy: IfNotPresent
           args: ["--bind", "0.0.0.0:5111", "--mode", "live"]
           env:
