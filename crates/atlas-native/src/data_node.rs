@@ -1196,4 +1196,80 @@ mod tests {
         let err = client.with_rdma(1, |_| Ok(())).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::Unsupported, "{err}");
     }
+
+    /// An in-memory connection: reads come from `input`, writes are collected in `output`.
+    struct Memory {
+        input: io::Cursor<Vec<u8>>,
+        output: Vec<u8>,
+    }
+
+    impl Read for Memory {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            self.input.read(buf)
+        }
+    }
+
+    impl Write for Memory {
+        fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+            self.output.write(buf)
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    fn empty_shared(root: &Path) -> Shared {
+        Shared {
+            devices: Vec::new(),
+            root: root.to_path_buf(),
+            fences: Mutex::new(BTreeMap::new()),
+            tls: None,
+            stop: AtomicBool::new(false),
+            stats: Stats::default(),
+            conns: Mutex::new(BTreeMap::new()),
+            next_conn: AtomicU64::new(0),
+            handlers: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// Sends an `RdmaUpgrade` request through the request loop and returns what the node answered and
+    /// whether it agreed to switch transports.
+    fn ask_for_upgrade(allow_upgrade: bool) -> (Response, Option<u32>) {
+        let dir = tempfile::tempdir().unwrap();
+        let mut input = Vec::new();
+        write_message(&mut input, &Request::RdmaUpgrade { gid_index: 1 }, &[]).unwrap();
+        let mut stream = Memory {
+            input: io::Cursor::new(input),
+            output: Vec::new(),
+        };
+        let outcome = serve_requests(&mut stream, &empty_shared(dir.path()), allow_upgrade);
+        let resp = read_header::<Response>(&mut stream.output.as_slice()).unwrap();
+        (resp, outcome)
+    }
+
+    /// `serve` passes `allow_upgrade = false` for a TLS connection (and for one already upgraded):
+    /// RDMA carries no encryption, so the node must answer with an error and keep the connection on TLS.
+    #[test]
+    fn an_rdma_upgrade_is_refused_when_the_connection_may_not_upgrade() {
+        let (resp, outcome) = ask_for_upgrade(false);
+        assert_eq!(outcome, None, "the connection must not switch transports");
+        match resp {
+            Response::Error { message } => assert!(message.contains("not available on this connection"), "{message}"),
+            other => panic!("expected an error, got {other:?}"),
+        }
+    }
+
+    /// Without `ATLAS_NATIVE_RDMA=1` even a plain connection is refused: the upgrade is opt-in.
+    #[test]
+    fn an_rdma_upgrade_is_refused_unless_the_node_enabled_it() {
+        if rdma_enabled() {
+            return; // the test host opted in; this case is about the default
+        }
+        let (resp, outcome) = ask_for_upgrade(true);
+        assert_eq!(outcome, None);
+        match resp {
+            Response::Error { message } => assert!(message.contains("not enabled"), "{message}"),
+            other => panic!("expected an error, got {other:?}"),
+        }
+    }
 }
