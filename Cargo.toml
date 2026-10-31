@@ -116,7 +116,7 @@ rustls-pki-types = "1"
 # no dedicated rusty-s3 action type, see atlas-driver-rgw/src/lib.rs.
 jiff = "0.2"
 # eBPF loader for atlas-io's live block-layer source (`bpf` feature, Linux only).
-aya = "0.14"
+aya = "0.15"
 
 [profile.release]
 lto = true
