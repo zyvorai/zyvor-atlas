@@ -346,7 +346,7 @@ impl S3Target {
                 let key = percent_encoding::percent_decode_str(&c.key)
                     .decode_utf8_lossy()
                     .into_owned();
-                (key, c.size)
+                (key, c.size.unwrap_or(0))
             }));
             match parsed.next_continuation_token {
                 Some(tok) => continuation_token = Some(tok),
