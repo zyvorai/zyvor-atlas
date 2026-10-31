@@ -459,6 +459,7 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     for n in [
         "ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans",
         "databridge_cdc_streams", "list_policies", "list_audit", "native_reduction", "volume_ransomware",
+        "osd_ok_to_stop", "ceph_health_rollup", "metrics_forecast", "upgrade_preflight", "protection_status",
     ] {
         assert!(names.contains(&n), "tools: {names:?}");
     }
@@ -467,7 +468,7 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     let tree_text = text_of(&tree);
     assert!(tree_text.contains("\"status\":\"ok\""), "{tree_text}");
     assert!(tree_text.contains("\"osds_not_serving\":1"), "fake tree has one down OSD: {tree_text}");
-    for n in ["ceph_status", "ceph_df", "ceph_nvme", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_policies"] {
+    for n in ["ceph_status", "ceph_df", "ceph_nvme", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_policies", "ceph_health_rollup", "metrics_forecast", "protection_status"] {
         let r = op.call_tool(CallToolRequestParams::new(n)).await.unwrap();
         assert_eq!(r.is_error, Some(false), "{n}: {}", text_of(&r));
     }
@@ -480,7 +481,7 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     op.cancel().await.unwrap();
 
     let viewer = connect(addr, secret, "viewer").await;
-    for n in ["ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_audit", "native_reduction"] {
+    for n in ["ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_audit", "native_reduction", "ceph_health_rollup", "metrics_forecast", "upgrade_preflight", "protection_status"] {
         let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
         assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
     }
@@ -507,6 +508,24 @@ async fn mcp_native_tools_fail_closed_without_a_native_backend() {
         .call_tool(CallToolRequestParams::new("volume_ransomware").with_arguments(args.as_object().unwrap().clone()))
         .await;
     assert!(r.is_err() || r.unwrap().is_error == Some(true), "an unknown volume must not get a verdict");
+    op.cancel().await.unwrap();
+}
+
+/// The OSD safety check validates its ids before asking Ceph anything.
+#[tokio::test]
+async fn mcp_osd_ok_to_stop_rejects_bad_ids() {
+    use rmcp::model::CallToolRequestParams;
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, _pool) = spawn(true, secret).await;
+    let op = connect(addr, secret, "operator").await;
+    for ids in [serde_json::json!([]), serde_json::json!([-1])] {
+        let args = serde_json::json!({ "ids": ids });
+        let r = op
+            .call_tool(CallToolRequestParams::new("osd_ok_to_stop").with_arguments(args.as_object().unwrap().clone()))
+            .await;
+        assert!(r.is_err() || r.unwrap().is_error == Some(true), "ids {ids} must be refused");
+    }
     op.cancel().await.unwrap();
 }
 

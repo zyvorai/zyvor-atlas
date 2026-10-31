@@ -27,6 +27,24 @@ const MAX_OSD_LISTED: usize = 50;
 const AUDIT_DEFAULT_LIMIT: i64 = 50;
 const AUDIT_MAX_LIMIT: i64 = 200;
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct OsdIdsArgs {
+    /// OSD ids to stop together, for example `[3, 4]`. At least one, at most 64.
+    ids: Vec<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ForecastArgs {
+    /// Minutes of metric history to fit, 1 to 20160. Default 1440 (one day).
+    minutes: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct ProtectionArgs {
+    /// Only volumes with this verdict, as the API names it. Default: all.
+    verdict: Option<String>,
+}
+
 pub(super) fn bounded(v: Value) -> Result<Value, McpError> {
     if v.to_string().len() > MAX_RESPONSE_BYTES {
         return Err(McpError::internal_error(
@@ -213,6 +231,105 @@ impl AtlasMcp {
                 .map_err(|e| atlas_common::AppError::Internal(e.to_string()))
         });
         let ToolJson(v) = rest(result)?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Would stopping these OSDs together leave every placement group available? \
+                        Ask before taking a host down (`ceph osd ok-to-stop`); `ok_to_stop: false` \
+                        carries Ceph's PG counts and reason. Read-only: it stops nothing. Up to 64 \
+                        OSD ids. Requires an operator-or-higher token."
+    )]
+    async fn osd_ok_to_stop(
+        &self,
+        Parameters(args): Parameters<OsdIdsArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.operator(&context)?;
+        let ids = args.ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        let query = serde_json::from_value(json!({ "ids": ids }))
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let ToolJson(v) = rest(
+            crate::routes::day2::osds_ok_to_stop(State(self.state.clone()), axum::extract::Query(query)).await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "One verdict for the Ceph cluster: health, capacity and Rook findings rolled up. \
+                        Read-only. Requires an operator-or-higher token."
+    )]
+    async fn ceph_health_rollup(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::inventory::get_ceph_health_rollup(State(self.state.clone())).await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Capacity forecast from the persisted metric history: when pools run out at the \
+                        current growth. `minutes` of history to fit (1 to 20160, default 1440). \
+                        Read-only. Requires an operator-or-higher token."
+    )]
+    async fn metrics_forecast(
+        &self,
+        Parameters(args): Parameters<ForecastArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.operator(&context)?;
+        let query = serde_json::from_value(json!({ "minutes": args.minutes }))
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let ToolJson(v) = rest(
+            crate::routes::observability::metrics_forecast(
+                State(self.state.clone()),
+                axum::extract::Query(query),
+            )
+            .await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Upgrade pre-flight: the checks that must pass before upgrading Atlas, with \
+                        each blocker named. Read-only; it upgrades nothing. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn upgrade_preflight(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::day2::upgrade_preflight(State(self.state.clone()), axum::Extension(actor)).await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Which volumes are protected (snapshots, backups, replication) and which are not, \
+                        with a verdict each. Optional `verdict` filter. Limited to the caller's tenant \
+                        unless admin. Read-only. Requires an operator-or-higher token."
+    )]
+    async fn protection_status(
+        &self,
+        Parameters(args): Parameters<ProtectionArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let query = serde_json::from_value(json!({ "verdict": args.verdict }))
+            .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
+        let ToolJson(v) = rest(
+            crate::routes::protection::list_protection_status(
+                State(self.state.clone()),
+                axum::Extension(actor),
+                axum::extract::Query(query),
+            )
+            .await,
+        )?;
         Ok(ToolJson(bounded(v)?))
     }
 

@@ -11,6 +11,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- MCP read tools `osd_ok_to_stop`, `ceph_health_rollup`, `metrics_forecast`, `upgrade_preflight` and `protection_status`, wrapping the existing routes with the same role and tenant checks.
+- Every MCP tool call now leaves an `mcp.tool.call` audit row with the caller, tool, outcome, token `jti` and role, written off the request path. `ATLAS_MCP_AUDIT_CALLS=0` turns it off. Before this only denials and guarded writes were audited.
 - MCP read tools `native_reduction` and `volume_ransomware`, so an agent can read atlas-native savings and a filesystem volume's ransomware verdict. Operator role, tenant-scoped, read-only: protecting a volume stays an admin REST call.
 
 ### Changed

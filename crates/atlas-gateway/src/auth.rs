@@ -52,6 +52,9 @@ pub struct Actor {
     pub tenant_id: String,
     /// See [`Claims::tools`]; empty = unscoped.
     pub tools: Vec<String>,
+    /// The token's `jti` (empty for the bootstrap secret, anonymous callers and legacy tokens), so an
+    /// audit row can be traced to the token that made the call.
+    pub jti: String,
 }
 
 impl Actor {
@@ -61,6 +64,7 @@ impl Actor {
             role: "viewer".into(),
             tenant_id: default_tenant(),
             tools: Vec::new(),
+            jti: String::new(),
         }
     }
 
@@ -241,6 +245,7 @@ pub async fn auth_middleware(
                 role: "admin".into(),
                 tenant_id: default_tenant(),
                 tools: Vec::new(),
+                jti: String::new(),
             }
         } else {
             match decode_token(
@@ -265,6 +270,7 @@ pub async fn auth_middleware(
                         role: data.claims.role,
                         tenant_id: data.claims.tenant_id,
                         tools: data.claims.tools,
+                        jti: data.claims.jti,
                     }
                 }
                 Err(e) => return unauthorized(&format!("invalid token: {e}")),
