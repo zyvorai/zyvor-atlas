@@ -485,6 +485,20 @@ impl AtlasMcp {
 /// Longest tool name written to the audit trail; a caller can send any string as a tool name.
 const MAX_AUDITED_TOOL_NAME: usize = 64;
 
+/// Per-token budget of tool calls per minute (`ATLAS_MCP_CALLS_PER_MIN`, 0 or unset = off), on top of the
+/// per-actor request limit at the edge. A token with a `jti` has its own budget; callers without one (the
+/// bootstrap secret, legacy tokens) share their actor id's. In memory, so per pod, read once at first use.
+fn call_budget() -> &'static crate::state::RateLimiter {
+    static BUDGET: std::sync::OnceLock<crate::state::RateLimiter> = std::sync::OnceLock::new();
+    BUDGET.get_or_init(|| {
+        let rpm = std::env::var("ATLAS_MCP_CALLS_PER_MIN")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0);
+        crate::state::RateLimiter::new(rpm)
+    })
+}
+
 /// Every MCP tool call, not only denials and writes, leaves an `mcp.tool.call` audit row unless
 /// `ATLAS_MCP_AUDIT_CALLS=0`. A polling agent writes one row per call, so turn it off if that volume matters.
 fn audit_calls_enabled() -> bool {
@@ -524,6 +538,25 @@ impl ServerHandler for AtlasMcp {
             .await;
             return Err(McpError::invalid_request(
                 format!("tool '{}' is not permitted for this token", request.name),
+                None,
+            ));
+        }
+        let budget_key = if actor.jti.is_empty() { actor.id.as_str() } else { actor.jti.as_str() };
+        if !call_budget().allow(budget_key) {
+            let _ = atlas_inventory::audit::record(
+                &self.state.pool,
+                Some(&actor.tenant_id),
+                &actor.id,
+                "mcp.tool.rate_limited",
+                "mcp_tool",
+                &tool,
+                "denied",
+                None,
+                Some(json!({ "jti": actor.jti })),
+            )
+            .await;
+            return Err(McpError::invalid_request(
+                "tool-call budget for this token is used up for this minute; retry later",
                 None,
             ));
         }
