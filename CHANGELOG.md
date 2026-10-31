@@ -9,6 +9,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- MCP read tools `native_reduction` and `volume_ransomware`, so an agent can read atlas-native savings and a filesystem volume's ransomware verdict. Operator role, tenant-scoped, read-only: protecting a volume stays an admin REST call.
+
 ### Changed
 
 - `rusty-s3` 0.10 → 0.11. Object listings report the size as optional now, so `atlas-driver-rgw` treats a listing entry without a size as 0 bytes.
