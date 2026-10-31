@@ -133,7 +133,7 @@ impl Attached {
         }
         let mut kept = Vec::with_capacity(now.len());
         for pid in now {
-            if self.tracked.contains(&pid) || self.native_pids.insert(pid, 1u8, 0).is_ok() {
+            if self.tracked.contains(&pid) || self.native_pids.insert(&pid, &1u8, 0).is_ok() {
                 kept.push(pid);
             }
         }
