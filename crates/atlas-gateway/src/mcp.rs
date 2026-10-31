@@ -482,6 +482,18 @@ impl AtlasMcp {
     }
 }
 
+/// Longest tool name written to the audit trail; a caller can send any string as a tool name.
+const MAX_AUDITED_TOOL_NAME: usize = 64;
+
+/// Every MCP tool call, not only denials and writes, leaves an `mcp.tool.call` audit row unless
+/// `ATLAS_MCP_AUDIT_CALLS=0`. A polling agent writes one row per call, so turn it off if that volume matters.
+fn audit_calls_enabled() -> bool {
+    !matches!(
+        std::env::var("ATLAS_MCP_AUDIT_CALLS").ok().as_deref().map(str::trim),
+        Some("0" | "false" | "FALSE" | "no")
+    )
+}
+
 // `router = self.tool_router`: the macro's default is `Self::tool_router()`, which would ignore the
 // per-instance router that conditionally includes the guarded write tools.
 //
@@ -496,6 +508,7 @@ impl ServerHandler for AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
         let actor = actor_from(&context)?;
+        let tool: String = request.name.chars().take(MAX_AUDITED_TOOL_NAME).collect();
         if !actor.may_call_tool(&request.name) {
             let _ = atlas_inventory::audit::record(
                 &self.state.pool,
@@ -503,7 +516,7 @@ impl ServerHandler for AtlasMcp {
                 &actor.id,
                 "mcp.tool.denied",
                 "mcp_tool",
-                &request.name,
+                &tool,
                 "denied",
                 None,
                 None,
@@ -515,7 +528,30 @@ impl ServerHandler for AtlasMcp {
             ));
         }
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        self.tool_router.call(tcc).await
+        let result = self.tool_router.call(tcc).await;
+        if audit_calls_enabled() {
+            let status = match &result {
+                Ok(CallToolResponse::Complete(r)) if r.is_error != Some(true) => "success",
+                _ => "error",
+            };
+            // Off the request path: a slow or failing audit write never delays or fails a tool call.
+            let pool = self.state.pool.clone();
+            tokio::spawn(async move {
+                let _ = atlas_inventory::audit::record(
+                    &pool,
+                    Some(&actor.tenant_id),
+                    &actor.id,
+                    "mcp.tool.call",
+                    "mcp_tool",
+                    &tool,
+                    status,
+                    None,
+                    Some(json!({ "jti": actor.jti, "scoped": actor.is_scoped(), "role": actor.role })),
+                )
+                .await;
+            });
+        }
+        result
     }
 
     async fn list_tools(

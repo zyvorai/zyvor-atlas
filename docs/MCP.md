@@ -22,6 +22,7 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 | DR | `dr_status`, `dr_preflight`, `list_dr_mirrors`, `dr_mirror_status`, `list_volume_groups` |
 | Work | `list_jobs`, `get_job`, `list_snapshots` (operator role, stricter than REST; limited to the caller's tenant unless admin) |
 | Ceph | `ceph_status`, `ceph_df`, `ceph_osd_tree` (summary: counts and the OSDs that are down or out), `ceph_nvme` (NVMe wear, media errors and spare from Ceph's device-health scrapes), `ceph_nvmeof` (Rook NVMe-oF gateways and their StorageClasses; needs a Kubernetes cluster), `ceph_osd_objectstore` (each OSD's object store and Ceph version), `ceph_sizing` (NVMe hosts against a CPU/RAM rule of thumb). Operator role; output capped at 256 KiB |
+| Operations | `osd_ok_to_stop` (would stopping these OSDs together keep every PG available; ask before maintenance), `ceph_health_rollup`, `metrics_forecast` (capacity runway), `upgrade_preflight`, `protection_status` (tenant-scoped). Operator role; none of them changes anything |
 | Native data | `native_reduction` (atlas-native compression and sharing savings; fails when the driver is off), `volume_ransomware` (activity-based verdict for one native filesystem volume, tenant-scoped; it never snapshots or locks, `POST …/ransomware/protect` stays admin REST only). Operator role |
 | DataBridge | `databridge_plans`, `databridge_cdc_streams` (operator; tenant-filtered) |
 | Governance | `list_policies` (static catalogue), `list_audit` (operator; tenant-filtered; request and result bodies are not returned) |
@@ -80,6 +81,7 @@ its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
 |---|---|---|
 | `ATLAS_MCP_ALLOWED_HOSTS` | gateway | `Host` allow-list for the transport; `*` disables. Unset: loopback-only without auth, any host when auth is required (the endpoint is bearer-gated). |
 | `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot` and `ack_alert` tools. Off by default. |
+| `ATLAS_MCP_AUDIT_CALLS` | gateway | Every tool call writes an `mcp.tool.call` audit row (caller, tool, `success` or `error`, token `jti`, role, whether the token is scoped), written after the response so it never delays a call. `0` turns it off, for a polling agent where one row per call is too many. Denied calls (`mcp.tool.denied`) and guarded writes are always audited. |
 | `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk`, `io_ai` and the Ops Advisor's `io_risk` and `io_ai` blocks read the node agent from. |
 | `ATLAS_IO_TOKEN` | agent | Bearer token for the agent API (health probes exempt) and its `/mcp`. |
 

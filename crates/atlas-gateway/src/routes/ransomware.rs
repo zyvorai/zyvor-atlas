@@ -409,6 +409,7 @@ pub fn spawn_autoprotect(s: AppState) {
             role: "admin".into(),
             tenant_id: "global".into(),
             tools: Vec::new(),
+            jti: String::new(),
         };
         let mut last: std::collections::HashMap<String, std::time::Instant> = Default::default();
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(every));
