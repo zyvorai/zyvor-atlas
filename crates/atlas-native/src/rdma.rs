@@ -2,12 +2,13 @@
 // SPDX-License-Identifier: Apache-2.0
 //! RDMA building blocks over `libibverbs` (feature `rdma`, Linux only).
 //!
-//! This is the foundation for an RDMA transport between data nodes and clients, not the transport
-//! itself: today the data path is TCP/TLS (`data_node`, `tls`) and nothing here changes that. What
-//! exists is a way to list RDMA devices and one self-connected reliable-connection round trip, so
-//! the verbs stack, the device and the build can be checked on a host before a transport is
-//! written on top. It runs on SoftRoCE (`rdma link add rxe0 type rxe netdev lo`) as well as on
-//! hardware, so a passing round trip on SoftRoCE says the plumbing works, never how fast it is.
+//! The pieces of an RDMA transport between data nodes and clients: listing RDMA devices, a
+//! self-connected reliable-connection round trip, and [`with_stream`], a `Read + Write` stream
+//! between two endpoints once their queue-pair details have been exchanged over an ordinary
+//! connection. `data_node` uses it for the opt-in `RdmaUpgrade` request (`ATLAS_NATIVE_RDMA=1`); the
+//! default data path stays TCP/TLS, and RDMA is never offered on a TLS connection because it is
+//! unencrypted. It runs on SoftRoCE (`rdma link add rxe0 type rxe netdev lo`) as well as on
+//! hardware, so a passing test on SoftRoCE says the plumbing works, never how fast it is.
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
