@@ -9,6 +9,11 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Changed
+
+- `rusty-s3` 0.10 → 0.11. Object listings report the size as optional now, so `atlas-driver-rgw` treats a listing entry without a size as 0 bytes.
+- Kubernetes manifests pin `atlas-io-agent` to the 0.10.0 image instead of 0.9.0.
+
 ## [0.10.0] — 2026-10-30
 
 ### Added
