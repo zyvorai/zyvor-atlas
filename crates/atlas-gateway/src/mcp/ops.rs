@@ -168,6 +168,55 @@ impl AtlasMcp {
     }
 
     #[tool(
+        description = "Cluster-wide compression and sharing savings of the atlas-native backend \
+                        (logical, referenced and stored bytes with the derived ratios). Read-only; \
+                        fails when the atlas-native driver is not enabled. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn native_reduction(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::reduction::native_reduction(
+                State(self.state.clone()),
+                axum::Extension(actor),
+            )
+            .await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Ransomware assessment of one atlas-native filesystem volume from the node's \
+                        recorded activity windows (writes, renames, deletes, write entropy): a \
+                        verdict with the evidence behind it. Read-only: it never snapshots or locks \
+                        anything (that is an admin REST call). Limited to the caller's tenant \
+                        unless admin. Requires an operator-or-higher token."
+    )]
+    async fn volume_ransomware(
+        &self,
+        Parameters(args): Parameters<super::IdArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let result = crate::routes::ransomware::volume_ransomware(
+            State(self.state.clone()),
+            axum::Extension(actor),
+            axum::extract::Path(args.id),
+        )
+        .await
+        .and_then(|axum::Json(a)| {
+            serde_json::to_value(a)
+                .map(axum::Json)
+                .map_err(|e| atlas_common::AppError::Internal(e.to_string()))
+        });
+        let ToolJson(v) = rest(result)?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
         description = "Each OSD's reported object store and Ceph version (`ceph osd metadata`), with counts \
                         and a mixed-versions flag. Read-only. Requires an operator-or-higher token."
     )]

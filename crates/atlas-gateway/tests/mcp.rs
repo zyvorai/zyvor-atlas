@@ -458,7 +458,7 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     let names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     for n in [
         "ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans",
-        "databridge_cdc_streams", "list_policies", "list_audit",
+        "databridge_cdc_streams", "list_policies", "list_audit", "native_reduction", "volume_ransomware",
     ] {
         assert!(names.contains(&n), "tools: {names:?}");
     }
@@ -480,13 +480,34 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     op.cancel().await.unwrap();
 
     let viewer = connect(addr, secret, "viewer").await;
-    for n in ["ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_audit"] {
+    for n in ["ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_audit", "native_reduction"] {
         let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
         assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
     }
     let policies = viewer.call_tool(CallToolRequestParams::new("list_policies")).await.unwrap();
     assert_eq!(policies.is_error, Some(false), "the static catalogue is open to any role");
     viewer.cancel().await.unwrap();
+}
+
+/// The native-backend tools never fabricate data: with no atlas-native driver enabled they fail,
+/// and the ransomware assessment refuses a volume that does not exist or is not a native filesystem.
+#[tokio::test]
+async fn mcp_native_tools_fail_closed_without_a_native_backend() {
+    use rmcp::model::CallToolRequestParams;
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, _pool) = spawn(true, secret).await;
+    let op = connect(addr, secret, "operator").await;
+
+    let r = op.call_tool(CallToolRequestParams::new("native_reduction")).await;
+    assert!(r.is_err() || r.unwrap().is_error == Some(true), "no native driver must not report savings");
+
+    let args = serde_json::json!({ "id": "vol_does_not_exist" });
+    let r = op
+        .call_tool(CallToolRequestParams::new("volume_ransomware").with_arguments(args.as_object().unwrap().clone()))
+        .await;
+    assert!(r.is_err() || r.unwrap().is_error == Some(true), "an unknown volume must not get a verdict");
+    op.cancel().await.unwrap();
 }
 
 /// Prompts and resources are static text: listed, renderable, and arguments are validated rather
