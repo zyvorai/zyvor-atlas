@@ -11,6 +11,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- MCP read tools `policy_drift`, `orphan_backups` (tenant-filtered) and `list_events` (admin or unscoped only; a tenant-scoped token is refused because the feed has no tenant). `GET /policy-drift` rows now carry `tenant_id`.
 - `ATLAS_MCP_CALLS_PER_MIN`: a per-token budget of MCP tool calls per minute. Calls over it are refused and audited as `mcp.tool.rate_limited`; off by default, per gateway pod.
 - MCP read tools `osd_ok_to_stop`, `ceph_health_rollup`, `metrics_forecast`, `upgrade_preflight` and `protection_status`, wrapping the existing routes with the same role and tenant checks.
 - Every MCP tool call now leaves an `mcp.tool.call` audit row with the caller, tool, outcome, token `jti` and role, written off the request path. `ATLAS_MCP_AUDIT_CALLS=0` turns it off. Before this only denials and guarded writes were audited.

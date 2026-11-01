@@ -490,6 +490,77 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     viewer.cancel().await.unwrap();
 }
 
+/// `policy_drift` and `orphan_backups` show a tenant-scoped operator only that tenant's rows; the
+/// untenanted `list_events` feed is refused to a tenant-scoped token and open to an admin; viewers are refused.
+#[tokio::test]
+async fn mcp_drift_orphans_and_events_respect_tenants() {
+    use rmcp::model::CallToolRequestParams;
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, pool) = spawn(true, secret).await;
+
+    for (tenant, id) in [("acme", "vol_drift_acme"), ("globex", "vol_drift_globex")] {
+        let v = atlas_api_types::StorageVolume {
+            id: id.into(),
+            cluster_id: None,
+            pool_id: None,
+            name: id.into(),
+            kind: atlas_api_types::VolumeKind::Block,
+            backend_native_id: Some(format!("rbd:pool/{id}")),
+            size_bytes: 1073741824,
+            used_bytes: None,
+            state: "bound".into(),
+            health: atlas_api_types::Health::Ok,
+            kubernetes_namespace: Some("default".into()),
+            pvc_name: Some(id.into()),
+            storage_class_name: Some("zyvor-rbd-prod".into()),
+        };
+        // A policy id that does not exist: the volume has drifted ("policy deleted").
+        atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", tenant, &v, Some("pol_gone"))
+            .await
+            .unwrap();
+        // A backup of a volume that is not in the inventory: an orphan.
+        atlas_inventory::backups::insert_backup(
+            &pool,
+            &format!("bak_orphan_{tenant}"),
+            tenant,
+            &format!("vol_missing_{tenant}"),
+            None,
+            "bkt_x",
+            "key",
+            "rbd-export-diff",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+    }
+
+    let op = connect_as(addr, secret, "operator", "acme").await;
+    let drift = text_of(&op.call_tool(CallToolRequestParams::new("policy_drift")).await.unwrap());
+    assert!(drift.contains("vol_drift_acme"), "{drift}");
+    assert!(!drift.contains("globex"), "another tenant's drift leaked: {drift}");
+    let orphans = text_of(&op.call_tool(CallToolRequestParams::new("orphan_backups")).await.unwrap());
+    assert!(orphans.contains("bak_orphan_acme"), "{orphans}");
+    assert!(!orphans.contains("globex"), "another tenant's orphan leaked: {orphans}");
+    let events = op.call_tool(CallToolRequestParams::new("list_events")).await;
+    assert!(events.is_err() || events.unwrap().is_error == Some(true), "tenant-scoped token must not read the feed");
+    op.cancel().await.unwrap();
+
+    let admin = connect_as(addr, secret, "admin", "global").await;
+    let all = text_of(&admin.call_tool(CallToolRequestParams::new("policy_drift")).await.unwrap());
+    assert!(all.contains("vol_drift_acme") && all.contains("vol_drift_globex"), "{all}");
+    let ev = admin.call_tool(CallToolRequestParams::new("list_events")).await.unwrap();
+    assert_eq!(ev.is_error, Some(false), "{}", text_of(&ev));
+    admin.cancel().await.unwrap();
+
+    let viewer = connect(addr, secret, "viewer").await;
+    for n in ["policy_drift", "orphan_backups", "list_events"] {
+        let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
+        assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
+    }
+    viewer.cancel().await.unwrap();
+}
+
 /// The native-backend tools never fabricate data: with no atlas-native driver enabled they fail,
 /// and the ransomware assessment refuses a volume that does not exist or is not a native filesystem.
 #[tokio::test]

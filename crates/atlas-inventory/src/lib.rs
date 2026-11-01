@@ -768,7 +768,7 @@ pub async fn list_policy_drift(pool: &AnyPool) -> Result<Vec<serde_json::Value>>
         // `placement` (raw JSON text) is pulled back and parsed in Rust rather than extracted via
         // SQLite's json_extract() server-side — no portable equivalent exists whose query text is
         // identical on Postgres (see set_volume_qos's comment for the same tradeoff).
-        "SELECT v.id AS volume_id, v.name AS name, v.storage_class_name AS actual, v.policy_id AS policy_id,
+        "SELECT v.id AS volume_id, v.tenant_id AS tenant_id, v.name AS name, v.storage_class_name AS actual, v.policy_id AS policy_id,
                 p.placement AS placement,
                 CASE WHEN p.id IS NULL THEN 1 ELSE 0 END AS policy_missing
          FROM storage_volumes v LEFT JOIN storage_policies p ON p.id = v.policy_id
@@ -794,6 +794,7 @@ pub async fn list_policy_drift(pool: &AnyPool) -> Result<Vec<serde_json::Value>>
         if drifted {
             drift.push(serde_json::json!({
                 "volume_id": r.get::<String, _>("volume_id"),
+                "tenant_id": r.get::<String, _>("tenant_id"),
                 "name": r.get::<String, _>("name"),
                 "policy_id": r.get::<Option<String>, _>("policy_id"),
                 "expected_storage_class": expected,

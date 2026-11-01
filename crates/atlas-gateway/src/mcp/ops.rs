@@ -108,6 +108,13 @@ pub(super) fn summarise_osd_tree(tree: &Value) -> Value {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct EventsArgs {
+    /// Most recent N events (default 50, at most 200).
+    #[serde(default)]
+    limit: Option<i64>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct ListAuditArgs {
     /// Only entries by this actor id.
     #[serde(default)]
@@ -417,6 +424,68 @@ impl AtlasMcp {
         let ToolJson(v) = rest(databridge::db_list_cdc_streams(State(self.state.clone())).await)?;
         let scope = tenant_scope(self.state.config.auth_required, &actor);
         Ok(ToolJson(bounded(scope_by_tenant(v, scope))?))
+    }
+
+    #[tool(
+        description = "Volumes whose applied StorageClass no longer matches their policy, or whose policy \
+                        was deleted, limited to the caller's tenant unless admin. Read-only. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn policy_drift(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let drift = atlas_inventory::list_policy_drift(&self.state.pool)
+            .await
+            .map_err(internal_error)?;
+        let scope = tenant_scope(self.state.config.auth_required, &actor);
+        let mine = scope_by_tenant(json!(drift), scope);
+        let count = mine.as_array().map_or(0, Vec::len);
+        Ok(ToolJson(bounded(json!({ "drift": mine, "count": count }))?))
+    }
+
+    #[tool(
+        description = "Backups whose source volume no longer exists, limited to the caller's tenant \
+                        unless admin. Read-only: cleaning them up stays a REST call. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn orphan_backups(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let orphans = atlas_inventory::backups::list_orphans(&self.state.pool)
+            .await
+            .map_err(internal_error)?;
+        let scope = tenant_scope(self.state.config.auth_required, &actor);
+        let mine = scope_by_tenant(json!(orphans), scope);
+        let count = mine.as_array().map_or(0, Vec::len);
+        Ok(ToolJson(bounded(json!({ "orphan_backups": mine, "count": count }))?))
+    }
+
+    #[tool(
+        description = "Unified activity feed (jobs, audit and alerts), newest first. The feed carries no \
+                        tenant, so a tenant-scoped token is refused: use list_audit, which is filtered \
+                        by tenant. Read-only. Requires an operator-or-higher, unscoped-tenant token."
+    )]
+    async fn list_events(
+        &self,
+        Parameters(args): Parameters<EventsArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        if tenant_scope(self.state.config.auth_required, &actor).is_some() {
+            return Err(McpError::invalid_request(
+                "the event feed is not tenant-filtered; use list_audit for your tenant's activity",
+                None,
+            ));
+        }
+        let limit = args.limit.unwrap_or(50).clamp(1, 200);
+        let rows = atlas_inventory::events::feed(&self.state.pool, limit)
+            .await
+            .map_err(internal_error)?;
+        Ok(ToolJson(bounded(json!({ "events": rows }))?))
     }
 
     #[tool(
