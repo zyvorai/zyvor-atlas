@@ -3,7 +3,8 @@
 """Tenant-isolated content storage and transactional AI data workflows.
 
 No background promises: readiness follows verified bytes, never a reported cache hint.
-All metadata changes and audit events commit together in SQLite transactions.
+All metadata changes and audit events commit together in one catalog transaction (SQLite, or Postgres
+with `ATLAS_DATA_DATABASE_URL=postgres://...` for several service replicas; see catalog.py).
 """
 from __future__ import annotations
 
@@ -14,11 +15,12 @@ import json
 import os
 from pathlib import Path, PurePosixPath
 import re
-import sqlite3
 import tempfile
 import threading
 import time
 import uuid
+
+from .catalog import open_catalog
 
 CHUNK = 4 * 1024 * 1024
 MAX_FILES = 10000
@@ -84,40 +86,18 @@ class Actor:
 class Store:
     """Single service process with serialized writes and durable metadata + immutable chunks.
 
-    The root must be private to the service account. It is not an HA database or
-    a replacement for Atlas Native. Put its persistent volume on an Atlas backend.
+    The root must be private to the service account. With SQLite the catalog is a single-process file
+    and the service is not HA. With a Postgres catalog, replicas share the database and must share the
+    root (a ReadWriteMany volume) for the chunk bytes. Put that volume on an Atlas backend.
     """
-    def __init__(self, root, clock=time.time, capacity_bytes=100 * 1024**3):
+    def __init__(self, root, clock=time.time, capacity_bytes=100 * 1024**3, database_url=None):
         self.root = Path(root)
         self.root.mkdir(parents=True, exist_ok=True, mode=0o700)
         self.lock = threading.RLock()
         self.clock = clock
         self.capacity = number(capacity_bytes, 1)
         self.kv_capacity = min(self.capacity, 64 * 1024**2)
-        self.db = sqlite3.connect(self.root / "data.sqlite", check_same_thread=False)
-        self.db.row_factory = sqlite3.Row
-        self.db.executescript('''
-        PRAGMA journal_mode=WAL;
-        PRAGMA synchronous=FULL;
-        PRAGMA foreign_keys=ON;
-        CREATE TABLE IF NOT EXISTS resources (
-          tenant TEXT NOT NULL, kind TEXT NOT NULL, id TEXT NOT NULL,
-          body TEXT NOT NULL, PRIMARY KEY(tenant,kind,id));
-        CREATE TABLE IF NOT EXISTS chunks (
-          tenant TEXT NOT NULL, hash TEXT NOT NULL, size INTEGER NOT NULL,
-          PRIMARY KEY(tenant,hash));
-        CREATE TABLE IF NOT EXISTS chunk_owners (
-          tenant TEXT NOT NULL, hash TEXT NOT NULL, subject TEXT NOT NULL,
-          PRIMARY KEY(tenant,hash,subject));
-        CREATE TABLE IF NOT EXISTS events (
-          seq INTEGER PRIMARY KEY AUTOINCREMENT, tenant TEXT NOT NULL,
-          subject TEXT NOT NULL, action TEXT NOT NULL, resource TEXT NOT NULL,
-          at REAL NOT NULL);
-        CREATE TABLE IF NOT EXISTS ledger (
-          tenant TEXT NOT NULL, event_id TEXT NOT NULL, job TEXT NOT NULL,
-          meter TEXT NOT NULL, units INTEGER NOT NULL, micros INTEGER NOT NULL,
-          PRIMARY KEY(tenant,event_id));
-        ''')
+        self.db = open_catalog(self.root, database_url or os.environ.get("ATLAS_DATA_DATABASE_URL"))
 
     def close(self):
         self.db.close()
@@ -125,7 +105,7 @@ class Store:
     @contextlib.contextmanager
     def transaction(self):
         with self.lock:
-            self.db.execute("BEGIN IMMEDIATE")
+            self.db.begin()
             try:
                 yield
                 self.db.commit()
@@ -145,7 +125,7 @@ class Store:
             try:
                 self.db.execute("INSERT INTO resources VALUES (?,?,?,?)",
                                 (a.tenant, kind, key, canonical(body)))
-            except sqlite3.IntegrityError as exc:
+            except self.db.IntegrityError as exc:
                 raise DataError("resource already exists", 409) from exc
         else:
             self.db.execute("INSERT INTO resources VALUES (?,?,?,?) ON CONFLICT(tenant,kind,id) "
