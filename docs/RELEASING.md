@@ -5,7 +5,7 @@
 A release is a `v*` tag on `main`. Two workflows fire on the tag push:
 
 - **Publish container images** (`docker-publish.yml`): builds, signs (keyless), generates an SBOM and Trivy-scans
-  `ghcr.io/zyvorai/atlas` (`Dockerfile`), `atlas-ceph` (`Dockerfile.ceph`) and `atlas-io-agent` (`Dockerfile.io`).
+  `ghcr.io/zyvorai/atlas` (`Dockerfile`), `atlas-ceph` (`Dockerfile.ceph`), `atlas-io-agent` (`Dockerfile.io`) and `atlas-data` (`Dockerfile.data`).
 - **Release** (`release.yml`): GitHub Release with the matching `CHANGELOG.md` section, `atlasctl` and
   `atlas-mac-agent` archives for common platforms (macOS included), the UI bundle, `SHA256SUMS.txt` and its keyless
   cosign signature `SHA256SUMS.txt.sigstore.json`.

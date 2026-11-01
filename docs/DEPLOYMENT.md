@@ -51,9 +51,9 @@ first-party RustFS integration.
 NodePort **30510**. Verifies `/health`, `/version`, and `/storage-classes`. Gates automatically on
 `GET /upgrade/preflight` before rolling out (pass `--force` to override a blocked pre-flight).
 
-The script builds `localhost/atlas-gateway:dev` on the host (chart `appVersion` is `0.10.0`).
+The script builds `localhost/atlas-gateway:dev` on the host (chart `appVersion` is `0.10.1`).
 Published images are separate: [`deploy/helm/atlas/values-release.yaml`](../deploy/helm/atlas/values-release.yaml)
-pins `ghcr.io/zyvorai/atlas:0.10.0`, and the real-Ceph image is `ghcr.io/zyvorai/atlas-ceph:0.10.0`.
+pins `ghcr.io/zyvorai/atlas:0.10.1`, and the real-Ceph image is `ghcr.io/zyvorai/atlas-ceph:0.10.1`.
 Do not deploy the floating `:latest` tag. What that build is allowed to claim is
 [STATUS.md](STATUS.md).
 
