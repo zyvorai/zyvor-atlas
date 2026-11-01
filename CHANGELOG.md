@@ -23,7 +23,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 ### Changed
 
 - `Dockerfile.data` is built by CI's `docker` job and, on a `v*` tag, published, signed and scanned as `ghcr.io/zyvorai/atlas-data` with the other images.
-- MLPerf Storage harness now targets `mlcommons/storage` `v3.0`. The `v3.0` CLI rejects `h100` (accelerator types are `b200`/`mi355`), takes `--max-accelerators` for `datasize`, needs a system name and an initialised results directory, and uses a different directory flag per workload; `mlperf-run.sh` handles those (`MLPERF_SYSTEMNAME`, `MLPERF_ORG`, `--cache-dir` for kvcache, `--checkpoint-folder` for checkpointing). Still no image build on the lab and no result.
+- MLPerf Storage harness now targets `mlcommons/storage` `v3.0`. The `v3.0` CLI rejects `h100` (accelerator types are `b200`/`mi355`), takes `--max-accelerators` for `datasize`, needs a system name and an initialised results directory, and uses a different directory flag per workload; `mlperf-run.sh` handles those (`MLPERF_SYSTEMNAME`, `MLPERF_ORG`, `--cache-dir` for kvcache, `--checkpoint-folder` for checkpointing). The image builds on the lab and `datasize` runs in it; no benchmark has run on a mount and there is no result.
 - `rusty-s3` 0.10 → 0.11. Object listings report the size as optional now, so `atlas-driver-rgw` treats a listing entry without a size as 0 bytes.
 - Kubernetes manifests pin `atlas-io-agent` to the 0.10.0 image instead of 0.9.0.
 
