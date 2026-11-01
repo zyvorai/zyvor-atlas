@@ -26,6 +26,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - `rusty-s3` 0.10 → 0.11. Object listings report the size as optional now, so `atlas-driver-rgw` treats a listing entry without a size as 0 bytes.
 - Kubernetes manifests pin `atlas-io-agent` to the 0.10.0 image instead of 0.9.0.
 
+### Fixed
+
+- A job could run twice: `enqueue` inserted the job as `pending` and then unconditionally set it `queued`, so if the startup recovery or the poller claimed it in between, that write turned the running job back into a claimable one. The queue step now only moves `pending` jobs. Found through a flaky `dedup.estimate` test (about 1 failure in 10 under CPU load; 0 in 150 after the fix).
+
 ## [0.10.0] — 2026-10-30
 
 ### Added

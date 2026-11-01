@@ -127,6 +127,22 @@ pub async fn set_state(pool: &AnyPool, id: &str, state: &str, progress: i64) -> 
     Ok(())
 }
 
+/// Move a freshly inserted job from `pending` to `queued`, and only from `pending`. The startup
+/// recovery and the durable poller can claim a `pending` job the instant it is inserted; an
+/// unconditional `set_state(.., "queued")` after that would overwrite `running` and make a job that
+/// is already executing claimable a second time. Returns whether the job was still `pending`.
+pub async fn queue_if_pending(pool: &AnyPool, id: &str) -> Result<bool> {
+    let res = sqlx::query(
+        "UPDATE storage_jobs SET state='queued', progress_percent=0, updated_at=$1
+         WHERE id=$2 AND state='pending'",
+    )
+    .bind(now_rfc3339(chrono::Utc::now()))
+    .bind(id)
+    .execute(pool)
+    .await?;
+    Ok(res.rows_affected() == 1)
+}
+
 /// Record mid-flight progress and a partial result without changing the job's state, so a long job
 /// (an image import) can be resumed from what it recorded if it is retried or restarted.
 pub async fn set_progress_result(

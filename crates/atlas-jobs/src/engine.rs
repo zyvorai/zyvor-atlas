@@ -219,7 +219,8 @@ impl JobEngine {
             }
             return Err(e);
         }
-        atlas_inventory::jobs::set_state(&self.pool, job_id, "queued", 0).await?;
+        // Conditional: the recovery task or the poller may already have claimed the job (see queue_if_pending).
+        atlas_inventory::jobs::queue_if_pending(&self.pool, job_id).await?;
         if self.tx.send(job_id.to_string()).is_err() {
             tracing::warn!(
                 job = %job_id,
