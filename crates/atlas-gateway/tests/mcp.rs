@@ -519,14 +519,26 @@ async fn mcp_drift_orphans_and_events_respect_tenants() {
         atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", tenant, &v, Some("pol_gone"))
             .await
             .unwrap();
-        // A backup of a volume that is not in the inventory: an orphan.
+        // A backup of a volume that is not in the inventory: an orphan (its bucket row must exist).
+        atlas_inventory::buckets::insert_bucket(
+            &pool,
+            &format!("bkt_{tenant}"),
+            tenant,
+            &format!("bkt-{tenant}"),
+            "bkd_ceph_lab",
+            "default",
+            &format!("obc-{tenant}"),
+            "zyvor-bucket",
+        )
+        .await
+        .unwrap();
         atlas_inventory::backups::insert_backup(
             &pool,
             &format!("bak_orphan_{tenant}"),
             tenant,
             &format!("vol_missing_{tenant}"),
             None,
-            "bkt_x",
+            &format!("bkt_{tenant}"),
             "key",
             "rbd-export-diff",
             &serde_json::json!({}),
