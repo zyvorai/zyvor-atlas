@@ -138,10 +138,21 @@ with the fake source only; the console does not draw it yet.
 - The gateway sends `ATLAS_IO_AGENT_TOKEN` (same value) when it fetches `/io/risk` for the Ops
   Advisor and the `io_risk` MCP tool.
 - Built with `--features mcp` (`Dockerfile.io` does), the agent serves a read-only MCP endpoint at
-  `/mcp`: `io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_risk`, `io_leases`. It sits
+  `/mcp`: `io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `io_leases`. It sits
   behind the same token; there is no tool that grants a lease or changes anything.
 
 ## Risk scoring
+
+`GET /io/ai` names a heuristic I/O **shape** per device from the histograms: `large_write`
+(checkpoint-like: at least 80% of bytes are writes averaging 1 MiB or more), `bulk_read` (the same
+for reads: dataset or model loading), `small_read` (reads averaging 64 KiB or less),
+`mixed`, or `unknown` below 20 requests. Each entry lists the numbers behind it and carries a
+`finding` only when the shape's own latency expectation is missed (p99 of 50 ms for large I/O, 2 ms
+for small reads). It cannot see periodicity, file names or which framework issued the I/O, so it
+never names a job and never triggers an action. The thresholds are heuristics, not measurements.
+The gateway shows it as `io_ai` in the Ops Advisor (informational, no effect on the score) and in
+the `io_ai` MCP tool.
+Through the gateway the same view is `GET /api/atlas/v1/io/ai` (operator; `unavailable` without a configured agent, never a healthy reading) and `atlasctl io-ai`; `atlasctl io ai` talks to the agent directly.
 
 `GET /io/risk` and the `atlas_io_risk_level` metric reduce the RCA (and an optional,
 caller-supplied capacity signal) to healthy / elevated / critical, and the gateway's Ops Advisor

@@ -20,7 +20,8 @@ explicit `"confirm": true` — formatting a disk is irreversible.
 Device selection is backed by two read-only discovery endpoints the Disks UI's picker calls
 instead of a blind free-text field: `GET /api/atlas/v1/zfs/devices` (bulk `lsblk`/`wipefs`/`zpool
 status` scan of the gateway's own host) and `GET /api/atlas/v1/ceph/nodes/{node}/devices` (passes
-through Rook's own `local-device-<node>` discovery ConfigMap for one node). Both are advisory only
+through Rook's own `local-device-<node>` discovery ConfigMap for one node, each entry tagged
+`class: nvme|ssd|hdd`). Both are advisory only
 — the checks below are re-run, authoritatively, against whatever device is actually submitted.
 
 ## Safety model
@@ -142,6 +143,31 @@ Requires a live Kubernetes cluster. Refuses if the target `CephCluster`'s
 node, so this API only applies when devices are pinned explicitly per node. Patches
 `spec.storage.nodes[].devices` via a scoped JSON merge patch (never a full-spec replace, which
 would clobber unrelated cluster settings) and is idempotent — safe to retry.
+
+### BlueStore DB/WAL on a separate device
+
+Optional fields put the OSD's RocksDB (and WAL) on a faster device, which is how an NVMe drive
+speeds up OSDs on slower media:
+
+```json
+{ "node_name": "node-1", "device_path": "/dev/sdb", "confirm": true,
+  "db_device": "/dev/nvme1n1", "db_size_mb": 61440, "wal_size_mb": 2048, "osds_per_device": 1 }
+```
+
+They become the device's `config` in the CR (`metadataDevice`, `databaseSizeMB`, `walSizeMB`,
+`osdsPerDevice`; Rook's values are strings). `db_size_mb` and `wal_size_mb` need `db_device`.
+The `db_device` gets the same path rules as `device_path` (a whole disk, never the conventional
+first disk such as `nvme0n1` or `sda`) plus: it must differ from `device_path`, be visible to
+Rook's discovery, not be rotational, not already be an OSD data device on the node, and be either
+reported empty or already the `metadataDevice` of another device on that node. A DB device is
+shared by design, so it stops being empty once one OSD uses it; the last rule is what lets you add
+the second OSD. Layout fields are applied only when the device is first listed: retrying the job
+or re-posting an already listed device never rewrites its layout, and an existing OSD is never
+re-laid-out.
+
+Existing per-device and per-node settings in the CR (`config`, `deviceFilter`, and any other
+field) are preserved when Atlas adds a device. Earlier versions rewrote the `nodes` array from
+only the fields they knew, which dropped the rest.
 
 Rook's reconciliation (`ceph-volume prepare`/`activate`) can take **several minutes**. Rather than
 blocking the job engine's single worker (which would stall every other tenant's jobs), each
