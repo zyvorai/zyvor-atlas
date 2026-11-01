@@ -11,6 +11,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `Dockerfile.data` (the `atlas_data` service, CLI and data-ready `gate-wait` as one non-root image), `deploy/k8s/atlas-data.yaml` and `deploy/k8s/atlas-data-gate-example.yaml`, and `deploy/data/gate-smoke.sh`. On the lab the image builds and `gate-wait` fails while data is unstaged and passes once staged; manifests pass a server-side dry run. Image not published; no pod has run on a cluster.
 - `atlas_data`: optional Postgres catalog (`ATLAS_DATA_DATABASE_URL`) so several service replicas can share metadata; write transactions are serialised by an advisory lock. SQLite stays the default. Whole test suite passed on a lab Postgres 16, plus a two-replica reservation race test. Chunk bytes still need a shared volume.
 - MCP read tools `policy_drift`, `orphan_backups` (tenant-filtered) and `list_events` (admin or unscoped only; a tenant-scoped token is refused because the feed has no tenant). `GET /policy-drift` rows now carry `tenant_id`.
 - `ATLAS_MCP_CALLS_PER_MIN`: a per-token budget of MCP tool calls per minute. Calls over it are refused and audited as `mcp.tool.rate_limited`; off by default, per gateway pod.

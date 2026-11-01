@@ -196,17 +196,30 @@ blocks until `ready()` succeeds. Only "data not ready" is retried; a refused cre
 timeout exits non-zero, so a pod fails visibly instead of starting compute without its data. Used as an init container, it holds
 the workload back until a trusted worker has staged and verified the job's artifacts:
 
+The image is `Dockerfile.data` (non-root UID 10001, standard library plus `psycopg`; arguments choose `serve`, `gate-wait`,
+`call`, `ingest`, `export`). `deploy/k8s/atlas-data.yaml` runs the service (TLS and the credential config come from
+Secrets you create; none is in the file), and `deploy/k8s/atlas-data-gate-example.yaml` is a pod whose init container is
+`gate-wait`, holding the workload until the data is staged:
+
 ```yaml
 initContainers:
   - name: wait-for-data
-    image: <image with tools/atlas_data and ATLAS_DATA_TOKEN from a Secret>
-    command: ["python3", "-m", "atlas_data", "--url", "https://atlas-data:5120", "gate-wait", "job-123", "--out", "/gate/selection.json"]
-    volumeMounts: [{name: gate, mountPath: /gate}]
+    image: ghcr.io/zyvorai/atlas-data:0.10.0
+    args: ["--url=https://atlas-data.zyvor-system.svc:5120", "--ca=/etc/atlas-data-ca/ca.crt", "gate-wait", "job-123", "--out=/gate/selection.json"]
+    env: [{name: ATLAS_DATA_TOKEN, valueFrom: {secretKeyRef: {name: atlas-data-client, key: token}}}]
 ```
 
-This is an example, not a shipped admission webhook: it waits, it does not place. The scheduler still has to put the pod on the
-node in `selection.json` (for example by reading it in a submission hook), and nothing here has run on a cluster; the wait logic
-is covered by unit tests with a scripted client and clock.
+It waits, it does not place: the pod must already be scheduled onto the node in `selection.json` (set the
+`nodeSelector`, or read the file in a submission hook). For placement of the bytes themselves, atlas-native can pin a
+dataset's extents to the GPU node with `POST /v1/fs/{fs}/locality/pin` ([NATIVE_FS.md](NATIVE_FS.md)); this service does
+not call it.
+
+Verified on the lab (2026-11-01, `scripts/atlas-data-image-remote.sh`, `deploy/data/gate-smoke.sh`): the image builds;
+a service container publishes a dataset, registers a node and reserves a job; `gate-wait` exits non-zero ("timed out
+after 3s waiting for job job-1 data") while nothing is staged, then succeeds and writes `selection.json` naming the node
+once it is staged. Both manifests pass a server-side `kubectl apply --dry-run=server` on the lab k3s. Not done: the image
+is not published (the `ghcr.io/zyvorai/atlas-data` tag in the manifests is the intended name, not an existing image), no
+pod has actually run on a cluster, and no Kubernetes admission or scheduler integration exists.
 
 `tools/atlas_data/integrations.py` provides `DataReadyGate` and `CostCollector`.
 The caller is responsible for matching node IDs to Kubernetes hostnames, checking

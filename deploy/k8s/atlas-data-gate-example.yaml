@@ -1,0 +1,51 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+# Example workload held back by the data-ready gate (docs/AI_DATA_SERVICES.md, "Data-ready scheduling").
+# The init container exits 0 only once a trusted worker has staged and verified the job's artifacts;
+# on timeout it exits non-zero and the pod fails visibly. It WAITS, it does not place: the pod must
+# already be scheduled onto the node that holds the data (see selection.json and the nodeSelector below).
+#
+# Needs a Secret `atlas-data-client` with key `token` (the job owner's token) and the service CA in
+# ConfigMap `atlas-data-ca` (key ca.crt). Replace JOB and the nodeSelector value before applying.
+apiVersion: v1
+kind: Pod
+metadata:
+  name: train-with-data
+  namespace: zyvor-system
+spec:
+  restartPolicy: Never
+  nodeSelector:
+    kubernetes.io/hostname: REPLACE_WITH_THE_NODE_FROM_selection.json
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 10001
+  initContainers:
+    - name: wait-for-data
+      image: ghcr.io/zyvorai/atlas-data:0.10.0
+      args:
+        - --url=https://atlas-data.zyvor-system.svc:5120
+        - --ca=/etc/atlas-data-ca/ca.crt
+        - gate-wait
+        - REPLACE_WITH_JOB
+        - --timeout=900
+        - --out=/gate/selection.json
+      env:
+        - name: ATLAS_DATA_TOKEN
+          valueFrom: {secretKeyRef: {name: atlas-data-client, key: token}}
+      securityContext:
+        allowPrivilegeEscalation: false
+        readOnlyRootFilesystem: true
+        capabilities: {drop: ["ALL"]}
+      volumeMounts:
+        - {name: gate, mountPath: /gate}
+        - {name: ca, mountPath: /etc/atlas-data-ca, readOnly: true}
+  containers:
+    - name: workload
+      image: REPLACE_WITH_WORKLOAD_IMAGE
+      volumeMounts:
+        - {name: gate, mountPath: /gate, readOnly: true}
+  volumes:
+    - name: gate
+      emptyDir: {}
+    - name: ca
+      configMap: {name: atlas-data-ca}

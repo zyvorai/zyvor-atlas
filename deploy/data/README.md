@@ -49,4 +49,4 @@ cache directories, and restrict credential/config filesystem access.
 
 When containerizing, run as a non-root UID, use a read-only image, mount config and
 TLS certificates read-only, and mount only the required data/temp volumes writable.
-No container image was built or published by this change.
+The image is `Dockerfile.data`; build and smoke-test it on the lab with `scripts/atlas-data-image-remote.sh <host> <user>`. It is not published to a registry yet. Manifests: `deploy/k8s/atlas-data.yaml`, `deploy/k8s/atlas-data-gate-example.yaml`.
