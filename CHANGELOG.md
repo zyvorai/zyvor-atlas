@@ -9,6 +9,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.10.1] — 2026-11-01
+
 ### Added
 
 - `deploy/helm/atlas-native/values-cache.yaml`: three pods, one copy of each extent, for recomputable data such as an inference KV-cache tier. The lab KV-cache smoke test passed 9/9 on it (`RF=1` selects it in `scripts/lab-kvcache-remote.sh`); node loss, space and speed were not measured.

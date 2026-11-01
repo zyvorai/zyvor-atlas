@@ -228,7 +228,7 @@ Secrets you create; none is in the file), and `deploy/k8s/atlas-data-gate-exampl
 ```yaml
 initContainers:
   - name: wait-for-data
-    image: ghcr.io/zyvorai/atlas-data:0.10.0
+    image: ghcr.io/zyvorai/atlas-data:0.10.1
     args: ["--url=https://atlas-data.zyvor-system.svc:5120", "--ca=/etc/atlas-data-ca/ca.crt", "gate-wait", "job-123", "--out=/gate/selection.json"]
     env: [{name: ATLAS_DATA_TOKEN, valueFrom: {secretKeyRef: {name: atlas-data-client, key: token}}}]
 ```

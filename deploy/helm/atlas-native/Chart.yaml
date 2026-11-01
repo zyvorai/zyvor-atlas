@@ -5,7 +5,7 @@ name: atlas-native
 description: Atlas native storage nodes (replicated extent engine with a Raft metadata log)
 type: application
 version: 0.1.0
-appVersion: "0.10.0"
+appVersion: "0.10.1"
 home: https://github.com/zyvorai/atlas
 sources:
   - https://github.com/zyvorai/atlas

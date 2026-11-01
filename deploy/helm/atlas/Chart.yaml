@@ -4,8 +4,8 @@ apiVersion: v2
 name: atlas
 description: Atlas storage control plane for the Zyvor product suite
 type: application
-version: 0.10.0
-appVersion: "0.10.0"
+version: 0.10.1
+appVersion: "0.10.1"
 home: https://github.com/zyvorai/atlas
 sources:
   - https://github.com/zyvorai/atlas

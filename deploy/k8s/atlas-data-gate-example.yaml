@@ -21,7 +21,7 @@ spec:
     runAsUser: 10001
   initContainers:
     - name: wait-for-data
-      image: ghcr.io/zyvorai/atlas-data:0.10.0
+      image: ghcr.io/zyvorai/atlas-data:0.10.1
       args:
         - --url=https://atlas-data.zyvor-system.svc:5120
         - --ca=/etc/atlas-data-ca/ca.crt

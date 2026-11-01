@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Status
 
-Short maturity matrix for Atlas 0.10.0. History and narrative live in [ROADMAP.md](ROADMAP.md).
+Short maturity matrix for Atlas 0.10.1. History and narrative live in [ROADMAP.md](ROADMAP.md).
 When the two disagree, this file wins.
 
 A cell is **yes** only for that column. Lab verification is not production support. Nothing
