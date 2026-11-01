@@ -27,7 +27,7 @@ rsync -az --delete \
 log "build binaries and run the KV-cache smoke test"
 $SSH "cd ~/${DIR} && podman build --target builder -t atlas-ci-builder -f Dockerfile . >/tmp/atlas-ci-builder.log 2>&1 || { tail -30 /tmp/atlas-ci-builder.log; exit 1; }
   podman run --rm --network=host --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined \
-    -e BLOCKS=${BLOCKS:-64} -e BLOCK_KIB=${BLOCK_KIB:-2048} -e READERS=${READERS:-8} \
+    -e RF=${RF:-3} -e BLOCKS=${BLOCKS:-64} -e BLOCK_KIB=${BLOCK_KIB:-2048} -e READERS=${READERS:-8} \
     -v ${CACHE}/target:/build/target -v ${CACHE}/cargo:/usr/local/cargo/registry atlas-ci-builder bash -c '
     set -e
     command -v curl python3 fusermount3 >/dev/null || { apt-get update -qq && apt-get install -y -qq curl python3 fuse3 >/dev/null; }

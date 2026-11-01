@@ -44,7 +44,7 @@ EOF
 {"node_id":"m$i","data_dir":"$WORK/m$i","http_listen":"127.0.0.1:2740$i",
  "api_token_file":"$WORK/token",
  "metadata":{"listen":"127.0.0.1:2730$i","peers":{${peers%,}},"data_nodes":$data_nodes,
-             "replicas":3,"extent_bytes":4194304,
+             "replicas":${RF:-3},"extent_bytes":4194304,
              "repair_interval_secs":5,"gc_interval_secs":5}}
 EOF
 done

@@ -1,0 +1,15 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+# Single-copy profile for data that can be recomputed, such as an inference KV-cache tier
+# (docs/AI_INFERENCE.md). Layer it over the defaults:
+#   helm install kvcache deploy/helm/atlas-native -f deploy/helm/atlas-native/values-cache.yaml
+# Three pods keep a three-voter metadata group, so the catalog survives losing a pod, but each extent
+# has ONE copy. Losing a pod or its disk loses the blocks stored on it: reads of those return an error
+# and the engine must treat them as a cache miss. Do not put anything here that cannot be rebuilt.
+replicas: 3
+
+node:
+  replicationFactor: 1
+  # One copy: a scrub finds corruption but has nothing to repair from, so run it daily and slowly.
+  repairIntervalSecs: 86400
+  scrubBytesPerSec: 8388608

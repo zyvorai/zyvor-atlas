@@ -94,12 +94,24 @@ Earlier runs of the same test failed, and the cause was the test setup, not the 
 - Clients started with only the first leader's URL get `421 not_leader` after leadership moves. Give the mount and the
   S3 gateway every metadata node: `--endpoint http://m1:7400,http://m2:7400,http://m3:7400`.
 
+## Single-copy profile for cache data
+
+`deploy/helm/atlas-native/values-cache.yaml` keeps three pods and three metadata voters but stores one copy of
+each extent (`node.replicationFactor: 1`), for data that can be recomputed. Losing a pod or its disk loses the
+blocks stored on it, so reads of those fail and the engine has to treat them as a miss. Do not put anything here
+that cannot be rebuilt. Scrub finds corruption but has nothing to repair from, so the profile runs it daily.
+
+Lab result (2026-11-01): the same smoke test with `RF=1 scripts/lab-kvcache-remote.sh <host> <user>` (three
+metadata nodes and three data nodes, one copy per extent) passed all 9 checks. That shows the single-copy cluster
+is correct while healthy. It does not test what happens when a node is lost, it does not measure the space or
+speed gained, and whether a cache tier should skip replication is the engine vendors' argument, not ours.
+
 ## Not done, and why
 
 - **No engine has been run against Atlas.** The smoke test checks the storage behaviour an engine needs, not the engine.
 - **No performance numbers.** The lab is a shared CPU host with no GPU or RDMA NIC. GPUDirect Storage has no code in Atlas
   ([STATUS.md](STATUS.md)).
-- **No cache-specific durability tier.** KV-cache blocks can be recomputed, so some vendors argue they do not need
+- **Single-copy profile is opt-in and only smoke tested.** KV-cache blocks can be recomputed, so some vendors argue they do not need
   replication; that is their argument, not something Atlas has measured. Today a KV-cache filesystem is replicated
-  like any other. A single-replica profile for it is a design question, not a feature.
+  like any other unless you opt into the single-copy profile above.
 - **No vLLM connector.** Writing one over `KVAdapter` makes sense only if the file or S3 path proves insufficient.
