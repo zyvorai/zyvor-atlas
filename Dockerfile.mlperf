@@ -14,7 +14,7 @@ RUN cargo build --release --locked -p atlas-native-fuse --features fuse --bin at
 FROM docker.io/library/ubuntu:25.10 AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 # Branch or tag of github.com/mlcommons/storage. Pin a release tag for a reproducible image.
-ARG MLPERF_REF=main
+ARG MLPERF_REF=v3.0
 RUN apt-get update && apt-get install -y --no-install-recommends \
         ca-certificates curl git fuse3 util-linux openssh-client libopenmpi-dev openmpi-common openmpi-bin \
     && rm -rf /var/lib/apt/lists/*
