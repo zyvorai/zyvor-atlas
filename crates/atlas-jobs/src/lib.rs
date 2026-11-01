@@ -165,4 +165,30 @@ mod durability_tests {
             .unwrap();
         assert_eq!(j.state, "queued", "a retried job returns to the queue");
     }
+
+    /// `enqueue` inserts a job as `pending` and then queues it. If the recovery task or the poller
+    /// claims it in between, the late "queue" must not overwrite `running`: that made a job that was
+    /// already executing claimable a second time (found by a flaky dedup test).
+    #[tokio::test]
+    async fn queueing_a_job_never_overwrites_a_claim() {
+        let pool = migrated_pool().await;
+        for id in ["j_fresh", "j_claimed"] {
+            atlas_inventory::jobs::insert_job(&pool, id, "t", "volume.create", "me", &serde_json::json!({}), None)
+                .await
+                .unwrap();
+        }
+        assert!(atlas_inventory::jobs::queue_if_pending(&pool, "j_fresh").await.unwrap());
+        let fresh = atlas_inventory::jobs::get_job(&pool, "j_fresh").await.unwrap().unwrap();
+        assert_eq!(fresh.state, "queued");
+
+        // A worker claims the still-`pending` job before enqueue gets to queue it.
+        assert!(atlas_inventory::jobs::try_claim(&pool, "j_claimed", "worker-a").await.unwrap());
+        assert!(!atlas_inventory::jobs::queue_if_pending(&pool, "j_claimed").await.unwrap());
+        let claimed = atlas_inventory::jobs::get_job(&pool, "j_claimed").await.unwrap().unwrap();
+        assert_eq!(claimed.state, "running", "queueing overwrote a running job");
+        assert!(
+            !atlas_inventory::jobs::try_claim(&pool, "j_claimed", "worker-b").await.unwrap(),
+            "a running job must not be claimable twice"
+        );
+    }
 }
