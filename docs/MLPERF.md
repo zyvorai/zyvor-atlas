@@ -10,8 +10,9 @@ ships a **harness** that runs the unmodified `mlpstorage` tool against an atlas-
 for IO500.
 
 **Status: the harness targets `mlcommons/storage` tag `v3.0`. The `mlpstorage` command lines below were
-checked against that tag on the lab (CLI help, and a real `training unet3d datasize` run), but the Atlas image
-has not been built and no benchmark has run on an atlas-native mount. There is no MLPerf Storage result and no
+checked against that tag on the lab (CLI help, and a real `training unet3d datasize` run). The Atlas image
+(`Dockerfile.mlperf`) builds on the lab (2026-11-01) and `datasize` runs inside it, but no benchmark has run on
+an atlas-native mount. There is no MLPerf Storage result and no
 submission.** Nothing on this page is a performance claim; a representative run needs NVMe and network hardware
 the shared lab does not have, and the closed division fixes accelerator counts and dataset sizes (`datasize`).
 
@@ -74,6 +75,11 @@ podman run --rm $COMMON -e MLPERF_ARGS="closed checkpointing run file --model ll
 ```
 
 The checkpointing and kvcache lines follow the `v3.0` help output but have not been run here.
+
+Image check (2026-11-01, lab host, image run directly, no mount): `closed training unet3d datasize --max-accelerators 2
+--accelerator-type b200 --client-host-memory-in-gb 64` computes a dataset of about 1.03 TB and then stops at its own
+capacity check (`E403 CAP-01`, 136 GB free on the lab disk). So a `datagen`/`run` needs a filesystem of that size;
+none was run. mpirun refuses to start as root, which `mlperf-run.sh` handles with `--allow-run-as-root`.
 
 Multi-host runs need passwordless SSH from the launching host to every client host and are not
 covered by this single-container harness. Results land in `MLPERF_RESULTS` (default `/results`);
