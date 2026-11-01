@@ -11,6 +11,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `atlas_data`: optional Postgres catalog (`ATLAS_DATA_DATABASE_URL`) so several service replicas can share metadata; write transactions are serialised by an advisory lock. SQLite stays the default. Whole test suite passed on a lab Postgres 16, plus a two-replica reservation race test. Chunk bytes still need a shared volume.
 - MCP read tools `policy_drift`, `orphan_backups` (tenant-filtered) and `list_events` (admin or unscoped only; a tenant-scoped token is refused because the feed has no tenant). `GET /policy-drift` rows now carry `tenant_id`.
 - `ATLAS_MCP_CALLS_PER_MIN`: a per-token budget of MCP tool calls per minute. Calls over it are refused and audited as `mcp.tool.rate_limited`; off by default, per gateway pod.
 - MCP read tools `osd_ok_to_stop`, `ceph_health_rollup`, `metrics_forecast`, `upgrade_preflight` and `protection_status`, wrapping the existing routes with the same role and tenant checks.

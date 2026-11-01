@@ -30,8 +30,19 @@ OTHER = Actor("other", "ops", "admin")
 KV = dict(model="weights-sha", tokenizer="tokens-sha", adapter="none", layout="float16-4heads", prefix="prefix-sha")
 
 
+def wipe_postgres():
+    """With ATLAS_DATA_DATABASE_URL set the whole suite runs on that Postgres: start each test empty."""
+    url = os.environ.get("ATLAS_DATA_DATABASE_URL")
+    if url:
+        from atlas_data.catalog import PostgresCatalog
+        catalog = PostgresCatalog(url)
+        catalog.execute("DROP TABLE IF EXISTS resources, chunks, chunk_owners, events, ledger")
+        catalog.close()
+
+
 class Fixture(unittest.TestCase):
     def setUp(self):
+        wipe_postgres()
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.now = time.time()
@@ -198,6 +209,24 @@ class SchedulingTests(Fixture):
                 return False
         with ThreadPoolExecutor(max_workers=10) as pool:
             self.assertEqual(sum(pool.map(reserve, range(10))), 1)
+
+    @unittest.skipUnless(os.environ.get("ATLAS_DATA_DATABASE_URL"), "needs a Postgres catalog")
+    def test_replicas_on_one_database_do_not_overcommit(self):
+        """Two service replicas (separate Store objects, shared root and database) racing for one slot."""
+        replicas = [self.store, Store(self.root / "service", clock=lambda: self.now)]
+        self.addCleanup(replicas[1].close)
+        assets = [self.asset(f"v{i}", str(i).encode())["id"] for i in range(10)]
+        self.store.node(ADMIN, "n1", 1, 100, {})
+        def reserve(i):
+            try:
+                replicas[i % 2].schedule(ALICE, f"j{i}", [assets[i]])
+                return True
+            except DataError:
+                return False
+        with ThreadPoolExecutor(max_workers=10) as pool:
+            self.assertEqual(sum(pool.map(reserve, range(10))), 1)
+        # Each replica sees what the other committed.
+        self.assertEqual(len(replicas[1].audit(ADMIN)), len(replicas[0].audit(ADMIN)))
 
     def test_shared_reservations_do_not_double_count_capacity(self):
         asset = self.asset()
