@@ -9,18 +9,42 @@ ships a **harness** that runs the unmodified `mlpstorage` tool against an atlas-
 ([`NATIVE_FS.md`](NATIVE_FS.md)) through the FUSE client, the same way [`IO500.md`](IO500.md) does
 for IO500.
 
-**Status: the harness is written but has not been built or run, and there is no MLPerf Storage
-result and no submission.** The image build, the `mlpstorage` flags used below (taken from the
-upstream README) and the mount step are untested here. Nothing on this page is a performance
-claim; a representative run needs NVMe and network hardware the shared lab does not have, and
-MLPerf's closed division defines accelerator counts and dataset sizes that must be chosen with
-`mlpstorage ... datasize`.
+**Status: the harness targets `mlcommons/storage` tag `v3.0`. The `mlpstorage` command lines below were
+checked against that tag on the lab (CLI help, and a real `training unet3d datasize` run), but the Atlas image
+has not been built and no benchmark has run on an atlas-native mount. There is no MLPerf Storage result and no
+submission.** Nothing on this page is a performance claim; a representative run needs NVMe and network hardware
+the shared lab does not have, and the closed division fixes accelerator counts and dataset sizes (`datasize`).
+
+## What v3.0 changed for this harness
+
+Read from the upstream [README](https://github.com/mlcommons/storage) and `Rules.md` (main branch, fetched
+2026-11-01 through a summarising tool, so check the originals before relying on a rule), and from the `v3.0`
+tag's own `--help`:
+
+- Workload families: `training` (`unet3d`, `retinanet` in closed), `checkpointing` (`llama3-8b` to
+  `llama3-1t`, chosen with `--model`, not a positional), `vectordb` (closed requires Milvus) and `kvcache`
+  (closed runs three fixed options, no model positional, no `file`/`object` selector). S3 is available for
+  training and checkpointing through `object` instead of `file`. The KV-cache benchmark has no object backend
+  of its own, so S3 for it would go through a POSIX gateway.
+- **Accelerator types are `b200` and `mi355`.** `h100` is rejected by the `v3.0` CLI, so earlier examples on this
+  page that used it could not have run. Upstream's README still shows `h100`.
+- `datasize` takes `--max-accelerators`, not `--num-accelerators`.
+- A **system name** is required (`--systemname`, or `MLPERF_SYSTEMNAME`), and the results directory must be
+  initialised once with `mlpstorage init <org> <results-dir>`. The directory flag differs: `--data-dir`
+  (training, vectordb), `--cache-dir` (kvcache), `--checkpoint-folder` (checkpointing).
+- The benchmark checks that the dataset and the results directory are on different filesystems
+  (`--skip-fs-separation-gate` exists but a gated run is not what Rules.md accepts). In this harness the
+  results directory is the container's own `/results` and the data is on the Atlas mount.
+- Rules.md (as summarised): closed runs may not change other parameters; training needs a warm-up run plus five
+  measured runs; checkpointing needs `checkpoint.fsync` true; KV-cache closed uses fixed options with
+  three trials and a 90 s delay between options; each submission needs a system description
+  (`<name>.yaml` and `.pdf`) and `mlpstorage validate` has to pass.
 
 ## What is in the repo
 
 | Piece | Role |
 |---|---|
-| `Dockerfile.mlperf` | Image `atlas-mlperf`: Ubuntu 24.04 (upstream's tested platform) with Open MPI, `uv`, a checkout of `mlcommons/storage` at `MLPERF_REF` (default `main`; pin a release tag for a reproducible image), and `atlas-native-mount` |
+| `Dockerfile.mlperf` | Image `atlas-mlperf`: Ubuntu 24.04 (upstream's tested platform) with Open MPI, `uv`, a checkout of `mlcommons/storage` at `MLPERF_REF` (default `v3.0`), and `atlas-native-mount` |
 | `deploy/mlperf/mlperf-run.sh` | Entry point: mounts `MLPERF_FS`, runs `mlpstorage $MLPERF_ARGS`, unmounts |
 
 The benchmark is a separate program; nothing in Atlas links it.
@@ -34,16 +58,22 @@ the mounted filesystem), `--results-dir` and, when running as root, `--allow-run
 
 ```sh
 podman build -f Dockerfile.mlperf -t atlas-mlperf .
-# size first: how much data would this workload need? (no data or results directories)
-podman run --rm --device /dev/fuse --cap-add SYS_ADMIN \
-  -e ATLAS_NATIVE_ENDPOINTS=http://atlas-native:8080 -e MLPERF_FS=<fs-id> \
-  -e MLPERF_APPEND_DIRS=0 \
-  -e MLPERF_ARGS="closed training unet3d datasize file --num-accelerators 2 --accelerator-type h100 --client-host-memory-in-gb 64" \
+COMMON="--device /dev/fuse --cap-add SYS_ADMIN -e ATLAS_NATIVE_ENDPOINTS=http://atlas-native:8080 -e MLPERF_FS=<fs-id> \
+        -e MLPERF_ORG=<your-org> -e MLPERF_SYSTEMNAME=<system-name>"
+# size first: how much data would this workload need?
+podman run --rm $COMMON -e MLPERF_APPEND_DIRS=0 \
+  -e MLPERF_ARGS="closed training unet3d datasize --max-accelerators 2 --accelerator-type b200 --client-host-memory-in-gb 64 --results-dir /results" \
   atlas-mlperf
 # generate the dataset, then run
-podman run ... -e MLPERF_ARGS="closed training unet3d datagen file --num-processes 4" atlas-mlperf
-podman run ... -e MLPERF_ARGS="closed training unet3d run file --num-accelerators 2 --accelerator-type h100 --client-host-memory-in-gb 64" atlas-mlperf
+podman run --rm $COMMON -e MLPERF_ARGS="closed training unet3d datagen file --num-processes 4" atlas-mlperf
+podman run --rm $COMMON -e MLPERF_ARGS="closed training unet3d run file --num-accelerators 2 --accelerator-type b200 --client-host-memory-in-gb 64" atlas-mlperf
+# KV cache (the cache directory is on the mount, results stay local)
+podman run --rm $COMMON -e MLPERF_ARGS="closed kvcache run" atlas-mlperf
+# checkpointing
+podman run --rm $COMMON -e MLPERF_ARGS="closed checkpointing run file --model llama3-8b --num-processes 8 --client-host-memory-in-gb 64" atlas-mlperf
 ```
+
+The checkpointing and kvcache lines follow the `v3.0` help output but have not been run here.
 
 Multi-host runs need passwordless SSH from the launching host to every client host and are not
 covered by this single-container harness. Results land in `MLPERF_RESULTS` (default `/results`);

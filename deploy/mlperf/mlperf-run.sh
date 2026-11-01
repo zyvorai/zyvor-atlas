@@ -10,8 +10,12 @@
 #   MLPERF_FS                 filesystem id (required); its root must be writable by root
 #   MLPERF_ARGS               arguments after `mlpstorage`, space-separated (required), e.g.
 #                             "closed training unet3d datagen file --num-processes 4"
-#   MLPERF_APPEND_DIRS        1 (default) appends --data-dir and --results-dir; set 0 for
-#                             subcommands that do not take them (e.g. datasize)
+#   MLPERF_APPEND_DIRS        1 (default) appends the workload's directory flag (--data-dir for training and
+#                             vectordb, --cache-dir for kvcache, --checkpoint-folder for checkpointing, all on
+#                             the mounted filesystem) and --results-dir; set 0 for subcommands that take neither
+#   MLPERF_SYSTEMNAME         system name; mlpstorage (v3.0) refuses to run without --systemname or this variable
+#   MLPERF_ORG                organisation name; when set and the results directory is not initialised yet, the
+#                             script runs `mlpstorage init $MLPERF_ORG <results dir>` first (v3.0 requires it)
 #   MLPERF_CA_FILE            CA bundle for https endpoints
 #   MLPERF_MOUNT_ARGS         extra atlas-native-mount arguments, space-separated
 #   MLPERF_RESULTS            result directory (default /results)
@@ -59,9 +63,20 @@ mountpoint -q "$MNT" || { echo "mount did not appear within 60s" >&2; exit 1; }
 
 # shellcheck disable=SC2206  # word splitting is the documented format
 cmd=(mlpstorage $MLPERF_ARGS)
+# The directory flag differs per workload family in mlpstorage v3.0; the results directory is always local to
+# the container, never on the filesystem under test (the benchmark checks they are on different filesystems).
+case " $MLPERF_ARGS " in
+    *" kvcache "*) dir_flag=--cache-dir ;;
+    *" checkpointing "*) dir_flag=--checkpoint-folder ;;
+    *) dir_flag=--data-dir ;;
+esac
+if [[ -n "${MLPERF_ORG:-}" && ! -e "$RESULTS/mlperf-results.yaml" ]]; then
+    log "initialising results directory for ${MLPERF_ORG}"
+    mlpstorage init "$MLPERF_ORG" "$RESULTS"
+fi
 if [[ "${MLPERF_APPEND_DIRS:-1}" == 1 ]]; then
     mkdir -p "$MNT/mlperf"
-    cmd+=(--data-dir "$MNT/mlperf" --results-dir "$RESULTS")
+    cmd+=("$dir_flag" "$MNT/mlperf" --results-dir "$RESULTS")
 fi
 # MLPerf Storage needs --allow-run-as-root on MPI-launching commands when run as root.
 if [[ "$(id -u)" == 0 && " ${cmd[*]} " != *" --allow-run-as-root "* ]]; then
