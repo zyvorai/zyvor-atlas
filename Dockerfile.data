@@ -1,0 +1,16 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+# atlas-data: the atlas_data AI data service, CLI and data-ready gate (docs/AI_DATA_SERVICES.md).
+# One image for three uses, chosen by the arguments:
+#   serve --root /data --config /etc/atlas-data/config.json --host 0.0.0.0 --cert ... --key ...   the service
+#   --url https://atlas-data:5120 gate-wait JOB --out /gate/selection.json                       Kubernetes init container
+#   --url ... call / ingest / export / stage                                                      the client CLI
+# Standard library only, plus psycopg for the optional Postgres catalog (ATLAS_DATA_DATABASE_URL).
+FROM docker.io/library/python:3.12-slim@sha256:1148dbb014615300fa7e713b2f94f550c0d1c69780c0805f84f093ceee34dd0b
+ENV PYTHONUNBUFFERED=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH=/app/tools
+RUN pip install --no-cache-dir 'psycopg[binary]==3.3.6' \
+    && useradd --uid 10001 --no-create-home --shell /usr/sbin/nologin atlas
+COPY tools/atlas_data /app/tools/atlas_data
+USER 10001
+WORKDIR /app
+ENTRYPOINT ["python3", "-m", "atlas_data"]

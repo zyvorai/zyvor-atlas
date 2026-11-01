@@ -1,0 +1,82 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: Apache-2.0
+# The atlas_data AI data service (Dockerfile.data, docs/AI_DATA_SERVICES.md). One replica on SQLite; set
+# ATLAS_DATA_DATABASE_URL (Secret atlas-data-db) and the data volume to ReadWriteMany to run more.
+#
+# Create first (none of these is in this file, so no credential is ever committed):
+#   kubectl -n zyvor-system create secret generic atlas-data-config --from-file=config.json=<private config>
+#   kubectl -n zyvor-system create secret tls atlas-data-tls --cert=<crt> --key=<key>
+# The service refuses to listen outside loopback without TLS, and clients refuse plain http to a remote host.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: atlas-data
+  namespace: zyvor-system
+spec:
+  accessModes: ["ReadWriteOnce"] # ReadWriteMany for several replicas on a Postgres catalog
+  resources:
+    requests:
+      storage: 100Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-data
+  namespace: zyvor-system
+  labels: {app: atlas-data}
+spec:
+  replicas: 1
+  strategy: {type: Recreate} # one SQLite catalog per data root
+  selector:
+    matchLabels: {app: atlas-data}
+  template:
+    metadata:
+      labels: {app: atlas-data}
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        fsGroup: 10001
+        seccompProfile: {type: RuntimeDefault}
+      containers:
+        - name: atlas-data
+          image: ghcr.io/zyvorai/atlas-data:0.10.0
+          args:
+            - serve
+            - --root=/data
+            - --config=/etc/atlas-data/config.json
+            - --host=0.0.0.0
+            - --port=5120
+            - --cert=/etc/atlas-data-tls/tls.crt
+            - --key=/etc/atlas-data-tls/tls.key
+          ports: [{name: https, containerPort: 5120}]
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: {drop: ["ALL"]}
+          resources:
+            requests: {cpu: 100m, memory: 256Mi}
+            limits: {memory: 2Gi}
+          volumeMounts:
+            - {name: data, mountPath: /data}
+            - {name: tmp, mountPath: /tmp}
+            - {name: config, mountPath: /etc/atlas-data, readOnly: true}
+            - {name: tls, mountPath: /etc/atlas-data-tls, readOnly: true}
+      volumes:
+        - name: data
+          persistentVolumeClaim: {claimName: atlas-data}
+        - name: tmp
+          emptyDir: {}
+        - name: config
+          secret: {secretName: atlas-data-config, defaultMode: 0400}
+        - name: tls
+          secret: {secretName: atlas-data-tls, defaultMode: 0400}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-data
+  namespace: zyvor-system
+spec:
+  selector: {app: atlas-data}
+  ports: [{name: https, port: 5120, targetPort: https}]
