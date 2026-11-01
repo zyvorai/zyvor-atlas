@@ -35,6 +35,9 @@ jobs:
           - dockerfile: Dockerfile.io
             image: ghcr.io/zyvorai/atlas-io-agent
             name: atlas-io-agent
+          - dockerfile: Dockerfile.data
+            image: ghcr.io/zyvorai/atlas-data
+            name: atlas-data
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 

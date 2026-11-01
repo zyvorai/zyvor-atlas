@@ -258,3 +258,14 @@ jobs:
           tags: atlas-io-agent:ci
           cache-from: type=gha,scope=io
           cache-to: type=gha,mode=max,scope=io
+      # atlas-data (tools/atlas_data, docs/AI_DATA_SERVICES.md) — Python service image, published
+      # on tags by docker-publish.yml.
+      - name: Build Dockerfile.data
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.data
+          push: false
+          tags: atlas-data:ci
+          cache-from: type=gha,scope=data
+          cache-to: type=gha,mode=max,scope=data
