@@ -43,6 +43,7 @@ const DOCS = [
   ['MACOS_CLIENT.md', 'control-plane', 'macos-client', 16, 'Mac as a client'],
   ['RELEASING.md', 'control-plane', 'releasing', 17, 'Releasing'],
   ['AI_DATA_SERVICES.md', 'control-plane', 'ai-data-services', 18, 'AI data services (experimental)'],
+  ['AI_INFERENCE.md', 'control-plane', 'ai-inference', 21, 'Inference KV-cache storage'],
   ['IMAGE_IMPORT.md', 'control-plane', 'image-import', 19, 'Image import'],
   ['NVME.md', 'control-plane', 'nvme', 20, 'NVMe'],
 

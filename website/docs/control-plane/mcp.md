@@ -27,10 +27,12 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 |---|---|
 | Inventory | `list_clusters`, `cluster_health`, `list_backends`, `list_pools`, `list_volumes` (tenant-scoped), `list_alerts`, `metrics_summary` |
 | Advisory | `ops_advisor`, `list_incidents`, `detect_anomalies`, `what_if_capacity` (always local mode: never calls an external LLM) |
-| I/O | `io_risk` (from the node agent; `unavailable` when not configured/reachable, never healthy) |
+| I/O | `io_risk`, `io_ai` (from the node agent; `unavailable` when not configured/reachable, never healthy) |
 | DR | `dr_status`, `dr_preflight`, `list_dr_mirrors`, `dr_mirror_status`, `list_volume_groups` |
 | Work | `list_jobs`, `get_job`, `list_snapshots` (operator role, stricter than REST; limited to the caller's tenant unless admin) |
-| Ceph | `ceph_status`, `ceph_df`, `ceph_osd_tree` (summary: counts and the OSDs that are down or out). Operator role; output capped at 256 KiB |
+| Ceph | `ceph_status`, `ceph_df`, `ceph_osd_tree` (summary: counts and the OSDs that are down or out), `ceph_nvme` (NVMe wear, media errors and spare from Ceph's device-health scrapes), `ceph_nvmeof` (Rook NVMe-oF gateways and their StorageClasses; needs a Kubernetes cluster), `ceph_osd_objectstore` (each OSD's object store and Ceph version), `ceph_sizing` (NVMe hosts against a CPU/RAM rule of thumb). Operator role; output capped at 256 KiB |
+| Operations | `osd_ok_to_stop` (would stopping these OSDs together keep every PG available; ask before maintenance), `ceph_health_rollup`, `metrics_forecast` (capacity runway), `upgrade_preflight`, `protection_status` (tenant-scoped), `policy_drift` and `orphan_backups` (both tenant-filtered), `list_events` (the jobs, audit and alerts feed; it has no tenant, so a tenant-scoped token is refused and told to use `list_audit`). Operator role; none of them changes anything |
+| Native data | `native_reduction` (atlas-native compression and sharing savings; fails when the driver is off), `volume_ransomware` (activity-based verdict for one native filesystem volume, tenant-scoped; it never snapshots or locks, `POST …/ransomware/protect` stays admin REST only). Operator role |
 | DataBridge | `databridge_plans`, `databridge_cdc_streams` (operator; tenant-filtered) |
 | Governance | `list_policies` (static catalogue), `list_audit` (operator; tenant-filtered; request and result bodies are not returned) |
 | Guarded write | `create_snapshot`, `ack_alert`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
@@ -40,7 +42,7 @@ like any other backend. Erase, add/delete volume and eject are REST only, never 
 
 ## Node agent tools
 
-`io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_risk`, `io_leases`: read-only views of the
+`io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `io_leases`: read-only views of the
 sensor ([IO_EBPF.md](./io-ebpf.md)). There is no tool that grants a write-freeze lease.
 
 ## Prompts and resources
@@ -74,13 +76,23 @@ the auth scheme. It lists no tools and exposes no inventory or tenant data; thos
 
 Detailed Hermes walkthrough: [HERMES_AGENT.md](./hermes-agent.md).
 
+**Least privilege per agent.** An admin can mint a token limited to named tools with
+`POST /auth/tokens {"subject": "...", "role": "operator", "tools": ["ceph_nvme", "ops_advisor"]}`
+([API.md](../api-reference/index.md#post-apiatlasv1authtokens)). Such a token lists and calls only those tools, is
+refused on every non-MCP route, and every refused call is audited as `mcp.tool.denied`. The
+per-actor rate limit (`ATLAS_RATE_LIMIT_RPM`) already covers MCP calls, and a distinct subject gets
+its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
+`crates/atlas-gateway/src/mcp.rs`), so new tools are covered automatically.
+
 ## Configuration
 
 | Variable | Where | Meaning |
 |---|---|---|
 | `ATLAS_MCP_ALLOWED_HOSTS` | gateway | `Host` allow-list for the transport; `*` disables. Unset: loopback-only without auth, any host when auth is required (the endpoint is bearer-gated). |
 | `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot` and `ack_alert` tools. Off by default. |
-| `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk` and the Ops Advisor's `io_risk` block read the node agent from. |
+| `ATLAS_MCP_AUDIT_CALLS` | gateway | Every tool call writes an `mcp.tool.call` audit row (caller, tool, `success` or `error`, token `jti`, role, whether the token is scoped), written after the response so it never delays a call. `0` turns it off, for a polling agent where one row per call is too many. Denied calls (`mcp.tool.denied`) and guarded writes are always audited. |
+| `ATLAS_MCP_CALLS_PER_MIN` | gateway | Tool calls per minute each token may make (a token's own `jti`; callers without one share their actor id's budget). Calls over it are refused and audited as `mcp.tool.rate_limited`. Unset or `0` is off. It adds to the per-actor request limit (`ATLAS_RATE_LIMIT_RPM`), which already covers `/mcp`. The count is in memory, so it is per gateway pod, and read once at startup. |
+| `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk`, `io_ai` and the Ops Advisor's `io_risk` and `io_ai` blocks read the node agent from. |
 | `ATLAS_IO_TOKEN` | agent | Bearer token for the agent API (health probes exempt) and its `/mcp`. |
 
 ## Guarded writes
@@ -98,7 +110,7 @@ Tokens are held in process memory and die with the gateway.
 - **Prompt injection** via data an agent reads (alert titles, device names, job text): tools return
   data only, the skill tells the agent to treat it as untrusted, and the only write paths (`create_snapshot`, `ack_alert`) need a
   human-approved confirmation of the exact arguments.
-- **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens.
+- **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens. A tool-scoped token also cannot be used outside MCP. Mint one with `atlasctl issue-token agent-1 --role viewer --tool ceph_nvme --tool io_ai` (admin; repeat `--tool`).
   Never give an agent an admin token.
 - **Fan-out**: advisory tools run in local mode so an agent call cannot trigger an outbound LLM
   request; the gateway's agent fetch is bounded (timeout, 256 KiB, no redirects) and fails open to

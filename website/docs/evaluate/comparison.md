@@ -43,7 +43,7 @@ columns state only what has been measured or verified in this repository.
 | Cross-site DR | Two-way RBD mirroring with clean failback, verified live (`docs/DR.md`) | Asynchronous filesystem replication: snapshot increments that send only changed extents, read-only replica, promote and demote for failover and failback; verified live between two clusters on one lab host (`docs/NATIVE_REPLICATION.md`) | Snapshot-to-object and replication features |
 | Mixed backends under one API | Ceph, NFS, ZFS, Longhorn, S3, macOS, native | (same gateway) | WEKA only |
 | Cloud-to-edge DB migration | DataBridge: six engines, CDC, cutover | (same gateway) | Not in scope |
-| Operations | AI Ops Advisor, anomaly detection, eBPF I/O RCA (`atlas-io`); MCP server with 27 read-only tools and two opt-in, audited, two-phase writes (`create_snapshot`, `ack_alert`) (`docs/MCP.md`) | (same gateway) | Own management GUI and monitoring |
+| Operations | AI Ops Advisor, anomaly detection, eBPF I/O RCA (`atlas-io`); MCP server with 32 read-only tools and two opt-in, audited, two-phase writes (`create_snapshot`, `ack_alert`) (`docs/MCP.md`) | (same gateway) | Own management GUI and monitoring |
 | Edge footprint | Single-node Rook lab profile | Single-node low-memory profile (`values-edge.yaml`): one pod, catalog memory capped at ~26 MB however many files, 61 MB peak in a 50k-file lab run (`docs/NATIVE_EDGE.md`) | Multi-node clusters on qualified hardware |
 | Licence | Apache-2.0, no key | Apache-2.0, no key | Commercial |
 

@@ -570,6 +570,14 @@ Mint a scoped service-account JWT for a product (admin). The shared secret never
 is clamped to `[60, 7776000]` (90 days). The product sends the token as `Authorization: Bearer <jwt>`.
 The response `jti` identifies the token for revocation.
 
+**Scoped agent tokens.** Add `"tools": ["ceph_nvme", "ops_advisor"]` to mint a token that is valid
+**only on the MCP edge** and can call just those tools; the response echoes the (deduplicated) list.
+The role still applies on top, so a scope narrows a token and never widens it, and the token is
+refused with 403 on every REST route and `/metrics` (and `permission_denied` on gRPC) so it cannot
+be used elsewhere with the role's full reach. Names are `[a-z0-9_]`, at most 64 per token; an
+unknown name grants nothing. Omitted or empty `tools` mints an ordinary token. A call outside the
+scope is refused and audited as `mcp.tool.denied`.
+
 ### Governance reports (operator, day-2)
 - `GET /api/atlas/v1/audit.csv` — export the audit trail as CSV (SIEM/compliance). Retention:
   `ATLAS_AUDIT_RETENTION_DAYS` prunes rows older than N days (0 = keep forever).
