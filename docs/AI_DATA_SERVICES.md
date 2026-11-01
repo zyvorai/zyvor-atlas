@@ -17,12 +17,36 @@ working first implementation, not production parity with ONTAP or a performance 
 | Shared model cache | Immutable model revisions, deduplicated 4 MiB chunks per tenant, resumable chunk uploads, verified exports, shared worker chunk cache, pinned placements | No Hugging Face proxy or peer-to-peer transport; re-running ingest resumes by deduplicating chunks already uploaded |
 | Data-ready scheduling | Label/health/capacity filtering, transfer-time ranking, transactional reservations, readiness gate, stage worker, lease renew/release | External scheduler must use `DataReadyGate`; no automatic Gryvia controller or Kubernetes scheduler plugin |
 | Agent workspaces | Copy-on-write manifests, path overlays/tombstones, optimistic generations, byte/time budgets, review, selective publication, discard | Branch is a virtual file manifest, not an OS sandbox or writable FUSE mount; export published artifacts into FluxVM separately |
-| Permission-aware data access | Tenant and subject identity from credentials, artifact ownership, live ACL revocation across revisions, filename/name search, authorized chunk retrieval, audit trail | Source ACLs must be imported explicitly; no automatic AD/SMB ACL synchronization, semantic embeddings, OCR or vector database |
+| Permission-aware data access | Tenant and subject identity from credentials, artifact ownership, live ACL revocation across revisions, filename/name search, authorized chunk retrieval, audit trail | Source POSIX ACLs are imported on request with `acl-sync` (below), not continuously; no AD/SMB/NFSv4 ACL synchronization, semantic embeddings, OCR or vector database |
 | Inference context cache | Exact compatibility keys, subject isolation, TTL, 64 MiB subject budget with LRU eviction, byte-block SDK | Blocks <=4 MiB, no tensor conversion, NIXL transport, GPU residency or drop-in vLLM/MLX connector; adapter required in serving runtime |
 | Dataset releases | Immutable file manifests and checksums, provenance, metadata-only branches, revision diff, verified exports | A release captures uploaded files, not an automatically quiesced database; use existing `atlas_recovery` for coordinated live capture |
 | Application-verified recovery | Isolated temporary restore, all-file checksum validation, allowlisted verification process, deadline, durable pass/fail evidence, latest verified release | Hook must actually start/check/stop its application; no isolation from a malicious trusted hook, no malware-clean certification; snapshot age is not measured RPO |
 | Per-job storage costs | Trusted collectors, integer micro-USD estimates, idempotent measurements, per-meter/job totals, placement transfer estimates | User-configured rates and measurements, not a cloud invoice or automatic eBPF attribution; compute cost is excluded |
 | Iceberg management | Real SQL catalog and Parquet, typed schemas, optimistic snapshot checks, append/read, bounded compaction, retained snapshot history, metadata expiration | Optional dependency; admin-only local warehouse. No standard Iceberg REST catalog, S3 warehouse configuration, distributed compaction, automatic scheduling or online orphan-file deletion |
+
+## Importing a source ACL
+
+`acl-sync` sets an artifact's readers from the POSIX ACL of the directory it came from, so access in Atlas
+follows the file server instead of being typed in twice. It is a command you run, on a schedule if you want
+(a Kubernetes `CronJob`), not a background sync.
+
+```sh
+getfacl models/llama > llama.acl
+echo '{"user:bob": "bob-agent", "group:ml": ["carol", "dan"]}' > map.json
+python3 -m atlas_data acl-sync ARTIFACT_ID --getfacl llama.acl --map map.json          # shows the change
+python3 -m atlas_data acl-sync ARTIFACT_ID --getfacl llama.acl --map map.json --apply  # sets the readers
+```
+
+Rules, all of them fail closed:
+
+- Only principals you name in the map become readers; any other user or group is listed under `dropped` and gets no access.
+  Atlas does not look users up or resolve group membership: a group entry maps to the subjects you list for it.
+- An entry counts only if its effective permission (after the ACL mask) includes read.
+- `other::r--` is reported in `notes` and never expanded to subjects. `default:` entries are ignored.
+- The command replaces the reader list; the owner is unchanged. It needs the artifact owner's or an admin's credential.
+- Not covered: NFSv4 and SMB ACLs, automatic refresh, group membership changes (re-run the command) and S3 policies.
+
+Unit tested (`tools/atlas_data/tests/test_acl_sync.py`) on `getfacl` text; not yet run against a live file server.
 
 ## Postgres catalog (several replicas)
 

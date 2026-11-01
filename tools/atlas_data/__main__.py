@@ -8,6 +8,7 @@ import os
 from pathlib import Path
 import sys
 
+from .acl_sync import sync as acl_sync
 from .api import serve
 from .client import Client
 from .core import DataError, Store
@@ -39,6 +40,11 @@ def main(argv=None):
     export = commands.add_parser("export")
     export.add_argument("artifact")
     export.add_argument("directory", type=Path)
+    acl = commands.add_parser("acl-sync", help="set an artifact's readers from a source directory's POSIX ACL (dry run unless --apply)")
+    acl.add_argument("artifact")
+    acl.add_argument("--getfacl", type=Path, required=True, help="output of `getfacl` for the source directory")
+    acl.add_argument("--map", type=Path, required=True, help="JSON mapping user:NAME / group:NAME to Atlas subjects")
+    acl.add_argument("--apply", action="store_true")
     worker = commands.add_parser("stage")
     worker.add_argument("job")
     worker.add_argument("node")
@@ -66,6 +72,8 @@ def main(argv=None):
             client = Client(args.url, token, args.ca)
             if args.command == "call":
                 result = client.call(args.action, **json.loads(args.json.read_text()))
+            elif args.command == "acl-sync":
+                result = acl_sync(client, args.artifact, args.getfacl.read_text(), args.map.read_text(), args.apply)
             elif args.command == "ingest":
                 result = client.call("artifacts.publish", kind=args.kind, name=args.name,
                                      revision=args.revision, files=client.upload(args.directory))
