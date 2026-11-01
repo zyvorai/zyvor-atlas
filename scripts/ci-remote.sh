@@ -33,7 +33,7 @@ rsync -az --delete \
 if [[ "$WHAT" == "all" || "$WHAT" == "rust" ]]; then
   log "Rust: clippy (-D warnings) + workspace tests in the Dockerfile builder image"
   $SSH "cd ~/${DIR} && podman build --target builder -t atlas-ci-builder -f Dockerfile . >/tmp/atlas-ci-builder.log 2>&1 || { tail -30 /tmp/atlas-ci-builder.log; exit 1; }
-    podman run --rm -v ${CACHE}/target:/build/target -v ${CACHE}/cargo:/usr/local/cargo/registry atlas-ci-builder bash -c 'rustup component add clippy >/dev/null 2>&1; cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tail -60; echo CLIPPY_EXIT=\${PIPESTATUS[0]}; cargo test --workspace 2>&1 | grep -E \"^test result|FAILED|failed|panicked|error(\\[|:)\" | tail -60; echo TEST_EXIT=\${PIPESTATUS[0]}'"
+    podman run --rm -v ${CACHE}/target:/build/target -v ${CACHE}/cargo:/usr/local/cargo/registry atlas-ci-builder bash -c 'rustup component add clippy >/dev/null 2>&1; cargo clippy --workspace --all-targets -- -D warnings 2>&1 | tail -60; echo CLIPPY_EXIT=\${PIPESTATUS[0]}; cargo test --workspace 2>&1 | grep -E \"^test result|FAILED|failed|panicked|error(\\[|:)\" | tail -60; echo TEST_EXIT=\${PIPESTATUS[0]}; cargo clippy -p atlas-gateway --features mcp --all-targets -- -D warnings 2>&1 | tail -30; echo MCP_CLIPPY_EXIT=\${PIPESTATUS[0]}; cargo test -p atlas-gateway --features mcp 2>&1 | grep -E \"^test result|FAILED|failed|panicked|error(\\[|:)\" | tail -40; echo MCP_TEST_EXIT=\${PIPESTATUS[0]}'"
 fi
 
 if [[ "$WHAT" == "all" || "$WHAT" == "ui" ]]; then
