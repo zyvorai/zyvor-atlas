@@ -52,10 +52,13 @@ async fn the_agent_requires_its_token_but_health_stays_open() {
 
 #[tokio::test]
 async fn an_unreachable_agent_is_an_error_not_an_empty_inventory() {
-    let l = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-    let url = format!("http://{}", l.local_addr().unwrap());
-    drop(l);
+    // Bound but never listening: connecting is refused, and the port stays ours, so a server started by a
+    // parallel test cannot take it between the bind and the request (the old drop-then-connect version could).
+    let socket = tokio::net::TcpSocket::new_v4().unwrap();
+    socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
+    let url = format!("http://{}", socket.local_addr().unwrap());
     assert!(matches!(remote(&url, None).discover().await, Err(DriverError::Unreachable(_))));
+    drop(socket);
 }
 
 #[test]
