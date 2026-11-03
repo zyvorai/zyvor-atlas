@@ -9,6 +9,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.11.0] — 2026-11-03
+
 ### Added
 
 - MCP: `chargeback` read tool (per-tenant usage and estimated cost). A tenant-bound token sees only its own tenant's row; admins see all.
@@ -17,6 +19,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - MCP: `ATLAS_MCP_TOOL_CALLS_PER_MIN`, a per-token budget for each tool, next to the per-token `ATLAS_MCP_CALLS_PER_MIN`. Refusals are audited as `mcp.tool.rate_limited`.
 - MCP: guarded `silence_alert` (two-phase like `ack_alert`; 60 s to 24 h, default 1 h) behind `ATLAS_MCP_WRITE_ENABLE=1`.
 - `atlas-io` agent MCP: `io_native`, `io_heatmap` and `io_coverage` read tools. `io_native` says `unavailable` when the native maps are not loaded.
+
+### Security
+
+- `pulldown-cmark` 0.13.5 → 0.13.6 (RUSTSEC-2026-0433, quadratic parsing with `ENABLE_WIKILINKS`). It is a build-time dependency via `prost-build`; Atlas does not use that option.
 
 ## [0.10.1] — 2026-11-01
 
