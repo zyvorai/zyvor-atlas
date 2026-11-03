@@ -335,11 +335,12 @@ mod tool_tests {
         IoMcp::new(Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab()))
     }
 
-    /// With no atlas_native maps (the fake source) the tool says so; it never returns an empty "healthy" view.
+    /// The fake source carries atlas_native data, so the tool returns the real view, not the "unavailable" marker.
     #[tokio::test]
-    async fn io_native_reports_unavailable_instead_of_empty() {
+    async fn io_native_returns_the_view_when_maps_are_present() {
         let ToolJson(v) = mcp().io_native().await.unwrap();
-        assert_eq!(v["status"], "unavailable", "{v}");
+        assert_ne!(v["status"], "unavailable", "{v}");
+        assert!(v["slow"].is_array(), "{v}");
     }
 
     #[tokio::test]
