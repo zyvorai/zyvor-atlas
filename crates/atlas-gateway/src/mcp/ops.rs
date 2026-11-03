@@ -228,6 +228,51 @@ impl AtlasMcp {
     }
 
     #[tool(
+        description = "One volume's inventory record (backend, pool, size, state, labels). Read-only. \
+                        Limited to the caller's tenant unless admin: another tenant's volume reads as \
+                        not found or forbidden, exactly like the REST route. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn get_volume(
+        &self,
+        Parameters(args): Parameters<super::IdArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::inventory::get_volume(
+                State(self.state.clone()),
+                axum::Extension(actor),
+                axum::extract::Path(args.id),
+            )
+            .await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
+        description = "Protection posture of one volume: its snapshot/backup schedules and the \
+                        recovery points they have produced. Read-only. Limited to the caller's \
+                        tenant unless admin. Requires an operator-or-higher token."
+    )]
+    async fn volume_protection(
+        &self,
+        Parameters(args): Parameters<super::IdArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let ToolJson(v) = rest(
+            crate::routes::protection::get_volume_protection(
+                State(self.state.clone()),
+                axum::Extension(actor),
+                axum::extract::Path(args.id),
+            )
+            .await,
+        )?;
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
         description = "Ransomware assessment of one atlas-native filesystem volume from the node's \
                         recorded activity windows (writes, renames, deletes, write entropy): a \
                         verdict with the evidence behind it. Read-only: it never snapshots or locks \

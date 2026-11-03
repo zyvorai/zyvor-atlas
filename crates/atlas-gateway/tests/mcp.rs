@@ -746,3 +746,64 @@ async fn mcp_server_card_is_public_and_minimal() {
     let text = card.to_string();
     assert!(!text.contains("tenant") && !text.contains("cluster"), "{text}");
 }
+
+/// `get_volume` / `volume_protection` keep the REST routes' tenant checks: a tenant token reads its own volume
+/// and is refused another tenant's; an admin reads both; a viewer is refused.
+#[tokio::test]
+async fn mcp_volume_reads_respect_tenants() {
+    use rmcp::model::CallToolRequestParams;
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, pool) = spawn(true, secret).await;
+    for tenant in ["acme", "globex"] {
+        let id = format!("vol_{tenant}");
+        let vol = atlas_api_types::StorageVolume {
+            id: id.clone(),
+            cluster_id: None,
+            pool_id: None,
+            name: format!("{tenant}-vol"),
+            kind: atlas_api_types::VolumeKind::Block,
+            backend_native_id: Some(format!("rbd:pool/{id}")),
+            size_bytes: 1073741824,
+            used_bytes: None,
+            state: "bound".into(),
+            health: atlas_api_types::Health::Ok,
+            kubernetes_namespace: Some("default".into()),
+            pvc_name: Some(format!("{tenant}-vol")),
+            storage_class_name: Some("zyvor-rbd-prod".into()),
+        };
+        atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", tenant, &vol, None).await.unwrap();
+    }
+    let by_id = |tool: &'static str, id: &str| {
+        CallToolRequestParams::new(tool)
+            .with_arguments(serde_json::json!({ "id": id }).as_object().unwrap().clone())
+    };
+
+    let op = connect_as(addr, secret, "operator", "acme").await;
+    for tool in ["get_volume", "volume_protection"] {
+        let own = op.call_tool(by_id(tool, "vol_acme")).await.unwrap();
+        assert_eq!(own.is_error, Some(false), "{tool}: {}", text_of(&own));
+        let other = op.call_tool(by_id(tool, "vol_globex")).await;
+        assert!(
+            other.is_err() || other.as_ref().unwrap().is_error == Some(true),
+            "{tool} must refuse another tenant's volume"
+        );
+    }
+    let own = text_of(&op.call_tool(by_id("get_volume", "vol_acme")).await.unwrap());
+    assert!(own.contains("vol_acme") && !own.contains("globex"), "{own}");
+    op.cancel().await.unwrap();
+
+    let admin = connect_as(addr, secret, "admin", "global").await;
+    for id in ["vol_acme", "vol_globex"] {
+        let r = admin.call_tool(by_id("get_volume", id)).await.unwrap();
+        assert_eq!(r.is_error, Some(false), "{id}: {}", text_of(&r));
+    }
+    admin.cancel().await.unwrap();
+
+    let viewer = connect(addr, secret, "viewer").await;
+    for tool in ["get_volume", "volume_protection"] {
+        let r = viewer.call_tool(by_id(tool, "vol_acme")).await;
+        assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {tool}");
+    }
+    viewer.cancel().await.unwrap();
+}
