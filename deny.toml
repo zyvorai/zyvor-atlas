@@ -31,12 +31,10 @@ ignore = [
     # attacker positioned to observe response-time variance; both call sites here talk to a
     # server-configured IdP/DB endpoint, not an arbitrary untrusted peer.
     "RUSTSEC-2023-0071",
-    # instant (RUSTSEC-2024-0384) is unmaintained, not vulnerable, and still transitive after the
-    # 2026-09-28 dependency upgrade. (The same upgrade dropped derivative/backoff/rustls-pemfile
-    # from Cargo.lock entirely — kube 0.95 -> 4.2 and axum-server 0.7 -> 0.8 — so their ignores
-    # (RUSTSEC-2024-0388, RUSTSEC-2025-0012, RUSTSEC-2025-0134) were removed rather than kept "just
-    # in case": an ignore for a crate that's no longer built only hides a future regression.)
-    "RUSTSEC-2024-0384",
+    # (RUSTSEC-2024-0384, `instant` unmaintained, is no longer ignored: the crate is still listed in
+    # Cargo.lock but nothing in the checked graph depends on it, so cargo-deny reported the ignore as
+    # unmatched. An ignore for a crate that is not built only hides a future regression; re-add it
+    # if the advisory starts matching again.)
     # crypto-bigint 0.5.5 (RUSTSEC-2026-0387, timing variability in constant-time operations) via
     # p256/p384 0.13 -> jsonwebtoken and openidconnect. It is fixed only in >=0.7.6, and that crate
     # copy is pinned by elliptic-curve 0.13, so there is no in-place upgrade. Atlas signs its own
