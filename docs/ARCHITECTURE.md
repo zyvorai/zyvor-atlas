@@ -24,8 +24,8 @@ Atlas centralizes it:
 - **Ownership + audit** — every volume maps to product/resource/tenant/policy/pool/cluster.
 - **Explainable AI Ops Advisor** — deterministic risk scoring, incident correlation, what-if
   capacity planning, and anomaly detection layered on the same inventory, read-only
-  (`can_execute: false`). The gateway exposes it, plus inventory, I/O risk, DR and job state, as 20
-  read-only MCP tools (and two opt-in guarded writes, `create_snapshot` and `ack_alert`); the `atlas-io` agent serves 6 more at its
+  (`can_execute: false`). The gateway exposes it, plus inventory, I/O risk, DR and job state, as 50
+  read-only MCP tools (and three opt-in guarded writes, `create_snapshot`, `ack_alert` and `silence_alert`); the `atlas-io` agent serves 10 more at its
   own authenticated `/mcp` — see [MCP.md](MCP.md) and [AI_ADVISOR.md](AI_ADVISOR.md).
 
 ## Crate topology
