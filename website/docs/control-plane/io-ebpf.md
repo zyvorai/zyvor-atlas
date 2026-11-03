@@ -138,7 +138,7 @@ with the fake source only; the console does not draw it yet.
 - The gateway sends `ATLAS_IO_AGENT_TOKEN` (same value) when it fetches `/io/risk` for the Ops
   Advisor and the `io_risk` MCP tool.
 - Built with `--features mcp` (`Dockerfile.io` does), the agent serves a read-only MCP endpoint at
-  `/mcp`: `io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `io_leases`. It sits
+  `/mcp`: `io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `io_leases`, `io_heatmap`, `io_coverage`, `io_native`. It sits
   behind the same token; there is no tool that grants a lease or changes anything.
 
 ## Risk scoring

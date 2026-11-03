@@ -33,16 +33,19 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 | Ceph | `ceph_status`, `ceph_df`, `ceph_osd_tree` (summary: counts and the OSDs that are down or out), `ceph_nvme` (NVMe wear, media errors and spare from Ceph's device-health scrapes), `ceph_nvmeof` (Rook NVMe-oF gateways and their StorageClasses; needs a Kubernetes cluster), `ceph_osd_objectstore` (each OSD's object store and Ceph version), `ceph_sizing` (NVMe hosts against a CPU/RAM rule of thumb). Operator role; output capped at 256 KiB |
 | Operations | `osd_ok_to_stop` (would stopping these OSDs together keep every PG available; ask before maintenance), `ceph_health_rollup`, `metrics_forecast` (capacity runway), `upgrade_preflight`, `protection_status` (tenant-scoped), `policy_drift` and `orphan_backups` (both tenant-filtered), `list_events` (the jobs, audit and alerts feed; it has no tenant, so a tenant-scoped token is refused and told to use `list_audit`). Operator role; none of them changes anything |
 | Native data | `native_reduction` (atlas-native compression and sharing savings; fails when the driver is off), `volume_ransomware` (activity-based verdict for one native filesystem volume, tenant-scoped; it never snapshots or locks, `POST …/ransomware/protect` stays admin REST only). Operator role |
-| DataBridge | `databridge_plans`, `databridge_cdc_streams` (operator; tenant-filtered) |
+| DataBridge | `databridge_plans`, `databridge_cdc_streams`, `databridge_validations` (optional `plan_id`), `databridge_cutovers` (operator; tenant-filtered) |
+| Showback | `chargeback` — per-tenant usage and estimated cost; a tenant-bound token sees only its own row |
+| Volumes | `get_volume`, `volume_protection` (by `id`) — operator, tenant-checked like the REST routes |
+| Storage records | `list_buckets` (S3 secret is a reference only), `list_backups` and `list_schedules` (optional `volume_id`; no download URLs) — operator, tenant-filtered; `list_osds` (cluster-wide like the other Ceph tools; OSD rows carry no tenant) |
 | Governance | `list_policies` (static catalogue), `list_audit` (operator; tenant-filtered; request and result bodies are not returned) |
-| Guarded write | `create_snapshot`, `ack_alert`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
+| Guarded write | `create_snapshot`, `ack_alert`, `silence_alert`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
 
 Macs registered as backends (`bkd_macos*`, see [MACOS.md](./macos.md)) appear in `list_pools` and `list_volumes`
 like any other backend. Erase, add/delete volume and eject are REST only, never MCP tools.
 
 ## Node agent tools
 
-`io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `io_leases`: read-only views of the
+`io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `io_leases`, `io_heatmap` (columns for the last N minutes), `io_coverage` (BPF programs loaded and missing) and `io_native` (Atlas Native kernel maps; `unavailable` when they are not loaded, which is not healthy): read-only views of the
 sensor ([IO_EBPF.md](./io-ebpf.md)). There is no tool that grants a write-freeze lease.
 
 ## Prompts and resources
@@ -89,26 +92,27 @@ its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
 | Variable | Where | Meaning |
 |---|---|---|
 | `ATLAS_MCP_ALLOWED_HOSTS` | gateway | `Host` allow-list for the transport; `*` disables. Unset: loopback-only without auth, any host when auth is required (the endpoint is bearer-gated). |
-| `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot` and `ack_alert` tools. Off by default. |
+| `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot`, `ack_alert` and `silence_alert` tools. Off by default. |
 | `ATLAS_MCP_AUDIT_CALLS` | gateway | Every tool call writes an `mcp.tool.call` audit row (caller, tool, `success` or `error`, token `jti`, role, whether the token is scoped), written after the response so it never delays a call. `0` turns it off, for a polling agent where one row per call is too many. Denied calls (`mcp.tool.denied`) and guarded writes are always audited. |
 | `ATLAS_MCP_CALLS_PER_MIN` | gateway | Tool calls per minute each token may make (a token's own `jti`; callers without one share their actor id's budget). Calls over it are refused and audited as `mcp.tool.rate_limited`. Unset or `0` is off. It adds to the per-actor request limit (`ATLAS_RATE_LIMIT_RPM`), which already covers `/mcp`. The count is in memory, so it is per gateway pod, and read once at startup. |
+| `ATLAS_MCP_TOOL_CALLS_PER_MIN` | gateway | Calls per minute each token may make to any one tool, so a loop on one expensive tool cannot use up the whole `ATLAS_MCP_CALLS_PER_MIN` allowance. Calls over it are refused and audited as `mcp.tool.rate_limited` (with `scope: tool`). Only real tool names are counted. Unset or `0` is off. In memory, per gateway pod, read once at startup. |
 | `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk`, `io_ai` and the Ops Advisor's `io_risk` and `io_ai` blocks read the node agent from. |
 | `ATLAS_IO_TOKEN` | agent | Bearer token for the agent API (health probes exempt) and its `/mcp`. |
 
 ## Guarded writes
 
-`create_snapshot` and `ack_alert` are two-phase and single-use: the first call (no `confirmation_token`) changes
+`create_snapshot`, `ack_alert` and `silence_alert` are two-phase and single-use: the first call (no `confirmation_token`) changes
 nothing and returns the plan plus a token valid for 5 minutes and bound to the caller, the tool and
 the exact arguments; the second call with that token executes the REST handler, so its role and
 tenant checks apply. Proposals, rejections and executions are audited as `mcp.<tool>`. `ack_alert` only records that a
 named operator saw an alert (the plan shows its title, severity and state); it does not resolve the alert or
-silence notifications. Both tools share one gate, so a token for one tool or alert never works for another.
+silence notifications. `silence_alert` silences webhook notifications for one alert for 60 s to 24 h (default 1 h; REST allows 30 days, so a longer window stays a human action); the alert is still tracked and listed, and the token is bound to the alert and the window. All write tools share one gate, so a token for one tool, alert or window never works for another.
 Tokens are held in process memory and die with the gateway.
 
 ## Threat model in short
 
 - **Prompt injection** via data an agent reads (alert titles, device names, job text): tools return
-  data only, the skill tells the agent to treat it as untrusted, and the only write paths (`create_snapshot`, `ack_alert`) need a
+  data only, the skill tells the agent to treat it as untrusted, and the only write paths (`create_snapshot`, `ack_alert`, `silence_alert`) need a
   human-approved confirmation of the exact arguments.
 - **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens. A tool-scoped token also cannot be used outside MCP. Mint one with `atlasctl issue-token agent-1 --role viewer --tool ceph_nvme --tool io_ai` (admin; repeat `--tool`).
   Never give an agent an admin token.
