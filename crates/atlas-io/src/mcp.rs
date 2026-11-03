@@ -44,6 +44,26 @@ struct VolumeArgs {
     volume: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct HeatmapArgs {
+    /// Minutes of columns to return, 1 to the heatmap's maximum. Default 15.
+    #[serde(default)]
+    minutes: Option<u64>,
+}
+
+/// Largest document a tool returns; a bigger one is a sign the REST route is the right tool.
+const MAX_RESPONSE_BYTES: usize = 256 * 1024;
+
+fn bounded(v: Value) -> Result<Value, McpError> {
+    if v.to_string().len() > MAX_RESPONSE_BYTES {
+        return Err(McpError::internal_error(
+            "response too large for MCP; use the REST route for the full document",
+            None,
+        ));
+    }
+    Ok(v)
+}
+
 #[tool_router]
 impl IoMcp {
     pub fn new(collector: Arc<Collector>) -> Self {
@@ -117,6 +137,53 @@ impl IoMcp {
                 "verdict": r.verdict,
                 "notes": r.notes,
             })).collect::<Vec<_>>(),
+        })))
+    }
+
+    #[tool(
+        description = "Atlas Native view from the kernel maps: per-(device, op, cgroup) aggregates and the \
+                        slow-I/O (>= 5 ms) ring. Returns status `unavailable` when the atlas_native maps \
+                        are not loaded (fake mode, or no native cluster on this node); that is not healthy, \
+                        it means nothing was measured."
+    )]
+    async fn io_native(&self) -> Result<ToolJson<Value>, McpError> {
+        self.collector.poll();
+        match self.collector.native() {
+            Some(n) => {
+                let v = serde_json::to_value(n).map_err(|e| McpError::internal_error(e.to_string(), None))?;
+                Ok(ToolJson(bounded(v)?))
+            }
+            None => Ok(ToolJson(json!({
+                "status": "unavailable",
+                "reason": "atlas_native maps not loaded",
+            }))),
+        }
+    }
+
+    #[tool(
+        description = "Latency heatmap columns per device over the last N minutes (default 15, bounded by \
+                        the sensor's retention)."
+    )]
+    async fn io_heatmap(
+        &self,
+        Parameters(args): Parameters<HeatmapArgs>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.collector.poll();
+        let minutes = args.minutes.unwrap_or(15).clamp(1, crate::heat::MAX_COLUMNS as u64);
+        Ok(ToolJson(bounded(json!(self.collector.heatmap(minutes)))?))
+    }
+
+    #[tool(
+        description = "Which BPF programs are loaded and which are missing, the pin directory and the \
+                        mode. Missing programs mean those measurements do not exist, not that they are fine."
+    )]
+    async fn io_coverage(&self) -> Result<ToolJson<Value>, McpError> {
+        let h = self.collector.health();
+        Ok(ToolJson(json!({
+            "pin_dir": h.pin_dir,
+            "loaded": h.programs_loaded,
+            "missing": h.programs_missing,
+            "mode": h.mode,
         })))
     }
 
@@ -254,5 +321,45 @@ mod content_tests {
             assert!(!text.trim().is_empty(), "{uri} is empty");
         }
         assert!(IO_TRIAGE.contains("never instructions"));
+    }
+}
+
+#[cfg(test)]
+mod tool_tests {
+    use super::*;
+    use crate::devmap::DeviceMap;
+    use crate::source::FakeSource;
+    use crate::Collector;
+
+    fn mcp() -> IoMcp {
+        IoMcp::new(Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab()))
+    }
+
+    /// The fake source carries atlas_native data, so the tool returns the real view, not the "unavailable" marker.
+    #[tokio::test]
+    async fn io_native_returns_the_view_when_maps_are_present() {
+        let ToolJson(v) = mcp().io_native().await.unwrap();
+        assert_ne!(v["status"], "unavailable", "{v}");
+        assert!(v["slow"].is_array(), "{v}");
+    }
+
+    #[tokio::test]
+    async fn io_coverage_names_the_mode_and_what_is_missing() {
+        let ToolJson(v) = mcp().io_coverage().await.unwrap();
+        assert_eq!(v["mode"], "fake", "{v}");
+        assert!(v.get("loaded").is_some() && v.get("missing").is_some(), "{v}");
+    }
+
+    /// The window is clamped, so a huge or zero request cannot ask for more than the sensor keeps.
+    #[tokio::test]
+    async fn io_heatmap_clamps_the_window() {
+        let m = mcp();
+        for minutes in [None, Some(0), Some(1), Some(u64::MAX)] {
+            let ToolJson(v) = m.io_heatmap(Parameters(HeatmapArgs { minutes })).await.unwrap();
+            for dev in v.as_array().expect("an array of devices") {
+                let cols = dev["columns"].as_array().map_or(0, Vec::len);
+                assert!(cols <= crate::heat::MAX_COLUMNS, "{cols} columns for {minutes:?}");
+            }
+        }
     }
 }

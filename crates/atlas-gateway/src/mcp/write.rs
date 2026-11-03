@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
 use rmcp::{
@@ -25,13 +25,18 @@ use serde_json::{json, Value};
 
 use super::{actor_from, internal_error, rest, AtlasMcp};
 use crate::auth::{require_role, require_tenant, Actor, ROLE_OPERATOR};
-use crate::routes::observability;
+use crate::routes::observability::{self, SilenceQuery};
 use crate::routes::volumes::{self, SnapshotBody};
 use crate::state::AppState;
 
 const TOKEN_TTL_SECS: u64 = 300;
 const CREATE_SNAPSHOT: &str = "create_snapshot";
 const ACK_ALERT: &str = "ack_alert";
+const SILENCE_ALERT: &str = "silence_alert";
+/// Longest silence an agent can request. REST allows 30 days; a mistaken or manipulated agent should not
+/// be able to mute an alert for that long, and a human can still use REST for a longer window.
+const MAX_MCP_SILENCE_SECS: i64 = 24 * 3600;
+const DEFAULT_MCP_SILENCE_SECS: i64 = 3600;
 
 pub(super) fn write_enabled() -> bool {
     matches!(
@@ -182,6 +187,18 @@ struct AckAlertArgs {
     confirmation_token: Option<String>,
 }
 
+#[derive(Debug, Deserialize, JsonSchema)]
+struct SilenceAlertArgs {
+    /// Alert id, as returned by `list_alerts`.
+    alert_id: String,
+    /// Silence window in seconds, 60 to 86400 (default 3600).
+    #[serde(default)]
+    secs: Option<i64>,
+    /// Omit to get the alert and a token; pass the token (with identical arguments) to execute.
+    #[serde(default)]
+    confirmation_token: Option<String>,
+}
+
 #[tool_router(router = write_router, vis = "pub(super)")]
 impl AtlasMcp {
     #[tool(
@@ -318,6 +335,79 @@ impl AtlasMcp {
         match &result {
             Ok(Json(v)) => audit(s, &actor, ACK_ALERT, "alert", rid, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
             Err(e) => audit(s, &actor, ACK_ALERT, "alert", rid, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
+        }
+        let out = rest(result)?;
+        Ok(ToolJson(json!({ "executed": true, "result": out.0 })))
+    }
+
+    #[tool(
+        description = "Silence webhook notifications for one alert for a bounded window (60 s to 24 h, \
+                        default 1 h). The alert keeps being tracked and still shows in list_alerts; it is \
+                        not resolved or acknowledged. Two-phase: call without confirmation_token to \
+                        receive the alert and a 5-minute single-use token, show it to a human, then call \
+                        again with the same arguments plus that token to execute. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn silence_alert(
+        &self,
+        Parameters(args): Parameters<SilenceAlertArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        let s = &self.state;
+        write_guard(s, &actor)?;
+        let secs = args.secs.unwrap_or(DEFAULT_MCP_SILENCE_SECS);
+        if !(60..=MAX_MCP_SILENCE_SECS).contains(&secs) {
+            return Err(McpError::invalid_params(
+                format!("secs must be between 60 and {MAX_MCP_SILENCE_SECS}"),
+                None,
+            ));
+        }
+        let alert = atlas_inventory::alerts::list(&s.pool, None)
+            .await
+            .map_err(internal_error)?
+            .into_iter()
+            .find(|a| a.id == args.alert_id)
+            .ok_or_else(|| McpError::invalid_params(format!("unknown alert {}", args.alert_id), None))?;
+        let params = json!({ "alert_id": args.alert_id, "secs": secs }).to_string();
+        let rid = args.alert_id.as_str();
+
+        match gate(&actor.id, SILENCE_ALERT, &params, args.confirmation_token.as_deref()) {
+            Ok(Gate::Propose(token)) => {
+                audit(s, &actor, SILENCE_ALERT, "alert", rid, "proposed", json!({ "via": "mcp", "confirmed": false, "secs": secs })).await;
+                return Ok(ToolJson(json!({
+                    "executed": false,
+                    "plan": {
+                        "action": "silence_alert",
+                        "alert_id": alert.id,
+                        "severity": alert.severity,
+                        "title": alert.title,
+                        "state": alert.state,
+                        "silence_secs": secs,
+                        "already_silenced_until": alert.silenced_until,
+                    },
+                    "confirmation_token": token,
+                    "expires_in_secs": TOKEN_TTL_SECS,
+                    "next": "call silence_alert again with the same arguments plus confirmation_token",
+                })));
+            }
+            Ok(Gate::Execute) => {}
+            Err(why) => {
+                audit(s, &actor, SILENCE_ALERT, "alert", rid, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                return Err(McpError::invalid_params(why, None));
+            }
+        }
+
+        let result = observability::silence_alert(
+            State(s.clone()),
+            Extension(actor.clone()),
+            Path(args.alert_id.clone()),
+            Query(SilenceQuery { secs: Some(secs) }),
+        )
+        .await;
+        match &result {
+            Ok(Json(v)) => audit(s, &actor, SILENCE_ALERT, "alert", rid, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
+            Err(e) => audit(s, &actor, SILENCE_ALERT, "alert", rid, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
         }
         let out = rest(result)?;
         Ok(ToolJson(json!({ "executed": true, "result": out.0 })))

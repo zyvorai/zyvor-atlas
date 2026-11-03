@@ -109,7 +109,7 @@ pub(crate) async fn ack_alert(
 #[derive(Debug, Deserialize)]
 pub(crate) struct SilenceQuery {
     /// Silence window in seconds (default 1h, capped at 30d).
-    secs: Option<i64>,
+    pub(crate) secs: Option<i64>,
 }
 
 /// `POST /alerts/{id}/silence[?secs=]` — suppress webhook notification for a window; the condition

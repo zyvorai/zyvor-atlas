@@ -573,6 +573,73 @@ async fn mcp_drift_orphans_and_events_respect_tenants() {
     viewer.cancel().await.unwrap();
 }
 
+/// `list_buckets` and `list_backups` show a tenant-scoped operator only that tenant's rows, the
+/// cluster-wide `list_osds` is open to any operator (OSD rows carry no tenant data), and viewers are
+/// refused on every new tool. The DataBridge/schedule lists answer (empty) for an operator.
+#[tokio::test]
+async fn mcp_bucket_backup_and_inventory_reads_respect_tenants() {
+    use rmcp::model::CallToolRequestParams;
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, pool) = spawn(true, secret).await;
+
+    for tenant in ["acme", "globex"] {
+        atlas_inventory::buckets::insert_bucket(
+            &pool,
+            &format!("bkt_{tenant}"),
+            tenant,
+            &format!("bkt-{tenant}"),
+            "bkd_ceph_lab",
+            "default",
+            &format!("obc-{tenant}"),
+            "zyvor-bucket",
+        )
+        .await
+        .unwrap();
+        atlas_inventory::backups::insert_backup(
+            &pool,
+            &format!("bak_{tenant}"),
+            tenant,
+            &format!("vol_{tenant}"),
+            None,
+            &format!("bkt_{tenant}"),
+            "key",
+            "rbd-export-diff",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+    }
+
+    let op = connect_as(addr, secret, "operator", "acme").await;
+    let buckets = text_of(&op.call_tool(CallToolRequestParams::new("list_buckets")).await.unwrap());
+    assert!(buckets.contains("bkt_acme") && !buckets.contains("globex"), "{buckets}");
+    let backups = text_of(&op.call_tool(CallToolRequestParams::new("list_backups")).await.unwrap());
+    assert!(backups.contains("bak_acme") && !backups.contains("globex"), "{backups}");
+    for n in ["list_schedules", "databridge_validations", "databridge_cutovers", "list_osds"] {
+        let r = op.call_tool(CallToolRequestParams::new(n)).await.unwrap();
+        assert_eq!(r.is_error, Some(false), "{n}: {}", text_of(&r));
+    }
+    op.cancel().await.unwrap();
+
+    let admin = connect_as(addr, secret, "admin", "global").await;
+    let all = text_of(&admin.call_tool(CallToolRequestParams::new("list_backups")).await.unwrap());
+    assert!(all.contains("bak_acme") && all.contains("bak_globex"), "{all}");
+    let osds = admin.call_tool(CallToolRequestParams::new("list_osds")).await.unwrap();
+    assert_eq!(osds.is_error, Some(false), "{}", text_of(&osds));
+    admin.cancel().await.unwrap();
+
+    let viewer = connect(addr, secret, "viewer").await;
+    for n in [
+        "list_buckets", "list_backups", "list_schedules", "list_osds", "databridge_validations",
+        "databridge_cutovers",
+    ] {
+        let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
+        assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
+    }
+    viewer.cancel().await.unwrap();
+}
+
 /// The native-backend tools never fabricate data: with no atlas-native driver enabled they fail,
 /// and the ransomware assessment refuses a volume that does not exist or is not a native filesystem.
 #[tokio::test]
