@@ -115,6 +115,20 @@ struct EventsArgs {
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
+struct PlanFilterArgs {
+    /// Only rows for this DataBridge plan id. Default: all.
+    #[serde(default)]
+    plan_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct VolumeFilterArgs {
+    /// Only rows for this volume id. Default: all.
+    #[serde(default)]
+    volume_id: Option<String>,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
 struct ListAuditArgs {
     /// Only entries by this actor id.
     #[serde(default)]
@@ -424,6 +438,112 @@ impl AtlasMcp {
         let ToolJson(v) = rest(databridge::db_list_cdc_streams(State(self.state.clone())).await)?;
         let scope = tenant_scope(self.state.config.auth_required, &actor);
         Ok(ToolJson(bounded(scope_by_tenant(v, scope))?))
+    }
+
+    #[tool(
+        description = "DataBridge validation runs (tables checked and mismatched), optionally for one \
+                        plan, limited to the caller's tenant unless admin. Read-only. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn databridge_validations(
+        &self,
+        Parameters(args): Parameters<PlanFilterArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let rows = atlas_inventory::databridge::validations::list_validations(
+            &self.state.pool,
+            args.plan_id.as_deref(),
+        )
+        .await
+        .map_err(internal_error)?;
+        let scope = tenant_scope(self.state.config.auth_required, &actor);
+        Ok(ToolJson(bounded(scope_by_tenant(json!(rows), scope))?))
+    }
+
+    #[tool(
+        description = "DataBridge cutovers (state, drain and rollback deadlines), limited to the \
+                        caller's tenant unless admin. Read-only. Requires an operator-or-higher token."
+    )]
+    async fn databridge_cutovers(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let rows = atlas_inventory::databridge::cutovers::list_cutovers(&self.state.pool)
+            .await
+            .map_err(internal_error)?;
+        let scope = tenant_scope(self.state.config.auth_required, &actor);
+        Ok(ToolJson(bounded(scope_by_tenant(json!(rows), scope))?))
+    }
+
+    #[tool(
+        description = "Object-storage buckets (backend, endpoint, state; the S3 secret is only a \
+                        reference, never the keys), limited to the caller's tenant unless admin. \
+                        Read-only. Requires an operator-or-higher token."
+    )]
+    async fn list_buckets(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let rows = atlas_inventory::buckets::list_buckets(&self.state.pool)
+            .await
+            .map_err(internal_error)?;
+        let scope = tenant_scope(self.state.config.auth_required, &actor);
+        Ok(ToolJson(bounded(scope_by_tenant(json!(rows), scope))?))
+    }
+
+    #[tool(
+        description = "Backup records (volume, bucket, object key, checksum, state), optionally for one \
+                        volume, limited to the caller's tenant unless admin. No download URL is \
+                        returned. Read-only. Requires an operator-or-higher token."
+    )]
+    async fn list_backups(
+        &self,
+        Parameters(args): Parameters<VolumeFilterArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let rows = atlas_inventory::backups::list_backups(&self.state.pool, args.volume_id.as_deref())
+            .await
+            .map_err(internal_error)?;
+        let scope = tenant_scope(self.state.config.auth_required, &actor);
+        Ok(ToolJson(bounded(scope_by_tenant(json!(rows), scope))?))
+    }
+
+    #[tool(
+        description = "Snapshot and backup schedules (interval, keep, last and next run), optionally for \
+                        one volume, limited to the caller's tenant unless admin. Read-only. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn list_schedules(
+        &self,
+        Parameters(args): Parameters<VolumeFilterArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let rows = atlas_inventory::schedules::list(&self.state.pool, args.volume_id.as_deref())
+            .await
+            .map_err(internal_error)?;
+        let scope = tenant_scope(self.state.config.auth_required, &actor);
+        Ok(ToolJson(bounded(scope_by_tenant(json!(rows), scope))?))
+    }
+
+    #[tool(
+        description = "Ceph OSDs known to the inventory (host, state, usage). Cluster-wide like the other \
+                        Ceph tools; OSD rows carry no tenant data. Read-only. Requires an \
+                        operator-or-higher token."
+    )]
+    async fn list_osds(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        self.operator(&context)?;
+        let rows = atlas_inventory::list_osds(&self.state.pool)
+            .await
+            .map_err(internal_error)?;
+        Ok(ToolJson(bounded(json!(rows))?))
     }
 
     #[tool(

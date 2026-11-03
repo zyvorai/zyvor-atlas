@@ -9,6 +9,13 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- MCP: six read-only tools — `list_buckets`, `list_backups`, `list_schedules`, `list_osds`, `databridge_validations`, `databridge_cutovers`. Operator role, tenant-filtered where rows carry a tenant; `list_osds` is cluster-wide. No download URLs or secrets are returned.
+- MCP: `ATLAS_MCP_TOOL_CALLS_PER_MIN`, a per-token budget for each tool, next to the per-token `ATLAS_MCP_CALLS_PER_MIN`. Refusals are audited as `mcp.tool.rate_limited`.
+- MCP: guarded `silence_alert` (two-phase like `ack_alert`; 60 s to 24 h, default 1 h) behind `ATLAS_MCP_WRITE_ENABLE=1`.
+- `atlas-io` agent MCP: `io_native`, `io_heatmap` and `io_coverage` read tools. `io_native` says `unavailable` when the native maps are not loaded.
+
 ## [0.10.1] — 2026-11-01
 
 ### Added

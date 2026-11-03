@@ -499,6 +499,21 @@ fn call_budget() -> &'static crate::state::RateLimiter {
     })
 }
 
+/// Per-token, per-tool budget (`ATLAS_MCP_TOOL_CALLS_PER_MIN`, 0 or unset = off): each tool may be called this
+/// many times a minute by one token, so an agent looping on one expensive tool (`ceph_status`, `list_audit`)
+/// cannot use up its whole `ATLAS_MCP_CALLS_PER_MIN` allowance on it. Only names that are real tools are
+/// counted, so an arbitrary tool name cannot grow the table. In memory, per pod, read once at first use.
+fn tool_budget() -> &'static crate::state::RateLimiter {
+    static BUDGET: std::sync::OnceLock<crate::state::RateLimiter> = std::sync::OnceLock::new();
+    BUDGET.get_or_init(|| {
+        let rpm = std::env::var("ATLAS_MCP_TOOL_CALLS_PER_MIN")
+            .ok()
+            .and_then(|v| v.trim().parse().ok())
+            .unwrap_or(0);
+        crate::state::RateLimiter::new(rpm)
+    })
+}
+
 /// Every MCP tool call, not only denials and writes, leaves an `mcp.tool.call` audit row unless
 /// `ATLAS_MCP_AUDIT_CALLS=0`. A polling agent writes one row per call, so turn it off if that volume matters.
 fn audit_calls_enabled() -> bool {
@@ -557,6 +572,26 @@ impl ServerHandler for AtlasMcp {
             .await;
             return Err(McpError::invalid_request(
                 "tool-call budget for this token is used up for this minute; retry later",
+                None,
+            ));
+        }
+        if self.tool_router.has_route(&request.name)
+            && !tool_budget().allow(&format!("{budget_key}\u{1f}{}", request.name))
+        {
+            let _ = atlas_inventory::audit::record(
+                &self.state.pool,
+                Some(&actor.tenant_id),
+                &actor.id,
+                "mcp.tool.rate_limited",
+                "mcp_tool",
+                &tool,
+                "denied",
+                None,
+                Some(json!({ "jti": actor.jti, "scope": "tool" })),
+            )
+            .await;
+            return Err(McpError::invalid_request(
+                format!("call budget for tool '{}' is used up for this minute; retry later", request.name),
                 None,
             ));
         }

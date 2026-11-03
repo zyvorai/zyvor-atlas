@@ -333,3 +333,82 @@ async fn guarded_ack_alert_is_two_phase_single_use_and_audited() {
         assert!(statuses.contains(&want), "audit statuses: {statuses:?}");
     }
 }
+
+/// `silence_alert` is two-phase and single-use like the other writes, its token is bound to the alert and the
+/// window, the window is bounded (an agent cannot mute an alert for days), viewers are refused, and nothing is
+/// silenced until the confirmed call.
+#[tokio::test]
+async fn guarded_silence_alert_is_two_phase_bounded_and_audited() {
+    use rmcp::model::CallToolRequestParams;
+    std::env::set_var("ATLAS_MCP_WRITE_ENABLE", "1");
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, pool) = spawn(true, secret).await;
+    for id in ["alert_s1", "alert_s2"] {
+        atlas_inventory::alerts::upsert_open(
+            &pool, id, "warning", "test", "pool", "pool_x", &format!("title {id}"), "d",
+            &serde_json::json!({}),
+        )
+        .await
+        .unwrap();
+    }
+    let silenced = |pool: sqlx::AnyPool, id: &'static str| async move {
+        atlas_inventory::alerts::list(&pool, None)
+            .await
+            .unwrap()
+            .into_iter()
+            .find(|a| a.id == id)
+            .unwrap()
+            .silenced_until
+    };
+    let refused = |r: Result<rmcp::model::CallToolResult, rmcp::service::ServiceError>| {
+        r.is_err() || r.unwrap().is_error == Some(true)
+    };
+
+    let op = connect(addr, secret, "operator", "tenant-a").await;
+    let call = |v: serde_json::Value| op.call_tool(CallToolRequestParams::new("silence_alert").with_arguments(args(v)));
+
+    // Phase 1: the plan names the alert and the window and silences nothing.
+    let plan = call(serde_json::json!({"alert_id": "alert_s1", "secs": 600})).await.unwrap();
+    let plan_json: serde_json::Value = serde_json::from_str(&text_of(&plan)).unwrap();
+    assert_eq!(plan_json["executed"], false);
+    assert_eq!(plan_json["plan"]["silence_secs"], 600);
+    let token = plan_json["confirmation_token"].as_str().unwrap().to_string();
+    assert_eq!(silenced(pool.clone(), "alert_s1").await, None, "planning must not silence");
+
+    // The token is bound to the alert and to the window: neither can be swapped after the plan.
+    assert!(refused(call(serde_json::json!({"alert_id": "alert_s2", "secs": 600, "confirmation_token": token})).await));
+    assert!(refused(call(serde_json::json!({"alert_id": "alert_s1", "secs": 3600, "confirmation_token": token})).await));
+    assert_eq!(silenced(pool.clone(), "alert_s1").await, None);
+    assert_eq!(silenced(pool.clone(), "alert_s2").await, None);
+
+    // Phase 2 executes once; the replay is refused.
+    let done = call(serde_json::json!({"alert_id": "alert_s1", "secs": 600, "confirmation_token": token})).await.unwrap();
+    assert_eq!(done.is_error, Some(false), "{}", text_of(&done));
+    assert!(silenced(pool.clone(), "alert_s1").await.is_some());
+    assert!(refused(call(serde_json::json!({"alert_id": "alert_s1", "secs": 600, "confirmation_token": token})).await));
+
+    // The window is bounded both ways and unknown alerts are caller errors.
+    for secs in [0, 59, 86_401, 2_592_000, -5] {
+        assert!(refused(call(serde_json::json!({"alert_id": "alert_s2", "secs": secs})).await), "secs {secs}");
+    }
+    assert!(refused(call(serde_json::json!({"alert_id": "nope"})).await));
+    assert_eq!(silenced(pool.clone(), "alert_s2").await, None);
+    op.cancel().await.unwrap();
+
+    // Viewers cannot even get a plan.
+    let viewer = connect(addr, secret, "viewer", "tenant-a").await;
+    let denied = viewer
+        .call_tool(CallToolRequestParams::new("silence_alert").with_arguments(args(serde_json::json!({"alert_id": "alert_s2"}))))
+        .await;
+    assert!(refused(denied));
+    viewer.cancel().await.unwrap();
+
+    let rows = atlas_inventory::audit::list(&pool, None, Some("mcp.silence_alert"), None, None, 50)
+        .await
+        .unwrap();
+    let statuses: Vec<_> = rows.iter().filter_map(|r| r["status"].as_str()).collect();
+    for want in ["proposed", "rejected", "success"] {
+        assert!(statuses.contains(&want), "audit statuses: {statuses:?}");
+    }
+}

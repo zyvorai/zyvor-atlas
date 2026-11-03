@@ -697,6 +697,12 @@ connect and call:
 | `ceph_df` | `GET /ceph/df` (operator role; capped) |
 | `ceph_osd_tree` | `GET /ceph/osd-tree`, summarised to node counts and the OSDs that are down or out (operator role) |
 | `databridge_plans` | `GET /databridge/plans` (operator role; limited to the caller's tenant unless admin) |
+| `databridge_validations` | `GET /databridge/validations` (operator; tenant-filtered; optional `plan_id`) |
+| `databridge_cutovers` | `GET /databridge/cutovers` (operator; tenant-filtered) |
+| `list_buckets` | `GET /buckets` (operator; tenant-filtered; secret reference only) |
+| `list_backups` | `GET /backups` (operator; tenant-filtered; optional `volume_id`; no download URL) |
+| `list_schedules` | `GET /schedules` (operator; tenant-filtered; optional `volume_id`) |
+| `list_osds` | `GET /osds` (operator; cluster-wide) |
 | `databridge_cdc_streams` | `GET /databridge/cdc/streams` (operator role; tenant-filtered) |
 | `list_policies` | `GET /policies` (static catalogue) |
 | `list_audit` | `GET /audit` (operator role; tenant-filtered; request and result bodies not returned; at most 200 entries) |
@@ -708,8 +714,8 @@ with `ATLAS_MCP_ALLOWED_HOSTS` (`*` disables the check; otherwise a comma-separa
 allow-list).
 
 Write tools are **off by default**. With `ATLAS_MCP_WRITE_ENABLE=1` the server additionally
-lists `create_snapshot` (one volume, reversible) and `ack_alert` (records that an operator saw an alert; it
-neither resolves nor silences it). Both are two-phase: a call without
+lists `create_snapshot` (one volume, reversible) `ack_alert` (records that an operator saw an alert; it
+neither resolves nor silences it) and `silence_alert` (webhook notifications for one alert, 60 s to 24 h). All are two-phase: a call without
 `confirmation_token` changes nothing and returns the plan plus a 5-minute, single-use token bound to
 the caller, the tool and the exact arguments; the same call with that token executes the REST
 handler (so its role and tenant checks apply). Every proposal, rejection and execution is audited
