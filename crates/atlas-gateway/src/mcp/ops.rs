@@ -540,6 +540,34 @@ impl AtlasMcp {
     }
 
     #[tool(
+        description = "Showback: per-tenant used capacity, volume count, quota and estimated monthly \
+                        cost (rate from ATLAS_CHARGEBACK_USD_PER_GIB_MONTH; 0 = usage only). A \
+                        tenant-scoped token sees only its own tenant's row; admins see all. \
+                        Point-in-time, read-only. Requires an operator-or-higher token."
+    )]
+    async fn chargeback(
+        &self,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = self.operator(&context)?;
+        let scope = tenant_scope(self.state.config.auth_required, &actor).map(str::to_owned);
+        let ToolJson(mut v) = rest(
+            crate::routes::observability::chargeback(
+                State(self.state.clone()),
+                axum::Extension(actor),
+            )
+            .await,
+        )?;
+        // The REST route reports every tenant (an operator-gated cross-tenant view); an agent token bound to
+        // one tenant must not read the others' usage or spend, so keep only its own row.
+        if let (Some(tenant), Some(rows)) = (scope.as_deref(), v.get_mut("tenants")) {
+            let own = scope_by_tenant(rows.take(), Some(tenant));
+            *rows = own;
+        }
+        Ok(ToolJson(bounded(v)?))
+    }
+
+    #[tool(
         description = "Backup records (volume, bucket, object key, checksum, state), optionally for one \
                         volume, limited to the caller's tenant unless admin. No download URL is \
                         returned. Read-only. Requires an operator-or-higher token."
