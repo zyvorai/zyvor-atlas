@@ -807,3 +807,50 @@ async fn mcp_volume_reads_respect_tenants() {
     }
     viewer.cancel().await.unwrap();
 }
+
+/// `chargeback` reports every tenant over REST; over MCP a tenant-bound token gets only its own row, an admin all,
+/// and a viewer is refused.
+#[tokio::test]
+async fn mcp_chargeback_is_tenant_filtered() {
+    use rmcp::model::CallToolRequestParams;
+
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, pool) = spawn(true, secret).await;
+    for tenant in ["acme", "globex"] {
+        let id = format!("vol_cb_{tenant}");
+        let vol = atlas_api_types::StorageVolume {
+            id: id.clone(),
+            cluster_id: None,
+            pool_id: None,
+            name: format!("{tenant}-vol"),
+            kind: atlas_api_types::VolumeKind::Block,
+            backend_native_id: Some(format!("rbd:pool/{id}")),
+            size_bytes: 1073741824,
+            used_bytes: None,
+            state: "bound".into(),
+            health: atlas_api_types::Health::Ok,
+            kubernetes_namespace: Some("default".into()),
+            pvc_name: Some(format!("{tenant}-vol")),
+            storage_class_name: Some("zyvor-rbd-prod".into()),
+        };
+        atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", tenant, &vol, None).await.unwrap();
+    }
+
+    let admin = connect_as(addr, secret, "admin", "global").await;
+    let all = text_of(&admin.call_tool(CallToolRequestParams::new("chargeback")).await.unwrap());
+    assert!(all.contains("\"acme\"") && all.contains("\"globex\""), "admin sees every tenant: {all}");
+    admin.cancel().await.unwrap();
+
+    let op = connect_as(addr, secret, "operator", "acme").await;
+    let own = op.call_tool(CallToolRequestParams::new("chargeback")).await.unwrap();
+    assert_eq!(own.is_error, Some(false), "{}", text_of(&own));
+    let own = text_of(&own);
+    assert!(own.contains("\"acme\"") && !own.contains("globex"), "tenant token must see only itself: {own}");
+    assert!(own.contains("usd_per_gib_month"), "{own}");
+    op.cancel().await.unwrap();
+
+    let viewer = connect(addr, secret, "viewer").await;
+    let r = viewer.call_tool(CallToolRequestParams::new("chargeback")).await;
+    assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused");
+    viewer.cancel().await.unwrap();
+}
