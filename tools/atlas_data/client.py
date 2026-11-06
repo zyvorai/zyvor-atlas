@@ -112,11 +112,16 @@ class Client:
             raise
         return {"verified": True, "bytes": asset["size"], "network_bytes": network_bytes, "path": str(target)}
 
-    def stage(self, job, node, cache):
+    def stage(self, job, node, cache, stats=None):
         """Trusted node worker: download/check bytes before acknowledging placement.
 
         Cache entries are reverified every stage, including after a worker restart.
+        If `stats` is a dict it receives `network_bytes` (bytes fetched from the service),
+        `miss_bytes` (logical size of artifacts that were not in the cache), `hits` and `misses`.
         """
+        stats = stats if stats is not None else {}
+        for k in ("network_bytes", "miss_bytes", "hits", "misses"):
+            stats.setdefault(k, 0)
         decision = self.call("jobs.status", job=job)
         require(decision["node"] == node, "job reserved on another node", 409)
         cache = Path(cache)
@@ -137,8 +142,12 @@ class Client:
                                 size += len(part)
                         require(size == entry["size"] and hasher.hexdigest() == entry["sha256"],
                                 "cached file checksum mismatch", 422)
+                    stats["hits"] += 1
                 else:
-                    self.download(key, target, cache / ".chunks")
+                    done = self.download(key, target, cache / ".chunks")
+                    stats["misses"] += 1
+                    stats["network_bytes"] += done["network_bytes"]
+                    stats["miss_bytes"] += done["bytes"]
             except (DataError, OSError):
                 self.call("nodes.invalidate", node=node, artifact_id=key)
                 raise

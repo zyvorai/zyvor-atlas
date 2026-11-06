@@ -59,6 +59,10 @@ class CostCollector:
         return self.client.call("costs.meter", event=event_id, job=job,
                                 meter="transfer_bytes", units=bytes_transferred)
 
+    def cache_miss(self, job, event_id, bytes_missed):
+        return self.client.call("costs.meter", event=event_id, job=job,
+                                meter="cache_miss_bytes", units=bytes_missed)
+
     def checkpoint(self, job, event_id, bytes_written):
         return self.client.call("costs.meter", event=event_id, job=job,
                                 meter="checkpoint_bytes", units=bytes_written)
