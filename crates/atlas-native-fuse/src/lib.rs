@@ -10,6 +10,7 @@
 
 pub mod cache;
 pub mod client;
+pub mod direct_write;
 pub mod dirs;
 #[cfg(all(feature = "fuse", target_os = "linux"))]
 pub mod fuse;

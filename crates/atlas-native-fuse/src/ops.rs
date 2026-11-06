@@ -26,6 +26,7 @@ use crate::{
     cache::TtlCache,
     client::{encode, Body, Client, Error, Retry},
     locks::{Conflict, Locks, Recall},
+    direct_write::{DirectWriter, DirectWrites},
     pipeline::{Pipeline, SendRun},
     writeback::{Dirty, WriteBack},
 };
@@ -59,6 +60,9 @@ pub struct OpsConfig {
     /// Cache attributes and names under cache leases instead of for `ttl`: nothing cached is
     /// ever stale, and the kernel is given a zero TTL so every lookup reaches this cache.
     pub cache_leases: bool,
+    /// Write whole extents straight to the data nodes ([`DirectWrites`]); the metadata leader
+    /// only leases and commits. Everything it can't do goes through the leader as before.
+    pub direct_writes: Option<DirectWrites>,
 }
 
 impl Default for OpsConfig {
@@ -73,6 +77,7 @@ impl Default for OpsConfig {
             session_ttl: Duration::from_secs(15),
             lock_waiters: 3,
             cache_leases: false,
+            direct_writes: None,
         }
     }
 }
@@ -117,6 +122,8 @@ pub struct Ops {
     /// Data-node clients for direct reads, by `(node id, endpoint, device)`.
     data_nodes: Mutex<HashMap<(String, String, usize), Arc<RemoteDevice>>>,
     direct_fallbacks: std::sync::atomic::AtomicU64,
+    /// Whole-extent writes straight to the data nodes, when enabled.
+    direct_writer: Option<Arc<DirectWriter>>,
     locks: Arc<Locks>,
 }
 
@@ -186,13 +193,20 @@ impl Ops {
             cfg.lock_waiters,
             recall,
         ));
+        let direct_writer = cfg
+            .direct_writes
+            .clone()
+            .filter(|_| !fs.contains('@'))
+            .map(|d| Arc::new(DirectWriter::new(client.clone(), &fs, d, locks.clone())));
         let pipeline = (cfg.writeback_parallel > 0 && cfg.writeback_bytes > 0).then(|| {
             let send: SendRun = {
                 let (client, fs, locks, attrs) =
                     (client.clone(), fs.clone(), locks.clone(), attrs.clone());
+                let dw = direct_writer.clone();
                 let max_io = cfg.max_io_bytes;
                 Arc::new(move |run: &Dirty| {
-                    let result = send_run(&client, &fs, &locks, max_io, run).map(drop);
+                    let result =
+                        send_run(&client, &fs, &locks, max_io, run, dw.as_deref()).map(drop);
                     // Runs finish out of order, so no reply's attributes are known current.
                     if let Ok(mut c) = attrs.lock() {
                         c.remove(&run.ino);
@@ -221,8 +235,20 @@ impl Ops {
             hidden: Mutex::new(HashMap::new()),
             data_nodes: Mutex::new(HashMap::new()),
             direct_fallbacks: std::sync::atomic::AtomicU64::new(0),
+            direct_writer,
             cfg,
         }
+    }
+
+    /// Runs of whole extents written straight to the data nodes, and runs that fell back to the
+    /// leader after a direct attempt failed (both 0 unless direct writes are enabled).
+    pub fn direct_write_counts(&self) -> (u64, u64) {
+        self.direct_writer.as_ref().map_or((0, 0), |d| {
+            (
+                d.direct.load(std::sync::atomic::Ordering::Relaxed),
+                d.fallbacks.load(std::sync::atomic::Ordering::Relaxed),
+            )
+        })
     }
 
     /// Direct reads that fell back to reading through the leader.
@@ -1048,6 +1074,7 @@ impl Ops {
             &self.locks,
             self.cfg.max_io_bytes,
             run,
+            self.direct_writer.as_deref(),
         )? {
             let a: Attr = decode(v)?;
             if let Ok(mut c) = self.attrs.lock() {
@@ -1060,7 +1087,7 @@ impl Ops {
 
 /// Requests name the mount's session (once it has one), so the cluster does not recall the
 /// mount's own cache leases for its own changes.
-fn fs_path(fs: &str, locks: &Locks, rest: &str) -> String {
+pub(crate) fn fs_path(fs: &str, locks: &Locks, rest: &str) -> String {
     match locks.session_id() {
         Some(s) => {
             let sep = if rest.contains('?') { '&' } else { '?' };
@@ -1070,19 +1097,60 @@ fn fs_path(fs: &str, locks: &Locks, rest: &str) -> String {
     }
 }
 
-/// Writes a run in requests of at most `max_io` bytes (each is idempotent: same bytes, same
-/// offset); returns the last reply (the file's attributes).
+/// Writes a run: its whole extents straight to the data nodes when direct writes are on, the
+/// rest (and anything that can't go direct) through the leader. Returns the last reply (the
+/// file's attributes).
 fn send_run(
     client: &Client,
     fs: &str,
     locks: &Locks,
     max_io: usize,
     run: &Dirty,
+    direct: Option<&DirectWriter>,
+) -> Result<Option<serde_json::Value>, Errno> {
+    let leader =
+        |offset: u64, data: &[u8]| send_leader(client, fs, locks, max_io, run.ino, offset, data);
+    let Some((dw, (head, body))) =
+        direct.and_then(|d| d.split(run.offset, run.data.len()).map(|s| (d, s)))
+    else {
+        return leader(run.offset, &run.data);
+    };
+    let mut last = None;
+    if head > 0 {
+        last = leader(run.offset, &run.data[..head])?;
+    }
+    let end = head + body;
+    if let Some(v) = dw.write(
+        run.ino,
+        run.offset + head as u64,
+        &run.data[head..end],
+        &leader,
+    )? {
+        last = Some(v);
+    }
+    if end < run.data.len() {
+        if let Some(v) = leader(run.offset + end as u64, &run.data[end..])? {
+            last = Some(v);
+        }
+    }
+    Ok(last)
+}
+
+/// Writes `data` through the leader in requests of at most `max_io` bytes (each is idempotent:
+/// same bytes, same offset); returns the last reply (the file's attributes).
+fn send_leader(
+    client: &Client,
+    fs: &str,
+    locks: &Locks,
+    max_io: usize,
+    ino: u64,
+    offset: u64,
+    data: &[u8],
 ) -> Result<Option<serde_json::Value>, Errno> {
     let mut last = None;
-    for (i, chunk) in run.data.chunks(max_io.max(1)).enumerate() {
-        let at = run.offset + (i * max_io.max(1)) as u64;
-        let path = fs_path(fs, locks, &format!("/inodes/{}/data?offset={at}", run.ino));
+    for (i, chunk) in data.chunks(max_io.max(1)).enumerate() {
+        let at = offset + (i * max_io.max(1)) as u64;
+        let path = fs_path(fs, locks, &format!("/inodes/{ino}/data?offset={at}"));
         let v = client
             .json(Method::PUT, &path, Body::Bytes(chunk), Retry::Idempotent)
             .map_err(errno)?;

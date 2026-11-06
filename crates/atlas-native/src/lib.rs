@@ -22,6 +22,7 @@ mod durable;
 pub mod ec;
 pub mod engine;
 pub mod gc;
+pub mod grant;
 pub mod http;
 pub mod inodes;
 pub mod leases;
@@ -56,6 +57,7 @@ pub use engine::{
     ObjectKind, PinReport, RepairStats, TierPolicy, TierStats, VolumeInfo,
 };
 pub use gc::GcStats;
+pub use grant::{Grant, GrantKey};
 pub use membership::Membership;
 pub use metadata::{Catalog, MetaCommand, SnapshotId, VolumeId};
 pub use namespace::{FsId, FsOp, FsQuota, Inode, InodeKind, NodeType, SetAttr, XattrMode, ROOT_INO};

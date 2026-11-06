@@ -155,6 +155,7 @@ fn start_node(root: &Path, server: &(String, String), client_ca: &str) -> Native
             store_cache_bytes: atlas_native::store::DEFAULT_STORE_CACHE_BYTES,
         }),
         max_request_bytes: 1 << 20,
+        grant_key_file: None,
     };
     NativeNode::start_with(
         cfg,

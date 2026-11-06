@@ -29,6 +29,7 @@ use crate::{
         RepairStats, TierPolicy, TierStats,
     },
     gc::GcStats,
+    grant::GrantKey,
     http::{Handler, HttpServer, Request, Response},
     metadata::MetaError,
     metrics::{self, PromText},
@@ -67,6 +68,13 @@ pub struct NodeConfig {
     pub metadata: Option<MetadataRole>,
     #[serde(default = "default_max_request_bytes")]
     pub max_request_bytes: usize,
+    /// File holding the secret (at least 16 bytes) behind write grants, identical on every data
+    /// node and metadata node. A data node that has it refuses any write without a grant, and a
+    /// metadata leader that has it can lease direct client writes (`direct-write`); without it
+    /// the data nodes accept writes from anyone who can reach them (the pre-existing model) and
+    /// direct writes are refused.
+    #[serde(default)]
+    pub grant_key_file: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -559,6 +567,14 @@ impl NativeNode {
         if token.as_deref() == Some("") {
             return Err(NativeError::Invalid("api_token_file is empty".into()));
         }
+        let grant_key = cfg
+            .grant_key_file
+            .as_ref()
+            .map(|p| -> Result<GrantKey, NativeError> {
+                let raw = std::fs::read_to_string(p)?;
+                GrantKey::new(raw.trim().as_bytes())
+            })
+            .transpose()?;
         let http_tls = cfg
             .http_tls
             .as_ref()
@@ -581,7 +597,16 @@ impl NativeNode {
                 };
                 let root = cfg.data_dir.join("data");
                 let srv = if role.devices.is_empty() {
-                    DataNodeServer::start_with(cfg.node_id.clone(), root, l, tls.clone())?
+                    let device: Arc<dyn BlockStore> =
+                        Arc::new(crate::device::FileDevice::open(root.join("nvme0.data"))?);
+                    DataNodeServer::start_devices_with(
+                        cfg.node_id.clone(),
+                        root,
+                        vec![device],
+                        l,
+                        tls.clone(),
+                        grant_key.clone(),
+                    )?
                 } else {
                     let devices = role
                         .devices
@@ -589,12 +614,13 @@ impl NativeNode {
                         .enumerate()
                         .map(|(i, d)| open_store(&d.path, d.backend, &root.join(format!("dev{i}"))))
                         .collect::<Result<Vec<_>, _>>()?;
-                    DataNodeServer::start_devices(
+                    DataNodeServer::start_devices_with(
                         cfg.node_id.clone(),
                         root,
                         devices,
                         l,
                         tls.clone(),
+                        grant_key.clone(),
                     )?
                 };
                 data_addr = Some(srv.local_addr());
@@ -638,10 +664,13 @@ impl NativeNode {
                     for d in &m.data_nodes {
                         let mut devs: Vec<Arc<dyn BlockStore>> = Vec::new();
                         for index in 0..d.devices.max(1) {
-                            let dev = match &tls {
+                            let mut dev = match &tls {
                                 Some(id) => RemoteDevice::with_tls(&d.addr, &d.id, id, io_timeout)?,
                                 None => RemoteDevice::new(&d.addr, io_timeout),
                             };
+                            if let Some(k) = &grant_key {
+                                dev = dev.with_grant_key(k.clone());
+                            }
                             devs.push(Arc::new(dev.on_device(index).in_group(g)));
                         }
                         let spec = Node {
@@ -662,6 +691,8 @@ impl NativeNode {
                     ecfg.erasure_min_bytes = m.erasure_min_bytes;
                     ecfg.compression = m.compression;
                     ecfg.dedup = m.dedup;
+                    ecfg.grant_key = grant_key.clone();
+                    ecfg.meta_group = g;
                     ecfg.catalog_cache_inodes = m.cache_inodes;
                     ecfg.catalog_cache_bytes = m.store_cache_bytes;
                     if let (Some(store), Some(t)) = (&objects, &m.tiering) {

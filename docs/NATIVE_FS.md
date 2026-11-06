@@ -431,6 +431,58 @@ Checkpoint fast path (large sequential writes, e.g. a training checkpoint):
 - File-backed data-node devices reserve append space under a lock, then write and sync outside
   it, so concurrent appends share the device instead of queueing behind each other's fsync.
 
+### Direct writes (`atlas-native-mount --direct-writes`, off by default)
+
+Implemented and tested in-process only; **not yet run on the lab or measured**, so there is no
+throughput claim. With the flag, a mount sends whole extents to the data nodes itself and the
+metadata leader only allocates and commits:
+
+1. `POST /v1/fs/{fs}/inodes/{ino}/direct-write {offset, len}` (leader): `offset` and `len` are
+   multiples of the filesystem's `extent_bytes` (at most 64 extents). The leader picks the
+   replica targets as it would for its own write, holds their free space in an allocator lease
+   (`inflight`), and returns per extent `replicas + 1` targets (the extra one is a spare for a
+   replica that is down): the data node's address, the device and offset (or "append"), and a
+   write **grant**, together with the leader's term.
+2. The client writes each target with that grant and the term as the fence
+   (`RemoteDevice::write_at_granted` / `append_granted`).
+3. `POST .../direct-commit {lease, cells[{logical_offset, checksum, replicas[{node, device, offset,
+   receipt}]}], failed[]}` (leader): the leader checks every reported replica against the lease
+   (an append must carry the data node's receipt for its offset), requires the usual number of
+   replicas per extent, then commits through the same path as a leader-side write: the Raft
+   proposal is made in the lease's term, so a leader that was replaced cannot commit it. Quota,
+   file size, snapshots and cache-lease recall are unchanged. `POST .../direct-abort {lease}`
+   gives a lease up.
+
+The write credential is separate from read access. Set `grant_key_file` (a secret of at least 16
+bytes, the same file on every metadata and data node). A data node that has it refuses every write
+that lacks a valid HMAC-SHA256 grant from the leader for exactly that node, group, device, fence,
+offset (or append), length and an expiry (30 s by default); the leaders sign their own writes with
+the key. A client that can only read the data nodes (an address, or the cluster client certificate)
+cannot make a grant. Without `grant_key_file` the data nodes accept unauthenticated writes as
+before and the leader refuses to lease direct writes, so the mount keeps writing through the
+leader. RDMA sessions do not carry grants yet, so they cannot write to a node that requires them.
+
+Failure handling:
+
+- Any failure of the direct path (no grant key, compression, deduplication or erasure coding
+  enabled, a refused or expired lease, a data node fault with no spare left, a fenced term, a
+  failed commit) is followed by writing that chunk through the leader. A refused lease pauses
+  direct writes for 60 s instead of asking for every run.
+- A client that dies after writing the data nodes but before committing leaves unreferenced
+  bytes and nothing visible. The lease expires; its ranges then stay out of the free list for a
+  grace period (30 s by default, `set_direct_write_timing`) because a write may still be in
+  flight, then the allocator hands them out again. A commit that arrives after expiry is refused.
+- A client holding a lease from an earlier term is refused by the data nodes (`Fenced`) once any
+  newer leader has written to them, and the new leader does not know its lease, so its commit is
+  refused. Leases live in the leader's memory; a failover loses them.
+- Appended (not reused) space that is never committed is not reclaimed, as with a failed
+  leader-side write.
+
+Known gaps: the extent checksum in the commit is the client's word (scrub checks replicas
+against it); direct commits record write volume in the per-minute activity windows but no
+entropy sample, so the ransomware assessment is blinder for them; grants and leases are
+wall-clock based, so leaders and data nodes need roughly synchronized clocks.
+
 Measured 2026-10-05 (release builds; the engine benchmark is `checkpoint_throughput` in
 `tests/datapath_bench.rs`, 1 MiB extents, 3 replicas, 8 MiB writes; the client one is
 `checkpoint_bench` in `atlas-native-fuse/tests/ops.rs`, one file in 128 KiB writes):
@@ -461,7 +513,9 @@ Known limits:
 - The client reuses connections (one per concurrent request) but does not pipeline or batch
   requests, so each metadata operation is one round trip to the leader.
 - A read verifies whole extents, so a small random read transfers and checksums a full extent.
-- Writes always go through the leader; only reads can go direct.
+- Writes go through the leader unless the mount runs with `--direct-writes` (see Direct writes);
+  partial extents, compressed, deduplicated or erasure-coded extents and clusters without a
+  `grant_key_file` always do.
 - Unlink-while-open works only within one mount (see Consistency).
 
 ## Verification
@@ -475,6 +529,11 @@ Known limits:
   clone isolation, concurrent creates, direct reads (across extents, after a rewrite) and their
   fallback to the leader; `crates/atlas-native-fuse/src/dirs.rs` unit tests page a 2500-entry
   listing through small kernel buffers with one request per page, and rewind on a seek back.
+- `crates/atlas-native/tests/direct_writes.rs` and the `direct_writes_*` / `a_*` tests at the end of
+  `crates/atlas-native-fuse/tests/ops.rs`: direct writes against in-process data nodes that
+  require grants: grant scoping and expiry, a client dying between data and commit (space
+  reclaimed after expiry and quarantine), a stale-term client fenced (also across a real leader
+  failover), a down replica covered by the spare, forged commits, and fallback to the leader.
 - `crates/atlas-native/tests/allocator.rs`: one write's concurrent extent placements reuse
   distinct free ranges (verified by reading back and scrubbing every replica).
 - `crates/atlas-driver-native/tests/nodes.rs` and `crates/atlas-gateway/tests/native_backend.rs`:

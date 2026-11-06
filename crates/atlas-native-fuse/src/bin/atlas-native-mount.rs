@@ -10,6 +10,7 @@ use std::{path::PathBuf, process::ExitCode, sync::Arc, time::Duration};
 use atlas_native::TlsIdentity;
 use atlas_native_fuse::{
     client::{Client, ClientConfig},
+    direct_write::DirectWrites,
     ops::{DirectReads, Ops, OpsConfig},
 };
 use clap::Parser;
@@ -71,6 +72,14 @@ struct Args {
     /// `--identity-file` must hold a certificate signed by the cluster CA in `--ca-file`.
     #[arg(long)]
     direct_reads: bool,
+    /// Write whole extents straight to the data nodes, with a short-lived write grant the
+    /// metadata leader leases per write, instead of sending the bytes through the leader (which
+    /// then only allocates and commits). Unaligned heads and tails, and any write that fails
+    /// this way, still go through the leader. Needs network access to the data nodes and a
+    /// cluster configured with `grant_key_file`; without one every attempt is refused and the
+    /// mount keeps using the leader. Off by default.
+    #[arg(long)]
+    direct_writes: bool,
     /// With `--direct-reads`: read full copies on this data-node host (its failure-domain
     /// `host`) first, e.g. the host this client runs on after `POST /v1/fs/{fs}/locality/pin`.
     #[arg(long, requires = "direct_reads")]
@@ -106,21 +115,25 @@ fn ops(args: &Args) -> Result<Ops, String> {
     cfg.ca_pem = read(&args.ca_file, "CA file")?;
     cfg.identity_pem = read(&args.identity_file, "identity file")?;
     cfg.retry_for = Duration::from_secs(args.retry_secs);
-    let direct_reads = if args.direct_reads {
-        let identity = match (&cfg.ca_pem, &cfg.identity_pem) {
+    let identity = if args.direct_reads || args.direct_writes {
+        match (&cfg.ca_pem, &cfg.identity_pem) {
             (Some(ca), Some(id)) => Some(Arc::new(
                 TlsIdentity::from_pem(ca, id, id).map_err(|e| format!("identity: {e}"))?,
             )),
             _ => None,
-        };
-        Some(DirectReads {
-            identity,
-            timeout: cfg.request_timeout,
-            prefer_host: args.prefer_host.clone(),
-        })
+        }
     } else {
         None
     };
+    let direct_reads = args.direct_reads.then(|| DirectReads {
+        identity: identity.clone(),
+        timeout: cfg.request_timeout,
+        prefer_host: args.prefer_host.clone(),
+    });
+    let direct_writes = args.direct_writes.then(|| DirectWrites {
+        identity: identity.clone(),
+        timeout: cfg.request_timeout,
+    });
     let client = Client::new(cfg).map_err(|e| e.to_string())?;
     let fs = match &args.snapshot {
         Some(s) => format!("{}@{s}", args.fs),
@@ -136,6 +149,7 @@ fn ops(args: &Args) -> Result<Ops, String> {
             readahead_bytes: args.readahead_bytes,
             max_io_bytes: args.max_io_bytes,
             direct_reads,
+            direct_writes,
             session_ttl: Duration::from_millis(args.session_ttl_ms),
             lock_waiters: args.fuse_threads.saturating_sub(1),
             cache_leases: args.cache_leases,

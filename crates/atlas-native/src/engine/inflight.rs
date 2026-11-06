@@ -48,6 +48,9 @@ pub(super) struct Lease<'a> {
 
 impl NativeEngine {
     pub(super) fn lease(&self) -> Result<Lease<'_>, NativeError> {
+        // Leases clients held and never committed come due here, so their space is reclaimed
+        // by the next placement.
+        self.reap_direct();
         let mut s = self
             .inflight
             .state
@@ -125,13 +128,36 @@ impl Lease<'_> {
                     | RaftError::Wal(_)
             )
         );
-        if !unknown {
-            return;
+        if unknown {
+            self.quarantine(QUARANTINE);
         }
+    }
+
+    /// Keeps everything this lease holds out of the view for `grace`, then lets it go. For
+    /// ranges a client may still be writing, or whose commit may still apply.
+    pub fn quarantine(&self, grace: Duration) {
         if let Ok(mut s) = self.engine.inflight.state.lock() {
-            let until = Instant::now() + QUARANTINE;
+            let until = Instant::now() + grace;
             let held = s.held.insert(self.token, Vec::new()).unwrap_or_default();
             s.quarantine.extend(held.into_iter().map(|r| (until, r)));
+        }
+    }
+
+    /// Keeps the ranges held after this value is gone, identified by the returned token, so a
+    /// client can hold a lease across requests ([`NativeEngine::adopt`] takes it back).
+    pub fn detach(self) -> u64 {
+        let token = self.token;
+        std::mem::forget(self);
+        token
+    }
+}
+
+impl NativeEngine {
+    /// The lease a [`Lease::detach`] returned the token of.
+    pub(super) fn adopt(&self, token: u64) -> Lease<'_> {
+        Lease {
+            engine: self,
+            token,
         }
     }
 }

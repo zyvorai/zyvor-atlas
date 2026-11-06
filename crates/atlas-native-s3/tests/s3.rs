@@ -81,6 +81,7 @@ impl Cluster {
             data_node: None,
             metadata: None,
             max_request_bytes: 1 << 20,
+            grant_key_file: None,
         };
         let data = data_l
             .into_iter()

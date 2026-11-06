@@ -47,6 +47,7 @@ impl Cluster {
             data_node: None,
             metadata: None,
             max_request_bytes: 1 << 20,
+            grant_key_file: None,
         };
         let mut dcfg = base("d1", td.path());
         dcfg.data_node = Some(DataNodeRole {

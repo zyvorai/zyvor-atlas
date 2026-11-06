@@ -18,6 +18,7 @@ use crate::{
     device::{BlockStore, FileDevice},
     ec::{EcLayout, EcScheme},
     gc,
+    grant::GrantKey,
     metadata::{Catalog, ExtentId, ExtentRef, MetaCommand, MetaError, ReplicaRef, SnapshotId, VolumeId},
     metrics::PromText,
     namespace::{FsOp, InodeKind},
@@ -33,6 +34,7 @@ use crate::{
     wal::{Wal, WalError, WalRecord},
 };
 
+mod direct;
 mod export;
 mod files;
 mod inflight;
@@ -41,6 +43,9 @@ mod locality;
 mod rebuild;
 mod replica;
 mod tier;
+pub use direct::{
+    DirectCell, DirectCellDone, DirectCommit, DirectLease, DirectReplicaDone, DirectTarget,
+};
 pub use export::{check_export_name, ExportExtent, ExportInfo, ExportManifest, ExportStats};
 pub use files::{
     Attr, DirEntry, FileLayout, FsInfo, FsSnapshotInfo, FsStat, LayoutEc, LayoutExtent,
@@ -183,6 +188,11 @@ pub struct EngineConfig {
     /// Key prefix of snapshot exports ([`NativeEngine::export_snapshot`]), shared by every
     /// group of a cluster.
     pub export_prefix: String,
+    /// Secret shared with the data nodes that check write grants ([`crate::grant`]). Required to
+    /// lease direct client writes ([`NativeEngine::direct_write_lease`]).
+    pub grant_key: Option<GrantKey>,
+    /// The metadata group this engine serves: the group its direct-write grants are fenced as.
+    pub meta_group: u32,
 }
 
 /// See [`NativeEngine::data_reduction`].
@@ -217,6 +227,8 @@ impl EngineConfig {
             objects: None,
             object_prefix: "atlas-native/".into(),
             export_prefix: "atlas-native/".into(),
+            grant_key: None,
+            meta_group: 0,
         }
     }
 }
@@ -334,6 +346,8 @@ pub struct NativeEngine {
     write_lock: Mutex<()>,
     /// Free ranges held by placements whose commit hasn't applied yet.
     inflight: inflight::Inflight,
+    /// Leases clients hold to write data nodes directly, until they commit or expire.
+    direct: direct::DirectWrites,
     /// One repair at a time, so two never write replacements for the same part.
     repair_lock: Mutex<()>,
     /// When each extent was last read (ms since the epoch), tracked only with an object store,
@@ -425,6 +439,7 @@ impl NativeEngine {
             meta,
             write_lock: Mutex::new(()),
             inflight: Default::default(),
+            direct: Default::default(),
             repair_lock: Mutex::new(()),
             reads: Mutex::new(Default::default()),
             opened_ms: now_ms(),
