@@ -42,6 +42,21 @@ features: ## Compile-check optional DataBridge connectors
 	@command -v cmake >/dev/null && cargo check -p atlas-databridge --features kafka-lag \
 		|| echo "skip kafka-lag (cmake not installed)"
 
+# Compile-check atlas-native / atlas-native-fuse optional features. Each is skipped with a message
+# when its prerequisites are missing (io-uring is Linux only; rdma needs libibverbs headers; fuse
+# needs libfuse3 headers). Run it where cargo and those headers live (the lab host's builder image).
+.PHONY: native-features
+native-features: ## Compile-check atlas-native io-uring/rdma and atlas-native-fuse fuse features
+	@if [ "$$(uname -s)" = Linux ]; then \
+	  cargo check -p atlas-native --features io-uring --all-targets; \
+	else echo "skip io-uring (Linux only)"; fi
+	@if pkg-config --exists libibverbs 2>/dev/null || [ -e /usr/include/infiniband/verbs.h ]; then \
+	  cargo check -p atlas-native --features rdma --all-targets; \
+	else echo "skip rdma (libibverbs headers not installed)"; fi
+	@if pkg-config --exists fuse3 2>/dev/null || [ -e /usr/include/fuse3/fuse.h ]; then \
+	  cargo check -p atlas-native-fuse --features fuse --all-targets; \
+	else echo "skip fuse (libfuse3 headers not installed)"; fi
+
 # Fast Docker smoke: UI stages of both images (needs podman or docker).
 docker-smoke: ## Build the UI stage of both gateway images
 	@RT=$$(command -v podman >/dev/null && echo podman || echo docker); \
