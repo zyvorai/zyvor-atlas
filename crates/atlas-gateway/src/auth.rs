@@ -38,6 +38,104 @@ pub struct Claims {
     /// by using the same token elsewhere. A scope narrows the role; it never widens it.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tools: Vec<String>,
+    /// Resource scope of an agent token (see [`ResourceScope`]). When present the token is scoped
+    /// (MCP only) and may name only the volumes, snapshots, workspaces and paths it lists.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scope: Option<ResourceScope>,
+    /// Budget on the sum of `max_bytes` of the workspaces this token's subject holds; unlike `scope`
+    /// it does not make the token MCP-only.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub workspace_bytes: Option<i64>,
+}
+
+/// Which resources an agent token may name, beyond which tools it may call. Each list holds exact ids
+/// or glob patterns where `*` matches any run of characters (`ws_*`, `/data/run1/*`). Deny by default:
+/// once a token carries a scope, a tool argument naming a resource of a kind whose list is empty or has
+/// no matching entry is refused, and so are tools that enumerate inventory (see `mcp::resource_guard`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ResourceScope {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub volumes: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub snapshots: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub workspaces: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub paths: Vec<String>,
+}
+
+/// The kinds of resource a [`ResourceScope`] covers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResourceKind {
+    Volume,
+    Snapshot,
+    Workspace,
+    Path,
+}
+
+impl ResourceKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Volume => "volume",
+            Self::Snapshot => "snapshot",
+            Self::Workspace => "workspace",
+            Self::Path => "path",
+        }
+    }
+}
+
+/// `*` matches any run of characters (including none and `/`); every other character matches itself.
+pub fn glob_match(pattern: &str, text: &str) -> bool {
+    let (p, t) = (pattern.as_bytes(), text.as_bytes());
+    let (mut pi, mut ti, mut star, mut mark) = (0, 0, None, 0);
+    while ti < t.len() {
+        if pi < p.len() && p[pi] == b'*' {
+            star = Some(pi);
+            mark = ti;
+            pi += 1;
+        } else if pi < p.len() && p[pi] == t[ti] {
+            pi += 1;
+            ti += 1;
+        } else if let Some(sp) = star {
+            pi = sp + 1;
+            mark += 1;
+            ti = mark;
+        } else {
+            return false;
+        }
+    }
+    p[pi..].iter().all(|c| *c == b'*')
+}
+
+impl ResourceScope {
+    /// True when no list has an entry (nothing was requested).
+    pub fn is_empty(&self) -> bool {
+        self.volumes.is_empty()
+            && self.snapshots.is_empty()
+            && self.workspaces.is_empty()
+            && self.paths.is_empty()
+    }
+
+    fn list(&self, kind: ResourceKind) -> &[String] {
+        match kind {
+            ResourceKind::Volume => &self.volumes,
+            ResourceKind::Snapshot => &self.snapshots,
+            ResourceKind::Workspace => &self.workspaces,
+            ResourceKind::Path => &self.paths,
+        }
+    }
+
+    /// Whether `name` is allowed for `kind`. A path with a `..` or empty segment, or a NUL, is never
+    /// allowed: a pattern like `/data/run1/*` must not be escapable by `/data/run1/../other`.
+    pub fn allows(&self, kind: ResourceKind, name: &str) -> bool {
+        if name.is_empty() || name.contains('\0') {
+            return false;
+        }
+        if kind == ResourceKind::Path && name.split('/').any(|seg| seg == "..") {
+            return false;
+        }
+        self.list(kind).iter().any(|pat| glob_match(pat, name))
+    }
 }
 
 fn default_tenant() -> String {
@@ -52,6 +150,10 @@ pub struct Actor {
     pub tenant_id: String,
     /// See [`Claims::tools`]; empty = unscoped.
     pub tools: Vec<String>,
+    /// See [`Claims::scope`]; `None` = no resource restriction.
+    pub scope: Option<ResourceScope>,
+    /// See [`Claims::workspace_bytes`].
+    pub workspace_bytes: Option<i64>,
     /// The token's `jti` (empty for the bootstrap secret, anonymous callers and legacy tokens), so an
     /// audit row can be traced to the token that made the call.
     pub jti: String,
@@ -64,13 +166,15 @@ impl Actor {
             role: "viewer".into(),
             tenant_id: default_tenant(),
             tools: Vec::new(),
+            scope: None,
+            workspace_bytes: None,
             jti: String::new(),
         }
     }
 
-    /// True for a scoped agent token (see [`Claims::tools`]).
+    /// True for a scoped agent token (see [`Claims::tools`] and [`Claims::scope`]).
     pub fn is_scoped(&self) -> bool {
-        !self.tools.is_empty()
+        !self.tools.is_empty() || self.scope.is_some()
     }
 
     /// Whether this actor may call the MCP tool `name`: always for an unscoped actor, otherwise
@@ -124,6 +228,22 @@ pub fn mint_scoped_token(
     ttl_secs: u64,
     tools: &[String],
 ) -> atlas_common::AppResult<(String, usize, String)> {
+    mint_agent_token(secret, subject, role, tenant_id, ttl_secs, tools, None, None)
+}
+
+/// [`mint_scoped_token`] plus a resource scope and a workspace byte budget (see [`Claims::scope`],
+/// [`Claims::workspace_bytes`]). An empty scope is minted as no scope.
+#[allow(clippy::too_many_arguments)]
+pub fn mint_agent_token(
+    secret: &str,
+    subject: &str,
+    role: &str,
+    tenant_id: &str,
+    ttl_secs: u64,
+    tools: &[String],
+    scope: Option<&ResourceScope>,
+    workspace_bytes: Option<i64>,
+) -> atlas_common::AppResult<(String, usize, String)> {
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map_err(|e| atlas_common::AppError::Internal(e.to_string()))?
@@ -137,6 +257,8 @@ pub fn mint_scoped_token(
         jti: jti.clone(),
         tenant_id: tenant_id.to_string(),
         tools: tools.to_vec(),
+        scope: scope.filter(|s| !s.is_empty()).cloned(),
+        workspace_bytes: workspace_bytes.filter(|b| *b > 0),
     };
     let token = encode(
         &Header::default(),
@@ -245,6 +367,8 @@ pub async fn auth_middleware(
                 role: "admin".into(),
                 tenant_id: default_tenant(),
                 tools: Vec::new(),
+                scope: None,
+                workspace_bytes: None,
                 jti: String::new(),
             }
         } else {
@@ -270,6 +394,8 @@ pub async fn auth_middleware(
                         role: data.claims.role,
                         tenant_id: data.claims.tenant_id,
                         tools: data.claims.tools,
+                        scope: data.claims.scope,
+                        workspace_bytes: data.claims.workspace_bytes,
                         jti: data.claims.jti,
                     }
                 }

@@ -121,6 +121,7 @@ async fn call(
 #[tokio::test]
 async fn each_token_has_its_own_call_budget() {
     std::env::set_var("ATLAS_MCP_CALLS_PER_MIN", "3");
+    std::env::set_var("ATLAS_RATE_LIMIT_SYNC_SECS", "1");
     let (addr, pool) = spawn(true, SECRET).await;
     let a = connect_token(addr, &scoped("operator", &["list_clusters"])).await.unwrap();
     let b = connect_token(addr, &scoped("operator", &["list_clusters"])).await.unwrap();
@@ -144,4 +145,20 @@ async fn each_token_has_its_own_call_budget() {
         .unwrap()
         .get("n");
     assert_eq!(n, 3, "each refusal is audited");
+
+    // The budget shares its counts through the database (so it holds across replicas on Postgres): the
+    // background sync writes this replica's per-token count under an `mcp:call:` key.
+    let mut total = 0i64;
+    for _ in 0..40 {
+        total = sqlx::query("SELECT CAST(COALESCE(SUM(count), 0) AS BIGINT) AS n FROM rate_limit_counters WHERE actor_id LIKE 'mcp:call:%'")
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+            .get("n");
+        if total >= 3 {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+    }
+    assert!(total >= 3, "the call budget's counts reach rate_limit_counters, got {total}");
 }

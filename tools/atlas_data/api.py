@@ -13,7 +13,9 @@ import ssl
 import threading
 from urllib.parse import parse_qs, urlsplit
 
-from .core import Actor, CHUNK, DataError, canonical, require
+from dataclasses import replace
+
+from .core import Actor, CHUNK, DataError, canonical, require, valid_run_id
 from .iceberg import Iceberg
 from .recovery import Recovery
 
@@ -96,6 +98,12 @@ class Service:
     def call(self, a, action, arguments):
         require(action in self.actions, "unknown action", 404)
         require(isinstance(arguments, dict) and "a" not in arguments, "invalid arguments")
+        # `run_id` is envelope metadata, not an action argument: it tags the audit events of this call.
+        if "run_id" in arguments and action != "audit.list":
+            arguments = dict(arguments)
+            supplied = valid_run_id(arguments.pop("run_id"))
+            require(a.run_id in (None, supplied), "run_id differs from the X-Atlas-Run-Id header")
+            a = replace(a, run_id=supplied)
         try:
             return self.actions[action](a, **arguments)
         except TypeError as exc:
@@ -135,6 +143,9 @@ def handler(service):
                 if not post and parsed.path == "/healthz":
                     return self.reply(200, {"status": "ok", "api_version": 1})
                 a = service.authenticate(self.headers.get("Authorization"))
+                header_run = self.headers.get("X-Atlas-Run-Id")
+                if header_run is not None:
+                    a = replace(a, run_id=valid_run_id(header_run))
                 if not post:
                     require(parsed.path.startswith("/v1/chunks/"), "route not found", 404)
                     query = parse_qs(parsed.query)

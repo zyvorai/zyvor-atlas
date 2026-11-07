@@ -165,6 +165,65 @@ async fn clone_base(
         .ok_or_else(|| AppError::Internal(format!("clone returned no volume id: {out}")))
 }
 
+/// The workspace size cap for a request: the given one, else `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`, else 0
+/// (none).
+pub(crate) fn resolve_max_bytes(requested: Option<i64>) -> AppResult<i64> {
+    match requested {
+        Some(b) if b < 0 => Err(AppError::Validation("max_bytes must not be negative".into())),
+        Some(b) if b > 0 => Ok(b),
+        _ => Ok(env_i64("ATLAS_WORKSPACE_DEFAULT_MAX_BYTES", 0)),
+    }
+}
+
+/// The byte budget on the workspaces `actor` may hold at once: the token's `workspace_bytes` claim,
+/// else `ATLAS_AGENT_WORKSPACE_BYTES`; 0 = no budget.
+fn byte_budget(actor: &Actor) -> i64 {
+    actor
+        .workspace_bytes
+        .filter(|b| *b > 0)
+        .unwrap_or_else(|| env_i64("ATLAS_AGENT_WORKSPACE_BYTES", 0))
+}
+
+/// Everything that can refuse a new workspace before anything is created: the per-tenant count, the
+/// source against its size cap, and the caller's byte budget. The MCP plan phase calls this too, so a
+/// plan can say up front that the execute would be refused. Not atomic with the insert: two creates
+/// racing, on one pod or two, can both pass (as with the per-tenant count).
+pub(crate) async fn preflight_create(
+    s: &AppState,
+    actor: &Actor,
+    tenant: &str,
+    source_size_bytes: i64,
+    max_bytes: i64,
+) -> AppResult<()> {
+    let per_tenant = env_i64("ATLAS_WORKSPACE_MAX_PER_TENANT", DEFAULT_MAX_PER_TENANT);
+    if per_tenant > 0 && store::count_for_tenant(&s.pool, tenant).await? >= per_tenant {
+        return Err(AppError::Conflict(format!(
+            "tenant {tenant} already has {per_tenant} workspaces (ATLAS_WORKSPACE_MAX_PER_TENANT); discard one first"
+        )));
+    }
+    if max_bytes > 0 && source_size_bytes > max_bytes {
+        return Err(AppError::Conflict(format!(
+            "source is {source_size_bytes} bytes, over the workspace cap of {max_bytes}"
+        )));
+    }
+    let budget = byte_budget(actor);
+    if budget > 0 {
+        if max_bytes == 0 {
+            return Err(AppError::Validation(
+                "a workspace byte budget applies to this caller, so max_bytes must be set".into(),
+            ));
+        }
+        let held = store::live_max_bytes_for_owner(&s.pool, tenant, &actor.id).await?;
+        if held.saturating_add(max_bytes) > budget {
+            return Err(AppError::Conflict(format!(
+                "{} already holds {held} bytes of workspaces; {max_bytes} more would pass its budget of {budget}",
+                actor.id
+            )));
+        }
+    }
+    Ok(())
+}
+
 /// `POST /workspaces`
 pub(crate) async fn create_workspace(
     State(s): State<AppState>,
@@ -179,11 +238,7 @@ pub(crate) async fn create_workspace(
             "ttl_secs must be between {MIN_TTL_SECS} and {max_ttl}"
         )));
     }
-    let max_bytes = match body.max_bytes {
-        Some(b) if b < 0 => return Err(AppError::Validation("max_bytes must not be negative".into())),
-        Some(b) if b > 0 => b,
-        _ => env_i64("ATLAS_WORKSPACE_DEFAULT_MAX_BYTES", 0),
-    };
+    let max_bytes = resolve_max_bytes(body.max_bytes)?;
 
     // Resolve the source and the tenant it belongs to; a caller from another tenant gets a 404.
     let (source_volume_id, existing_snapshot) = match (&body.source_volume_id, &body.source_snapshot_id) {
@@ -217,18 +272,8 @@ pub(crate) async fn create_workspace(
         ));
     }
 
-    let per_tenant = env_i64("ATLAS_WORKSPACE_MAX_PER_TENANT", DEFAULT_MAX_PER_TENANT);
-    if per_tenant > 0 && store::count_for_tenant(&s.pool, &tenant).await? >= per_tenant {
-        return Err(AppError::Conflict(format!(
-            "tenant {tenant} already has {per_tenant} workspaces (ATLAS_WORKSPACE_MAX_PER_TENANT); discard one first"
-        )));
-    }
-    if max_bytes > 0 && src.size_bytes > max_bytes {
-        return Err(AppError::Conflict(format!(
-            "source is {} bytes, over the workspace cap of {max_bytes}",
-            src.size_bytes
-        )));
-    }
+    // Every refusal that needs no side effect comes before the snapshot and clone are made.
+    preflight_create(&s, &actor, &tenant, src.size_bytes, max_bytes).await?;
 
     let id = format!("ws_{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
     let (snapshot_id, owns_snapshot) = match existing_snapshot {
@@ -452,6 +497,8 @@ pub async fn gc_once(s: &AppState, now_unix: i64) -> anyhow::Result<GcReport> {
         role: "admin".into(),
         tenant_id: "global".into(),
         tools: Vec::new(),
+        scope: None,
+        workspace_bytes: None,
         jti: String::new(),
     };
     let mut report = GcReport::default();

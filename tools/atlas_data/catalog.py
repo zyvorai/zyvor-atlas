@@ -102,6 +102,10 @@ class SqliteCatalog:
         self.db = sqlite3.connect(path, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.executescript(SQLITE_SCHEMA)
+        # Catalogs created before the run id existed gain the column in place.
+        if "run_id" not in [r[1] for r in self.db.execute("PRAGMA table_info(events)")]:
+            self.db.execute("ALTER TABLE events ADD COLUMN run_id TEXT")
+            self.db.commit()
 
     def execute(self, sql, params=()):
         return self.db.execute(sql, params)
@@ -130,6 +134,7 @@ class PostgresCatalog:
         self.db = psycopg.connect(url, autocommit=True, row_factory=self._row_factory)
         for statement in POSTGRES_SCHEMA:
             self.db.execute(statement)
+        self.db.execute("ALTER TABLE events ADD COLUMN IF NOT EXISTS run_id TEXT")
 
     @staticmethod
     def _row_factory(cursor):

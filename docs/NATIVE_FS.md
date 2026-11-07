@@ -370,7 +370,9 @@ block source), `state`, `used_bytes`, `over_cap` and `remaining_secs`.
   `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) refuses a source larger than that at create time. It is an
   admission check, not a hard limit: a native filesystem has no size limit, so growth after creation
   is only reported (`over_cap`), and the tenant byte quota is what bounds it. The per-tenant count
-  is checked before the create, so two simultaneous creates can overshoot it by one.
+  is checked before the create, so two simultaneous creates can overshoot it by one. A per-owner
+  budget on the sum of `max_bytes` (token `workspace_bytes`, `ATLAS_AGENT_WORKSPACE_BYTES`) is checked at
+  the same point; see [MCP.md](MCP.md#agent-identity-and-guardrails).
 - Create, reset, discard and expiry are audited (`workspace.create`, `workspace.reset`,
   `workspace.discard`, `workspace.expire`).
 

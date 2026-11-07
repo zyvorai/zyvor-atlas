@@ -163,6 +163,13 @@ impl AtlasMcp {
 
         match gate(&actor.id, CREATE_WORKSPACE, &params, args.confirmation_token.as_deref()) {
             Ok(Gate::Propose(token)) => {
+                // The plan changes nothing, so it is the dry run: it also reports whether the execute
+                // would be refused (tenant count, size cap, byte budget) rather than leave that to be
+                // found out after the token is spent.
+                let preflight = match workspaces::resolve_max_bytes(args.max_bytes) {
+                    Ok(cap) => workspaces::preflight_create(s, &actor, &tenant, vol.size_bytes, cap).await,
+                    Err(e) => Err(e),
+                };
                 audit(s, &actor, CREATE_WORKSPACE, "volume", &source, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
                 return Ok(ToolJson(json!({
                     "executed": false,
@@ -177,6 +184,7 @@ impl AtlasMcp {
                         "ttl_secs": args.ttl_secs,
                         "max_bytes": args.max_bytes,
                         "writes_to_source": false,
+                        "would_be_refused": preflight.as_ref().err().map(|e| e.to_string()),
                     },
                     "confirmation_token": token,
                     "expires_in_secs": TOKEN_TTL_SECS,

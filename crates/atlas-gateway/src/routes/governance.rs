@@ -149,6 +149,14 @@ pub(crate) struct IssueTokenBody {
     /// applies on top) and is refused on REST, gRPC and `/metrics`.
     #[serde(default)]
     tools: Option<Vec<String>>,
+    /// Resource scope for an agent token: the volumes, snapshots, workspaces and paths (exact ids
+    /// or `*` globs) it may name. Present and non-empty makes the token MCP-only, like `tools`, and
+    /// denies by default whatever the lists do not match.
+    #[serde(default)]
+    scope: Option<crate::auth::ResourceScope>,
+    /// Budget on the sum of `max_bytes` over the workspaces the token's subject holds at once.
+    #[serde(default)]
+    workspace_bytes: Option<i64>,
     /// Lifetime in seconds (default 3600, capped at 90 days).
     #[serde(default)]
     ttl_secs: Option<u64>,
@@ -543,6 +551,31 @@ fn validate_tool_scope(tools: &[String]) -> AppResult<Vec<String>> {
     Ok(out)
 }
 
+/// At most this many entries per resource list, each a plausible id or path pattern.
+const MAX_SCOPE_ENTRIES: usize = 64;
+
+/// Checks a requested resource scope: bounded lists of non-empty entries without control characters.
+/// Returns `None` when nothing was requested.
+fn validate_resource_scope(scope: Option<&crate::auth::ResourceScope>) -> AppResult<Option<crate::auth::ResourceScope>> {
+    let Some(scope) = scope.filter(|s| !s.is_empty()) else {
+        return Ok(None);
+    };
+    for (kind, list) in [
+        ("volumes", &scope.volumes),
+        ("snapshots", &scope.snapshots),
+        ("workspaces", &scope.workspaces),
+        ("paths", &scope.paths),
+    ] {
+        if list.len() > MAX_SCOPE_ENTRIES {
+            return Err(AppError::Validation(format!("at most {MAX_SCOPE_ENTRIES} {kind} per scoped token")));
+        }
+        if let Some(bad) = list.iter().find(|e| e.is_empty() || e.len() > 256 || e.chars().any(char::is_control)) {
+            return Err(AppError::Validation(format!("invalid {kind} scope entry '{}'", bad.escape_debug())));
+        }
+    }
+    Ok(Some(scope.clone()))
+}
+
 /// `POST /auth/tokens` — mint a scoped service-account JWT for a product (admin). The shared secret
 /// never leaves Atlas; the caller receives only the signed token + its claims.
 pub(crate) async fn issue_token(
@@ -565,13 +598,21 @@ pub(crate) async fn issue_token(
     const MAX_TTL: u64 = 90 * 24 * 3600;
     let ttl_secs = body.ttl_secs.unwrap_or(3600).clamp(60, MAX_TTL);
     let tools = validate_tool_scope(body.tools.as_deref().unwrap_or(&[]))?;
-    let (token, exp, jti) = crate::auth::mint_scoped_token(
+    let scope = validate_resource_scope(body.scope.as_ref())?;
+    let workspace_bytes = match body.workspace_bytes {
+        Some(b) if b < 0 => return Err(AppError::Validation("workspace_bytes must not be negative".into())),
+        Some(b) if b > 0 => Some(b),
+        _ => None,
+    };
+    let (token, exp, jti) = crate::auth::mint_agent_token(
         &s.config.jwt_secret,
         &body.subject,
         &role,
         tenant_id,
         ttl_secs,
         &tools,
+        scope.as_ref(),
+        workspace_bytes,
     )?;
     let _ = atlas_inventory::audit::record(
         &s.pool,
@@ -582,7 +623,7 @@ pub(crate) async fn issue_token(
         &body.subject,
         "ok",
         Some(json!({ "role": role, "tenant_id": tenant_id, "ttl_secs": ttl_secs, "jti": jti,
-                     "tools": tools })),
+                     "tools": tools, "scope": scope, "workspace_bytes": workspace_bytes })),
         None,
     )
     .await;
@@ -591,7 +632,7 @@ pub(crate) async fn issue_token(
         Json(json!({
             "token": token, "jti": jti, "subject": body.subject, "role": role, "tenant_id": tenant_id,
             "level": crate::auth::role_level(&role), "expires_at": exp, "ttl_secs": ttl_secs,
-            "tools": tools
+            "tools": tools, "scope": scope, "workspace_bytes": workspace_bytes
         })),
     ))
 }

@@ -296,38 +296,43 @@ pub fn spawn_rate_limit_sync(
         let mut tick = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
         loop {
             tick.tick().await;
-            let (minute, counts) = limiter.snapshot_current_window();
-            for (actor, count) in counts {
-                if let Err(e) = atlas_inventory::rate_limit::upsert_replica_count(
-                    &pool,
-                    &actor,
-                    minute as i64,
-                    &replica_id,
-                    count as i64,
-                )
-                .await
-                {
-                    tracing::warn!("rate limit sync: upsert failed for {actor}: {e:#}");
-                }
-            }
-            match atlas_inventory::rate_limit::cluster_totals(&pool, minute as i64).await {
-                Ok(totals) => {
-                    let over_budget = totals
-                        .into_iter()
-                        .filter(|(_, total)| *total as u32 > limiter.rpm)
-                        .map(|(actor, _)| actor);
-                    limiter.set_globally_limited(minute, over_budget);
-                }
-                Err(e) => tracing::warn!("rate limit sync: cluster_totals failed: {e:#}"),
-            }
-            // Keep a few minutes of history (covers a sync hiccup) and no more.
-            if let Err(e) =
-                atlas_inventory::rate_limit::prune_before(&pool, minute as i64 - 5).await
-            {
-                tracing::debug!("rate limit sync: prune failed: {e:#}");
-            }
+            sync_rate_limits_once(&pool, &limiter, &replica_id).await;
         }
     });
+}
+
+/// One sync tick: report this replica's counts for the current window, read back the cluster-wide
+/// totals and flag every actor already over budget. Best effort: a database error is logged and the
+/// next tick tries again.
+pub async fn sync_rate_limits_once(pool: &AnyPool, limiter: &RateLimiter, replica_id: &str) {
+    let (minute, counts) = limiter.snapshot_current_window();
+    for (actor, count) in counts {
+        if let Err(e) = atlas_inventory::rate_limit::upsert_replica_count(
+            pool,
+            &actor,
+            minute as i64,
+            replica_id,
+            count as i64,
+        )
+        .await
+        {
+            tracing::warn!("rate limit sync: upsert failed for {actor}: {e:#}");
+        }
+    }
+    match atlas_inventory::rate_limit::cluster_totals(pool, minute as i64).await {
+        Ok(totals) => {
+            let over_budget = totals
+                .into_iter()
+                .filter(|(_, total)| *total as u32 > limiter.rpm)
+                .map(|(actor, _)| actor);
+            limiter.set_globally_limited(minute, over_budget);
+        }
+        Err(e) => tracing::warn!("rate limit sync: cluster_totals failed: {e:#}"),
+    }
+    // Keep a few minutes of history (covers a sync hiccup) and no more.
+    if let Err(e) = atlas_inventory::rate_limit::prune_before(pool, minute as i64 - 5).await {
+        tracing::debug!("rate limit sync: prune failed: {e:#}");
+    }
 }
 
 #[derive(Clone)]
@@ -434,6 +439,35 @@ mod rate_limiter_tests {
         // A fresh sync for the *current* window with no over-budget actors clears the stale flag.
         limiter.set_globally_limited(RateLimiter::current_minute(), std::iter::empty::<String>());
         assert!(limiter.allow("alice"));
+    }
+
+    /// Two replicas (two limiters, one database) each stay under `rpm` alone but are over it
+    /// together: after both have synced twice (report, then read back the total) each denies.
+    /// SQLite in-process; the SQL is the shared dialect-neutral code the Postgres tests also run.
+    #[tokio::test]
+    async fn two_replicas_share_a_budget_through_the_database() {
+        let db = format!("{}/atlas-budget-sync-{}.db", std::env::temp_dir().display(), std::process::id());
+        let _ = std::fs::remove_file(&db);
+        let url = format!("sqlite://{db}?mode=rwc");
+        let pool = atlas_inventory::connect(&url).await.unwrap();
+        atlas_inventory::migrate(&pool, &url).await.unwrap();
+
+        let (a, b) = (RateLimiter::new(5), RateLimiter::new(5));
+        for _ in 0..3 {
+            assert!(a.allow("mcp:call:tok"));
+            assert!(b.allow("mcp:call:tok"));
+        }
+        // Without a sync, neither replica knows about the other: both would still allow.
+        for r in [&a, &b] {
+            super::sync_rate_limits_once(&pool, r, if std::ptr::eq(r, &a) { "a" } else { "b" }).await;
+        }
+        for r in [&a, &b] {
+            super::sync_rate_limits_once(&pool, r, if std::ptr::eq(r, &a) { "a" } else { "b" }).await;
+        }
+        assert!(!a.allow("mcp:call:tok"), "6 calls cluster-wide against a budget of 5");
+        assert!(!b.allow("mcp:call:tok"));
+        assert!(a.allow("mcp:call:other"), "another key is unaffected");
+        let _ = std::fs::remove_file(&db);
     }
 
     #[test]

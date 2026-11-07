@@ -137,6 +137,20 @@ pub async fn count_for_tenant(pool: &AnyPool, tenant_id: &str) -> Result<i64> {
     )
 }
 
+/// Sum of `max_bytes` over every workspace an owner still holds in a tenant (a finished teardown
+/// deletes its row, so every row is live): the quantity a per-agent byte budget is checked against.
+/// A workspace created without a cap counts 0 here, which is why a budget makes the cap mandatory.
+pub async fn live_max_bytes_for_owner(pool: &AnyPool, tenant_id: &str, owner: &str) -> Result<i64> {
+    Ok(sqlx::query_scalar(
+        "SELECT CAST(COALESCE(SUM(max_bytes), 0) AS BIGINT) FROM agent_workspaces
+         WHERE tenant_id = $1 AND owner = $2",
+    )
+    .bind(tenant_id)
+    .bind(owner)
+    .fetch_one(pool)
+    .await?)
+}
+
 /// Move `id` from one of `from` to `to`; true when this caller made the change (so exactly one of
 /// several racing callers proceeds).
 pub async fn transition(pool: &AnyPool, id: &str, from: &[&str], to: &str) -> Result<bool> {

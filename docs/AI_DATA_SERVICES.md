@@ -182,8 +182,15 @@ Optional-component failure can return 503; unexpected library failures return 50
 | `iceberg.rows` | `name`, optional `limit` (admin) |
 | `iceberg.compact` | `name`, `expected_snapshot`, optional `max_bytes` (admin) |
 | `iceberg.expire` | `name`, `older_than_seconds`, optional `retain_last` (admin) |
-| `audit.list` | none (admin; last 1000 tenant events) |
+| `audit.list` | optional `run_id` (admin; last 1000 tenant events, each with its `run_id`) |
 | `storage.gc` | none (admin) |
+
+Run id: any call may carry an agent run id, as the `X-Atlas-Run-Id` header or a `run_id` field in the action body (1 to 64 characters of
+`[A-Za-z0-9_.:-]`, starting with a letter or digit; both given must agree; an invalid one is a 400). It is stored in the `run_id` column of
+every audit event the call writes (`events.run_id`, added to an existing SQLite or Postgres catalog on open) and `audit.list` can filter on it.
+It is the same id the Atlas gateway stores on its audit rows (`X-Atlas-Run-Id`, [MCP.md](MCP.md#agent-identity-and-guardrails)), so a run can be
+joined across both trails. It is correlation only, not authentication. Tested over SQLite (`tools/atlas_data/tests/test_run_id.py`); the Postgres
+catalog statement is not run.
 
 Binary upload: `POST /v1/chunks`, optional `X-Content-SHA256`, <=4 MiB.
 Binary retrieval: `GET /v1/chunks/HASH?artifact=ARTIFACT_ID`. The artifact ACL and
