@@ -71,7 +71,8 @@ pub(crate) async fn create_volume_group(
             "a group takes at most {MAX_GROUP_MEMBERS} volumes"
         )));
     }
-    let mut members = Vec::with_capacity(body.volume_ids.len());
+    // Grown per accepted member rather than pre-sized from the request: no allocation is sized by input.
+    let mut members = Vec::new();
     for vid in &body.volume_ids {
         if members
             .iter()

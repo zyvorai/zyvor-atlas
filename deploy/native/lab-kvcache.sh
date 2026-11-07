@@ -79,7 +79,7 @@ for _ in $(seq 1 300); do curl -sf http://127.0.0.1:25110/health >/dev/null && b
 curl -sf http://127.0.0.1:25110/health >/dev/null || { echo "gateway did not start"; tail -20 "$WORK/gw.log"; exit 2; }
 
 "$CTL" --base-url http://127.0.0.1:25110 create-volume kvfs --kind filesystem --backend bkd_native >"$WORK/create.out" 2>&1
-VOL=$(curl -sS "http://127.0.0.1:25110/api/atlas/v1/volumes" | python3 -c 'import sys,json;v=[x for x in json.load(sys.stdin) if x["name"]=="kvfs"];print(v[0]["id"] if v else "")')
+VOL=$(python3 -c 'import sys,json;v=[x for x in json.load(sys.stdin) if x["name"]=="kvfs"];print(v[0]["id"] if v else "")' < <(curl -sS "http://127.0.0.1:25110/api/atlas/v1/volumes"))
 [ -n "$VOL" ] || { echo "filesystem volume not created"; cat "$WORK/create.out"; exit 2; }
 FSID=${VOL#vol_native_fs_}
 
