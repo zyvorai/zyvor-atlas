@@ -15,7 +15,7 @@ working first implementation, not production parity with ONTAP or a performance 
 | Workflow | Implemented | Boundary |
 |---|---|---|
 | Shared model cache | Immutable model revisions, deduplicated 4 MiB chunks per tenant, resumable chunk uploads, verified exports, shared worker chunk cache, pinned placements | No Hugging Face proxy or peer-to-peer transport; re-running ingest resumes by deduplicating chunks already uploaded |
-| Data-ready scheduling | Label/health/capacity filtering, transfer-time ranking, transactional reservations, readiness gate, stage worker, lease renew/release | External scheduler must use `DataReadyGate`; `JobController`/`NodeAgent` (unit tested with a fake Gryvia adapter); no real Gryvia adapter or Kubernetes scheduler plugin |
+| Data-ready scheduling | Label/health/capacity filtering, transfer-time ranking, transactional reservations, readiness gate, stage worker, lease renew/release | External scheduler must use `DataReadyGate`; `JobController`/`NodeAgent` (unit tested with a fake Gryvia adapter); `HttpGryvia` speaks Gryvia's REST gateway (contract-tested against a local fake, **not run against a live Gryvia**); no Kubernetes scheduler plugin |
 | Agent workspaces | Copy-on-write manifests, path overlays/tombstones, optimistic generations, byte/time budgets, review, selective publication, discard | Branch is a virtual file manifest, not an OS sandbox or writable FUSE mount; export published artifacts into FluxVM separately |
 | Permission-aware data access | Tenant and subject identity from credentials, artifact ownership, live ACL revocation across revisions, filename/name search, authorized chunk retrieval, audit trail | Source POSIX ACLs are imported on request with `acl-sync` (below), not continuously; no AD/SMB/NFSv4 ACL synchronization, semantic embeddings, OCR or vector database |
 | Inference context cache | Exact compatibility keys, subject isolation, TTL, 64 MiB subject budget with LRU eviction, byte-block SDK | Blocks <=4 MiB, no tensor conversion, NIXL transport, GPU residency; `KVConnector` is untested against vLLM/MLX; adapter required in serving runtime |
@@ -257,10 +257,41 @@ node selector to a scheduler -> renew the lease while the job is live -> release
 failure, lost lease or any admit error. `NodeAgent` heartbeats and runs `Client.stage` for
 reserved jobs, then meters `transfer_bytes` (bytes fetched) and `cache_miss_bytes` (logical size of
 artifacts not in the cache) through `CostCollector`; a missing rate is recorded in `meter_errors`
-and never fails staging. `GryviaAdapter` (`apply_node_selector`, `job_state`, `report`) is our own
-minimal interface, **not** Gryvia's API, which is unknown; only `FakeGryvia` exists. Unit tested
-over a real local HTTP service with the fake adapter. No real Gryvia adapter, DaemonSet manifest for
-the agent, or cluster run exists.
+and never fails staging. `GryviaAdapter` (`apply_node_selector`, `job_state`, `report`) is our own minimal interface;
+`FakeGryvia` is the in-memory double and `HttpGryvia` (`gryvia_adapter.py`) is the HTTP
+implementation. Unit tested over a real local HTTP service with the fake adapter.
+
+#### `HttpGryvia` and Gryvia's API
+
+Mapped from the Gryvia sources (repo `zyvorai/zyvor-gryvia`, `services/api-gateway/`), not from a
+running instance. Auth is `Authorization: Bearer <token>` (API key or OIDC JWT, `main.py:393-430`).
+
+| Adapter call | Gryvia route | Notes |
+|---|---|---|
+| `job_state` | `GET /api/jobs/{name}` (`main.py:967`) | `status.phase`: Pending/Queued/Scheduling or no status -> `pending`, Running -> `running`, Succeeded, Failed/Rejected -> `failed`, Cancelled/Preempted -> `cancelled`; any other phase is an error |
+| `apply_node_selector` | `POST /api/jobs` (`main.py:1017`) | sets `spec.nodeSelector` on the new job; see the limit below |
+| `report` | none | kept in `HttpGryvia.reports` and logged |
+
+Gryvia has no route that modifies a submitted job and none that attaches a message to one, so:
+
+- Placement can only be applied when the job is created. Call
+  `HttpGryvia.register_job(job, manifest)` with the `GryviaAIJob` manifest (job id must be a DNS
+  label equal to `metadata.name`); Gryvia first sees the job when `apply_node_selector` runs, after
+  the data is ready. A job that was not registered gets `GryviaUnsupported`, never a silent no-op.
+  A create answered 409 is accepted only if the existing job has the identical `nodeSelector`.
+- `report` cannot reach Gryvia. Dataset registration/readiness (`/api/datasets` creates a
+  `GryviaDataset` that Gryvia itself fetches from http/s3/nfs) and GPU reservations
+  (`/api/reservations`, GPU capacity, unrelated to Atlas cache leases) are different concepts and
+  are deliberately not mapped.
+
+Behaviour: per-request timeout (default 10 s); up to 3 retries with exponential backoff (cap 8 s,
+`Retry-After` honoured) on connection errors, timeouts, 429/502/503/504, and also 500 for reads; 401/403 raise
+`GryviaAuthError` and are never retried; other 4xx and malformed responses raise `GryviaError`
+(a `DataError`, with the HTTP status). The token never appears in errors. Contract tests
+(`tests/test_gryvia_adapter.py`) run against a local fake gateway whose routes, auth and payloads are
+copied from those sources, with file:line citations. **Nothing was run against a live Gryvia**; the
+Gryvia SDK's job phase names (`Completed`) differ from the CRD's (`Succeeded`), and this adapter
+follows the CRD. No DaemonSet manifest for the agent or cluster run exists.
 
 ## Agent branches and KV cache
 
