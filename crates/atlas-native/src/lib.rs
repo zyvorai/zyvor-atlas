@@ -36,6 +36,7 @@ pub mod placement;
 pub mod raft;
 pub mod raft_server;
 pub mod raft_snapshot;
+pub mod gpu;
 pub mod raw;
 pub mod rebuild;
 pub mod store;

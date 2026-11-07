@@ -270,7 +270,13 @@ fn http_api_round_trip_with_auth_and_leader_redirect() {
     assert_eq!(http(first, "GET", "/healthz", None, b"").0, 200);
     assert_eq!(http(first, "GET", "/v1/status", None, b"").0, 401);
     assert_eq!(http(first, "GET", "/v1/status", Some("wrong"), b"").0, 401);
-    assert_eq!(api(first, "GET", "/v1/status", b"").0, 200);
+    let (code, body) = api(first, "GET", "/v1/status", b"");
+    assert_eq!(code, 200);
+    // The GPU/GDS probe is always reported, as probe-only and never as hardware-verified.
+    let gpu = &json(&body)["gpu_io"];
+    assert!(["gds", "compat", "none"].contains(&gpu["status"].as_str().unwrap()));
+    assert_eq!(gpu["probe_only"], true);
+    assert_eq!(gpu["verified_on_hardware"], false);
 
     for (id, addr) in c.meta_addrs() {
         let deadline = Instant::now() + WAIT;
