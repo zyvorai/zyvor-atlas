@@ -30,6 +30,7 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 | Storage records | `list_buckets` (S3 secret is a reference only), `list_backups` and `list_schedules` (optional `volume_id`; no download URLs) — operator, tenant-filtered; `list_osds` (cluster-wide like the other Ceph tools; OSD rows carry no tenant) |
 | Governance | `list_policies` (static catalogue), `list_audit` (operator; tenant-filtered; request and result bodies are not returned) |
 | Agent workspaces | `list_workspaces`, `get_workspace`: disposable clones of native volumes and filesystems for agent runs ([NATIVE_FS.md](NATIVE_FS.md#agent-workspaces)); tenant-scoped like the REST routes |
+| AI data (atlas_data) | Only when `ATLAS_DATA_URL` is set: `data_artifact_list`, `data_artifact_get`, `data_artifact_revisions`, `data_job_ready`, `data_workspace_review`, `data_cost_report`, `data_cost_estimate`; guarded writes (with `ATLAS_MCP_WRITE_ENABLE=1`): `data_workspace_change`, `data_workspace_publish`, `data_workspace_discard`, `data_job_release`. See [AI data tools](#ai-data-tools-atlas_data) |
 | Guarded write | `create_snapshot`, `ack_alert`, `silence_alert`, and the workspace tools `create_workspace`, `reset_workspace`, `discard_workspace`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
 
 Macs registered as backends (`bkd_macos*`, see [MACOS.md](MACOS.md)) appear in `list_pools` and `list_volumes`
@@ -89,6 +90,7 @@ its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
 | `ATLAS_MCP_CALLS_PER_MIN` | gateway | Tool calls per minute each token may make (a token's own `jti`; callers without one share their actor id's budget). Calls over it are refused and audited as `mcp.tool.rate_limited`. Unset or `0` is off. It adds to the per-actor request limit (`ATLAS_RATE_LIMIT_RPM`), which already covers `/mcp`. The count is kept in process and shared through the database (see [HA.md](HA.md#mcp-call-budgets)), so on Postgres it holds across gateway pods within one sync interval; on SQLite it is per pod. Read once at startup. |
 | `ATLAS_MCP_TOOL_CALLS_PER_MIN` | gateway | Calls per minute each token may make to any one tool, so a loop on one expensive tool cannot use up the whole `ATLAS_MCP_CALLS_PER_MIN` allowance. Calls over it are refused and audited as `mcp.tool.rate_limited` (with `scope: tool`). Only real tool names are counted. Unset or `0` is off. Shared through the database like `ATLAS_MCP_CALLS_PER_MIN`; read once at startup. |
 | `ATLAS_AGENT_WORKSPACE_BYTES` | gateway | Default budget on the bytes of workspaces one caller may hold at once: the sum of the `max_bytes` of every workspace they own in the tenant, checked at create. A token's own `workspace_bytes` overrides it. Unset or `0` is off. While a budget applies `max_bytes` (or `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) must be set, since an uncapped workspace cannot be counted. |
+| `ATLAS_DATA_URL` / `ATLAS_DATA_TOKENS` / `ATLAS_DATA_TOKENS_FILE` / `ATLAS_DATA_TIMEOUT_SECS` | gateway | Enable and configure the `data_*` tools; see [AI data tools](#ai-data-tools-atlas_data). Unset URL: the tools do not exist. |
 | `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk`, `io_ai` and the Ops Advisor's `io_risk` and `io_ai` blocks read the node agent from. |
 | `ATLAS_IO_TOKEN` | agent | Bearer token for the agent API (health probes exempt) and its `/mcp`. |
 
@@ -151,6 +153,54 @@ was real: the `create_workspace` plan did not say whether the execute would be r
 token was spent to find out. The plan now carries `would_be_refused` with the reason, from the same checks the execute runs. The other
 write tools (`create_snapshot`, `ack_alert`, `silence_alert`, `reset_workspace`, `discard_workspace`) have no such refusal to preview
 beyond the validation their plan already does.
+
+## AI data tools (atlas_data)
+
+The tools call the separate `tools/atlas_data` service ([AI_DATA_SERVICES.md](AI_DATA_SERVICES.md)) over its `POST /v1/rpc/<action>` API.
+They are **not listed at all** unless `ATLAS_DATA_URL` is set (an `http(s)` URL; the gateway does not follow redirects or use an
+environment proxy). The four writes are listed only with `ATLAS_MCP_WRITE_ENABLE=1` and use the same two-phase, single-use token as the
+other writes: the first call changes nothing and returns a plan that includes the workspace or job as atlas_data reports it right now (so an
+unknown or not-visible target is rejected before any token is issued), and the token is bound to the caller, the tool and the exact
+arguments. `data_workspace_change` sets (an `entry` whose chunks already exist in atlas_data; MCP cannot upload bytes) or deletes
+(`delete: true`) one overlay path; `data_workspace_publish` creates a **new** immutable dataset from selected changed paths, owned by the
+mapped atlas_data identity; `data_workspace_discard` closes a workspace; `data_job_release` frees a job's reservation. The base revision is
+never modified. These are atlas_data workspaces (a manifest overlay), unrelated to the native-clone `list_workspaces` family above.
+
+**Identity mapping.** atlas_data authenticates by bearer credential alone: the credential fixes its tenant, subject and role, and the action
+envelope has no field for a caller-supplied subject (`Service.call` rejects extra arguments; pinned by
+`tools/atlas_data/tests/test_mcp_contract.py`). The gateway therefore cannot pass the MCP caller's subject through; it can only choose which
+credential to present. It holds a map, `ATLAS_DATA_TOKENS` (JSON object) or `ATLAS_DATA_TOKENS_FILE` (path to the same JSON, for a mounted
+Secret; re-read on every call, so rotation needs no restart), keyed `actor:<gateway token subject>` then `tenant:<gateway tenant id>`:
+
+```json
+{"tenant:acme": "<credential for an atlas_data credential with tenant acme>", "actor:agent-7": "<narrower credential>"}
+```
+
+A caller with no entry is refused, with no fallback or default credential. atlas_data's own tenant and ACL checks then apply to whatever identity
+that credential is, so a tenant-A caller cannot read tenant B's artifacts, jobs or workspaces through these tools (other tenants' resources
+report "not found"). Limits, stated plainly: (1) all callers of one gateway tenant who share a `tenant:` entry act as one atlas_data subject
+(use `actor:` entries for finer separation); (2) the gateway cannot verify that a credential's atlas_data tenant matches the key it is
+filed under, or what its role is (there is no whoami action), so the operator must map tenants to same-tenant credentials and should use
+`operator` (writes) or `viewer`-level credentials, never an `admin` one; (3) the gateway's own operator-role check gates the write tools
+on top, but atlas_data's ACLs are what protect other subjects' data inside a tenant. Credentials are read only from the environment or the
+file (the usual Secret mount; the Vault backend in [SECRETS.md](SECRETS.md) does not cover them), are sent only as the upstream bearer, and are
+never logged, audited or returned; error text from atlas_data is scrubbed of the credential.
+
+**Untrusted data.** Replies are wrapped as `{"source":"atlas_data","untrusted":true,"result":...}`, never interpreted, and refused (not
+truncated) above 256 KiB. Upstream failures become short fixed messages: 401/403 "refused the credential", 404 "not found or not visible",
+400/409/413 the (scrubbed, 200-character) atlas_data message, anything else "atlas_data failed"; timeouts (`ATLAS_DATA_TIMEOUT_SECS`, default 10,
+1 to 60) and connection failures say so without naming the URL. TLS trust is the system store only; there is no CA-file option yet.
+
+**Not exposed, because atlas_data cannot express it:** a workspace listing (only create/change/review/publish/discard exist, so the id must be
+known), per-node readiness (only per-job `jobs.status`, which reports `data_ready` and `missing`), and KV-cache status or statistics (atlas_data
+has only `kv.put`/`kv.get`, which move cache bytes, not stats). Dataset staging, node heartbeats, billing meters, rates, audit and
+admin calls are also not tools. `data_cost_estimate` needs an operator-role credential upstream because atlas_data checks `write` for it.
+
+`run_id` correlation is not part of these tools yet. TODO: once the MCP layer and the atlas_data envelope carry a `run_id`, forward it from `rpc()`
+in `crates/atlas-gateway/src/mcp/data.rs`. Unknown argument fields are currently ignored, so a client that already sends one is not rejected.
+
+Tested over a fake atlas_data HTTP server (`crates/atlas-gateway/tests/mcp_data.rs`, `mcp_data_modes.rs`) plus a Python contract test of the
+action names, argument names and reply fields. **Nothing ran against a deployed atlas_data and no agent was tried.**
 
 ## Threat model in short
 

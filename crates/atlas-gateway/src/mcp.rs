@@ -46,6 +46,7 @@ use crate::{
 };
 
 mod content;
+mod data;
 mod guard;
 mod ops;
 mod workspaces;
@@ -170,6 +171,12 @@ impl AtlasMcp {
         if write::write_enabled() {
             tool_router.merge(Self::write_router());
             tool_router.merge(Self::workspace_write_router());
+        }
+        if data::configured() {
+            tool_router.merge(Self::data_read_router());
+            if write::write_enabled() {
+                tool_router.merge(Self::data_write_router());
+            }
         }
         Self { state, tool_router }
     }

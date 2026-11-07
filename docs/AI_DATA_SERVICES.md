@@ -408,3 +408,12 @@ artifacts remain retained; no online artifact deletion is supplied. Expired work
 and KV metadata is retained for inspection. Orphan files from a crash between disk
 write and catalog commit may need offline cleanup; GC must not be used as a retention
 compliance mechanism. Audit metadata is operational evidence, not a tamper-proof log.
+
+## Agents through the gateway's MCP server
+
+With `ATLAS_DATA_URL` (and a per-tenant credential map) set on the gateway, agents can read artifacts and revisions, a job's data-ready
+state, a workspace review and the cost report, and, with `ATLAS_MCP_WRITE_ENABLE=1`, change/publish/discard a workspace or release a job
+through the two-phase confirm. The service sees each call as the atlas_data identity of the credential the gateway chose for the caller's
+tenant (this API cannot take a subject in the request), so its tenant and ACL checks apply unchanged. The tool list, the identity mapping and
+what could not be exposed (workspace listing, per-node status, KV statistics) are in [MCP.md](MCP.md#ai-data-tools-atlas_data). Verified only
+against a fake service and the Python contract test; not against a deployed atlas_data, and no agent was tried.
