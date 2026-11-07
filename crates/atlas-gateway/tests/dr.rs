@@ -520,6 +520,15 @@ async fn volume_group_snapshot_and_rollback() {
         .await
         .unwrap();
     assert_eq!(bad.status(), 400);
+    // A request cannot size the handler's work: more than 256 members is refused before any lookup.
+    let ids: Vec<String> = (0..257).map(|i| format!("big{i}")).collect();
+    let too_many = c
+        .post(format!("{base}/volume-groups"))
+        .json(&json!({ "name": "huge", "volume_ids": ids }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(too_many.status(), 400);
     let not_rbd = c
         .post(format!("{base}/volume-groups"))
         .json(&json!({ "name": "db", "volume_ids": ["g1", "g3"] }))
