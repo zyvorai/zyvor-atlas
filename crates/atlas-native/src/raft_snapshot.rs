@@ -387,8 +387,10 @@ mod tests {
         let staged = inc.finish();
         let path = follower_dir.path().join(CATALOG_STORE);
         fs::rename(staged, &path).unwrap();
-        let installed =
-            load_checkpoint(follower_dir.path(), &CatalogStore::open(&path).unwrap()).unwrap();
+        // Keep the store open while the paged catalog is read: redb 4.5 closes a dropped database
+        // even if read transactions are still live, so a temporary would fail the lazy reads.
+        let reopened = CatalogStore::open(&path).unwrap();
+        let installed = load_checkpoint(follower_dir.path(), &reopened).unwrap();
         assert_eq!(
             serde_json::to_value(&installed).unwrap(),
             serde_json::to_value(&c).unwrap()
