@@ -2,8 +2,9 @@
 # SPDX-License-Identifier: Apache-2.0
 """Job controller and node agent for data-ready scheduling.
 
-`GryviaAdapter` is OUR interface, not Gryvia's API: the real Gryvia schema is unknown, so nothing
-here claims to speak it. A real adapter must implement the three methods below; tests use a fake.
+`GryviaAdapter` is OUR interface, not Gryvia's API. `FakeGryvia` is the in-memory test double;
+`gryvia_adapter.HttpGryvia` implements it against Gryvia's REST gateway (contract-tested against a
+local fake only, never a live Gryvia).
 """
 import contextlib
 import time
