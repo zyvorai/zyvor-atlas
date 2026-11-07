@@ -332,6 +332,59 @@ of its file sizes (0 when empty), expanding it is refused, and the requested siz
 only used for tenant quota admission. Block data routes (`/volumes/{id}/data`) refuse filesystems;
 mount them with `atlas-native-mount` instead.
 
+## Agent workspaces
+
+An agent workspace is an instant, isolated, disposable copy of an atlas-native volume or filesystem
+(or of one of its snapshots) for one agent run. It is the snapshot and clone described above with a
+lifetime, an owner and a size limit around them: nothing is copied, the clone shares extents with its
+snapshot until it is written, and the source is never written.
+
+```
+POST   /api/atlas/v1/workspaces                {"source_volume_id": "vol_native_fs_<id>", "name": "run-42", "ttl_secs": 3600, "max_bytes": 0}
+GET    /api/atlas/v1/workspaces                 (tenant-scoped; admins see every tenant)
+GET    /api/atlas/v1/workspaces/{id}
+POST   /api/atlas/v1/workspaces/{id}/reset      roll back to the base snapshot
+DELETE /api/atlas/v1/workspaces/{id}            discard
+```
+
+Give `source_volume_id` (Atlas snapshots it now) or `source_snapshot_id` (an existing snapshot, which
+Atlas leaves alone when the workspace goes away). The result carries the workspace `id`, its own
+`volume_id` (a normal volume; mount it with `atlas-native-mount`, or use `/volumes/{id}/data` for a
+block source), `state`, `used_bytes`, `over_cap` and `remaining_secs`.
+
+- **Create, reset and discard** need the operator role and a source in the caller's tenant (another
+  tenant gets 404). Only atlas-native sources are accepted.
+- **Reset** deletes the clone and everything written to it and clones again from the same base
+  snapshot. The workspace keeps its id and its expiry (a reset does not extend it); its `volume_id`
+  changes. If the re-clone fails the workspace is `reset_failed` with no volume and `last_error` set;
+  reset again, or discard it.
+- **Discard** deletes the clone, then the snapshot Atlas took for it (kept, and reported as
+  `base_snapshot_retained`, if some other volume was cloned from it), then the record.
+- **TTL**: `ttl_secs` is 60 to `ATLAS_WORKSPACE_MAX_TTL_SECS` (default 7 days), default 3600. A
+  background worker discards expired workspaces and finishes half-done teardowns every
+  `ATLAS_WORKSPACE_GC_SECS` seconds (default 60, minimum 5, `0` turns it off). State changes are
+  compare-and-set, so several gateway replicas on Postgres can run it at once.
+- **Limits**: the clone goes through the normal clone path, so the tenant's byte and volume-count
+  quota applies and a refused create leaves nothing behind. `ATLAS_WORKSPACE_MAX_PER_TENANT`
+  (default 10, `0` = no limit) caps live workspaces per tenant. `max_bytes` (or
+  `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) refuses a source larger than that at create time. It is an
+  admission check, not a hard limit: a native filesystem has no size limit, so growth after creation
+  is only reported (`over_cap`), and the tenant byte quota is what bounds it. The per-tenant count
+  is checked before the create, so two simultaneous creates can overshoot it by one.
+- Create, reset, discard and expiry are audited (`workspace.create`, `workspace.reset`,
+  `workspace.discard`, `workspace.expire`).
+
+The same operations are MCP tools for agents (`list_workspaces`, `get_workspace`, and the guarded
+two-phase `create_workspace`, `reset_workspace`, `discard_workspace`); see [MCP.md](MCP.md). There is
+no `atlasctl` command for workspaces yet.
+
+Tested over the fixture driver through the gateway (`crates/atlas-gateway/tests/workspaces.rs`,
+`mcp_workspaces.rs`): create, write, reset and discard with the source untouched, TTL expiry GC,
+quota, size-cap and count refusals, tenant isolation and roles. The fixture driver does not model
+files, so a filesystem workspace is not written through the gateway in these tests (a block source is,
+through `/volumes/{id}/data`); filesystem snapshot and clone themselves are tested against live
+in-process nodes in `crates/atlas-driver-native/tests/nodes.rs`. Not run against a lab cluster.
+
 ## NFS
 
 The FUSE client supports kernel export (`FUSE_EXPORT_SUPPORT`; the node API resolves `.` and `..`

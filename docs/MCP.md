@@ -29,7 +29,8 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 | Volumes | `get_volume`, `volume_protection` (by `id`) — operator, tenant-checked like the REST routes |
 | Storage records | `list_buckets` (S3 secret is a reference only), `list_backups` and `list_schedules` (optional `volume_id`; no download URLs) — operator, tenant-filtered; `list_osds` (cluster-wide like the other Ceph tools; OSD rows carry no tenant) |
 | Governance | `list_policies` (static catalogue), `list_audit` (operator; tenant-filtered; request and result bodies are not returned) |
-| Guarded write | `create_snapshot`, `ack_alert`, `silence_alert`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
+| Agent workspaces | `list_workspaces`, `get_workspace`: disposable clones of native volumes and filesystems for agent runs ([NATIVE_FS.md](NATIVE_FS.md#agent-workspaces)); tenant-scoped like the REST routes |
+| Guarded write | `create_snapshot`, `ack_alert`, `silence_alert`, and the workspace tools `create_workspace`, `reset_workspace`, `discard_workspace`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
 
 Macs registered as backends (`bkd_macos*`, see [MACOS.md](MACOS.md)) appear in `list_pools` and `list_volumes`
 like any other backend. Erase, add/delete volume and eject are REST only, never MCP tools.
@@ -83,7 +84,7 @@ its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
 | Variable | Where | Meaning |
 |---|---|---|
 | `ATLAS_MCP_ALLOWED_HOSTS` | gateway | `Host` allow-list for the transport; `*` disables. Unset: loopback-only without auth, any host when auth is required (the endpoint is bearer-gated). |
-| `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot`, `ack_alert` and `silence_alert` tools. Off by default. |
+| `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot`, `ack_alert`, `silence_alert`, `create_workspace`, `reset_workspace` and `discard_workspace` tools. Off by default. |
 | `ATLAS_MCP_AUDIT_CALLS` | gateway | Every tool call writes an `mcp.tool.call` audit row (caller, tool, `success` or `error`, token `jti`, role, whether the token is scoped), written after the response so it never delays a call. `0` turns it off, for a polling agent where one row per call is too many. Denied calls (`mcp.tool.denied`) and guarded writes are always audited. |
 | `ATLAS_MCP_CALLS_PER_MIN` | gateway | Tool calls per minute each token may make (a token's own `jti`; callers without one share their actor id's budget). Calls over it are refused and audited as `mcp.tool.rate_limited`. Unset or `0` is off. It adds to the per-actor request limit (`ATLAS_RATE_LIMIT_RPM`), which already covers `/mcp`. The count is in memory, so it is per gateway pod, and read once at startup. |
 | `ATLAS_MCP_TOOL_CALLS_PER_MIN` | gateway | Calls per minute each token may make to any one tool, so a loop on one expensive tool cannot use up the whole `ATLAS_MCP_CALLS_PER_MIN` allowance. Calls over it are refused and audited as `mcp.tool.rate_limited` (with `scope: tool`). Only real tool names are counted. Unset or `0` is off. In memory, per gateway pod, read once at startup. |
@@ -100,10 +101,21 @@ named operator saw an alert (the plan shows its title, severity and state); it d
 silence notifications. `silence_alert` silences webhook notifications for one alert for 60 s to 24 h (default 1 h; REST allows 30 days, so a longer window stays a human action); the alert is still tracked and listed, and the token is bound to the alert and the window. All write tools share one gate, so a token for one tool, alert or window never works for another.
 Tokens are held in process memory and die with the gateway.
 
+The workspace tools follow the same rules. `create_workspace` takes `source_volume_id` or `source_snapshot_id` (an atlas-native volume,
+filesystem or snapshot in the caller's tenant), optional `name`, `ttl_secs` (60 s up to the server maximum, default 1 h) and `max_bytes`;
+the plan shows the source and the limits, and the token is bound to all of them. The clone is a separate volume that expires on its own
+(the gateway discards expired workspaces) and never writes to the source. `reset_workspace` rolls a workspace back to the state it was
+created from, and `discard_workspace` deletes it with everything written to it. Both touch only the workspace's own clone and the snapshot
+Atlas took for it, and a non-admin caller may only reset or discard a workspace they created themselves (REST lets any operator of the
+tenant do it). The tools are not listed at all unless `ATLAS_MCP_WRITE_ENABLE=1`; `list_workspaces` and `get_workspace` are always listed.
+Tenant quotas, per-tenant workspace limits and the TTL bounds are the REST handler's (`ATLAS_WORKSPACE_*`, see
+[NATIVE_FS.md](NATIVE_FS.md#agent-workspaces)). A token scoped with `--tool` can call only the tools it lists. Tested over the fixture
+driver (`crates/atlas-gateway/tests/mcp_workspaces.rs`); not run with a real agent or on the lab.
+
 ## Threat model in short
 
 - **Prompt injection** via data an agent reads (alert titles, device names, job text): tools return
-  data only, the skill tells the agent to treat it as untrusted, and the only write paths (`create_snapshot`, `ack_alert`, `silence_alert`) need a
+  data only, the skill tells the agent to treat it as untrusted, and the only write paths (`create_snapshot`, `ack_alert`, `silence_alert` and the workspace tools) need a
   human-approved confirmation of the exact arguments.
 - **Token theft**: operator tokens are short-lived, revocable by `jti`, and cannot mint tokens. A tool-scoped token also cannot be used outside MCP. Mint one with `atlasctl issue-token agent-1 --role viewer --tool ceph_nvme --tool io_ai` (admin; repeat `--tool`).
   Never give an agent an admin token.
