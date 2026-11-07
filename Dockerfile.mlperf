@@ -4,15 +4,15 @@
 # Mounts a filesystem with atlas-native-mount and runs the unmodified upstream `mlpstorage`
 # benchmark on it. MLPerf Storage is a separate program (Apache-2.0); nothing in Atlas links it.
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:48b7f435b8fc6378ce43b44f15e3a47fd8919b2825f835c39bd4bd3da50af5b8 AS builder
+FROM docker.io/library/rust:1.99-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS builder
 WORKDIR /build
 COPY . .
 RUN cargo build --release --locked -p atlas-native-fuse --features fuse --bin atlas-native-mount
 
 # ---- runtime ----
 # MLPerf Storage documents Ubuntu 24.04 with Python 3.12 as its tested platform.
-# ubuntu:25.10
-FROM docker.io/library/ubuntu:25.10@sha256:7cc5e35f6567ee8c66d2abb4aab0fd866669e6207c237c3a8f0947a5c7f17092 AS runtime
+# ubuntu:26.04
+FROM docker.io/library/ubuntu:26.04@sha256:6a06111c3b0a8600feadb270aec771dc239bf407b25625f93f44ab00e11f4d3c AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 # Branch or tag of github.com/mlcommons/storage. Pin a release tag for a reproducible image.
 ARG MLPERF_REF=v3.0
