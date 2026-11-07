@@ -17,7 +17,7 @@ use std::{
 use atlas_native::{
     checksum,
     engine::{Attr, DirEntry, FileLayout, FsStat, LayoutExtent, NewNode},
-    BlockStore, NodeType, RemoteDevice, SetAttr, TlsIdentity,
+    BlockStore, NodeType, RdmaConfig, RdmaSnapshot, RemoteDevice, SetAttr, TlsIdentity,
 };
 use reqwest::Method;
 use serde_json::json;
@@ -65,6 +65,38 @@ pub struct OpsConfig {
     pub direct_writes: Option<DirectWrites>,
 }
 
+impl OpsConfig {
+    /// Rejects contradictory settings. RDMA carries the data-node protocol in plaintext, so
+    /// asking for it together with a TLS identity is an error rather than a silent downgrade of
+    /// the encryption the operator configured.
+    pub fn validate(&self) -> Result<(), String> {
+        let clash = |what: &str| {
+            Err(format!(
+                "{what}: RDMA is plaintext and cannot be combined with TLS to the data nodes \
+                 (drop the client certificate, or drop --rdma)"
+            ))
+        };
+        if let Some(d) = &self.direct_reads {
+            if d.rdma.is_some() && d.identity.is_some() {
+                return clash("direct reads");
+            }
+        }
+        if let Some(d) = &self.direct_writes {
+            if d.rdma.is_some() && d.identity.is_some() {
+                return clash("direct writes");
+            }
+        }
+        Ok(())
+    }
+
+    /// RDMA counters of the direct-read or direct-write configuration, if either uses RDMA.
+    pub fn rdma_stats(&self) -> Option<RdmaSnapshot> {
+        let r = self.direct_reads.as_ref().and_then(|d| d.rdma.as_ref());
+        let w = self.direct_writes.as_ref().and_then(|d| d.rdma.as_ref());
+        r.or(w).map(|c| c.stats.snapshot())
+    }
+}
+
 impl Default for OpsConfig {
     fn default() -> Self {
         Self {
@@ -93,6 +125,9 @@ pub struct DirectReads {
     pub timeout: Duration,
     /// Try full copies on this data-node host first (the host this client runs on).
     pub prefer_host: Option<String>,
+    /// Use RDMA to the data nodes, each new connection falling back to TCP if RDMA fails.
+    /// Refused together with `identity`: RDMA is plaintext (see [`OpsConfig::validate`]).
+    pub rdma: Option<RdmaConfig>,
 }
 
 /// Extents a direct read fetches concurrently.
@@ -961,14 +996,18 @@ impl Ops {
         if let Some(dev) = nodes.get(&key) {
             return Ok(dev.clone());
         }
-        let dev = Arc::new(
-            match &d.identity {
-                Some(id) => RemoteDevice::with_tls(endpoint, node_id, id, d.timeout)
-                    .map_err(|e| format!("{node_id}: {e}"))?,
-                None => RemoteDevice::new(endpoint, d.timeout),
-            }
-            .on_device(device),
-        );
+        let mut dev = match &d.identity {
+            Some(id) => RemoteDevice::with_tls(endpoint, node_id, id, d.timeout)
+                .map_err(|e| format!("{node_id}: {e}"))?,
+            None => RemoteDevice::new(endpoint, d.timeout),
+        }
+        .on_device(device);
+        if let Some(cfg) = &d.rdma {
+            dev = dev
+                .use_rdma(cfg.clone())
+                .map_err(|e| format!("{node_id}: {e}"))?;
+        }
+        let dev = Arc::new(dev);
         nodes.insert(key, dev.clone());
         Ok(dev)
     }

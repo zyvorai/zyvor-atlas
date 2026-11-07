@@ -340,3 +340,18 @@ fn mtls_engine_writes_through_raft_to_tls_data_nodes() {
     }
     assert!(engines[leader].device_len("n1").unwrap() >= 4096);
 }
+
+/// RDMA carries the data-node protocol in plaintext, so asking for it on a TLS client is a
+/// configuration error, not a quiet downgrade.
+#[test]
+fn rdma_is_refused_on_a_tls_client() {
+    let pki = Pki::new();
+    let id = pki.issue("client");
+    let dev = RemoteDevice::with_tls("127.0.0.1:1", "n1", &id, IO_TIMEOUT).unwrap();
+    let cfg = atlas_native::RdmaConfig::new(atlas_native::FakeTransport::new(), 1);
+    let err = dev.use_rdma(cfg).unwrap_err();
+    match err {
+        NativeError::Invalid(m) => assert!(m.contains("plaintext") && m.contains("TLS"), "{m}"),
+        other => panic!("expected a configuration error, got {other:?}"),
+    }
+}

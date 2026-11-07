@@ -90,7 +90,7 @@ for _ in $(seq 1 300); do curl -sf http://127.0.0.1:25110/health >/dev/null && b
 curl -sf http://127.0.0.1:25110/health >/dev/null || { echo "gateway did not start"; tail -20 "$WORK/gw.log"; exit 2; }
 
 "$CTL" --base-url http://127.0.0.1:25110 create-volume ransomfs --kind filesystem --backend bkd_native >"$WORK/create.out" 2>&1
-VOL=$(curl -sS "$GWURL/volumes" | python3 -c 'import sys,json;v=[x for x in json.load(sys.stdin) if x["name"]=="ransomfs"];print(v[0]["id"] if v else "")')
+VOL=$(python3 -c 'import sys,json;v=[x for x in json.load(sys.stdin) if x["name"]=="ransomfs"];print(v[0]["id"] if v else "")' < <(curl -sS "$GWURL/volumes"))
 [ -n "$VOL" ] || { echo "filesystem volume not created"; cat "$WORK/create.out"; exit 2; }
 FSID=${VOL#vol_native_fs_}
 echo "filesystem volume $VOL"
@@ -101,10 +101,10 @@ PIDS+=($!)
 for _ in $(seq 1 100); do mountpoint -q "$MNT" && break; sleep 0.1; done
 mountpoint -q "$MNT" && pass "native filesystem mounted over FUSE" || { fail "mount did not come up"; cat "$WORK/mount.log"; exit 2; }
 
-verdict() { curl -sS "$GWURL/volumes/$VOL/ransomware" | python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["verdict"],d.get("risk_score",d.get("score")))'; }
+verdict() { python3 -c 'import sys,json;d=json.load(sys.stdin);print(d["verdict"],d.get("risk_score",d.get("score")))' < <(curl -sS "$GWURL/volumes/$VOL/ransomware"); }
 verdict_full() { curl -sS "$GWURL/volumes/$VOL/ransomware"; echo; }
 activity() { api "$NODEURL/v1/fs/$FSID/activity" | python3 -c 'import sys,json;[print("  ",x) for x in json.load(sys.stdin)["samples"][-8:]]'; }
-snap_count() { curl -sS "$GWURL/snapshots" | python3 -c 'import sys,json;print(len(json.load(sys.stdin)))'; }
+snap_count() { python3 -c 'import sys,json;print(len(json.load(sys.stdin)))' < <(curl -sS "$GWURL/snapshots"); }
 
 # ---------------------------------------------------------------- 1. seed
 echo "--- seeding $FILES documents"
@@ -174,7 +174,7 @@ done
 EOS
 chmod +x "$WORK/ransom.sh"
 SNAPS1=$(snap_count)
-SNAP_IDS_BEFORE=$(curl -sS "$GWURL/snapshots" | python3 -c 'import sys,json;print(" ".join(x["id"] for x in json.load(sys.stdin)))')
+SNAP_IDS_BEFORE=$(python3 -c 'import sys,json;print(" ".join(x["id"] for x in json.load(sys.stdin)))' < <(curl -sS "$GWURL/snapshots"))
 (
   first=""
   while [ ! -f "$WORK/attack.done" ]; do
@@ -227,7 +227,7 @@ for _ in $(seq 1 24); do
   sleep 5
 done
 [ "$AUTO" -gt "$SNAPS1" ] && pass "auto-protect took a snapshot ($SNAPS1 -> $AUTO)" || fail "auto-protect took no snapshot"
-AUTOSNAP=$(curl -sS "$GWURL/snapshots" | python3 -c 'import sys,json;old=set(sys.argv[1].split());print(next((x["id"] for x in json.load(sys.stdin) if x["id"] not in old),""))' "$SNAP_IDS_BEFORE")
+AUTOSNAP=$(python3 -c 'import sys,json;old=set(sys.argv[1].split());print(next((x["id"] for x in json.load(sys.stdin) if x["id"] not in old),""))' "$SNAP_IDS_BEFORE" < <(curl -sS "$GWURL/snapshots"))
 if [ -n "$AUTOSNAP" ]; then
   code=$(curl -sS -o /dev/null -w '%{http_code}' -X DELETE "$GWURL/snapshots/$AUTOSNAP")
   [ "$code" = 409 ] && pass "the auto-protect snapshot refuses deletion (409)" || fail "delete locked snapshot -> $code"

@@ -7,7 +7,7 @@
 
 use std::{path::PathBuf, process::ExitCode, sync::Arc, time::Duration};
 
-use atlas_native::TlsIdentity;
+use atlas_native::{RdmaConfig, TlsIdentity};
 use atlas_native_fuse::{
     client::{Client, ClientConfig},
     direct_write::DirectWrites,
@@ -80,6 +80,16 @@ struct Args {
     /// mount keeps using the leader. Off by default.
     #[arg(long)]
     direct_writes: bool,
+    /// Reach the data nodes over RDMA (RoCE/InfiniBand) for `--direct-reads` / `--direct-writes`,
+    /// falling back to TCP per connection when a node does not offer it or RDMA fails. RDMA is
+    /// plaintext, so this is refused together with a client certificate (`--ca-file` and
+    /// `--identity-file`), i.e. when the data nodes use mTLS. Needs a build with `--features rdma`
+    /// and nodes started with `ATLAS_NATIVE_RDMA=1`. Off by default.
+    #[arg(long)]
+    rdma: bool,
+    /// GID table index of the local RDMA port (RoCE routes by GID; see `show_gids`).
+    #[arg(long, default_value_t = 1, requires = "rdma")]
+    rdma_gid_index: u32,
     /// With `--direct-reads`: read full copies on this data-node host (its failure-domain
     /// `host`) first, e.g. the host this client runs on after `POST /v1/fs/{fs}/locality/pin`.
     #[arg(long, requires = "direct_reads")]
@@ -108,6 +118,28 @@ fn read(path: &Option<PathBuf>, what: &str) -> Result<Option<Vec<u8>>, String> {
         .transpose()
 }
 
+/// The RDMA settings for `--rdma`, or why they cannot be had. Pure apart from asking whether
+/// this build carries the verbs transport, so the refusals are tested on any OS.
+fn rdma_config(args: &Args, tls_identity: bool) -> Result<Option<RdmaConfig>, String> {
+    if !args.rdma {
+        return Ok(None);
+    }
+    if !(args.direct_reads || args.direct_writes) {
+        return Err("--rdma only applies with --direct-reads and/or --direct-writes".into());
+    }
+    if tls_identity {
+        return Err(
+            "--rdma cannot be combined with a client certificate (--ca-file and --identity-file): \
+             RDMA is plaintext, so it would silently drop the TLS to the data nodes"
+                .into(),
+        );
+    }
+    let transport = atlas_native::rdma_link::verbs_transport().ok_or(
+        "--rdma needs a build with `--features rdma` on Linux (libibverbs); this build has none",
+    )?;
+    Ok(Some(RdmaConfig::new(transport, args.rdma_gid_index)))
+}
+
 fn ops(args: &Args) -> Result<Ops, String> {
     let mut cfg = ClientConfig::new(args.endpoint.clone());
     cfg.token = read(&args.token_file, "token file")?
@@ -125,36 +157,37 @@ fn ops(args: &Args) -> Result<Ops, String> {
     } else {
         None
     };
+    let rdma = rdma_config(args, identity.is_some())?;
     let direct_reads = args.direct_reads.then(|| DirectReads {
         identity: identity.clone(),
         timeout: cfg.request_timeout,
         prefer_host: args.prefer_host.clone(),
+        rdma: rdma.clone(),
     });
     let direct_writes = args.direct_writes.then(|| DirectWrites {
         identity: identity.clone(),
         timeout: cfg.request_timeout,
+        rdma: rdma.clone(),
     });
     let client = Client::new(cfg).map_err(|e| e.to_string())?;
     let fs = match &args.snapshot {
         Some(s) => format!("{}@{s}", args.fs),
         None => args.fs.clone(),
     };
-    let ops = Ops::new(
-        client,
-        fs,
-        OpsConfig {
-            ttl: Duration::from_millis(args.ttl_ms),
-            writeback_bytes: args.writeback_bytes,
-            writeback_parallel: args.writeback_parallel,
-            readahead_bytes: args.readahead_bytes,
-            max_io_bytes: args.max_io_bytes,
-            direct_reads,
-            direct_writes,
-            session_ttl: Duration::from_millis(args.session_ttl_ms),
-            lock_waiters: args.fuse_threads.saturating_sub(1),
-            cache_leases: args.cache_leases,
-        },
-    );
+    let ops_cfg = OpsConfig {
+        ttl: Duration::from_millis(args.ttl_ms),
+        writeback_bytes: args.writeback_bytes,
+        writeback_parallel: args.writeback_parallel,
+        readahead_bytes: args.readahead_bytes,
+        max_io_bytes: args.max_io_bytes,
+        direct_reads,
+        direct_writes,
+        session_ttl: Duration::from_millis(args.session_ttl_ms),
+        lock_waiters: args.fuse_threads.saturating_sub(1),
+        cache_leases: args.cache_leases,
+    };
+    ops_cfg.validate()?;
+    let ops = Ops::new(client, fs, ops_cfg);
     // Fail fast on a wrong endpoint, token or filesystem id instead of at first access.
     ops.getattr(atlas_native::ROOT_INO)
         .map_err(|e| format!("filesystem {} is not reachable (errno {e})", ops.fs()))?;
@@ -205,5 +238,40 @@ fn main() -> ExitCode {
             eprintln!("atlas-native-mount: {e}");
             ExitCode::FAILURE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn args(extra: &[&str]) -> Args {
+        let mut v = vec!["atlas-native-mount", "--endpoint", "http://x:1", "--fs", "f", "/mnt"];
+        v.extend_from_slice(extra);
+        Args::try_parse_from(v).unwrap()
+    }
+
+    #[test]
+    fn rdma_is_off_unless_asked_for() {
+        assert!(rdma_config(&args(&["--direct-reads"]), false).unwrap().is_none());
+    }
+
+    #[test]
+    fn rdma_with_a_tls_identity_is_a_configuration_error() {
+        let e = rdma_config(&args(&["--direct-reads", "--rdma"]), true).unwrap_err();
+        assert!(e.contains("plaintext") && e.contains("TLS"), "{e}");
+    }
+
+    #[test]
+    fn rdma_needs_a_direct_path() {
+        let e = rdma_config(&args(&["--rdma"]), false).unwrap_err();
+        assert!(e.contains("--direct-reads"), "{e}");
+    }
+
+    #[cfg(not(all(feature = "rdma", target_os = "linux")))]
+    #[test]
+    fn rdma_without_the_feature_says_so() {
+        let e = rdma_config(&args(&["--direct-writes", "--rdma"]), false).unwrap_err();
+        assert!(e.contains("--features rdma"), "{e}");
     }
 }

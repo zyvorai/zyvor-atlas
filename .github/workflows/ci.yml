@@ -41,7 +41,7 @@ jobs:
         run: PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_recovery/tests -v
       - name: AI data services core and Iceberg scenarios
         run: |
-          python3 -m pip install -r tools/atlas_data/requirements-iceberg.txt
+          python3 -m pip install --require-hashes -r tools/atlas_data/requirements-iceberg.lock
           PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_data/tests -v
           PYTHONPATH=tools python3 examples/data/end_to_end.py
       - name: License headers
