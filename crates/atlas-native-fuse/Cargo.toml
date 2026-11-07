@@ -26,6 +26,9 @@ path = "src/bin/atlas-native-replicate.rs"
 [features]
 # The kernel FUSE adapter (Linux only); without it the binary only reports how it was built.
 fuse = ["dep:fuser"]
+# RDMA transport to the data nodes for direct reads and writes (Linux, needs libibverbs); see
+# `docs/NATIVE_FS.md`. Without it `--rdma` is a configuration error.
+rdma = ["atlas-native/rdma"]
 
 [dependencies]
 atlas-native.workspace = true

@@ -25,7 +25,7 @@ use atlas_native::{
     engine::{
         DirectCell, DirectCellDone, DirectCommit, DirectLease, DirectReplicaDone, DirectTarget,
     },
-    NativeError, RemoteDevice, TlsIdentity,
+    NativeError, RdmaConfig, RemoteDevice, TlsIdentity,
 };
 use reqwest::Method;
 use serde_json::{json, Value};
@@ -46,6 +46,9 @@ pub struct DirectWrites {
     /// Client identity for data nodes that require mutual TLS; plaintext otherwise.
     pub identity: Option<Arc<TlsIdentity>>,
     pub timeout: Duration,
+    /// Use RDMA to the data nodes, falling back to TCP per connection; refused with `identity`
+    /// (RDMA is plaintext, see [`crate::ops::OpsConfig::validate`]).
+    pub rdma: Option<RdmaConfig>,
 }
 
 /// `(node id, endpoint, device, group)`.
@@ -353,10 +356,13 @@ impl DirectWriter {
         if let Some(d) = nodes.get(&key) {
             return Ok(d.clone());
         }
-        let dev = match &self.cfg.identity {
+        let mut dev = match &self.cfg.identity {
             Some(id) => RemoteDevice::with_tls(&t.endpoint, &t.node_id, id, self.cfg.timeout)?,
             None => RemoteDevice::new(&t.endpoint, self.cfg.timeout),
         };
+        if let Some(cfg) = &self.cfg.rdma {
+            dev = dev.use_rdma(cfg.clone())?;
+        }
         let dev = Arc::new(dev.on_device(t.device_index).in_group(t.group));
         nodes.insert(key, dev.clone());
         Ok(dev)

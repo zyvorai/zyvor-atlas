@@ -27,7 +27,7 @@ use std::{
         Arc, Mutex, RwLock,
     },
     thread::{self, JoinHandle},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use rustls::{pki_types::ServerName, ClientConfig, ServerConfig};
@@ -39,6 +39,7 @@ use crate::{
     engine::NativeError,
     grant::{Grant, GrantKey},
     metrics::PromText,
+    rdma_link::{Duplex, RdmaConfig, RdmaSnapshot, RdmaTransport, NODE_REFUSED_RETRY_AFTER},
     tls::{self, Conn, TlsIdentity},
 };
 
@@ -165,6 +166,9 @@ struct Shared {
     id: String,
     /// When set, every write must carry a [`Grant`] made with this key.
     grant_key: Option<GrantKey>,
+    /// Transport offered for `RdmaUpgrade`; unset means the verbs transport when the operator
+    /// enabled it (`ATLAS_NATIVE_RDMA=1`), else none.
+    rdma: RwLock<Option<Arc<dyn RdmaTransport>>>,
     stop: AtomicBool,
     stats: Stats,
     conns: Mutex<BTreeMap<u64, TcpStream>>,
@@ -192,6 +196,17 @@ fn read_fence(path: &Path) -> Result<u64, NativeError> {
 }
 
 impl Shared {
+    /// The transport this node would switch a plaintext connection to, if it offers RDMA.
+    fn rdma_offer(&self) -> Option<Arc<dyn RdmaTransport>> {
+        if let Some(t) = self.rdma.read().ok().and_then(|g| g.clone()) {
+            return Some(t);
+        }
+        if rdma_enabled() {
+            return crate::rdma_link::verbs_transport();
+        }
+        None
+    }
+
     /// `group`'s fence, read from its file the first time the group writes.
     fn fence(&self, group: u32) -> Result<Arc<Fence>, NativeError> {
         let mut fences = self
@@ -386,6 +401,7 @@ impl DataNodeServer {
             tls,
             id: id.clone(),
             grant_key,
+            rdma: RwLock::new(None),
             stop: AtomicBool::new(false),
             stats: Stats::default(),
             conns: Mutex::new(BTreeMap::new()),
@@ -406,6 +422,22 @@ impl DataNodeServer {
 
     pub fn local_addr(&self) -> SocketAddr {
         self.addr
+    }
+
+    /// Offers `transport` for `RdmaUpgrade` requests on plaintext connections, regardless of
+    /// `ATLAS_NATIVE_RDMA` (which only switches on the verbs transport). Used to test the
+    /// RDMA client path with [`crate::rdma_link::FakeTransport`] on hosts without RDMA.
+    pub fn with_rdma_transport(self, transport: Arc<dyn RdmaTransport>) -> Self {
+        self.set_rdma_transport(transport);
+        self
+    }
+
+    /// [`Self::with_rdma_transport`] on a running server; connections already upgraded keep
+    /// theirs.
+    pub fn set_rdma_transport(&self, transport: Arc<dyn RdmaTransport>) {
+        if let Ok(mut g) = self.shared.rdma.write() {
+            *g = Some(transport);
+        }
     }
 
     /// Highest fence accepted from metadata group 0.
@@ -580,16 +612,14 @@ fn rdma_enabled() -> bool {
 
 fn serve(mut stream: Conn, sh: &Shared) {
     // After a successful `RdmaUpgrade` the same request loop continues over an RDMA stream whose
-    // queue-pair endpoints were exchanged over this connection. A nested upgrade is refused, and so
-    // is an upgrade of a TLS connection: RDMA traffic is not encrypted, so it would silently
-    // drop the protection the operator configured.
+    // setup was exchanged over this connection. A nested upgrade is refused, and so is an
+    // upgrade of a TLS connection: RDMA traffic is not encrypted, so it would silently drop the
+    // protection the operator configured.
     let upgradable = matches!(stream, Conn::Plain(_));
-    if let Some(_gid_index) = serve_requests(&mut stream, sh, upgradable) {
-        #[cfg(all(feature = "rdma", target_os = "linux"))]
-        {
-            let _ = crate::rdma::with_stream(&mut stream, _gid_index, |rdma| {
+    if let Some(gid_index) = serve_requests(&mut stream, sh, upgradable) {
+        if let (Conn::Plain(tcp), Some(transport)) = (&mut stream, sh.rdma_offer()) {
+            let _ = transport.serve(tcp, gid_index, &mut |rdma| {
                 serve_requests(rdma, sh, false);
-                Ok(())
             });
         }
     }
@@ -696,7 +726,7 @@ fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bo
                 &[],
             ),
             Request::RdmaUpgrade { gid_index } => {
-                if allow_upgrade && rdma_enabled() {
+                if allow_upgrade && sh.rdma_offer().is_some() {
                     if write_message(&mut stream, &Response::RdmaReady, &[]).is_err() {
                         return None;
                     }
@@ -723,53 +753,62 @@ fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bo
     None
 }
 
-/// Object-safe `Read + Write`, so [`RdmaSession`] does not need the RDMA stream's lifetimes.
-#[cfg(all(feature = "rdma", target_os = "linux"))]
-trait Wire: Read + Write {}
-#[cfg(all(feature = "rdma", target_os = "linux"))]
-impl<T: Read + Write> Wire for T {}
-
-/// Typed requests over an RDMA connection opened by [`RemoteDevice::with_rdma`]; the same wire
-/// protocol and the same fence/device/group semantics as the TCP client.
-#[cfg(all(feature = "rdma", target_os = "linux"))]
-pub struct RdmaSession<'a> {
-    io: &'a mut dyn Wire,
-    device: usize,
-    group: u32,
+/// A pooled connection: ordinary TCP/TLS, or an RDMA stream whose verbs resources are owned by a
+/// worker thread (see [`crate::rdma_link`]).
+enum Link {
+    Net(Conn),
+    Rdma(Box<dyn Duplex>),
 }
 
-#[cfg(all(feature = "rdma", target_os = "linux"))]
-impl RdmaSession<'_> {
-    fn expect_ok(&mut self, req: Request, payload: &[u8]) -> io::Result<(Response, Vec<u8>)> {
-        write_message(&mut self.io, &req, payload)?;
-        let resp: Response = read_header(&mut self.io)?;
-        let data = match &resp {
-            Response::Data { len } => read_payload(&mut self.io, *len)?,
-            Response::Error { message } => return Err(io::Error::other(message.clone())),
-            _ => Vec::new(),
-        };
-        Ok((resp, data))
+impl Link {
+    fn is_rdma(&self) -> bool {
+        matches!(self, Link::Rdma(_))
     }
+}
 
-    /// Appends `data` under `fence` and returns its offset.
-    pub fn append(&mut self, fence: u64, data: &[u8]) -> io::Result<u64> {
-        let req = Request::Append {
-            fence,
-            len: data.len() as u64,
-            device: self.device,
-            group: self.group,
-            grant: None,
-        };
-        match self.expect_ok(req, data)?.0 {
-            Response::Appended { offset, .. } => Ok(offset),
-            other => Err(io::Error::other(format!("append was not acknowledged: {other:?}"))),
+impl Read for Link {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        match self {
+            Link::Net(c) => c.read(buf),
+            Link::Rdma(r) => r.read(buf),
+        }
+    }
+}
+
+impl Write for Link {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        match self {
+            Link::Net(c) => c.write(buf),
+            Link::Rdma(r) => r.write(buf),
+        }
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        match self {
+            Link::Net(c) => c.flush(),
+            Link::Rdma(r) => r.flush(),
+        }
+    }
+}
+
+/// A device's RDMA settings plus its back-off state.
+struct RdmaClient {
+    cfg: RdmaConfig,
+    /// RDMA is not attempted before this instant (after a failed attempt or connection).
+    retry_at: Mutex<Option<Instant>>,
+}
+
+impl RdmaClient {
+    fn usable(&self) -> bool {
+        match self.retry_at.lock() {
+            Ok(g) => g.is_none_or(|t| Instant::now() >= t),
+            Err(_) => false,
         }
     }
 
-    /// Reads `len` bytes at `offset`.
-    pub fn read(&mut self, offset: u64, len: u64) -> io::Result<Vec<u8>> {
-        let req = Request::Read { offset, len, device: self.device };
-        self.expect_ok(req, &[]).map(|(_, data)| data)
+    fn back_off(&self, d: Duration) {
+        if let Ok(mut g) = self.retry_at.lock() {
+            *g = Some(Instant::now() + d);
+        }
     }
 }
 
@@ -782,7 +821,9 @@ pub struct RemoteDevice {
     target: String,
     timeout: Duration,
     tls: Option<(Arc<ClientConfig>, ServerName<'static>)>,
-    idle: Mutex<Vec<Conn>>,
+    idle: Mutex<Vec<Link>>,
+    /// Opt-in RDMA transport for this node's connections, with TCP as the fallback.
+    rdma: Option<RdmaClient>,
     /// Which of the node's devices this client addresses.
     device: usize,
     /// For `device > 0`: the node has confirmed it serves that many devices.
@@ -816,6 +857,7 @@ impl RemoteDevice {
             timeout,
             tls: None,
             idle: Mutex::new(Vec::new()),
+            rdma: None,
             device: 0,
             device_checked: AtomicBool::new(false),
             group: 0,
@@ -836,6 +878,7 @@ impl RemoteDevice {
             timeout,
             tls: Some((identity.client_config()?, tls::server_name(node_id)?)),
             idle: Mutex::new(Vec::new()),
+            rdma: None,
             device: 0,
             device_checked: AtomicBool::new(false),
             group: 0,
@@ -849,6 +892,42 @@ impl RemoteDevice {
     pub fn with_grant_key(mut self, key: GrantKey) -> Self {
         self.grant_key = Some(key);
         self
+    }
+
+    /// Prefers RDMA for this node's connections: each new connection asks the node to switch to
+    /// RDMA, and pooled RDMA connections are reused like TCP ones. Any failure (the node does not
+    /// offer it, the transport cannot connect, a request errors mid-flight) falls back to
+    /// ordinary TCP, is counted in `cfg.stats`, and pauses RDMA attempts on this device for
+    /// `cfg.retry_after` (five minutes when the node itself declined).
+    ///
+    /// RDMA carries the protocol in plaintext, so this is a configuration error on a client that
+    /// uses TLS: the operator asked for encryption and must not silently lose it.
+    pub fn use_rdma(mut self, cfg: RdmaConfig) -> Result<Self, NativeError> {
+        if self.tls.is_some() {
+            return Err(NativeError::Invalid(format!(
+                "RDMA is plaintext and cannot be combined with TLS (data node {}); \
+                 use TLS over TCP or RDMA on a trusted storage network, not both",
+                self.target
+            )));
+        }
+        self.rdma = Some(RdmaClient {
+            cfg,
+            retry_at: Mutex::new(None),
+        });
+        Ok(self)
+    }
+
+    /// Closes the idle pooled connections; the next request opens a new one (and so tries RDMA
+    /// again if its back-off has passed).
+    pub fn close_idle(&self) {
+        if let Ok(mut idle) = self.idle.lock() {
+            idle.clear();
+        }
+    }
+
+    /// RDMA counters when [`Self::use_rdma`] was set.
+    pub fn rdma_stats(&self) -> Option<RdmaSnapshot> {
+        self.rdma.as_ref().map(|r| r.cfg.stats.snapshot())
     }
 
     /// Addresses the node's device `index` instead of device 0.
@@ -956,33 +1035,48 @@ impl RemoteDevice {
         }
     }
 
-    fn connect(&self) -> io::Result<Conn> {
+    fn connect(&self) -> io::Result<Link> {
+        if let Some(r) = &self.rdma {
+            if r.usable() {
+                match self.connect_rdma(r) {
+                    Ok(link) => {
+                        r.cfg.stats.connected();
+                        return Ok(link);
+                    }
+                    Err(e) => {
+                        r.cfg.stats.connect_failed();
+                        r.back_off(if e.kind() == io::ErrorKind::Unsupported {
+                            NODE_REFUSED_RETRY_AFTER
+                        } else {
+                            r.cfg.retry_after
+                        });
+                    }
+                }
+            }
+            r.cfg.stats.tcp_fallback();
+        }
+        self.connect_net().map(Link::Net)
+    }
+
+    fn connect_tcp(&self) -> io::Result<TcpStream> {
         let s = TcpStream::connect_timeout(&tls::resolve(&self.target)?, self.timeout)?;
         s.set_nodelay(true)?;
         s.set_read_timeout(Some(self.timeout))?;
         s.set_write_timeout(Some(self.timeout))?;
-        Conn::connect(s, self.tls.as_ref().map(|(c, n)| (c, n.clone())))
+        Ok(s)
     }
 
-    /// Opens a fresh connection, asks the node to switch it to RDMA and runs `f` over the queue
-    /// pair. A node that has RDMA off, or a TLS client (RDMA traffic is not encrypted), yields
-    /// `ErrorKind::Unsupported` so the caller can use the ordinary TCP methods instead. The
-    /// connection is not pooled: the RDMA objects live only inside this call.
-    #[cfg(all(feature = "rdma", target_os = "linux"))]
-    pub fn with_rdma<R>(
-        &self,
-        gid_index: u32,
-        f: impl FnOnce(&mut RdmaSession<'_>) -> io::Result<R>,
-    ) -> io::Result<R> {
-        if self.tls.is_some() {
-            return Err(io::Error::new(
-                io::ErrorKind::Unsupported,
-                "RDMA traffic is not encrypted; refused on a TLS client",
-            ));
-        }
-        let mut conn = self.connect()?;
-        write_message(&mut conn, &Request::RdmaUpgrade { gid_index }, &[])?;
-        match read_header::<Response>(&mut conn)? {
+    fn connect_net(&self) -> io::Result<Conn> {
+        Conn::connect(self.connect_tcp()?, self.tls.as_ref().map(|(c, n)| (c, n.clone())))
+    }
+
+    /// Opens a connection, asks the node to switch it to RDMA and hands it to the transport. A
+    /// node that does not offer RDMA yields `ErrorKind::Unsupported`.
+    fn connect_rdma(&self, r: &RdmaClient) -> io::Result<Link> {
+        let mut tcp = self.connect_tcp()?;
+        let gid_index = r.cfg.gid_index;
+        write_message(&mut tcp, &Request::RdmaUpgrade { gid_index }, &[])?;
+        match read_header::<Response>(&mut tcp)? {
             Response::RdmaReady => {}
             Response::Error { message } => {
                 return Err(io::Error::new(io::ErrorKind::Unsupported, message))
@@ -991,13 +1085,10 @@ impl RemoteDevice {
                 return Err(io::Error::other(format!("unexpected upgrade reply: {other:?}")))
             }
         }
-        let (device, group) = (self.device, self.group);
-        crate::rdma::with_stream(&mut conn, gid_index, |stream| {
-            f(&mut RdmaSession { io: stream, device, group })
-        })
+        r.cfg.transport.connect(tcp, gid_index).map(Link::Rdma)
     }
 
-    fn exchange(s: &mut Conn, req: &Request, payload: &[u8]) -> io::Result<(Response, Vec<u8>)> {
+    fn exchange(s: &mut Link, req: &Request, payload: &[u8]) -> io::Result<(Response, Vec<u8>)> {
         write_message(s, req, payload)?;
         let resp: Response = read_header(s)?;
         let data = match &resp {
@@ -1034,13 +1125,24 @@ impl RemoteDevice {
             Some(s) => s,
             None => self.connect()?,
         };
+        let was_rdma = stream.is_rdma();
         let out = match Self::exchange(&mut stream, req, payload) {
-            Err(_) if reused => {
+            Err(_) if reused || was_rdma => {
+                // A broken RDMA connection also pauses RDMA, so the retry goes over TCP.
+                if let (true, Some(r)) = (was_rdma, &self.rdma) {
+                    r.cfg.stats.midflight_error();
+                    r.back_off(r.cfg.retry_after);
+                }
                 stream = self.connect()?;
                 Self::exchange(&mut stream, req, payload)
             }
             other => other,
         }?;
+        if stream.is_rdma() {
+            if let Some(r) = &self.rdma {
+                r.cfg.stats.request();
+            }
+        }
         if let Ok(mut idle) = self.idle.lock() {
             if idle.len() < MAX_IDLE_CONNS {
                 idle.push(stream);
@@ -1276,41 +1378,50 @@ mod tests {
         assert_eq!(back, payload);
     }
 
-    /// The client helper: `RemoteDevice::with_rdma` upgrades, appends and reads back through a
-    /// typed session. Same SoftRoCE prerequisites as the test above.
+    /// The pooled client: `RemoteDevice::use_rdma` with the verbs transport appends and reads back
+    /// over a long-lived queue pair owned by a worker thread, reusing it across requests. Same
+    /// SoftRoCE prerequisites as the test above.
     #[cfg(all(feature = "rdma", target_os = "linux"))]
     #[test]
     #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
-    fn remote_device_with_rdma_appends_and_reads_back() {
+    fn pooled_remote_device_uses_rdma_and_reuses_the_connection() {
         std::env::set_var("ATLAS_NATIVE_RDMA", "1");
         let gid: u32 = std::env::var("ATLAS_RDMA_GID_INDEX")
             .ok()
             .and_then(|v| v.parse().ok())
             .unwrap_or(1);
         let (_dir, node) = start_node();
-        let client = RemoteDevice::new(node.local_addr(), Duration::from_secs(10));
+        let cfg = RdmaConfig::new(crate::rdma_link::verbs_transport().unwrap(), gid);
+        let client = RemoteDevice::new(node.local_addr(), Duration::from_secs(10))
+            .use_rdma(cfg)
+            .unwrap();
         let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 241) as u8).collect();
-        let back = client
-            .with_rdma(gid, |s| {
-                let offset = s.append(1, &payload)?;
-                s.read(offset, payload.len() as u64)
-            })
-            .expect("RDMA session");
-        assert_eq!(back, payload);
+        for _ in 0..3 {
+            let offset = client.append(1, &payload).unwrap();
+            assert_eq!(client.read_exact_at(offset, payload.len()).unwrap(), payload);
+        }
+        let s = client.rdma_stats().unwrap();
+        assert_eq!((s.connects, s.requests), (1, 6), "{s:?}");
+        assert_eq!((s.connect_failures, s.tcp_fallback_connects), (0, 0), "{s:?}");
     }
 
-    /// Without the operator switch the helper reports `Unsupported`, which is the caller's cue to
-    /// use the TCP methods.
+    /// Without the operator switch the node declines the upgrade and the client carries on over
+    /// TCP, counting the failed attempt.
     #[cfg(all(feature = "rdma", target_os = "linux"))]
     #[test]
-    fn with_rdma_reports_unsupported_when_the_node_has_it_off() {
+    fn use_rdma_falls_back_to_tcp_when_the_node_has_it_off() {
         if rdma_enabled() {
             return;
         }
         let (_dir, node) = start_node();
-        let client = RemoteDevice::new(node.local_addr(), Duration::from_secs(5));
-        let err = client.with_rdma(1, |_| Ok(())).unwrap_err();
-        assert_eq!(err.kind(), io::ErrorKind::Unsupported, "{err}");
+        let cfg = RdmaConfig::new(crate::rdma_link::verbs_transport().unwrap(), 1);
+        let client = RemoteDevice::new(node.local_addr(), Duration::from_secs(5))
+            .use_rdma(cfg)
+            .unwrap();
+        let off = client.append(1, b"hello").unwrap();
+        assert_eq!(client.read_exact_at(off, 5).unwrap(), b"hello");
+        let s = client.rdma_stats().unwrap();
+        assert_eq!((s.connect_failures, s.requests), (1, 0), "{s:?}");
     }
 
     /// An in-memory connection: reads come from `input`, writes are collected in `output`.
@@ -1342,6 +1453,7 @@ mod tests {
             tls: None,
             id: String::new(),
             grant_key: None,
+            rdma: RwLock::new(None),
             stop: AtomicBool::new(false),
             stats: Stats::default(),
             conns: Mutex::new(BTreeMap::new()),

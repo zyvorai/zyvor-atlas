@@ -46,6 +46,7 @@ pub mod tracked;
 pub mod uring;
 #[cfg(all(target_os = "linux", feature = "rdma"))]
 pub mod rdma;
+pub mod rdma_link;
 pub mod wal;
 
 pub use alloc::{FreeList, FreeRange};
@@ -65,4 +66,5 @@ pub use placement::{FailureDomain, Node, PlacementPolicy};
 pub use raft::{Envelope, Message, RaftConfig, RaftCounters, RaftError, RaftNode, Role};
 pub use raft_server::{RaftMux, RaftServer, RaftStatus};
 pub use raw::{open_store, DeviceBackend};
+pub use rdma_link::{FakeTransport, RdmaConfig, RdmaSnapshot, RdmaStats, RdmaTransport};
 pub use tls::TlsIdentity;
