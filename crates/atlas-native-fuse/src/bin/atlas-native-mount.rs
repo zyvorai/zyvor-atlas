@@ -137,7 +137,11 @@ fn rdma_config(args: &Args, tls_identity: bool) -> Result<Option<RdmaConfig>, St
     let transport = atlas_native::rdma_link::verbs_transport().ok_or(
         "--rdma needs a build with `--features rdma` on Linux (libibverbs); this build has none",
     )?;
-    Ok(Some(RdmaConfig::new(transport, args.rdma_gid_index)))
+    // Memlock warnings and ENOMEM explanations reach the log once each.
+    let cfg = RdmaConfig::new(transport, args.rdma_gid_index)
+        .with_diagnostic_sink(|m| tracing::warn!(target: "atlas_native_fuse::rdma", "{m}"));
+    cfg.warn_if_memlock_low();
+    Ok(Some(cfg))
 }
 
 fn ops(args: &Args) -> Result<Ops, String> {

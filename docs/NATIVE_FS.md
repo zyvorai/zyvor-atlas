@@ -535,12 +535,32 @@ exactly as over TCP.
 - **Fallback to TCP.** If a node does not offer RDMA, the transport cannot connect, or a request
   fails on an RDMA connection, that request or connection is retried over TCP, counted
   (`RdmaSnapshot`: connects, connect failures, TCP fallback connects, mid-flight errors, requests
-  over RDMA), and RDMA is not tried again on that node for 30 s (5 minutes if the node itself
+  over RDMA, capped fallbacks, `ENOMEM` failures, live connections), and RDMA is not tried again on that node for 30 s (5 minutes if the node itself
   declined). A mid-flight retry follows the same rule as a retry on a stale pooled TCP connection:
   an append can leave an unreferenced copy behind.
+- **Locked memory.** Every RDMA connection pins about 1.06 MiB (17 x 64 KiB) on the client and on
+  the node, counted against `RLIMIT_MEMLOCK`; with a typical 8 MiB limit only a few fit and
+  registering more fails with `ENOMEM`. Raise the limit for the mount and the nodes (systemd
+  `LimitMEMLOCK=infinity`, `ulimit -l unlimited`, a container's `--ulimit memlock=-1:-1` and
+  `IPC_LOCK`; a rootless container cannot exceed its host hard limit; in Kubernetes set the
+  runtime default and add `IPC_LOCK`). As a safeguard the client keeps at most
+  `RdmaConfig::max_connections` RDMA connections alive across all its data-node clients, by default
+  half of the soft limit divided by 1.06 MiB (at least 1; 64 when unlimited). Beyond that, new
+  connections use TCP and are counted as `capped_fallbacks` in `RdmaSnapshot` (not a failure, no
+  back-off); `enomem_failures` counts setups that hit `ENOMEM` anyway, `live_connections` is the
+  current count, and `RdmaStats::diagnostics()` holds the explanations (logged once by the mount).
+  The mount and `atlas-native-node` warn at startup when the soft limit is under 64 MiB. Details
+  and what was verified: `docs/NATIVE_STORAGE.md`, "RDMA and `RLIMIT_MEMLOCK`".
+- **Idle connections.** A pooled RDMA connection may sit idle indefinitely: the node waits for the
+  next request (waking every 500 ms to notice shutdown) rather than closing after the stream's 30 s
+  read timeout. A request that starts and then stalls for 30 s still fails.
 - **One owner thread per RDMA connection.** The verbs objects borrow from one another, so each
   client connection runs on a worker thread that owns them for the connection's lifetime
   (`rdma_link::WorkerStream`); the pooled handle talks to it over channels.
+- Verified only on SoftRoCE over loopback on one dev host (`crates/atlas-native-fuse/tests/ops.rs`,
+  `real_rdma_*`, `--ignored`, `--features rdma`): direct reads and direct writes with the memlock
+  limit raised for the test process, and graceful degradation to TCP under the default 8 MiB limit.
+  No RDMA hardware, and no throughput or latency numbers.
 - Not built: pipelined sends, messages larger than the existing 64 KiB, registered-memory
   zero-copy and one-sided RDMA READ/WRITE. The stream is the same synchronous send/receive as
   before; nothing here is a performance claim.
