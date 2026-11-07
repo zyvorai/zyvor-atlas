@@ -5,7 +5,9 @@
 //! nothing and returns the plan plus a short-lived, single-use token bound to the caller, the tool
 //! and the exact arguments; only a second call with that token executes. Role and tenant checks are
 //! the wrapped REST handler's own. Only low-blast-radius, reversible actions are exposed — failover,
-//! delete, restore and disk operations stay human REST/CLI actions.
+//! delete, restore and disk operations stay human REST/CLI actions. The one exception is the agent
+//! workspace tools (`workspaces.rs`), which reset or discard only a disposable clone the agent made
+//! itself, never the volume it was copied from.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
@@ -29,7 +31,7 @@ use crate::routes::observability::{self, SilenceQuery};
 use crate::routes::volumes::{self, SnapshotBody};
 use crate::state::AppState;
 
-const TOKEN_TTL_SECS: u64 = 300;
+pub(super) const TOKEN_TTL_SECS: u64 = 300;
 const CREATE_SNAPSHOT: &str = "create_snapshot";
 const ACK_ALERT: &str = "ack_alert";
 const SILENCE_ALERT: &str = "silence_alert";
@@ -115,7 +117,7 @@ fn redeem(token: &str, actor: &str, tool: &str, params: &str) -> Result<(), &'st
 }
 
 /// Outcome of the shared two-phase gate.
-enum Gate {
+pub(super) enum Gate {
     /// No token was given: change nothing, hand back this token with the plan.
     Propose(String),
     /// A valid, unused token bound to this caller, tool and exact arguments: go ahead.
@@ -124,7 +126,7 @@ enum Gate {
 
 /// The two-phase confirm shared by every write tool. `params` must be the canonical JSON of the
 /// arguments (everything except the token) so a token cannot be replayed with different arguments.
-fn gate(actor_id: &str, tool: &str, params: &str, token: Option<&str>) -> Result<Gate, &'static str> {
+pub(super) fn gate(actor_id: &str, tool: &str, params: &str, token: Option<&str>) -> Result<Gate, &'static str> {
     match token {
         None => Ok(Gate::Propose(issue(actor_id, tool, params, now_secs()))),
         Some(t) => redeem(t, actor_id, tool, params).map(|()| Gate::Execute),
@@ -132,7 +134,7 @@ fn gate(actor_id: &str, tool: &str, params: &str, token: Option<&str>) -> Result
 }
 
 /// Audit record `mcp.<tool>` (proposed | rejected | success | failure). Failures to audit never block.
-async fn audit(
+pub(super) async fn audit(
     s: &AppState,
     actor: &Actor,
     tool: &str,
@@ -155,7 +157,7 @@ async fn audit(
     .await;
 }
 
-fn write_guard(s: &AppState, actor: &Actor) -> Result<(), McpError> {
+pub(super) fn write_guard(s: &AppState, actor: &Actor) -> Result<(), McpError> {
     if !write_enabled() {
         return Err(McpError::invalid_request(
             "write tools are disabled on this server",

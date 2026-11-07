@@ -56,6 +56,7 @@ async fn main() -> anyhow::Result<()> {
     let disable_http = config.disable_http;
     let state = build_state(config, BuildOptions::default()).await?;
     atlas_gateway::routes::ransomware::spawn_autoprotect(state.clone());
+    atlas_gateway::routes::workspaces::spawn_gc(state.clone());
 
     let app = routes::router(state.clone())
         .layer(TraceLayer::new_for_http())

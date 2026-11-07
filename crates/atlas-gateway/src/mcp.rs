@@ -47,6 +47,7 @@ use crate::{
 
 mod content;
 mod ops;
+mod workspaces;
 mod write;
 
 fn internal_error(err: impl std::fmt::Display) -> McpError {
@@ -164,8 +165,10 @@ impl AtlasMcp {
     pub fn new(state: AppState) -> Self {
         let mut tool_router = Self::tool_router();
         tool_router.merge(Self::ops_router());
+        tool_router.merge(Self::workspace_read_router());
         if write::write_enabled() {
             tool_router.merge(Self::write_router());
+            tool_router.merge(Self::workspace_write_router());
         }
         Self { state, tool_router }
     }

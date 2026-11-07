@@ -23,6 +23,8 @@ struct State {
     snapshots: BTreeMap<String, (u64, u64)>,
     /// Written bytes per volume, up to the last written byte.
     data: BTreeMap<String, Vec<u8>>,
+    /// Snapshot id → the written bytes as they were, so a clone starts with its snapshot's content.
+    snapshot_data: BTreeMap<String, Vec<u8>>,
     filesystems: BTreeMap<String, NativeFs>,
     /// Filesystem snapshot id → the filesystem as it was.
     fs_snapshots: BTreeMap<String, NativeFs>,
@@ -131,6 +133,8 @@ impl NativeApi for FakeApi {
             .ok_or_else(|| DriverError::Backend(format!("not found: volume {volume_id}")))?;
         s.next += 1;
         s.snapshots.insert(id.to_string(), v);
+        let bytes = s.data.get(volume_id).cloned().unwrap_or_default();
+        s.snapshot_data.insert(id.to_string(), bytes);
         Ok(id.to_string())
     }
 
@@ -152,8 +156,12 @@ impl NativeApi for FakeApi {
             )));
         }
         let id = self.create_volume(id, name, size_bytes).await?;
-        if let Some(v) = lock(&self.state)?.volumes.get_mut(&id) {
+        let mut s = lock(&self.state)?;
+        if let Some(v) = s.volumes.get_mut(&id) {
             v.extents = extents;
+        }
+        if let Some(bytes) = s.snapshot_data.get(snapshot_id).cloned() {
+            s.data.insert(id.clone(), bytes);
         }
         Ok(id)
     }
@@ -203,6 +211,7 @@ impl NativeApi for FakeApi {
     async fn delete_snapshot(&self, id: &str) -> Result<(), DriverError> {
         let mut s = lock(&self.state)?;
         refuse_if_locked(&s, id)?;
+        s.snapshot_data.remove(id);
         if s.snapshots.remove(id).is_some() {
             Ok(())
         } else {
