@@ -27,7 +27,7 @@ fn bind() -> TcpListener {
 struct Cluster {
     _td: tempfile::TempDir,
     meta: BTreeMap<String, Option<NativeNode>>,
-    _data: Vec<NativeNode>,
+    data: Vec<(String, NativeNode)>,
 }
 
 impl Cluster {
@@ -42,8 +42,18 @@ impl Cluster {
 
     /// `data_nodes` data nodes (three replicas each), three metadata voters.
     fn start_nodes(erasure: Option<&str>, data_nodes: usize) -> Self {
+        Self::start_cfg(erasure, data_nodes, false)
+    }
+
+    /// Data nodes that refuse writes without a grant, and leaders that can lease them.
+    fn start_granted(data_nodes: usize) -> Self {
+        Self::start_cfg(None, data_nodes, true)
+    }
+
+    fn start_cfg(erasure: Option<&str>, data_nodes: usize, grants: bool) -> Self {
         let td = tempfile::tempdir().unwrap();
         std::fs::write(td.path().join("token"), TOKEN).unwrap();
+        std::fs::write(td.path().join("grant"), "fuse-test-grant-secret").unwrap();
         let data_l: Vec<(String, TcpListener)> = (1..=data_nodes)
             .map(|i| (format!("d{i}"), bind()))
             .collect();
@@ -75,8 +85,9 @@ impl Cluster {
             data_node: None,
             metadata: None,
             max_request_bytes: 1 << 20,
+            grant_key_file: grants.then(|| root.join("grant")),
         };
-        let data = data_l
+        let data: Vec<(String, NativeNode)> = data_l
             .into_iter()
             .map(|(id, l)| {
                 let mut cfg = base(&id, td.path());
@@ -84,7 +95,7 @@ impl Cluster {
                     listen: l.local_addr().unwrap(),
                     devices: Vec::new(),
                 });
-                NativeNode::start_with(
+                let node = NativeNode::start_with(
                     cfg,
                     Listeners {
                         http: Some(bind()),
@@ -92,7 +103,8 @@ impl Cluster {
                         metadata: None,
                     },
                 )
-                .unwrap()
+                .unwrap();
+                (id, node)
             })
             .collect();
         let meta = meta_l
@@ -137,8 +149,13 @@ impl Cluster {
         Self {
             _td: td,
             meta,
-            _data: data,
+            data,
         }
+    }
+
+    /// Stops data node `id`.
+    fn stop_data(&mut self, id: &str) {
+        self.data.retain(|(n, _)| n != id);
     }
 
     fn endpoints(&self) -> Vec<String> {
@@ -1131,4 +1148,257 @@ fn dot_lookups_resolve_handles_by_inode() {
     // A rename moves `..`, and nothing cached the old parent.
     ops.rename(a.ino, "b", ROOT_INO, "b2").unwrap();
     assert_eq!(ops.lookup_dot(b.ino, "..").unwrap().ino, ROOT_INO);
+}
+
+// ---- Direct client writes -------------------------------------------------------------------
+//
+// The cluster's extent size here is 64 KiB. With `direct_writes` on, a mount sends whole
+// extents to the data nodes itself under short-lived grants; the metadata leader only leases
+// and commits them.
+
+const EXT: usize = 64 << 10;
+
+fn direct_writes() -> OpsConfig {
+    OpsConfig {
+        writeback_bytes: 1 << 20,
+        readahead_bytes: 0,
+        direct_writes: Some(atlas_native_fuse::direct_write::DirectWrites {
+            identity: None,
+            timeout: Duration::from_secs(5),
+        }),
+        ..OpsConfig::default()
+    }
+}
+
+fn pattern(len: usize, seed: u8) -> Vec<u8> {
+    (0..len)
+        .map(|i| ((i * 31) as u8) ^ ((i >> 9) as u8) ^ seed)
+        .collect()
+}
+
+fn new_file(ops: &Ops, name: &str) -> u64 {
+    ops.mknode(ROOT_INO, name, NodeType::File, None, 0o644, 0, 0)
+        .unwrap()
+        .ino
+}
+
+/// What a client holds after `POST .../direct-write`: the targets and their grants.
+fn lease_over_http(c: &Cluster, fs: &str, ino: u64, offset: u64, len: u64) -> atlas_native::engine::DirectLease {
+    let v = c
+        .client()
+        .json(
+            Method::POST,
+            &format!("/v1/fs/{fs}/inodes/{ino}/direct-write"),
+            Body::Json(json!({ "offset": offset, "len": len })),
+            Retry::Idempotent,
+        )
+        .unwrap();
+    serde_json::from_value(v).unwrap()
+}
+
+/// Writes one target the way the mount's direct writer does; returns the error if refused.
+fn write_target(
+    lease: &atlas_native::engine::DirectLease,
+    t: &atlas_native::engine::DirectTarget,
+    data: &[u8],
+) -> Result<(), atlas_native::NativeError> {
+    let dev = atlas_native::RemoteDevice::new(&t.endpoint, Duration::from_secs(5))
+        .on_device(t.device_index)
+        .in_group(t.group);
+    match t.offset {
+        Some(o) => dev.write_at_granted(Some(t.grant.clone()), lease.term, o, data),
+        None => dev
+            .append_granted(Some(t.grant.clone()), lease.term, data)
+            .map(|_| ()),
+    }
+}
+
+#[test]
+fn direct_writes_send_whole_extents_to_the_data_nodes() {
+    let c = Cluster::start_granted(3);
+    create_fs(&c, "dw");
+    let ops = mount(&c, "dw", direct_writes());
+    let f = new_file(&ops, "ckpt.bin");
+
+    // Aligned: eight whole extents in one run go as one lease.
+    let a = pattern(8 * EXT, 1);
+    ops.write(f, 0, &a).unwrap();
+    ops.flush(f).unwrap();
+    let (direct, fallbacks) = ops.direct_write_counts();
+    assert!(direct >= 1 && fallbacks == 0, "direct {direct}, fallbacks {fallbacks}");
+
+    // Unaligned: the head and tail go through the leader, the whole extents in between direct.
+    let g = new_file(&ops, "ragged.bin");
+    let b = pattern(5 * EXT + 1234, 2);
+    ops.write(g, 100, &b).unwrap();
+    ops.flush(g).unwrap();
+    let (direct_after, fallbacks) = ops.direct_write_counts();
+    assert!(direct_after > direct && fallbacks == 0);
+
+    // A run smaller than an extent never leaves the leader path.
+    let h = new_file(&ops, "small.bin");
+    ops.write(h, 0, b"tiny").unwrap();
+    ops.flush(h).unwrap();
+    assert_eq!(ops.direct_write_counts().0, direct_after);
+
+    // A plain mount (reading through the leader) sees every byte.
+    let plain = mount(&c, "dw", OpsConfig::default());
+    assert_eq!(plain.read(f, 0, a.len()).unwrap(), a);
+    assert_eq!(plain.getattr(f).unwrap().size, a.len() as u64);
+    let mut want = vec![0u8; 100];
+    want.extend_from_slice(&b);
+    assert_eq!(plain.read(g, 0, want.len()).unwrap(), want);
+    assert_eq!(plain.read(h, 0, 16).unwrap(), b"tiny");
+
+    // Overwriting committed extents directly replaces them whole.
+    let a2 = pattern(2 * EXT, 3);
+    ops.write(f, 2 * EXT as u64, &a2).unwrap();
+    ops.flush(f).unwrap();
+    let mut a = a;
+    a[2 * EXT..4 * EXT].copy_from_slice(&a2);
+    // A new mount: `plain` may still serve this file from its read-ahead window.
+    let fresh = mount(&c, "dw", OpsConfig::default());
+    assert_eq!(fresh.read(f, 0, a.len()).unwrap(), a);
+    assert_eq!(ops.direct_write_counts().1, 0);
+}
+
+#[test]
+fn direct_writes_fall_back_to_the_leader_when_the_cluster_cannot_grant() {
+    // No grant key configured: the leader refuses every lease, the mount keeps working.
+    let c = Cluster::start();
+    create_fs(&c, "nb");
+    let ops = mount(&c, "nb", direct_writes());
+    let f = new_file(&ops, "a.bin");
+    let want = pattern(40 * EXT, 4);
+    ops.write(f, 0, &want).unwrap();
+    ops.flush(f).unwrap();
+    let (direct, fallbacks) = ops.direct_write_counts();
+    assert_eq!(direct, 0);
+    assert!(fallbacks >= 1);
+    let plain = mount(&c, "nb", OpsConfig::default());
+    assert_eq!(plain.read(f, 0, want.len()).unwrap(), want);
+}
+
+#[test]
+fn a_down_data_node_is_covered_by_the_spare_replica() {
+    let mut c = Cluster::start_granted(4);
+    create_fs(&c, "dn");
+    c.stop_data("d2");
+    let ops = mount(&c, "dn", direct_writes());
+    let f = new_file(&ops, "a.bin");
+    let want = pattern(12 * EXT, 5);
+    ops.write(f, 0, &want).unwrap();
+    ops.flush(f).unwrap();
+    let (direct, fallbacks) = ops.direct_write_counts();
+    assert!(direct >= 1, "the write did not go direct");
+    assert_eq!(fallbacks, 0, "a spare should have covered the dead node");
+    let plain = mount(&c, "dn", OpsConfig::default());
+    assert_eq!(plain.read(f, 0, want.len()).unwrap(), want);
+    // Every extent has its three replicas on the live nodes.
+    let layout: atlas_native::engine::FileLayout = serde_json::from_value(
+        c.client()
+            .json(
+                Method::GET,
+                &format!("/v1/fs/dn/inodes/{f}/layout?offset=0&len={}", want.len()),
+                Body::Empty,
+                Retry::Idempotent,
+            )
+            .unwrap(),
+    )
+    .unwrap();
+    for ext in &layout.extents {
+        assert_eq!(ext.replicas.len(), 3);
+        assert!(ext.replicas.iter().all(|r| r.node_id != "d2"));
+    }
+}
+
+#[test]
+fn a_client_that_dies_before_committing_leaves_nothing_visible() {
+    let c = Cluster::start_granted(3);
+    create_fs(&c, "die");
+    let ops = mount(&c, "die", OpsConfig::default());
+    let f = new_file(&ops, "a.bin");
+    let orphan = pattern(2 * EXT, 6);
+
+    // The client leases, writes every replica of both extents, then dies before committing.
+    let lease = lease_over_http(&c, "die", f, 0, orphan.len() as u64);
+    assert_eq!(lease.cells.len(), 2);
+    for (cell, bytes) in lease.cells.iter().zip(orphan.chunks(EXT)) {
+        for t in cell.targets.iter().take(lease.needed) {
+            write_target(&lease, t, bytes).unwrap();
+        }
+    }
+    // Not visible: the file has no size and no data.
+    assert_eq!(ops.getattr(f).unwrap().size, 0);
+    assert!(ops.read(f, 0, orphan.len()).unwrap().is_empty());
+
+    // The same range is written normally; the orphaned bytes never surface.
+    let real = pattern(2 * EXT, 7);
+    ops.write(f, 0, &real).unwrap();
+    ops.flush(f).unwrap();
+    assert_eq!(ops.read(f, 0, real.len()).unwrap(), real);
+    let other = mount(&c, "die", OpsConfig::default());
+    assert_eq!(other.read(f, 0, real.len()).unwrap(), real);
+
+    // The dead client's lease is still outstanding until it expires, but it commits nothing
+    // later either way: a commit naming it for different bytes is refused or ignored by
+    // content, so we only require that the committed file is unchanged after trying.
+    let _ = c.client().json(
+        Method::POST,
+        &format!("/v1/fs/die/inodes/{f}/direct-abort"),
+        Body::Json(json!({ "lease": lease.lease })),
+        Retry::Idempotent,
+    );
+    assert_eq!(other.read(f, 0, real.len()).unwrap(), real);
+}
+
+#[test]
+fn a_stale_term_client_is_fenced_after_a_leader_failover() {
+    let mut c = Cluster::start_granted(3);
+    create_fs(&c, "fo");
+    let ops = mount(&c, "fo", OpsConfig::default());
+    let f = new_file(&ops, "a.bin");
+    ops.write(f, 0, b"seed").unwrap();
+    ops.flush(f).unwrap();
+
+    // A client leases under the current leader's term...
+    let lease = lease_over_http(&c, "fo", f, 0, EXT as u64);
+    let stale = pattern(EXT, 8);
+
+    // ...which then dies; the new leader's first full-extent write raises the data nodes' fence.
+    c.kill_leader();
+    let after = mount(&c, "fo", direct_writes());
+    let g = new_file(&after, "b.bin");
+    let fresh = pattern(4 * EXT, 9);
+    after.write(g, 0, &fresh).unwrap();
+    after.flush(g).unwrap();
+    assert_eq!(after.read(g, 0, fresh.len()).unwrap(), fresh);
+
+    // The stale client's grants are for the old term: every data node refuses them.
+    let t = &lease.cells[0].targets[0];
+    let err = write_target(&lease, t, &stale).unwrap_err();
+    assert!(
+        matches!(err, atlas_native::NativeError::Fenced { current } if current > lease.term),
+        "{err}"
+    );
+    // And the new leader knows nothing of its lease, so a commit is refused.
+    let commit = json!({
+        "lease": lease.lease,
+        "cells": [{
+            "logical_offset": 0,
+            "checksum": "00".repeat(32),
+            "replicas": [],
+        }],
+    });
+    let err = c
+        .client()
+        .json(
+            Method::POST,
+            &format!("/v1/fs/fo/inodes/{f}/direct-commit"),
+            Body::Json(commit),
+            Retry::Idempotent,
+        )
+        .unwrap_err();
+    assert_eq!(err.errno(), libc::EINVAL, "{err}");
+    assert_eq!(ops.read(f, 0, 4).unwrap(), b"seed");
 }

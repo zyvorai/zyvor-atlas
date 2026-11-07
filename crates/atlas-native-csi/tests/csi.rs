@@ -64,6 +64,7 @@ impl Cluster {
             data_node: None,
             metadata: None,
             max_request_bytes: 1 << 20,
+            grant_key_file: None,
         };
         let mut cfg = base("d1");
         cfg.data_node = Some(DataNodeRole {

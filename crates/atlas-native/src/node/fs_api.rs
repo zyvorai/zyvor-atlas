@@ -15,7 +15,7 @@ use super::{
     body_json, cache_leases::Change, client_id, query_u64, read_range, MetaGroup, NodeShared,
 };
 use crate::{
-    engine::{LockRequest, NativeEngine, NativeError, NewNode, ObjectKind, DEFAULT_DIFF_LIMIT},
+    engine::{DirectCommit, LockRequest, NativeEngine, NativeError, NewNode, ObjectKind, DEFAULT_DIFF_LIMIT},
     http::{Request, Response},
     leases::{LockKind, Session},
     namespace::{FsQuota, ReplicaInode, SetAttr, XattrMode},
@@ -540,6 +540,29 @@ fn inode_route(
                 200,
                 &json!(e.file_layout(fs, ino, offset, len)?),
             ))
+        }
+        // Direct client writes: lease targets and write grants, then commit what the client
+        // wrote to the data nodes itself.
+        ("POST", ["direct-write"]) => {
+            let body = parse(req)?;
+            let lease = e.direct_write_lease(
+                fs,
+                ino,
+                u64_field(&body, "offset")?,
+                u64_field(&body, "len")?,
+            )?;
+            Ok(Response::json(200, &json!(lease)))
+        }
+        ("POST", ["direct-commit"]) => {
+            let c: DirectCommit = serde_json::from_slice(&req.body)
+                .map_err(|err| NativeError::Invalid(format!("invalid commit: {err}")))?;
+            let _change = change(&[ino])?;
+            attr(e.direct_write_commit(fs, ino, c)?)
+        }
+        ("POST", ["direct-abort"]) => {
+            let body = parse(req)?;
+            e.direct_write_abort(str_field(&body, "lease")?)?;
+            Ok(Response::text(204, ""))
         }
         ("PUT", ["data"]) => {
             let offset = match query_u64(req, "offset") {

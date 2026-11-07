@@ -124,6 +124,7 @@ impl Cluster {
             data_node: None,
             metadata: None,
             max_request_bytes: 1 << 20,
+            grant_key_file: None,
         };
         let mut data_nodes = BTreeMap::new();
         for (id, l) in data_l {

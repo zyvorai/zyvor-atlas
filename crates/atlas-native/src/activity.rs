@@ -116,6 +116,19 @@ impl FsActivity {
         f(&mut e.current)
     }
 
+    /// Records a write whose bytes the leader never saw (a direct client write): it counts
+    /// toward bytes and modified inodes, but contributes no entropy sample.
+    pub fn record_write_unsampled(&self, fs: &str, ino: u64, bytes: u64) {
+        self.with(fs, unix_now(), |w| {
+            w.bytes += bytes;
+            if w.modified.len() < MAX_INODES {
+                w.modified.insert(ino);
+            } else if !w.modified.contains(&ino) {
+                w.modified_overflow += 1;
+            }
+        });
+    }
+
     pub fn record_write(&self, fs: &str, ino: u64, data: &[u8]) {
         self.record_write_at(fs, ino, data, unix_now());
     }

@@ -43,6 +43,7 @@ impl Cluster {
             data_node: None,
             metadata: None,
             max_request_bytes: 1 << 20,
+            grant_key_file: None,
         };
         let data_l: Vec<(String, TcpListener)> =
             (1..=3).map(|i| (format!("d{i}"), bind())).collect();

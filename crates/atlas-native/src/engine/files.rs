@@ -206,7 +206,7 @@ fn is_internal_name(name: &str) -> bool {
     name.starts_with(".atlas_")
 }
 
-fn writable(fs: &str) -> Result<(), NativeError> {
+pub(super) fn writable(fs: &str) -> Result<(), NativeError> {
     if fs.contains('@') {
         return Err(NativeError::ReadOnly(format!("{fs} is a snapshot")));
     }

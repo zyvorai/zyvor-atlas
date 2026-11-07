@@ -37,6 +37,7 @@ use crate::{
     device::{BlockStore, FileDevice},
     durable,
     engine::NativeError,
+    grant::{Grant, GrantKey},
     metrics::PromText,
     tls::{self, Conn, TlsIdentity},
 };
@@ -58,6 +59,9 @@ enum Request {
         device: usize,
         #[serde(default, skip_serializing_if = "is_zero_group")]
         group: u32,
+        /// Write authorization; required by a node that holds a [`GrantKey`].
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        grant: Option<Grant>,
     },
     WriteAt {
         fence: u64,
@@ -67,6 +71,8 @@ enum Request {
         device: usize,
         #[serde(default, skip_serializing_if = "is_zero_group")]
         group: u32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        grant: Option<Grant>,
     },
     Read {
         offset: u64,
@@ -104,6 +110,10 @@ fn is_zero_group(v: &u32) -> bool {
 enum Response {
     Appended {
         offset: u64,
+        /// With a grant: proof the node placed the data at `offset` ([`GrantKey::receipt`]), so
+        /// the leader can trust a client-reported append offset.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        receipt: Option<String>,
     },
     Written,
     Data {
@@ -151,6 +161,10 @@ struct Shared {
     root: PathBuf,
     fences: Mutex<BTreeMap<u32, Arc<Fence>>>,
     tls: Option<Arc<ServerConfig>>,
+    /// This node's id, which grants are bound to.
+    id: String,
+    /// When set, every write must carry a [`Grant`] made with this key.
+    grant_key: Option<GrantKey>,
     stop: AtomicBool,
     stats: Stats,
     conns: Mutex<BTreeMap<u64, TcpStream>>,
@@ -262,6 +276,29 @@ impl Shared {
         }
     }
 
+    /// Whether a write may proceed: always, unless this node holds a grant key, in which case
+    /// `grant` must authorize exactly this write.
+    fn authorize(
+        &self,
+        grant: Option<&Grant>,
+        fence: u64,
+        group: u32,
+        device: usize,
+        offset: Option<u64>,
+        len: u64,
+    ) -> Result<(), Response> {
+        let Some(key) = &self.grant_key else {
+            return Ok(());
+        };
+        let refused = |message: String| {
+            self.stats.errors.fetch_add(1, Ordering::Relaxed);
+            Response::Error { message }
+        };
+        let grant = grant.ok_or_else(|| refused("write grant required".into()))?;
+        key.authorize(grant, &self.id, fence, group, device, offset, len)
+            .map_err(refused)
+    }
+
     fn device(&self, index: usize) -> Result<&Arc<dyn BlockStore>, NativeError> {
         self.devices.get(index).ok_or_else(|| {
             NativeError::Invalid(format!(
@@ -311,6 +348,20 @@ impl DataNodeServer {
         listener: TcpListener,
         tls: Option<TlsIdentity>,
     ) -> Result<Self, NativeError> {
+        Self::start_devices_with(id, root, devices, listener, tls, None)
+    }
+
+    /// [`Self::start_devices`] that, with a `grant_key`, refuses every write not authorized by a
+    /// [`Grant`] made with it (see [`crate::grant`]).
+    pub fn start_devices_with(
+        id: impl Into<String>,
+        root: impl AsRef<Path>,
+        devices: Vec<Arc<dyn BlockStore>>,
+        listener: TcpListener,
+        tls: Option<TlsIdentity>,
+        grant_key: Option<GrantKey>,
+    ) -> Result<Self, NativeError> {
+        let id = id.into();
         if devices.is_empty() {
             return Err(NativeError::Invalid(
                 "a data node needs at least one device".into(),
@@ -333,6 +384,8 @@ impl DataNodeServer {
                 }),
             )])),
             tls,
+            id: id.clone(),
+            grant_key,
             stop: AtomicBool::new(false),
             stats: Stats::default(),
             conns: Mutex::new(BTreeMap::new()),
@@ -344,7 +397,7 @@ impl DataNodeServer {
             thread::spawn(move || accept_loop(listener, &shared))
         };
         Ok(Self {
-            id: id.into(),
+            id,
             shared,
             addr,
             acceptor: Some(acceptor),
@@ -552,12 +605,21 @@ fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bo
                 len,
                 device,
                 group,
+                grant,
             } => read_payload(&mut stream, len).and_then(|data| {
+                if let Err(refused) = sh.authorize(grant.as_ref(), fence, group, device, None, len)
+                {
+                    return write_message(&mut stream, &refused, &[]);
+                }
                 let resp = sh.fenced(group, fence, || {
                     let offset = sh.device(device)?.append(fence, &data)?;
                     sh.stats.appends.fetch_add(1, Ordering::Relaxed);
                     sh.stats.bytes_written.fetch_add(len, Ordering::Relaxed);
-                    Ok(Response::Appended { offset })
+                    let receipt = match (&sh.grant_key, &grant) {
+                        (Some(k), Some(g)) => Some(k.receipt(&g.id, offset)),
+                        _ => None,
+                    };
+                    Ok(Response::Appended { offset, receipt })
                 });
                 write_message(&mut stream, &resp, &[])
             }),
@@ -567,7 +629,13 @@ fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bo
                 len,
                 device,
                 group,
+                grant,
             } => read_payload(&mut stream, len).and_then(|data| {
+                if let Err(refused) =
+                    sh.authorize(grant.as_ref(), fence, group, device, Some(offset), len)
+                {
+                    return write_message(&mut stream, &refused, &[]);
+                }
                 let resp = sh.fenced(group, fence, || {
                     sh.device(device)?.write_at(fence, offset, &data)?;
                     sh.stats.writes.fetch_add(1, Ordering::Relaxed);
@@ -690,9 +758,10 @@ impl RdmaSession<'_> {
             len: data.len() as u64,
             device: self.device,
             group: self.group,
+            grant: None,
         };
         match self.expect_ok(req, data)?.0 {
-            Response::Appended { offset } => Ok(offset),
+            Response::Appended { offset, .. } => Ok(offset),
             other => Err(io::Error::other(format!("append was not acknowledged: {other:?}"))),
         }
     }
@@ -722,6 +791,9 @@ pub struct RemoteDevice {
     group: u32,
     /// For `group > 0`: the node has confirmed it keeps a fence per group.
     group_checked: AtomicBool,
+    /// Signs this client's own writes for nodes that require write grants (a metadata leader
+    /// holds it; a direct-write client never does and passes the grants it was leased).
+    grant_key: Option<GrantKey>,
 }
 
 impl std::fmt::Debug for RemoteDevice {
@@ -748,6 +820,7 @@ impl RemoteDevice {
             device_checked: AtomicBool::new(false),
             group: 0,
             group_checked: AtomicBool::new(false),
+            grant_key: None,
         }
     }
 
@@ -767,7 +840,15 @@ impl RemoteDevice {
             device_checked: AtomicBool::new(false),
             group: 0,
             group_checked: AtomicBool::new(false),
+            grant_key: None,
         })
+    }
+
+    /// Makes this client authorize its own writes with `key`, for data nodes that require write
+    /// grants ([`crate::grant`]).
+    pub fn with_grant_key(mut self, key: GrantKey) -> Self {
+        self.grant_key = Some(key);
+        self
     }
 
     /// Addresses the node's device `index` instead of device 0.
@@ -826,6 +907,53 @@ impl RemoteDevice {
 
     pub fn target(&self) -> &str {
         &self.target
+    }
+
+    /// Writes `data` at `offset` carrying `grant`, the permission a leader leased to this client
+    /// (see [`crate::grant`]). Fails with [`NativeError::Fenced`] once the node has accepted a
+    /// write from a later term than the grant's.
+    pub fn write_at_granted(
+        &self,
+        grant: Option<Grant>,
+        fence: u64,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<(), NativeError> {
+        self.check_group()?;
+        let req = Request::WriteAt {
+            fence,
+            offset,
+            len: data.len() as u64,
+            device: self.device,
+            group: self.group,
+            grant,
+        };
+        match self.call(&req, data)?.0 {
+            Response::Written => Ok(()),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    /// Appends `data` carrying `grant`; returns the offset and, from a node that checks grants,
+    /// its receipt for that offset.
+    pub fn append_granted(
+        &self,
+        grant: Option<Grant>,
+        fence: u64,
+        data: &[u8],
+    ) -> Result<(u64, Option<String>), NativeError> {
+        self.check_group()?;
+        let req = Request::Append {
+            fence,
+            len: data.len() as u64,
+            device: self.device,
+            group: self.group,
+            grant,
+        };
+        match self.call(&req, data)?.0 {
+            Response::Appended { offset, receipt } => Ok((offset, receipt)),
+            other => Err(unexpected(other)),
+        }
     }
 
     fn connect(&self) -> io::Result<Conn> {
@@ -928,32 +1056,17 @@ fn unexpected(resp: Response) -> NativeError {
 
 impl BlockStore for RemoteDevice {
     fn append(&self, fence: u64, data: &[u8]) -> Result<u64, NativeError> {
-        self.check_group()?;
-        let req = Request::Append {
-            fence,
-            len: data.len() as u64,
-            device: self.device,
-            group: self.group,
-        };
-        match self.call(&req, data)?.0 {
-            Response::Appended { offset } => Ok(offset),
-            other => Err(unexpected(other)),
-        }
+        let grant = self.grant_key.as_ref().map(|k| {
+            k.mint_own(fence, self.group, self.device, None, data.len() as u64)
+        });
+        self.append_granted(grant, fence, data).map(|(offset, _)| offset)
     }
 
     fn write_at(&self, fence: u64, offset: u64, data: &[u8]) -> Result<(), NativeError> {
-        self.check_group()?;
-        let req = Request::WriteAt {
-            fence,
-            offset,
-            len: data.len() as u64,
-            device: self.device,
-            group: self.group,
-        };
-        match self.call(&req, data)?.0 {
-            Response::Written => Ok(()),
-            other => Err(unexpected(other)),
-        }
+        let grant = self.grant_key.as_ref().map(|k| {
+            k.mint_own(fence, self.group, self.device, Some(offset), data.len() as u64)
+        });
+        self.write_at_granted(grant, fence, offset, data)
     }
 
     fn read_exact_at(&self, offset: u64, len: usize) -> Result<Vec<u8>, NativeError> {
@@ -1053,6 +1166,7 @@ mod tests {
                 offset: 9,
                 len: 3,
                 group: 4,
+                grant: None,
             },
             b"abc",
         )
@@ -1065,6 +1179,7 @@ mod tests {
                 offset,
                 len,
                 group,
+                ..
             } => {
                 assert_eq!((device, fence, offset, len, group), (2, 7, 9, 3, 4));
                 assert_eq!(read_payload(&mut r, len).unwrap(), b"abc");
@@ -1080,6 +1195,7 @@ mod tests {
             len: 1,
             device: 0,
             group: 0,
+            grant: None,
         })
         .unwrap();
         assert!(!legacy.contains("group"), "{legacy}");
@@ -1140,10 +1256,10 @@ mod tests {
         let back = crate::rdma::with_stream(&mut tcp, gid, |s| {
             write_message(
                 s,
-                &Request::Append { fence: 1, len: payload.len() as u64, device: 0, group: 0 },
+                &Request::Append { fence: 1, len: payload.len() as u64, device: 0, group: 0, grant: None },
                 &payload,
             )?;
-            let Response::Appended { offset } = read_header::<Response>(s)? else {
+            let Response::Appended { offset, .. } = read_header::<Response>(s)? else {
                 return Err(io::Error::other("append was not acknowledged"));
             };
             write_message(
@@ -1224,6 +1340,8 @@ mod tests {
             root: root.to_path_buf(),
             fences: Mutex::new(BTreeMap::new()),
             tls: None,
+            id: String::new(),
+            grant_key: None,
             stop: AtomicBool::new(false),
             stats: Stats::default(),
             conns: Mutex::new(BTreeMap::new()),
