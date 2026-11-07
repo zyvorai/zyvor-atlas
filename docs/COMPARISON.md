@@ -79,7 +79,9 @@ The atlas-native roadmap, in order, each phase gated on a published benchmark:
    MLPerf Storage results. The checkpoint fast path (unserialized whole-extent writes,
    background parallel write-back), the CSI driver (`docs/NATIVE_CSI.md`) and a dataset
    locality API (query and pin a dataset's placement per host) are done; RDMA, GPUDirect Storage
-   and MLPerf Storage results are not.
+   and MLPerf Storage results are not. (A files-only GPU/GDS capability probe exists in the node's
+   `/v1/status`; it is unverified on real GPU hardware and there is no GPU I/O path,
+   `docs/NATIVE_GPU.md`.)
 5. **Protocols:** NFS, SMB and S3 front ends over the same namespace; ACLs, quotas, `O_DIRECT`;
    an IO500 submission. Per-filesystem byte and inode quotas, POSIX ACLs, `O_DIRECT`, an NFS gateway
    (`docs/NATIVE_NFS.md`), an S3 gateway (`docs/NATIVE_S3.md`) and an SMB gateway

@@ -496,6 +496,8 @@ struct NodeShared {
     transfers: transfers::Transfers,
     /// Client sessions this node expired as a group leader.
     sessions_expired: AtomicU64,
+    /// Files-only GPU/GDS capability probe taken at startup. Unverified on real GPU hardware.
+    gpu_io: crate::gpu::GpuReport,
 }
 
 /// One metadata Raft group on this node and the engine committing through it.
@@ -775,6 +777,20 @@ impl NativeNode {
             last_tier: Mutex::new(None),
             transfers: Default::default(),
             sessions_expired: AtomicU64::new(0),
+            gpu_io: {
+                let backends: Vec<DeviceBackend> = cfg
+                    .data_node
+                    .as_ref()
+                    .map(|d| {
+                        if d.devices.is_empty() {
+                            vec![DeviceBackend::File]
+                        } else {
+                            d.devices.iter().map(|x| x.backend).collect()
+                        }
+                    })
+                    .unwrap_or_default();
+                crate::gpu::probe(std::path::Path::new("/"), &backends)
+            },
         });
 
         let mut loops = Vec::new();
@@ -1644,6 +1660,8 @@ fn status(sh: &NodeShared) -> Response {
             // The rebuild controller of each group this node leads.
             "rebuild": (!rebuild.is_empty()).then_some(&rebuild),
             "data_node": fence.map(|f| json!({ "fence": f })),
+            // Read-only probe from files at startup; no GPU I/O path exists. Unverified on GPUs.
+            "gpu_io": sh.gpu_io,
         }),
     )
 }
