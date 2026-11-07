@@ -551,6 +551,16 @@ impl NativeNode {
         Self::start_with(cfg, Listeners::default())
     }
 
+    /// Offers `transport` for `RdmaUpgrade` on this node's data port (when it has one), as
+    /// `ATLAS_NATIVE_RDMA=1` offers the verbs transport. For tests with a fake transport.
+    pub fn offer_rdma_transport(&self, transport: Arc<dyn crate::rdma_link::RdmaTransport>) {
+        if let Ok(d) = self.shared.data.lock() {
+            if let Some(d) = d.as_ref() {
+                d.set_rdma_transport(transport);
+            }
+        }
+    }
+
     pub fn start_with(cfg: NodeConfig, listeners: Listeners) -> Result<Self, NativeError> {
         cfg.validate()?;
         std::fs::create_dir_all(&cfg.data_dir)?;

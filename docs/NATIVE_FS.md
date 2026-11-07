@@ -460,7 +460,8 @@ offset (or append), length and an expiry (30 s by default); the leaders sign the
 the key. A client that can only read the data nodes (an address, or the cluster client certificate)
 cannot make a grant. Without `grant_key_file` the data nodes accept unauthenticated writes as
 before and the leader refuses to lease direct writes, so the mount keeps writing through the
-leader. RDMA sessions do not carry grants yet, so they cannot write to a node that requires them.
+leader. Grants travel in the request header, so they are carried the same way over RDMA
+(see "RDMA to the data nodes" below).
 
 Failure handling:
 
@@ -517,6 +518,32 @@ Known limits:
   partial extents, compressed, deduplicated or erasure-coded extents and clusters without a
   `grant_key_file` always do.
 - Unlink-while-open works only within one mount (see Consistency).
+
+### RDMA to the data nodes (`atlas-native-mount --rdma`, off by default)
+
+`--rdma` (with `--direct-reads` and/or `--direct-writes`) makes the mount's data-node clients ask
+each new connection to switch to RDMA, and keep the resulting connection in the same pool TCP
+connections use. It needs a build with `--features rdma` (Linux, libibverbs), data nodes built the
+same way and started with `ATLAS_NATIVE_RDMA=1`, and `--rdma-gid-index` if the port's GID is not
+index 1. The wire protocol is unchanged, so write grants, receipts and fences work over RDMA
+exactly as over TCP.
+
+- **Plaintext, so never with TLS.** RDMA here carries no encryption. Passing `--rdma` together with
+  a client certificate (`--ca-file` and `--identity-file`, which make the data-node connections
+  mTLS) is a configuration error at startup, as is `RemoteDevice::use_rdma` on a TLS client, and a
+  node never upgrades a TLS connection. Use TLS over TCP, or RDMA on a trusted storage network.
+- **Fallback to TCP.** If a node does not offer RDMA, the transport cannot connect, or a request
+  fails on an RDMA connection, that request or connection is retried over TCP, counted
+  (`RdmaSnapshot`: connects, connect failures, TCP fallback connects, mid-flight errors, requests
+  over RDMA), and RDMA is not tried again on that node for 30 s (5 minutes if the node itself
+  declined). A mid-flight retry follows the same rule as a retry on a stale pooled TCP connection:
+  an append can leave an unreferenced copy behind.
+- **One owner thread per RDMA connection.** The verbs objects borrow from one another, so each
+  client connection runs on a worker thread that owns them for the connection's lifetime
+  (`rdma_link::WorkerStream`); the pooled handle talks to it over channels.
+- Not built: pipelined sends, messages larger than the existing 64 KiB, registered-memory
+  zero-copy and one-sided RDMA READ/WRITE. The stream is the same synchronous send/receive as
+  before; nothing here is a performance claim.
 
 ## Verification
 

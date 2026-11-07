@@ -464,6 +464,7 @@ fn direct(identity: Option<Arc<TlsIdentity>>) -> OpsConfig {
             identity,
             timeout: Duration::from_secs(5),
             prefer_host: None,
+            rdma: None,
         }),
         ..OpsConfig::default()
     }
@@ -1165,6 +1166,7 @@ fn direct_writes() -> OpsConfig {
         direct_writes: Some(atlas_native_fuse::direct_write::DirectWrites {
             identity: None,
             timeout: Duration::from_secs(5),
+            rdma: None,
         }),
         ..OpsConfig::default()
     }
@@ -1401,4 +1403,128 @@ fn a_stale_term_client_is_fenced_after_a_leader_failover() {
         .unwrap_err();
     assert_eq!(err.errno(), libc::EINVAL, "{err}");
     assert_eq!(ops.read(f, 0, 4).unwrap(), b"seed");
+}
+
+// ---- RDMA to the data nodes, over a fake transport (no RDMA hardware needed) ----
+
+fn rdma_cfg() -> (Arc<atlas_native::FakeTransport>, atlas_native::RdmaConfig) {
+    let t = atlas_native::FakeTransport::new();
+    let cfg = atlas_native::RdmaConfig::new(t.clone(), 1);
+    (t, cfg)
+}
+
+fn offer_rdma(c: &Cluster, t: &Arc<atlas_native::FakeTransport>) {
+    for (_, n) in &c.data {
+        n.offer_rdma_transport(t.clone());
+    }
+}
+
+#[test]
+fn direct_reads_go_over_rdma_when_the_nodes_offer_it() {
+    let c = Cluster::start();
+    create_fs(&c, "rr");
+    let writer = mount(&c, "rr", OpsConfig::default());
+    let f = new_file(&writer, "data.bin");
+    let data = pattern(11 * EXT + 77, 4);
+    writer.write(f, 0, &data).unwrap();
+    writer.flush(f).unwrap();
+
+    let (t, rdma) = rdma_cfg();
+    offer_rdma(&c, &t);
+    let mut cfg = direct(None);
+    cfg.direct_reads.as_mut().unwrap().rdma = Some(rdma);
+    let ops = mount(&c, "rr", cfg);
+    assert_eq!(ops.read(f, 0, data.len()).unwrap(), data);
+    assert_eq!(ops.direct_fallbacks(), 0);
+    let s = ops.cfg.rdma_stats().unwrap();
+    assert!(s.requests >= 11 && s.connects >= 1, "{s:?}");
+    assert_eq!((s.connect_failures, s.midflight_errors), (0, 0), "{s:?}");
+    assert!(t.server_opens.load(std::sync::atomic::Ordering::SeqCst) >= 1);
+}
+
+#[test]
+fn direct_reads_use_tcp_when_the_nodes_do_not_offer_rdma() {
+    if std::env::var("ATLAS_NATIVE_RDMA").is_ok_and(|v| v == "1") {
+        return;
+    }
+    let c = Cluster::start();
+    create_fs(&c, "rt");
+    let writer = mount(&c, "rt", OpsConfig::default());
+    let f = new_file(&writer, "data.bin");
+    let data = pattern(5 * EXT, 6);
+    writer.write(f, 0, &data).unwrap();
+    writer.flush(f).unwrap();
+
+    let (_t, rdma) = rdma_cfg();
+    let mut cfg = direct(None);
+    cfg.direct_reads.as_mut().unwrap().rdma = Some(rdma);
+    let ops = mount(&c, "rt", cfg);
+    assert_eq!(ops.read(f, 0, data.len()).unwrap(), data);
+    // The data came straight from the nodes over TCP, with RDMA tried and counted as failed.
+    assert_eq!(ops.direct_fallbacks(), 0);
+    let s = ops.cfg.rdma_stats().unwrap();
+    assert_eq!(s.requests, 0, "{s:?}");
+    assert!(s.connect_failures >= 1 && s.tcp_fallback_connects >= 1, "{s:?}");
+}
+
+#[test]
+fn direct_writes_go_over_rdma_to_nodes_that_require_grants() {
+    let c = Cluster::start_granted(3);
+    create_fs(&c, "rw");
+    let (t, rdma) = rdma_cfg();
+    offer_rdma(&c, &t);
+    let mut cfg = direct_writes();
+    cfg.direct_writes.as_mut().unwrap().rdma = Some(rdma);
+    let ops = mount(&c, "rw", cfg);
+    let f = new_file(&ops, "ckpt.bin");
+    let a = pattern(8 * EXT, 7);
+    ops.write(f, 0, &a).unwrap();
+    ops.flush(f).unwrap();
+    let (direct, fallbacks) = ops.direct_write_counts();
+    assert!(direct >= 1 && fallbacks == 0, "direct {direct}, fallbacks {fallbacks}");
+    let s = ops.cfg.rdma_stats().unwrap();
+    assert!(s.requests >= 8 && s.connects >= 1, "{s:?}");
+    assert_eq!((s.connect_failures, s.midflight_errors), (0, 0), "{s:?}");
+
+    let fresh = mount(&c, "rw", OpsConfig::default());
+    assert_eq!(fresh.read(f, 0, a.len()).unwrap(), a);
+}
+
+#[test]
+fn rdma_with_a_tls_identity_is_a_configuration_error() {
+    let key = KeyPair::generate().unwrap();
+    let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+    params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+    let ca = params.self_signed(&key).unwrap();
+    let issuer = Issuer::new(params, key);
+    let client_key = KeyPair::generate().unwrap();
+    let mut cp = CertificateParams::new(vec!["client".to_string()]).unwrap();
+    cp.extended_key_usages = vec![ExtendedKeyUsagePurpose::ClientAuth];
+    let cert = cp.signed_by(&client_key, &issuer).unwrap();
+    let identity = Arc::new(
+        TlsIdentity::from_pem(
+            ca.pem().as_bytes(),
+            cert.pem().as_bytes(),
+            client_key.serialize_pem().as_bytes(),
+        )
+        .unwrap(),
+    );
+    let (_t, rdma) = rdma_cfg();
+
+    let mut reads = direct(Some(identity.clone()));
+    reads.direct_reads.as_mut().unwrap().rdma = Some(rdma.clone());
+    let e = reads.validate().unwrap_err();
+    assert!(e.contains("plaintext") && e.contains("direct reads"), "{e}");
+
+    let mut writes = direct_writes();
+    let w = writes.direct_writes.as_mut().unwrap();
+    w.identity = Some(identity);
+    w.rdma = Some(rdma.clone());
+    assert!(writes.validate().unwrap_err().contains("direct writes"));
+
+    // Plaintext RDMA and TLS without RDMA are both fine.
+    let mut ok = direct(None);
+    ok.direct_reads.as_mut().unwrap().rdma = Some(rdma);
+    assert!(ok.validate().is_ok());
+    assert!(direct(None).validate().is_ok());
 }
