@@ -114,4 +114,4 @@ speed gained, and whether a cache tier should skip replication is the engine ven
 - **Single-copy profile is opt-in and only smoke tested.** KV-cache blocks can be recomputed, so some vendors argue they do not need
   replication; that is their argument, not something Atlas has measured. Today a KV-cache filesystem is replicated
   like any other unless you opt into the single-copy profile above.
-- **No vLLM connector.** Writing one over `KVAdapter` makes sense only if the file or S3 path proves insufficient.
+- **No vLLM connector tested against vLLM.** A dependency-free `KVConnector` class over `KVAdapter` exists in `tools/atlas_data/kv_connector.py` (unit tested locally against the data service only; see AI_DATA_SERVICES.md). **Original note:** Writing one over `KVAdapter` makes sense only if the file or S3 path proves insufficient.

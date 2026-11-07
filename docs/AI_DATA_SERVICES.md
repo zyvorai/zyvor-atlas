@@ -15,10 +15,10 @@ working first implementation, not production parity with ONTAP or a performance 
 | Workflow | Implemented | Boundary |
 |---|---|---|
 | Shared model cache | Immutable model revisions, deduplicated 4 MiB chunks per tenant, resumable chunk uploads, verified exports, shared worker chunk cache, pinned placements | No Hugging Face proxy or peer-to-peer transport; re-running ingest resumes by deduplicating chunks already uploaded |
-| Data-ready scheduling | Label/health/capacity filtering, transfer-time ranking, transactional reservations, readiness gate, stage worker, lease renew/release | External scheduler must use `DataReadyGate`; no automatic Gryvia controller or Kubernetes scheduler plugin |
+| Data-ready scheduling | Label/health/capacity filtering, transfer-time ranking, transactional reservations, readiness gate, stage worker, lease renew/release | External scheduler must use `DataReadyGate`; `JobController`/`NodeAgent` (unit tested with a fake Gryvia adapter); no real Gryvia adapter or Kubernetes scheduler plugin |
 | Agent workspaces | Copy-on-write manifests, path overlays/tombstones, optimistic generations, byte/time budgets, review, selective publication, discard | Branch is a virtual file manifest, not an OS sandbox or writable FUSE mount; export published artifacts into FluxVM separately |
 | Permission-aware data access | Tenant and subject identity from credentials, artifact ownership, live ACL revocation across revisions, filename/name search, authorized chunk retrieval, audit trail | Source POSIX ACLs are imported on request with `acl-sync` (below), not continuously; no AD/SMB/NFSv4 ACL synchronization, semantic embeddings, OCR or vector database |
-| Inference context cache | Exact compatibility keys, subject isolation, TTL, 64 MiB subject budget with LRU eviction, byte-block SDK | Blocks <=4 MiB, no tensor conversion, NIXL transport, GPU residency or drop-in vLLM/MLX connector; adapter required in serving runtime |
+| Inference context cache | Exact compatibility keys, subject isolation, TTL, 64 MiB subject budget with LRU eviction, byte-block SDK | Blocks <=4 MiB, no tensor conversion, NIXL transport, GPU residency; `KVConnector` is untested against vLLM/MLX; adapter required in serving runtime |
 | Dataset releases | Immutable file manifests and checksums, provenance, metadata-only branches, revision diff, verified exports | A release captures uploaded files, not an automatically quiesced database; use existing `atlas_recovery` for coordinated live capture |
 | Application-verified recovery | Isolated temporary restore, all-file checksum validation, allowlisted verification process, deadline, durable pass/fail evidence, latest verified release | Hook must actually start/check/stop its application; no isolation from a malicious trusted hook, no malware-clean certification; snapshot age is not measured RPO |
 | Per-job storage costs | Trusted collectors, integer micro-USD estimates, idempotent measurements, per-meter/job totals, placement transfer estimates | User-configured rates and measurements, not a cloud invoice or automatic eBPF attribution; compute cost is excluded |
@@ -250,6 +250,18 @@ The caller is responsible for matching node IDs to Kubernetes hostnames, checkin
 compute capacity in Gryvia, and mounting the cache into its workload. Cache capacity
 uses conservative logical artifact sizes; shared physical chunks can consume less.
 
+### Controller and node agent (`controller.py`)
+
+`JobController` runs reserve -> trigger staging on the chosen node -> `wait_ready` -> hand the
+node selector to a scheduler -> renew the lease while the job is live -> release on success,
+failure, lost lease or any admit error. `NodeAgent` heartbeats and runs `Client.stage` for
+reserved jobs, then meters `transfer_bytes` (bytes fetched) and `cache_miss_bytes` (logical size of
+artifacts not in the cache) through `CostCollector`; a missing rate is recorded in `meter_errors`
+and never fails staging. `GryviaAdapter` (`apply_node_selector`, `job_state`, `report`) is our own
+minimal interface, **not** Gryvia's API, which is unknown; only `FakeGryvia` exists. Unit tested
+over a real local HTTP service with the fake adapter. No real Gryvia adapter, DaemonSet manifest for
+the agent, or cluster run exists.
+
 ## Agent branches and KV cache
 
 A workspace starts with a base manifest and empty overlay. Edits add references to
@@ -277,6 +289,13 @@ blocks of the longest unbroken leading run, stopping at the first miss. It is en
 stdlib-only: the serving runtime still produces and consumes the block bytes, and nothing here
 says a hit makes inference faster. Unit tested with a fake client; not run against vLLM or any
 engine.
+
+`KVConnector(adapter, block_size)` (`kv_connector.py`) has the shape of a vLLM-style connector
+without importing vLLM: `save(token_ids, blocks)` stores one opaque block per full token block under
+its prefix digest, splitting a block over the 4 MiB service limit into parts behind a manifest
+(validated before any write), and `load(token_ids)` returns `(matched_tokens, blocks)` for the
+longest unbroken prefix, treating a lost part as a miss. Unit tested over the local HTTP service
+only; it is not registered with, or tested against, vLLM, and no GPU or speedup claim is made.
 
 ## Recovery and cost evidence
 
