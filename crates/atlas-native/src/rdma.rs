@@ -87,15 +87,15 @@ pub fn loopback_roundtrip(payload: &[u8], gid_index: u32) -> io::Result<Vec<u8>>
     Ok(mr[..n].to_vec())
 }
 
-/// Size of one RDMA message. A write larger than this is split; a read never spans messages.
-const MSG: usize = 64 * 1024;
-/// Receive buffers kept posted. The sender is not credit-limited: with infinite RNR retry, a send
-/// that finds no posted receive is retried by the adapter until one appears, which is the
-/// back-pressure.
-const DEPTH: usize = 16;
+use crate::rdma_link::{DEPTH, MSG};
+// `MSG` is the size of one RDMA message (a write larger than this is split; a read never spans
+// messages). `DEPTH` receive buffers are kept posted: the sender is not credit-limited, with
+// infinite RNR retry a send that finds no posted receive is retried by the adapter until one
+// appears, which is the back-pressure. Both live in `rdma_link` so the connection cap can size
+// what a connection pins.
 /// Work request id of the (single, synchronous) send; receive slots use their slot index.
 const SEND_ID: u64 = 1 << 32;
-/// How long a read or write may wait for the peer.
+/// How long a write (and by default a read) may wait for the peer.
 const STREAM_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A reliable byte stream over one RDMA reliable-connection queue pair: `Read` and `Write` like
@@ -117,9 +117,18 @@ pub struct RdmaStream<'a, 'r> {
     /// Bytes of the front message already consumed by `read`.
     consumed: usize,
     send_done: bool,
+    /// How long one `read` waits for a message before reporting `TimedOut`.
+    read_timeout: Duration,
 }
 
 impl RdmaStream<'_, '_> {
+    /// Changes how long a `read` waits before returning `ErrorKind::TimedOut` (nothing is lost:
+    /// the read can simply be called again). Lets a server wake from a quiet connection to check
+    /// for shutdown without treating the quiet as a failure.
+    pub fn set_read_timeout(&mut self, d: Duration) {
+        self.read_timeout = d;
+    }
+
     /// Polls the completion queue once, sorting completions into `ready` / `send_done`.
     fn pump(&mut self) -> io::Result<()> {
         let mut wcs = [ibverbs::ibv_wc::default(); 16];
@@ -152,7 +161,7 @@ impl Read for RdmaStream<'_, '_> {
         while self.ready.is_empty() {
             self.pump()?;
             if self.ready.is_empty() {
-                if started.elapsed() > STREAM_TIMEOUT {
+                if started.elapsed() > self.read_timeout {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "RDMA read timed out"));
                 }
                 std::thread::yield_now();
@@ -257,6 +266,7 @@ pub fn with_stream<R>(
         ready: VecDeque::new(),
         consumed: 0,
         send_done: false,
+        read_timeout: STREAM_TIMEOUT,
     };
     for slot in 0..DEPTH {
         stream.repost(slot)?;

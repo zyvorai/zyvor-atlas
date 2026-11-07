@@ -18,9 +18,9 @@ use std::{
     io::{self, Read, Write},
     net::TcpStream,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
         mpsc::{self, Receiver, Sender, SyncSender},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::Duration,
@@ -48,6 +48,92 @@ pub trait RdmaTransport: Send + Sync + std::fmt::Debug {
     /// Client side: a long-lived stream for the connection pool. Takes the control connection
     /// (the transport may keep it open for as long as the stream lives).
     fn connect(&self, control: TcpStream, gid_index: u32) -> io::Result<Box<dyn Duplex>>;
+
+    /// Memory one connection pins (registered, so counted against `RLIMIT_MEMLOCK`) on each end.
+    /// Zero for a transport that pins nothing (the fake one), which is then not memlock-capped.
+    fn pinned_bytes_per_connection(&self) -> u64 {
+        0
+    }
+}
+
+/// Size of one RDMA message of the verbs stream. A write larger than this is split.
+pub(crate) const MSG: usize = 64 * 1024;
+/// Receive buffers kept posted per verbs connection.
+pub(crate) const DEPTH: usize = 16;
+/// Bytes one verbs connection registers: `DEPTH` receive slots plus one send slot.
+pub const VERBS_PINNED_BYTES: u64 = ((DEPTH + 1) * MSG) as u64;
+
+/// The soft `RLIMIT_MEMLOCK` of a process.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Memlock {
+    Unlimited,
+    Bytes(u64),
+}
+
+/// Parses the soft "Max locked memory" limit out of the text of `/proc/<pid>/limits`.
+pub fn parse_memlock_soft(limits: &str) -> Option<Memlock> {
+    let rest = limits
+        .lines()
+        .find_map(|l| l.trim_start().strip_prefix("Max locked memory"))?;
+    let soft = rest.split_whitespace().next()?;
+    if soft == "unlimited" {
+        return Some(Memlock::Unlimited);
+    }
+    soft.parse().ok().map(Memlock::Bytes)
+}
+
+/// This process's soft `RLIMIT_MEMLOCK`, read from `/proc/self/limits`; `None` where that file does
+/// not exist or cannot be parsed.
+pub fn soft_memlock() -> Option<Memlock> {
+    parse_memlock_soft(&std::fs::read_to_string("/proc/self/limits").ok()?)
+}
+
+/// Connection cap used when the limit is unlimited or unknown, or the transport pins nothing.
+pub const DEFAULT_MAX_CONNECTIONS: usize = 64;
+
+/// Below this soft `RLIMIT_MEMLOCK` a warning is recorded when RDMA is enabled.
+pub const MEMLOCK_WARN_BELOW: u64 = 64 << 20;
+
+/// How many RDMA connections to allow given the memlock limit: half the limit divided by what one
+/// connection pins (the other half is left for the peer end when both ends share the process, and
+/// for everything else that locks memory), at least 1. `None`, unlimited or a transport that pins
+/// nothing give [`DEFAULT_MAX_CONNECTIONS`].
+pub fn default_max_connections(memlock: Option<Memlock>, pinned_per_connection: u64) -> usize {
+    match memlock {
+        Some(Memlock::Bytes(limit)) if pinned_per_connection > 0 => {
+            usize::try_from((limit / 2) / pinned_per_connection)
+                .unwrap_or(usize::MAX)
+                .max(1)
+        }
+        _ => DEFAULT_MAX_CONNECTIONS,
+    }
+}
+
+/// What to do about `ENOMEM` while setting up RDMA.
+pub const ENOMEM_HINT: &str = "RDMA setup failed with ENOMEM (os error 12): registering memory \
+    exceeded RLIMIT_MEMLOCK. Raise the locked-memory limit of this process (systemd \
+    LimitMEMLOCK=infinity, `ulimit -l unlimited`, a container's --ulimit memlock=-1:-1 or the \
+    IPC_LOCK capability); a rootless container cannot exceed its host hard limit. Until then \
+    connections over the cap use TCP";
+
+/// Whether `e` is the kernel refusing to pin memory.
+pub fn is_enomem(e: &io::Error) -> bool {
+    e.raw_os_error() == Some(12)
+}
+
+/// A warning when the soft memlock limit is low enough that RDMA connections will be capped hard.
+pub fn memlock_warning() -> Option<String> {
+    match soft_memlock()? {
+        Memlock::Bytes(b) if b < MEMLOCK_WARN_BELOW => Some(format!(
+            "RLIMIT_MEMLOCK is {} KiB: every RDMA connection pins {} KiB, so only a few fit and the \
+             rest use TCP. Raise it (systemd LimitMEMLOCK=infinity, `ulimit -l unlimited`, a \
+             container's --ulimit memlock=-1:-1 or IPC_LOCK); a rootless container cannot exceed \
+             its host hard limit",
+            b / 1024,
+            VERBS_PINNED_BYTES / 1024
+        )),
+        _ => None,
+    }
 }
 
 /// Counters a client keeps about its RDMA use, shared across the devices of one mount.
@@ -58,6 +144,12 @@ pub struct RdmaStats {
     tcp_fallback_connects: AtomicU64,
     midflight_errors: AtomicU64,
     requests: AtomicU64,
+    capped_fallbacks: AtomicU64,
+    enomem_failures: AtomicU64,
+    /// RDMA connections alive now (reserved before connecting, released when the link is dropped).
+    live: AtomicUsize,
+    /// Diagnostics seen so far, each kept once.
+    notes: Mutex<Vec<String>>,
 }
 
 /// A point-in-time copy of [`RdmaStats`].
@@ -73,6 +165,14 @@ pub struct RdmaSnapshot {
     pub midflight_errors: u64,
     /// Requests completed over RDMA.
     pub requests: u64,
+    /// Connections opened over TCP because the live-connection cap was reached. Not a failure:
+    /// nothing is retried and RDMA is not backed off.
+    pub capped_fallbacks: u64,
+    /// Failed RDMA setups whose cause was `ENOMEM` (the memlock limit), a subset of
+    /// `connect_failures`.
+    pub enomem_failures: u64,
+    /// RDMA connections alive right now (pooled or in use).
+    pub live_connections: u64,
 }
 
 impl RdmaStats {
@@ -83,7 +183,40 @@ impl RdmaStats {
             tcp_fallback_connects: self.tcp_fallback_connects.load(Ordering::Relaxed),
             midflight_errors: self.midflight_errors.load(Ordering::Relaxed),
             requests: self.requests.load(Ordering::Relaxed),
+            capped_fallbacks: self.capped_fallbacks.load(Ordering::Relaxed),
+            enomem_failures: self.enomem_failures.load(Ordering::Relaxed),
+            live_connections: self.live.load(Ordering::Relaxed) as u64,
         }
+    }
+
+    /// Diagnostics recorded so far (memlock warnings, `ENOMEM` explanations), each once.
+    pub fn diagnostics(&self) -> Vec<String> {
+        self.notes.lock().map(|n| n.clone()).unwrap_or_default()
+    }
+
+    /// Records `msg` unless already recorded; true when it is new.
+    fn note_once(&self, msg: &str) -> bool {
+        match self.notes.lock() {
+            Ok(mut n) if !n.iter().any(|m| m == msg) => {
+                n.push(msg.to_string());
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Reserves one of at most `cap` live connections; the slot is released when dropped.
+    pub(crate) fn reserve(self: &Arc<Self>, cap: usize) -> Option<ConnSlot> {
+        self.live
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < cap).then_some(n + 1))
+            .ok()
+            .map(|_| ConnSlot(self.clone()))
+    }
+    pub(crate) fn capped_fallback(&self) {
+        self.capped_fallbacks.fetch_add(1, Ordering::Relaxed);
+    }
+    pub(crate) fn enomem(&self) {
+        self.enomem_failures.fetch_add(1, Ordering::Relaxed);
     }
     pub(crate) fn connected(&self) {
         self.connects.fetch_add(1, Ordering::Relaxed);
@@ -102,10 +235,22 @@ impl RdmaStats {
     }
 }
 
+/// One live RDMA connection counted against the cap; released on drop.
+pub(crate) struct ConnSlot(Arc<RdmaStats>);
+
+impl Drop for ConnSlot {
+    fn drop(&mut self) {
+        self.0.live.fetch_sub(1, Ordering::AcqRel);
+    }
+}
+
 /// How long RDMA is not attempted on a device after the transport failed.
 pub const DEFAULT_RETRY_AFTER: Duration = Duration::from_secs(30);
 /// How long RDMA is not attempted after the node itself said it does not offer it.
 pub const NODE_REFUSED_RETRY_AFTER: Duration = Duration::from_secs(300);
+
+/// Receives each new RDMA diagnostic.
+pub type DiagnosticSink = Arc<dyn Fn(&str) + Send + Sync>;
 
 /// Client-side RDMA settings: the transport, the GID table index and where to count.
 #[derive(Clone)]
@@ -116,15 +261,61 @@ pub struct RdmaConfig {
     pub stats: Arc<RdmaStats>,
     /// Back-off after a transport failure before RDMA is attempted again on that device.
     pub retry_after: Duration,
+    /// Most RDMA connections alive at once across every device sharing this config's `stats`
+    /// (clones of one config share them). Beyond it a new connection is opened over TCP without
+    /// counting a failure or backing off. The default follows the soft `RLIMIT_MEMLOCK`, see
+    /// [`default_max_connections`].
+    pub max_connections: usize,
+    /// Called once per new diagnostic (see [`RdmaStats::diagnostics`]), e.g. to log it.
+    pub diagnostic_sink: Option<DiagnosticSink>,
 }
 
 impl RdmaConfig {
     pub fn new(transport: Arc<dyn RdmaTransport>, gid_index: u32) -> Self {
+        let max_connections =
+            default_max_connections(soft_memlock(), transport.pinned_bytes_per_connection());
         Self {
             transport,
             gid_index,
             stats: Arc::new(RdmaStats::default()),
             retry_after: DEFAULT_RETRY_AFTER,
+            max_connections,
+            diagnostic_sink: None,
+        }
+    }
+
+    /// Overrides the live-connection cap (at least 1).
+    pub fn with_max_connections(mut self, n: usize) -> Self {
+        self.max_connections = n.max(1);
+        self
+    }
+
+    /// Sends each new diagnostic to `sink`, including the ones already recorded.
+    pub fn with_diagnostic_sink(mut self, sink: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        let sink: DiagnosticSink = Arc::new(sink);
+        for m in self.stats.diagnostics() {
+            sink(&m);
+        }
+        self.diagnostic_sink = Some(sink);
+        self
+    }
+
+    /// Records [`memlock_warning`] (once) when this config's transport pins memory and the soft
+    /// limit is low. Called by `RemoteDevice::use_rdma`; callable earlier, e.g. at startup.
+    pub fn warn_if_memlock_low(&self) {
+        if self.transport.pinned_bytes_per_connection() > 0 {
+            if let Some(w) = memlock_warning() {
+                self.note(&w);
+            }
+        }
+    }
+
+    /// Records a diagnostic once and hands it to the sink the first time.
+    pub(crate) fn note(&self, msg: &str) {
+        if self.stats.note_once(msg) {
+            if let Some(sink) = &self.diagnostic_sink {
+                sink(msg);
+            }
         }
     }
 }
@@ -134,6 +325,7 @@ impl std::fmt::Debug for RdmaConfig {
         f.debug_struct("RdmaConfig")
             .field("transport", &self.transport)
             .field("gid_index", &self.gid_index)
+            .field("max_connections", &self.max_connections)
             .finish()
     }
 }
@@ -296,6 +488,10 @@ impl Drop for WorkerStream {
 // ---------------------------------------------------------------------------------------------
 // Verbs transport
 
+/// How often a served verbs stream wakes from a quiet read.
+#[cfg(all(feature = "rdma", target_os = "linux"))]
+const SERVE_IDLE_POLL: Duration = Duration::from_millis(500);
+
 /// The transport over `libibverbs` queue pairs; one worker thread per client connection.
 #[cfg(all(feature = "rdma", target_os = "linux"))]
 #[derive(Debug, Clone, Copy, Default)]
@@ -310,9 +506,16 @@ impl RdmaTransport for VerbsTransport {
         f: &mut dyn FnMut(&mut dyn Wire),
     ) -> io::Result<()> {
         crate::rdma::with_stream(control, gid_index, |s| {
+            // An idle connection is normal: reads wake up often so the caller can notice a
+            // shutdown, and decide itself whether a quiet stream is dead.
+            s.set_read_timeout(SERVE_IDLE_POLL);
             f(s);
             Ok(())
         })
+    }
+
+    fn pinned_bytes_per_connection(&self) -> u64 {
+        VERBS_PINNED_BYTES
     }
 
     fn connect(&self, mut control: TcpStream, gid_index: u32) -> io::Result<Box<dyn Duplex>> {
@@ -341,6 +544,8 @@ impl RdmaTransport for VerbsTransport {
 pub struct FakeTransport {
     /// Fail every client `connect`.
     pub fail_connect: AtomicBool,
+    /// Fail every client `connect` with `ENOMEM`, as registering memory over the memlock limit does.
+    pub fail_connect_enomem: AtomicBool,
     /// Make every established client stream fail its next read or write (then stay failed).
     pub break_streams: Arc<AtomicBool>,
     /// Client streams opened.
@@ -399,7 +604,8 @@ impl RdmaTransport for FakeTransport {
     }
 
     fn connect(&self, control: TcpStream, _gid_index: u32) -> io::Result<Box<dyn Duplex>> {
-        let fail = self.fail_connect.load(Ordering::SeqCst);
+        let enomem = self.fail_connect_enomem.load(Ordering::SeqCst);
+        let fail = enomem || self.fail_connect.load(Ordering::SeqCst);
         let mut inner = Breakable {
             inner: control,
             broken: self.break_streams.clone(),
@@ -407,7 +613,11 @@ impl RdmaTransport for FakeTransport {
         let worker = spawn_worker("atlas-fake-rdma-conn", move |rx, mut ready| {
             if fail {
                 // Setup fails on the owner thread, as a verbs failure would.
-                ready.fail(io::Error::other("fake RDMA connect failure"));
+                ready.fail(if enomem {
+                    io::Error::from_raw_os_error(12)
+                } else {
+                    io::Error::other("fake RDMA connect failure")
+                });
                 return;
             }
             ready.ok();
@@ -427,6 +637,66 @@ mod tests {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let c = TcpStream::connect(l.local_addr().unwrap()).unwrap();
         (c, l.accept().unwrap().0)
+    }
+
+    const LIMITS: &str = "\
+Limit                     Soft Limit           Hard Limit           Units     
+Max cpu time              unlimited            unlimited            seconds   
+Max locked memory         8388608              8388608              bytes     
+Max address space         unlimited            unlimited            bytes     
+";
+
+    #[test]
+    fn the_soft_memlock_limit_is_read_from_proc_limits_text() {
+        assert_eq!(parse_memlock_soft(LIMITS), Some(Memlock::Bytes(8 << 20)));
+        let unlimited = LIMITS.replace("8388608              8388608", "unlimited            unlimited");
+        assert_eq!(parse_memlock_soft(&unlimited), Some(Memlock::Unlimited));
+        // Soft and hard differ: the soft one counts.
+        let soft_low = LIMITS.replace("8388608              8388608", "65536                unlimited");
+        assert_eq!(parse_memlock_soft(&soft_low), Some(Memlock::Bytes(65536)));
+        assert_eq!(parse_memlock_soft("Max cpu time unlimited unlimited seconds\n"), None);
+        assert_eq!(parse_memlock_soft("Max locked memory  lots  lots bytes\n"), None);
+        assert_eq!(parse_memlock_soft(""), None);
+    }
+
+    #[test]
+    fn the_default_cap_follows_the_memlock_limit() {
+        let per = VERBS_PINNED_BYTES;
+        assert_eq!(per, 17 * 64 * 1024);
+        // 8 MiB: half of it, 4 MiB, holds three 1.06 MiB connections.
+        assert_eq!(default_max_connections(Some(Memlock::Bytes(8 << 20)), per), 3);
+        assert_eq!(default_max_connections(Some(Memlock::Bytes(64 << 10)), per), 1);
+        assert_eq!(default_max_connections(Some(Memlock::Bytes(0)), per), 1);
+        assert_eq!(default_max_connections(Some(Memlock::Bytes(1 << 30)), per), 481);
+        assert_eq!(default_max_connections(Some(Memlock::Unlimited), per), DEFAULT_MAX_CONNECTIONS);
+        assert_eq!(default_max_connections(None, per), DEFAULT_MAX_CONNECTIONS);
+        // A transport that pins nothing is not memlock-capped.
+        assert_eq!(default_max_connections(Some(Memlock::Bytes(1)), 0), DEFAULT_MAX_CONNECTIONS);
+    }
+
+    #[test]
+    fn a_slot_is_released_when_dropped_and_the_cap_holds() {
+        let stats = Arc::new(RdmaStats::default());
+        let a = stats.reserve(2).unwrap();
+        let _b = stats.reserve(2).unwrap();
+        assert!(stats.reserve(2).is_none());
+        assert_eq!(stats.snapshot().live_connections, 2);
+        drop(a);
+        assert_eq!(stats.snapshot().live_connections, 1);
+        assert!(stats.reserve(2).is_some());
+    }
+
+    #[test]
+    fn a_diagnostic_is_recorded_and_sent_once() {
+        let seen = Arc::new(Mutex::new(Vec::<String>::new()));
+        let sink_seen = seen.clone();
+        let cfg = RdmaConfig::new(FakeTransport::new(), 1)
+            .with_diagnostic_sink(move |m| sink_seen.lock().unwrap().push(m.to_string()));
+        cfg.note("a");
+        cfg.note("a");
+        cfg.note("b");
+        assert_eq!(*seen.lock().unwrap(), ["a", "b"]);
+        assert_eq!(cfg.stats.diagnostics(), ["a", "b"]);
     }
 
     #[test]

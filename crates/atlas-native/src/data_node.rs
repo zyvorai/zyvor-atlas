@@ -39,7 +39,10 @@ use crate::{
     engine::NativeError,
     grant::{Grant, GrantKey},
     metrics::PromText,
-    rdma_link::{Duplex, RdmaConfig, RdmaSnapshot, RdmaTransport, NODE_REFUSED_RETRY_AFTER},
+    rdma_link::{
+        is_enomem, ConnSlot, Duplex, RdmaConfig, RdmaSnapshot, RdmaTransport,
+        ENOMEM_HINT, NODE_REFUSED_RETRY_AFTER,
+    },
     tls::{self, Conn, TlsIdentity},
 };
 
@@ -149,6 +152,10 @@ struct Stats {
     bytes_written: AtomicU64,
     bytes_read: AtomicU64,
     tls_handshake_failures: AtomicU64,
+    /// RDMA upgrades whose queue-pair setup failed on this node (the client then falls back).
+    rdma_setup_failures: AtomicU64,
+    /// The subset of those that failed with `ENOMEM`, i.e. the node's `RLIMIT_MEMLOCK`.
+    rdma_enomem: AtomicU64,
 }
 
 /// One metadata group's highest accepted fence.
@@ -497,6 +504,16 @@ impl DataNodeServer {
                 "Inbound TLS handshakes that failed.",
                 &s.tls_handshake_failures,
             ),
+            (
+                "atlas_native_data_rdma_setup_failures_total",
+                "RDMA upgrades whose queue-pair setup failed on this node.",
+                &s.rdma_setup_failures,
+            ),
+            (
+                "atlas_native_data_rdma_enomem_total",
+                "RDMA setups that failed with ENOMEM (raise the node's RLIMIT_MEMLOCK).",
+                &s.rdma_enomem,
+            ),
         ] {
             p.family(name, "counter", help)
                 .sample(name, &node, v.load(Ordering::Relaxed));
@@ -618,10 +635,84 @@ fn serve(mut stream: Conn, sh: &Shared) {
     let upgradable = matches!(stream, Conn::Plain(_));
     if let Some(gid_index) = serve_requests(&mut stream, sh, upgradable) {
         if let (Conn::Plain(tcp), Some(transport)) = (&mut stream, sh.rdma_offer()) {
-            let _ = transport.serve(tcp, gid_index, &mut |rdma| {
-                serve_requests(rdma, sh, false);
-            });
+            // Only a setup failure returns an error (the request loop's own end is not one); it
+            // is counted so an operator can see a node that cannot pin memory (`ENOMEM`), and
+            // the client sees the connection reset and falls back to TCP.
+            if let Err(e) = transport.serve(tcp, gid_index, &mut |rdma| {
+                serve_requests(&mut IdleRdma::new(rdma, &sh.stop), sh, false);
+            }) {
+                sh.stats.rdma_setup_failures.fetch_add(1, Ordering::Relaxed);
+                if is_enomem(&e) {
+                    sh.stats.rdma_enomem.fetch_add(1, Ordering::Relaxed);
+                }
+            }
         }
+    }
+}
+
+/// How long a started message may stall on an RDMA stream before the connection is given up.
+const RDMA_MESSAGE_STALL: Duration = Duration::from_secs(30);
+
+/// Serves an RDMA stream whose reads wake up regularly (`ErrorKind::TimedOut`): a quiet
+/// connection between two requests is healthy and is waited on until the node stops, instead of
+/// being closed after the stream's read timeout. A message that has begun but stalls for
+/// [`RDMA_MESSAGE_STALL`] is still an error.
+struct IdleRdma<'a, S: ?Sized> {
+    inner: &'a mut S,
+    stop: &'a AtomicBool,
+    /// True from the start of the connection and after each write (a response ends a request),
+    /// until the next byte arrives: the stream is waiting for a request, not in the middle of one.
+    between_requests: bool,
+    last_progress: Instant,
+}
+
+impl<'a, S: ?Sized> IdleRdma<'a, S> {
+    fn new(inner: &'a mut S, stop: &'a AtomicBool) -> Self {
+        Self {
+            inner,
+            stop,
+            between_requests: true,
+            last_progress: Instant::now(),
+        }
+    }
+}
+
+impl<S: Read + ?Sized> Read for IdleRdma<'_, S> {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        loop {
+            match self.inner.read(buf) {
+                Err(e) if e.kind() == io::ErrorKind::TimedOut => {
+                    if self.stop.load(Ordering::SeqCst) {
+                        return Err(io::Error::new(
+                            io::ErrorKind::ConnectionAborted,
+                            "data node is shutting down",
+                        ));
+                    }
+                    if !self.between_requests && self.last_progress.elapsed() > RDMA_MESSAGE_STALL
+                    {
+                        return Err(e);
+                    }
+                }
+                Ok(n) => {
+                    if n > 0 {
+                        self.between_requests = false;
+                        self.last_progress = Instant::now();
+                    }
+                    return Ok(n);
+                }
+                other => return other,
+            }
+        }
+    }
+}
+
+impl<S: Write + ?Sized> Write for IdleRdma<'_, S> {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        self.between_requests = true;
+        self.inner.write(buf)
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        self.inner.flush()
     }
 }
 
@@ -757,12 +848,13 @@ fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bo
 /// worker thread (see [`crate::rdma_link`]).
 enum Link {
     Net(Conn),
-    Rdma(Box<dyn Duplex>),
+    /// The stream and its slot in the shared live-connection count.
+    Rdma(Box<dyn Duplex>, #[allow(dead_code)] ConnSlot),
 }
 
 impl Link {
     fn is_rdma(&self) -> bool {
-        matches!(self, Link::Rdma(_))
+        matches!(self, Link::Rdma(..))
     }
 }
 
@@ -770,7 +862,7 @@ impl Read for Link {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         match self {
             Link::Net(c) => c.read(buf),
-            Link::Rdma(r) => r.read(buf),
+            Link::Rdma(r, _) => r.read(buf),
         }
     }
 }
@@ -779,13 +871,13 @@ impl Write for Link {
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
         match self {
             Link::Net(c) => c.write(buf),
-            Link::Rdma(r) => r.write(buf),
+            Link::Rdma(r, _) => r.write(buf),
         }
     }
     fn flush(&mut self) -> io::Result<()> {
         match self {
             Link::Net(c) => c.flush(),
-            Link::Rdma(r) => r.flush(),
+            Link::Rdma(r, _) => r.flush(),
         }
     }
 }
@@ -910,6 +1002,7 @@ impl RemoteDevice {
                 self.target
             )));
         }
+        cfg.warn_if_memlock_low();
         self.rdma = Some(RdmaClient {
             cfg,
             retry_at: Mutex::new(None),
@@ -1038,13 +1131,23 @@ impl RemoteDevice {
     fn connect(&self) -> io::Result<Link> {
         if let Some(r) = &self.rdma {
             if r.usable() {
-                match self.connect_rdma(r) {
+                // Each RDMA connection pins memory on both ends, so only so many may be alive
+                // at once; the rest use TCP, which is not a failure and does not back RDMA off.
+                let Some(slot) = r.cfg.stats.reserve(r.cfg.max_connections) else {
+                    r.cfg.stats.capped_fallback();
+                    return self.connect_net().map(Link::Net);
+                };
+                match self.connect_rdma(r, slot) {
                     Ok(link) => {
                         r.cfg.stats.connected();
                         return Ok(link);
                     }
                     Err(e) => {
                         r.cfg.stats.connect_failed();
+                        if is_enomem(&e) {
+                            r.cfg.stats.enomem();
+                            r.cfg.note(ENOMEM_HINT);
+                        }
                         r.back_off(if e.kind() == io::ErrorKind::Unsupported {
                             NODE_REFUSED_RETRY_AFTER
                         } else {
@@ -1072,7 +1175,7 @@ impl RemoteDevice {
 
     /// Opens a connection, asks the node to switch it to RDMA and hands it to the transport. A
     /// node that does not offer RDMA yields `ErrorKind::Unsupported`.
-    fn connect_rdma(&self, r: &RdmaClient) -> io::Result<Link> {
+    fn connect_rdma(&self, r: &RdmaClient, slot: ConnSlot) -> io::Result<Link> {
         let mut tcp = self.connect_tcp()?;
         let gid_index = r.cfg.gid_index;
         write_message(&mut tcp, &Request::RdmaUpgrade { gid_index }, &[])?;
@@ -1085,7 +1188,7 @@ impl RemoteDevice {
                 return Err(io::Error::other(format!("unexpected upgrade reply: {other:?}")))
             }
         }
-        r.cfg.transport.connect(tcp, gid_index).map(Link::Rdma)
+        r.cfg.transport.connect(tcp, gid_index).map(|d| Link::Rdma(d, slot))
     }
 
     fn exchange(s: &mut Link, req: &Request, payload: &[u8]) -> io::Result<(Response, Vec<u8>)> {
@@ -1403,6 +1506,101 @@ mod tests {
         let s = client.rdma_stats().unwrap();
         assert_eq!((s.connects, s.requests), (1, 6), "{s:?}");
         assert_eq!((s.connect_failures, s.tcp_fallback_connects), (0, 0), "{s:?}");
+    }
+
+    /// An idle pooled RDMA connection must survive longer than the stream's 30 s read timeout: the
+    /// node must not end a healthy connection just because no request arrived. Takes ~40 s.
+    #[cfg(all(feature = "rdma", target_os = "linux"))]
+    #[test]
+    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0); takes ~40 s"]
+    fn an_idle_pooled_rdma_connection_survives_the_stream_timeout() {
+        std::env::set_var("ATLAS_NATIVE_RDMA", "1");
+        let (_dir, node) = start_node();
+        let client = rdma_client(&node);
+        let payload: Vec<u8> = (0..100_000u32).map(|i| (i % 239) as u8).collect();
+        let offset = client.append(1, &payload).unwrap();
+        thread::sleep(Duration::from_secs(40));
+        let t = Instant::now();
+        let back = client.read_exact_at(offset, payload.len());
+        let took = t.elapsed();
+        let s = client.rdma_stats().unwrap();
+        let ok = back.as_ref().is_ok_and(|b| *b == payload);
+        assert!(
+            ok && s.midflight_errors == 0 && s.connects == 1 && s.requests == 2,
+            "read ok {ok}, {s:?}, request after idle took {took:?}"
+        );
+    }
+
+    /// A node shuts down promptly while a client still holds a pooled RDMA connection open: its
+    /// handler thread must not sit in a 30 s RDMA read.
+    #[cfg(all(feature = "rdma", target_os = "linux"))]
+    #[test]
+    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
+    fn shutdown_does_not_wait_for_an_idle_pooled_rdma_connection() {
+        std::env::set_var("ATLAS_NATIVE_RDMA", "1");
+        let (_dir, mut node) = start_node();
+        let client = rdma_client(&node);
+        client.append(1, b"hello").unwrap();
+        let t = Instant::now();
+        node.shutdown();
+        let took = t.elapsed();
+        let s = client.rdma_stats().unwrap();
+        assert!(
+            s.requests == 1 && took < Duration::from_secs(5),
+            "{s:?}, shutdown took {took:?}"
+        );
+    }
+
+    #[cfg(all(feature = "rdma", target_os = "linux"))]
+    fn rdma_client(node: &DataNodeServer) -> RemoteDevice {
+        let gid: u32 = std::env::var("ATLAS_RDMA_GID_INDEX")
+            .ok()
+            .and_then(|v| v.parse().ok())
+            .unwrap_or(1);
+        let cfg = RdmaConfig::new(crate::rdma_link::verbs_transport().unwrap(), gid);
+        RemoteDevice::new(node.local_addr(), Duration::from_secs(60))
+            .use_rdma(cfg)
+            .unwrap()
+    }
+
+    /// A reader that times out `timeouts` times before yielding `data`.
+    struct Quiet {
+        timeouts: usize,
+        data: io::Cursor<Vec<u8>>,
+    }
+    impl Read for Quiet {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            if self.timeouts > 0 {
+                self.timeouts -= 1;
+                return Err(io::Error::new(io::ErrorKind::TimedOut, "quiet"));
+            }
+            self.data.read(buf)
+        }
+    }
+    impl Write for Quiet {
+        fn write(&mut self, b: &[u8]) -> io::Result<usize> {
+            Ok(b.len())
+        }
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[test]
+    fn a_quiet_rdma_connection_is_waited_on_until_the_node_stops() {
+        let stop = AtomicBool::new(false);
+        let mut quiet = Quiet { timeouts: 50, data: io::Cursor::new(vec![7]) };
+        let mut idle = IdleRdma::new(&mut quiet, &stop);
+        let mut b = [0u8; 1];
+        // Fifty quiet wake-ups between requests are not an error.
+        assert_eq!(idle.read(&mut b).unwrap(), 1);
+        assert_eq!(b[0], 7);
+
+        let mut quiet = Quiet { timeouts: usize::MAX, data: io::Cursor::new(Vec::new()) };
+        let mut idle = IdleRdma::new(&mut quiet, &stop);
+        stop.store(true, Ordering::SeqCst);
+        let e = idle.read(&mut b).unwrap_err();
+        assert_eq!(e.kind(), io::ErrorKind::ConnectionAborted);
     }
 
     /// Without the operator switch the node declines the upgrade and the client carries on over

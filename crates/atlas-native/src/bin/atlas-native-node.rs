@@ -40,6 +40,11 @@ fn main() -> ExitCode {
         node.data_node_addr(),
         node.metadata_addr()
     );
+    if std::env::var("ATLAS_NATIVE_RDMA").is_ok_and(|v| v == "1") {
+        if let Some(w) = atlas_native::rdma_link::memlock_warning() {
+            eprintln!("atlas-native-node {}: warning: RDMA is enabled but {w}", node.id());
+        }
+    }
     // Raft state and data are crash-safe on disk, so termination needs no graceful path; a fatal
     // storage error exits non-zero so the supervisor restarts the node from disk.
     loop {

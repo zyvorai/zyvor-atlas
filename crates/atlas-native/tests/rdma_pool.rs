@@ -175,3 +175,71 @@ fn rdma_writes_work_against_a_node_that_requires_grants() {
     let s = c.rdma_stats().unwrap();
     assert!(s.requests >= 5 && s.tcp_fallback_connects == 0, "{s:?}");
 }
+
+/// The live-connection cap: once reached, a new connection uses TCP without counting a failure or
+/// backing RDMA off, and the count returns to zero when the connections are dropped.
+#[test]
+fn reaching_the_connection_cap_uses_tcp_without_a_failure_or_backoff() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = FakeTransport::new();
+    let n = node(dir.path(), Some(t.clone()), None);
+    let cfg = RdmaConfig::new(t.clone(), 1).with_max_connections(1);
+    assert_eq!(cfg.max_connections, 1);
+    let stats = cfg.stats.clone();
+    // Two devices sharing one config (as a mount's clients do) share the cap.
+    let a = RemoteDevice::new(n.local_addr(), TIMEOUT).use_rdma(cfg.clone()).unwrap();
+    let b = RemoteDevice::new(n.local_addr(), TIMEOUT).use_rdma(cfg).unwrap();
+
+    let data = bytes(30_000, 2);
+    let off = a.append(1, &data).unwrap();
+    assert_eq!(stats.snapshot().live_connections, 1);
+
+    // b finds the cap reached and no idle connection: it is served over TCP, twice, correctly.
+    assert_eq!(b.read_exact_at(off, data.len()).unwrap(), data);
+    assert_eq!(b.read_exact_at(off, data.len()).unwrap(), data);
+    let s = stats.snapshot();
+    assert_eq!(s.capped_fallbacks, 1, "the TCP connection is pooled and reused: {s:?}");
+    assert_eq!((s.connect_failures, s.tcp_fallback_connects, s.midflight_errors), (0, 0, 0), "{s:?}");
+    assert_eq!((s.connects, s.requests, s.live_connections), (1, 1, 1), "{s:?}");
+    assert_eq!(t.client_opens.load(Ordering::SeqCst), 1);
+
+    // Free the slot: b is not backed off, so its next new connection goes over RDMA.
+    a.close_idle();
+    assert_eq!(stats.snapshot().live_connections, 0);
+    b.close_idle();
+    assert_eq!(b.read_exact_at(off, data.len()).unwrap(), data);
+    let s = stats.snapshot();
+    assert_eq!((s.connects, s.requests, s.live_connections), (2, 2, 1), "{s:?}");
+    assert_eq!((s.capped_fallbacks, s.connect_failures), (1, 0), "{s:?}");
+
+    drop((a, b));
+    assert_eq!(stats.snapshot().live_connections, 0);
+}
+
+/// A failed setup frees its slot, and `ENOMEM` is counted and explained once.
+#[test]
+fn enomem_is_counted_explained_once_and_frees_the_slot() {
+    let dir = tempfile::tempdir().unwrap();
+    let t = FakeTransport::new();
+    let n = node(dir.path(), Some(t.clone()), None);
+    let seen = Arc::new(std::sync::Mutex::new(Vec::<String>::new()));
+    let sink = seen.clone();
+    let mut cfg = RdmaConfig::new(t.clone(), 1)
+        .with_max_connections(1)
+        .with_diagnostic_sink(move |m| sink.lock().unwrap().push(m.to_string()));
+    cfg.retry_after = Duration::from_millis(50);
+    let stats = cfg.stats.clone();
+    let c = RemoteDevice::new(n.local_addr(), TIMEOUT).use_rdma(cfg).unwrap();
+
+    t.fail_connect_enomem.store(true, Ordering::SeqCst);
+    let off = c.append(1, b"hello").unwrap();
+    std::thread::sleep(Duration::from_millis(120));
+    c.close_idle();
+    assert_eq!(c.read_exact_at(off, 5).unwrap(), b"hello");
+    let s = stats.snapshot();
+    assert_eq!((s.connect_failures, s.enomem_failures, s.live_connections), (2, 2, 0), "{s:?}");
+    assert_eq!(s.capped_fallbacks, 0, "a failed setup is not the cap: {s:?}");
+    let seen = seen.lock().unwrap();
+    assert_eq!(seen.len(), 1, "{seen:?}");
+    assert!(seen[0].contains("RLIMIT_MEMLOCK") && seen[0].contains("LimitMEMLOCK"), "{seen:?}");
+}

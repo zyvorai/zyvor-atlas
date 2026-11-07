@@ -1528,3 +1528,131 @@ fn rdma_with_a_tls_identity_is_a_configuration_error() {
     assert!(ok.validate().is_ok());
     assert!(direct(None).validate().is_ok());
 }
+
+// ---- RDMA to the data nodes over a REAL verbs device (SoftRoCE rxe0 or hardware) ----
+//
+// These mirror the fake-transport tests above but use `rdma_link::verbs_transport()`, so they need
+// a build with `--features rdma` on Linux and an RDMA device. Every RDMA connection pins about
+// 1 MiB on each end (and these tests hold both ends in one process), so the first two need a high
+// RLIMIT_MEMLOCK (e.g. `ulimit -l unlimited`); the third runs under the default limit.
+//   ATLAS_RDMA_GID_INDEX=<n> cargo test -p atlas-native-fuse --features rdma --test ops -- --ignored real_rdma
+
+fn verbs() -> (Arc<dyn atlas_native::rdma_link::RdmaTransport>, u32) {
+    let t = atlas_native::rdma_link::verbs_transport()
+        .expect("no verbs transport: build with --features rdma on Linux");
+    let gid = std::env::var("ATLAS_RDMA_GID_INDEX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    (t, gid)
+}
+
+#[test]
+#[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0), --features rdma and a high RLIMIT_MEMLOCK"]
+fn real_rdma_direct_reads_use_the_verbs_transport() {
+    let c = Cluster::start();
+    create_fs(&c, "vr");
+    let writer = mount(&c, "vr", OpsConfig::default());
+    let f = new_file(&writer, "data.bin");
+    let data = pattern(11 * EXT + 77, 4);
+    writer.write(f, 0, &data).unwrap();
+    writer.flush(f).unwrap();
+
+    let (t, gid) = verbs();
+    for (_, n) in &c.data {
+        n.offer_rdma_transport(t.clone());
+    }
+    let mut cfg = direct(None);
+    cfg.direct_reads.as_mut().unwrap().rdma = Some(atlas_native::RdmaConfig::new(t, gid));
+    let ops = mount(&c, "vr", cfg);
+    assert_eq!(ops.read(f, 0, data.len()).unwrap(), data);
+    assert_eq!(ops.direct_fallbacks(), 0);
+    let s = ops.cfg.rdma_stats().unwrap();
+    assert!(s.requests >= 11 && s.connects >= 1, "{s:?}");
+    assert_eq!((s.connect_failures, s.midflight_errors), (0, 0), "{s:?}");
+}
+
+#[test]
+#[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0), --features rdma and a high RLIMIT_MEMLOCK"]
+fn real_rdma_direct_writes_use_the_verbs_transport() {
+    let c = Cluster::start_granted(3);
+    create_fs(&c, "vw");
+    let (t, gid) = verbs();
+    for (_, n) in &c.data {
+        n.offer_rdma_transport(t.clone());
+    }
+    let mut cfg = direct_writes();
+    cfg.direct_writes.as_mut().unwrap().rdma = Some(atlas_native::RdmaConfig::new(t, gid));
+    let ops = mount(&c, "vw", cfg);
+    let f = new_file(&ops, "ckpt.bin");
+    let a = pattern(8 * EXT, 7);
+    ops.write(f, 0, &a).unwrap();
+    ops.flush(f).unwrap();
+    let (direct, fallbacks) = ops.direct_write_counts();
+    assert!(direct >= 1 && fallbacks == 0, "direct {direct}, fallbacks {fallbacks}");
+    let s = ops.cfg.rdma_stats().unwrap();
+    assert!(s.requests >= 8 && s.connects >= 1, "{s:?}");
+    assert_eq!((s.connect_failures, s.midflight_errors), (0, 0), "{s:?}");
+
+    // Read it back over plain TCP from a fresh mount: the bytes the RDMA writes stored are intact.
+    let fresh = mount(&c, "vw", OpsConfig::default());
+    assert_eq!(fresh.read(f, 0, a.len()).unwrap(), a);
+}
+
+/// With a low `RLIMIT_MEMLOCK` (the common 8 MiB default) the connection cap keeps RDMA from
+/// running out of pinnable memory: the surplus connections use TCP, nothing fails, nothing backs
+/// off and the data is intact. Run it under the default limit; it does nothing when the limit is
+/// high enough that the cap would not bite.
+#[test]
+#[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0) and --features rdma; run under a low RLIMIT_MEMLOCK"]
+fn real_rdma_degrades_gracefully_under_a_low_memlock_limit() {
+    use atlas_native::rdma_link::{soft_memlock, Memlock};
+    let Some(Memlock::Bytes(limit)) = soft_memlock() else {
+        return;
+    };
+    if limit >= 32 << 20 {
+        return;
+    }
+    let c = Cluster::start();
+    create_fs(&c, "vl");
+    let writer = mount(&c, "vl", OpsConfig::default());
+    let mut files = Vec::new();
+    for i in 0..4u8 {
+        let f = new_file(&writer, &format!("data{i}.bin"));
+        let data = pattern(12 * EXT + 5, i);
+        writer.write(f, 0, &data).unwrap();
+        writer.flush(f).unwrap();
+        files.push((f, data));
+    }
+
+    let (t, gid) = verbs();
+    for (_, n) in &c.data {
+        n.offer_rdma_transport(t.clone());
+    }
+    let rdma = atlas_native::RdmaConfig::new(t, gid);
+    let cap = rdma.max_connections;
+    assert!(cap >= 1 && (cap as u64) * 2 * atlas_native::rdma_link::VERBS_PINNED_BYTES <= limit);
+    let mut cfg = direct(None);
+    cfg.direct_reads.as_mut().unwrap().rdma = Some(rdma);
+    let ops = Arc::new(mount(&c, "vl", cfg));
+    // Concurrent readers want more connections than the cap allows.
+    let readers: Vec<_> = files
+        .into_iter()
+        .map(|(f, data)| {
+            let ops = ops.clone();
+            std::thread::spawn(move || {
+                for _ in 0..3 {
+                    assert_eq!(ops.read(f, 0, data.len()).unwrap(), data);
+                }
+            })
+        })
+        .collect();
+    for r in readers {
+        r.join().unwrap();
+    }
+    assert_eq!(ops.direct_fallbacks(), 0);
+    let s = ops.cfg.rdma_stats().unwrap();
+    assert_eq!((s.connect_failures, s.midflight_errors, s.enomem_failures), (0, 0, 0), "{s:?}");
+    assert!(s.capped_fallbacks > 0, "the cap should have been reached: {s:?}");
+    assert!(s.live_connections <= cap as u64 && s.requests > 0, "cap {cap}: {s:?}");
+}
