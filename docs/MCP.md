@@ -86,8 +86,9 @@ its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
 | `ATLAS_MCP_ALLOWED_HOSTS` | gateway | `Host` allow-list for the transport; `*` disables. Unset: loopback-only without auth, any host when auth is required (the endpoint is bearer-gated). |
 | `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot`, `ack_alert`, `silence_alert`, `create_workspace`, `reset_workspace` and `discard_workspace` tools. Off by default. |
 | `ATLAS_MCP_AUDIT_CALLS` | gateway | Every tool call writes an `mcp.tool.call` audit row (caller, tool, `success` or `error`, token `jti`, role, whether the token is scoped), written after the response so it never delays a call. `0` turns it off, for a polling agent where one row per call is too many. Denied calls (`mcp.tool.denied`) and guarded writes are always audited. |
-| `ATLAS_MCP_CALLS_PER_MIN` | gateway | Tool calls per minute each token may make (a token's own `jti`; callers without one share their actor id's budget). Calls over it are refused and audited as `mcp.tool.rate_limited`. Unset or `0` is off. It adds to the per-actor request limit (`ATLAS_RATE_LIMIT_RPM`), which already covers `/mcp`. The count is in memory, so it is per gateway pod, and read once at startup. |
-| `ATLAS_MCP_TOOL_CALLS_PER_MIN` | gateway | Calls per minute each token may make to any one tool, so a loop on one expensive tool cannot use up the whole `ATLAS_MCP_CALLS_PER_MIN` allowance. Calls over it are refused and audited as `mcp.tool.rate_limited` (with `scope: tool`). Only real tool names are counted. Unset or `0` is off. In memory, per gateway pod, read once at startup. |
+| `ATLAS_MCP_CALLS_PER_MIN` | gateway | Tool calls per minute each token may make (a token's own `jti`; callers without one share their actor id's budget). Calls over it are refused and audited as `mcp.tool.rate_limited`. Unset or `0` is off. It adds to the per-actor request limit (`ATLAS_RATE_LIMIT_RPM`), which already covers `/mcp`. The count is kept in process and shared through the database (see [HA.md](HA.md#mcp-call-budgets)), so on Postgres it holds across gateway pods within one sync interval; on SQLite it is per pod. Read once at startup. |
+| `ATLAS_MCP_TOOL_CALLS_PER_MIN` | gateway | Calls per minute each token may make to any one tool, so a loop on one expensive tool cannot use up the whole `ATLAS_MCP_CALLS_PER_MIN` allowance. Calls over it are refused and audited as `mcp.tool.rate_limited` (with `scope: tool`). Only real tool names are counted. Unset or `0` is off. Shared through the database like `ATLAS_MCP_CALLS_PER_MIN`; read once at startup. |
+| `ATLAS_AGENT_WORKSPACE_BYTES` | gateway | Default budget on the bytes of workspaces one caller may hold at once: the sum of the `max_bytes` of every workspace they own in the tenant, checked at create. A token's own `workspace_bytes` overrides it. Unset or `0` is off. While a budget applies `max_bytes` (or `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) must be set, since an uncapped workspace cannot be counted. |
 | `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk`, `io_ai` and the Ops Advisor's `io_risk` and `io_ai` blocks read the node agent from. |
 | `ATLAS_IO_TOKEN` | agent | Bearer token for the agent API (health probes exempt) and its `/mcp`. |
 
@@ -111,6 +112,45 @@ tenant do it). The tools are not listed at all unless `ATLAS_MCP_WRITE_ENABLE=1`
 Tenant quotas, per-tenant workspace limits and the TTL bounds are the REST handler's (`ATLAS_WORKSPACE_*`, see
 [NATIVE_FS.md](NATIVE_FS.md#agent-workspaces)). A token scoped with `--tool` can call only the tools it lists. Tested over the fixture
 driver (`crates/atlas-gateway/tests/mcp_workspaces.rs`); not run with a real agent or on the lab.
+
+## Agent identity and guardrails
+
+All of these are enforced at the one `call_tool` chokepoint, so they cover every tool, present and future. An unscoped token (no
+`--tool`, no resource scope) behaves exactly as before.
+
+**Resource scope.** `atlasctl issue-token agent-1 --role operator --volume vol_data1 --workspace 'ws_*' --snapshot 'snap_*' --path '/runs/1/*' --workspace-bytes 10737418240`
+mints a token that may name only those volumes, snapshots, workspaces and paths (exact ids, or globs where `*` matches any run of
+characters). Deny by default: once a scope is present, a tool argument naming a resource of a kind with no matching entry is refused
+with `mcp.tool.denied` (reason, kind and the name, never the arguments). The arguments checked are `volume_id`,
+`source_volume_id`, `snapshot_id`, `source_snapshot_id`, `workspace_id`, `path` and `paths`, plus `id` on `get_volume`,
+`volume_protection` and `volume_ransomware`; a value of the wrong type is refused. Paths containing a `..` segment never match, so
+`/runs/1/*` cannot be escaped. Tools that list the whole inventory (`list_volumes`, `list_snapshots`, `list_workspaces`,
+`list_volume_groups`, `list_backups`, `list_schedules`, `protection_status`, `orphan_backups`, `list_events`, `list_audit`) cannot be
+narrowed to a scope, so a scoped token is refused them unless the call names an in-scope resource (`list_backups` with an allowed
+`volume_id`). A scope does not restrict tools that name no resource (`ceph_status`, `list_clusters`), so combine it with `--tool` to
+limit those, and a tool whose resource argument has another name is not covered: when adding a tool, give resource arguments the names
+above. A workspace's id is only known once it is created, so scope workspaces with a pattern such as `ws_*`. A token with a scope is
+MCP-only, like a `--tool` token: it is refused on REST, gRPC and `/metrics`. Tested in
+`crates/atlas-gateway/tests/mcp_guardrails.rs` (allowed and denied per resource and tool, unscoped unchanged, the audit rows, the issue-token endpoint).
+
+**Budgets.** The per-token and per-tool calls-per-minute budgets share their counts through the database (see
+[HA.md](HA.md#mcp-call-budgets)). `workspace_bytes` (the token claim, `--workspace-bytes`, or `ATLAS_AGENT_WORKSPACE_BYTES`) caps the sum of
+`max_bytes` over the workspaces the token's subject holds; `create_workspace` over it is refused before the snapshot or clone is made, so
+nothing is left behind. It counts the admitted caps, like `max_bytes` itself, not bytes actually written. The check is not atomic with the insert, so two creates racing can both pass, as with the per-tenant count.
+
+**Run id.** Send `X-Atlas-Run-Id: <id>` on the MCP connection (1 to 64 characters of `[A-Za-z0-9_.:-]`, starting with a letter or digit; a
+header, so a client sets it once per connection and no tool needs an argument). Every audit row the call causes carries it in the
+`run_id` column (migration 0038): the `mcp.tool.call` and `mcp.<tool>` rows, refusals, and the rows the REST handlers a tool calls write
+(`workspace.create`, `snapshot.create`). Filter with `list_audit` (`run_id`), `GET /audit?run_id=` and `atlasctl audit --run-id`. An invalid
+id refuses the call and is audited without it. Rows written by work that runs on another task (background jobs a call enqueues) are not
+tagged. The atlas_data service accepts the same id, as the `X-Atlas-Run-Id` header or a `run_id` field in an action body, on its own
+audit events ([AI_DATA_SERVICES.md](AI_DATA_SERVICES.md)), so one run can be joined across both trails.
+
+**Dry run.** The plan phase of every two-phase write already changes nothing and is the dry run, so no `dry_run` flag was added. One gap
+was real: the `create_workspace` plan did not say whether the execute would be refused (tenant limit, size cap, byte budget), so the
+token was spent to find out. The plan now carries `would_be_refused` with the reason, from the same checks the execute runs. The other
+write tools (`create_snapshot`, `ack_alert`, `silence_alert`, `reset_workspace`, `discard_workspace`) have no such refusal to preview
+beyond the validation their plan already does.
 
 ## Threat model in short
 

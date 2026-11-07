@@ -269,6 +269,8 @@ pub(crate) struct AuditQuery {
     action: Option<String>,
     resource_type: Option<String>,
     resource_id: Option<String>,
+    /// Only rows made under this agent run id.
+    run_id: Option<String>,
     limit: Option<i64>,
 }
 pub(crate) async fn list_audit(
@@ -277,12 +279,18 @@ pub(crate) async fn list_audit(
     Query(q): Query<AuditQuery>,
 ) -> AppResult<Json<Value>> {
     crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
-    let rows = atlas_inventory::audit::list(
+    if let Some(r) = q.run_id.as_deref() {
+        if !atlas_inventory::audit::valid_run_id(r) {
+            return Err(AppError::Validation("run_id is not a valid run id".into()));
+        }
+    }
+    let rows = atlas_inventory::audit::list_by_run(
         &s.pool,
         q.actor.as_deref(),
         q.action.as_deref(),
         q.resource_type.as_deref(),
         q.resource_id.as_deref(),
+        q.run_id.as_deref(),
         q.limit.unwrap_or(100),
     )
     .await?;

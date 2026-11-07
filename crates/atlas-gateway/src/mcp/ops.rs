@@ -142,6 +142,9 @@ struct ListAuditArgs {
     /// Only entries about this resource id.
     #[serde(default)]
     resource_id: Option<String>,
+    /// Only entries made under this agent run id (the `X-Atlas-Run-Id` header of the calls).
+    #[serde(default)]
+    run_id: Option<String>,
     /// Most recent N entries (default 50, at most 200).
     #[serde(default)]
     limit: Option<i64>,
@@ -705,12 +708,18 @@ impl AtlasMcp {
         let limit = args.limit.unwrap_or(AUDIT_DEFAULT_LIMIT).clamp(1, AUDIT_MAX_LIMIT);
         // A tenant-scoped caller's rows are filtered after the read, so fetch the maximum and trim.
         let fetch = if scope.is_some() { AUDIT_MAX_LIMIT * 5 } else { limit };
-        let rows = atlas_inventory::audit::list(
+        if let Some(r) = args.run_id.as_deref() {
+            if !atlas_inventory::audit::valid_run_id(r) {
+                return Err(McpError::invalid_params("run_id is not a valid run id", None));
+            }
+        }
+        let rows = atlas_inventory::audit::list_by_run(
             &self.state.pool,
             args.actor.as_deref(),
             args.action.as_deref(),
             args.resource_type.as_deref(),
             args.resource_id.as_deref(),
+            args.run_id.as_deref(),
             fetch,
         )
         .await
@@ -728,7 +737,7 @@ impl AtlasMcp {
                     "created_at": pick("created_at"), "tenant_id": pick("tenant_id"),
                     "actor_id": pick("actor_id"), "action": pick("action"),
                     "resource_type": pick("resource_type"), "resource_id": pick("resource_id"),
-                    "status": pick("status"),
+                    "status": pick("status"), "run_id": pick("run_id"),
                 })
             })
             .collect();

@@ -212,6 +212,8 @@ async fn grpc_enforces_jwt_when_auth_required() {
         jti: String::new(),
         tenant_id: "global".into(),
         tools: Vec::new(),
+        scope: None,
+        workspace_bytes: None,
     };
     let token = encode(
         &Header::default(),

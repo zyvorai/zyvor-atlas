@@ -43,6 +43,13 @@ def ident(value):
     return value
 
 
+def valid_run_id(value):
+    """The optional correlation id an agent run puts on its calls (same rule as the Atlas gateway)."""
+    require(isinstance(value, str) and re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,63}", value),
+            "invalid run_id")
+    return value
+
+
 def digest(value):
     require(isinstance(value, str) and re.fullmatch(r"[a-f0-9]{64}", value), "invalid SHA-256")
     return value
@@ -75,6 +82,8 @@ class Actor:
     tenant: str
     subject: str
     role: str = "viewer"
+    # Correlation id of the agent run making the call; stored on every audit event the call causes.
+    run_id: str | None = None
 
     def write(self):
         require(self.role in ("operator", "admin"), "operator role required", 403)
@@ -136,14 +145,19 @@ class Store:
             "SELECT body FROM resources WHERE tenant=? AND kind=? ORDER BY id", (a.tenant, kind))]
 
     def _audit(self, a, action, key):
-        self.db.execute("INSERT INTO events(tenant,subject,action,resource,at) VALUES (?,?,?,?,?)",
-                        (a.tenant, a.subject, action, key, self.clock()))
+        self.db.execute("INSERT INTO events(tenant,subject,action,resource,at,run_id) VALUES (?,?,?,?,?,?)",
+                        (a.tenant, a.subject, action, key, self.clock(), a.run_id))
 
-    def audit(self, a):
+    def audit(self, a, run_id=None):
         a.admin()
         with self.lock:
+            if run_id is None:
+                return [dict(r) for r in self.db.execute(
+                    "SELECT * FROM events WHERE tenant=? ORDER BY seq DESC LIMIT 1000", (a.tenant,))]
+            valid_run_id(run_id)
             return [dict(r) for r in self.db.execute(
-                "SELECT * FROM events WHERE tenant=? ORDER BY seq DESC LIMIT 1000", (a.tenant,))]
+                "SELECT * FROM events WHERE tenant=? AND run_id=? ORDER BY seq DESC LIMIT 1000",
+                (a.tenant, run_id))]
 
     def _chunk_path(self, a, h):
         # Hash tenant IDs too: no supplied string becomes an on-disk directory name.

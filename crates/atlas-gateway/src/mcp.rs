@@ -46,6 +46,7 @@ use crate::{
 };
 
 mod content;
+mod guard;
 mod ops;
 mod workspaces;
 mod write;
@@ -485,38 +486,6 @@ impl AtlasMcp {
     }
 }
 
-/// Longest tool name written to the audit trail; a caller can send any string as a tool name.
-const MAX_AUDITED_TOOL_NAME: usize = 64;
-
-/// Per-token budget of tool calls per minute (`ATLAS_MCP_CALLS_PER_MIN`, 0 or unset = off), on top of the
-/// per-actor request limit at the edge. A token with a `jti` has its own budget; callers without one (the
-/// bootstrap secret, legacy tokens) share their actor id's. In memory, so per pod, read once at first use.
-fn call_budget() -> &'static crate::state::RateLimiter {
-    static BUDGET: std::sync::OnceLock<crate::state::RateLimiter> = std::sync::OnceLock::new();
-    BUDGET.get_or_init(|| {
-        let rpm = std::env::var("ATLAS_MCP_CALLS_PER_MIN")
-            .ok()
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(0);
-        crate::state::RateLimiter::new(rpm)
-    })
-}
-
-/// Per-token, per-tool budget (`ATLAS_MCP_TOOL_CALLS_PER_MIN`, 0 or unset = off): each tool may be called this
-/// many times a minute by one token, so an agent looping on one expensive tool (`ceph_status`, `list_audit`)
-/// cannot use up its whole `ATLAS_MCP_CALLS_PER_MIN` allowance on it. Only names that are real tools are
-/// counted, so an arbitrary tool name cannot grow the table. In memory, per pod, read once at first use.
-fn tool_budget() -> &'static crate::state::RateLimiter {
-    static BUDGET: std::sync::OnceLock<crate::state::RateLimiter> = std::sync::OnceLock::new();
-    BUDGET.get_or_init(|| {
-        let rpm = std::env::var("ATLAS_MCP_TOOL_CALLS_PER_MIN")
-            .ok()
-            .and_then(|v| v.trim().parse().ok())
-            .unwrap_or(0);
-        crate::state::RateLimiter::new(rpm)
-    })
-}
-
 /// Every MCP tool call, not only denials and writes, leaves an `mcp.tool.call` audit row unless
 /// `ATLAS_MCP_AUDIT_CALLS=0`. A polling agent writes one row per call, so turn it off if that volume matters.
 fn audit_calls_enabled() -> bool {
@@ -539,90 +508,33 @@ impl ServerHandler for AtlasMcp {
         request: CallToolRequestParams,
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResponse, McpError> {
-        let actor = actor_from(&context)?;
-        let tool: String = request.name.chars().take(MAX_AUDITED_TOOL_NAME).collect();
-        if !actor.may_call_tool(&request.name) {
-            let _ = atlas_inventory::audit::record(
-                &self.state.pool,
-                Some(&actor.tenant_id),
-                &actor.id,
-                "mcp.tool.denied",
-                "mcp_tool",
-                &tool,
-                "denied",
-                None,
-                None,
-            )
-            .await;
-            return Err(McpError::invalid_request(
-                format!("tool '{}' is not permitted for this token", request.name),
-                None,
-            ));
-        }
-        let budget_key = if actor.jti.is_empty() { actor.id.as_str() } else { actor.jti.as_str() };
-        if !call_budget().allow(budget_key) {
-            let _ = atlas_inventory::audit::record(
-                &self.state.pool,
-                Some(&actor.tenant_id),
-                &actor.id,
-                "mcp.tool.rate_limited",
-                "mcp_tool",
-                &tool,
-                "denied",
-                None,
-                Some(json!({ "jti": actor.jti })),
-            )
-            .await;
-            return Err(McpError::invalid_request(
-                "tool-call budget for this token is used up for this minute; retry later",
-                None,
-            ));
-        }
-        if self.tool_router.has_route(&request.name)
-            && !tool_budget().allow(&format!("{budget_key}\u{1f}{}", request.name))
-        {
-            let _ = atlas_inventory::audit::record(
-                &self.state.pool,
-                Some(&actor.tenant_id),
-                &actor.id,
-                "mcp.tool.rate_limited",
-                "mcp_tool",
-                &tool,
-                "denied",
-                None,
-                Some(json!({ "jti": actor.jti, "scope": "tool" })),
-            )
-            .await;
-            return Err(McpError::invalid_request(
-                format!("call budget for tool '{}' is used up for this minute; retry later", request.name),
-                None,
-            ));
-        }
-        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        let result = self.tool_router.call(tcc).await;
-        if audit_calls_enabled() {
-            let status = match &result {
-                Ok(CallToolResponse::Complete(r)) if r.is_error != Some(true) => "success",
-                _ => "error",
-            };
-            // Off the request path: a slow or failing audit write never delays or fails a tool call.
-            let pool = self.state.pool.clone();
-            tokio::spawn(async move {
+        // The run id is scoped around the whole call so every audit row it causes carries it; the
+        // checks, budgets and the call itself are `guarded_call` (mcp/guard.rs).
+        match guard::run_id_from(&context) {
+            Ok(Some(run)) => {
+                atlas_inventory::audit::RUN_ID
+                    .scope(run.clone(), self.guarded_call(request, context, Some(run)))
+                    .await
+            }
+            Ok(None) => self.guarded_call(request, context, None).await,
+            Err(why) => {
+                let actor = actor_from(&context)?;
+                let tool: String = request.name.chars().take(64).collect();
                 let _ = atlas_inventory::audit::record(
-                    &pool,
+                    &self.state.pool,
                     Some(&actor.tenant_id),
                     &actor.id,
-                    "mcp.tool.call",
+                    "mcp.tool.denied",
                     "mcp_tool",
                     &tool,
-                    status,
+                    "denied",
                     None,
-                    Some(json!({ "jti": actor.jti, "scoped": actor.is_scoped(), "role": actor.role })),
+                    Some(json!({ "reason": "invalid run id" })),
                 )
                 .await;
-            });
+                Err(McpError::invalid_params(why, None))
+            }
         }
-        result
     }
 
     async fn list_tools(

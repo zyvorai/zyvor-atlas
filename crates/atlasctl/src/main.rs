@@ -152,6 +152,22 @@ enum Command {
         /// MCP edge, never on REST, gRPC or /metrics.
         #[arg(long = "tool")]
         tools: Vec<String>,
+        /// Resource scope: a volume id or glob (`*` matches anything) the token may name (repeat).
+        /// Any scope makes the token MCP-only and denies every resource not listed.
+        #[arg(long = "volume")]
+        volumes: Vec<String>,
+        /// Snapshot id or glob the token may name (repeat).
+        #[arg(long = "snapshot")]
+        snapshots: Vec<String>,
+        /// Workspace id or glob the token may name (repeat), e.g. `ws_*`.
+        #[arg(long = "workspace")]
+        workspaces: Vec<String>,
+        /// Path or glob the token may name in a `path`/`paths` tool argument (repeat).
+        #[arg(long = "path")]
+        paths: Vec<String>,
+        /// Budget: the most bytes (sum of `max_bytes`) of live workspaces this agent may hold.
+        #[arg(long)]
+        workspace_bytes: Option<i64>,
     },
     /// POST /api/atlas/v1/rbd-usage/refresh — recompute used_bytes via rbd du
     RefreshUsage,
@@ -234,6 +250,9 @@ enum Command {
         resource_type: Option<String>,
         #[arg(long)]
         resource_id: Option<String>,
+        /// Only rows made under this agent run id (X-Atlas-Run-Id)
+        #[arg(long)]
+        run_id: Option<String>,
         #[arg(long, default_value_t = 100)]
         limit: i64,
     },
@@ -618,12 +637,31 @@ async fn io_request(
     get_print(client, token, &format!("{base}{path}")).await
 }
 
-/// Body of `POST /auth/tokens`. `tools` is sent only when non-empty: an absent field mints an
-/// ordinary, unscoped token, while any value scopes it to the MCP edge.
-fn issue_token_body(subject: &str, role: &str, ttl_secs: u64, tools: &[String]) -> serde_json::Value {
+/// Body of `POST /auth/tokens`. `tools` and the resource `scope` are sent only when non-empty: an
+/// absent field mints an ordinary, unscoped token, while any value scopes it to the MCP edge.
+fn issue_token_body(
+    subject: &str,
+    role: &str,
+    ttl_secs: u64,
+    tools: &[String],
+    scope: &[(&str, &[String])],
+    workspace_bytes: Option<i64>,
+) -> serde_json::Value {
     let mut body = serde_json::json!({ "subject": subject, "role": role, "ttl_secs": ttl_secs });
     if !tools.is_empty() {
         body["tools"] = serde_json::json!(tools);
+    }
+    let mut sc = serde_json::Map::new();
+    for (kind, list) in scope {
+        if !list.is_empty() {
+            sc.insert((*kind).into(), serde_json::json!(list));
+        }
+    }
+    if !sc.is_empty() {
+        body["scope"] = serde_json::Value::Object(sc);
+    }
+    if let Some(b) = workspace_bytes {
+        body["workspace_bytes"] = serde_json::json!(b);
     }
     body
 }
@@ -770,10 +808,27 @@ async fn main() -> Result<()> {
             role,
             ttl_secs,
             tools,
+            volumes,
+            snapshots,
+            workspaces,
+            paths,
+            workspace_bytes,
         } => (
             "POST",
             "/api/atlas/v1/auth/tokens".to_string(),
-            Some(issue_token_body(subject, role, *ttl_secs, tools)),
+            Some(issue_token_body(
+                subject,
+                role,
+                *ttl_secs,
+                tools,
+                &[
+                    ("volumes", volumes.as_slice()),
+                    ("snapshots", snapshots.as_slice()),
+                    ("workspaces", workspaces.as_slice()),
+                    ("paths", paths.as_slice()),
+                ],
+                *workspace_bytes,
+            )),
         ),
         Command::RefreshUsage => ("POST", "/api/atlas/v1/rbd-usage/refresh".to_string(), None),
         Command::RbdImages { pool } => (
@@ -865,9 +920,13 @@ async fn main() -> Result<()> {
             action,
             resource_type,
             resource_id,
+            run_id,
             limit,
         } => {
             let mut qs = vec![format!("limit={limit}")];
+            if let Some(r) = run_id {
+                qs.push(format!("run_id={r}"));
+            }
             if let Some(a) = actor {
                 qs.push(format!("actor={a}"));
             }
@@ -1289,10 +1348,23 @@ mod tests {
 
     #[test]
     fn a_token_is_scoped_only_when_tools_are_given() {
-        let plain = issue_token_body("svc", "viewer", 60, &[]);
+        let plain = issue_token_body("svc", "viewer", 60, &[], &[], None);
         assert!(plain.get("tools").is_none());
-        let scoped = issue_token_body("agent", "viewer", 60, &["ceph_nvme".into(), "io_ai".into()]);
+        let scoped = issue_token_body("agent", "viewer", 60, &["ceph_nvme".into(), "io_ai".into()], &[], None);
         assert_eq!(scoped["tools"], serde_json::json!(["ceph_nvme", "io_ai"]));
         assert_eq!(scoped["role"], "viewer");
+    }
+
+    #[test]
+    fn resource_scope_and_budget_are_sent_only_when_given() {
+        let vols = vec!["vol_a".to_string(), "agent-*".to_string()];
+        let none: Vec<String> = Vec::new();
+        let body = issue_token_body(
+            "agent", "operator", 60, &[], &[("volumes", vols.as_slice()), ("workspaces", none.as_slice())], Some(1 << 30),
+        );
+        assert_eq!(body["scope"], serde_json::json!({ "volumes": ["vol_a", "agent-*"] }));
+        assert_eq!(body["workspace_bytes"], serde_json::json!(1u64 << 30));
+        let plain = issue_token_body("svc", "viewer", 60, &[], &[("volumes", none.as_slice())], None);
+        assert!(plain.get("scope").is_none() && plain.get("workspace_bytes").is_none());
     }
 }

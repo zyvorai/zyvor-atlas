@@ -409,6 +409,8 @@ pub fn spawn_autoprotect(s: AppState) {
             role: "admin".into(),
             tenant_id: "global".into(),
             tools: Vec::new(),
+            scope: None,
+            workspace_bytes: None,
             jti: String::new(),
         };
         let mut last: std::collections::HashMap<String, std::time::Instant> = Default::default();
