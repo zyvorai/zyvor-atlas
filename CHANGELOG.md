@@ -9,6 +9,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- MCP: RFC 9728 OAuth Protected Resource Metadata at `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/api/atlas/v1/mcp`, and a `WWW-Authenticate: Bearer resource_metadata="..."` challenge on 401s from `/api/atlas/v1/mcp` (REST 401s unchanged); the `/.well-known/mcp` card links it. `ATLAS_PUBLIC_URL` sets the origin used (otherwise derived from `Host`). Atlas still has no OAuth authorization server, so the document lists no `authorization_servers`, and token audience is not enforced; see `docs/MCP.md`.
+
 ## [0.11.0] — 2026-11-03
 
 ### Added

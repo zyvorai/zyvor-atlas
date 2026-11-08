@@ -410,6 +410,18 @@ pub fn router(state: AppState) -> Router {
     // Public and static (no tools, no inventory), so agent hosts can find the endpoint and auth scheme.
     #[cfg(feature = "mcp")]
     let root = root.route("/.well-known/mcp", get(crate::mcp::server_card));
+    // RFC 9728 Protected Resource Metadata for the MCP endpoint (root form and path-inserted form);
+    // public by definition. See crates/atlas-gateway/src/oauth_resource.rs for what it does not claim.
+    #[cfg(feature = "mcp")]
+    let root = root
+        .route(
+            crate::oauth_resource::METADATA_PATH,
+            get(crate::oauth_resource::root_metadata),
+        )
+        .route(
+            crate::oauth_resource::MCP_METADATA_PATH,
+            get(crate::oauth_resource::mcp_metadata),
+        );
     root
         // Any other path serves the embedded Storage Center SPA (client-side routing).
         .fallback(get(spa_handler))

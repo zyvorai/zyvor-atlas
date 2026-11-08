@@ -632,7 +632,13 @@ pub(crate) async fn server_card() -> Json<Value> {
         "version": env!("CARGO_PKG_VERSION"),
         "transport": "streamable-http",
         "endpoint": "/api/atlas/v1/mcp",
-        "authentication": {"type": "bearer", "format": "jwt", "role": "operator"},
+        "authentication": {
+            "type": "bearer",
+            "format": "jwt",
+            "role": "operator",
+            // RFC 9728 metadata for this endpoint, relative to the host like `endpoint`.
+            "resource_metadata": crate::oauth_resource::MCP_METADATA_PATH
+        },
         "capabilities": ["tools", "prompts", "resources"],
         "documentation": "https://github.com/zyvorai/zyvor-atlas/blob/main/docs/MCP.md"
     }))

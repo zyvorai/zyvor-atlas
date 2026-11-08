@@ -15,6 +15,15 @@ use atlas_gateway::startup::{build_state, BuildOptions};
 mod common;
 
 async fn spawn(auth_required: bool, secret: &str) -> (SocketAddr, sqlx::AnyPool) {
+    spawn_with(auth_required, secret, None).await
+}
+
+/// `public_url` sets `AppState::public_url` (what `ATLAS_PUBLIC_URL` does at startup).
+async fn spawn_with(
+    auth_required: bool,
+    secret: &str,
+    public_url: Option<&str>,
+) -> (SocketAddr, sqlx::AnyPool) {
     let database_url = common::fresh_database_url("mcp").await;
     let config = Config {
         bind_addr: "127.0.0.1:0".into(),
@@ -66,6 +75,8 @@ async fn spawn(auth_required: bool, secret: &str) -> (SocketAddr, sqlx::AnyPool)
     )
     .await
     .unwrap();
+    let mut state = state;
+    state.public_url = public_url.map(str::to_owned);
     let pool = state.pool.clone();
     let app = routes::router(state);
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -742,6 +753,10 @@ async fn mcp_server_card_is_public_and_minimal() {
     let card: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(card["endpoint"], "/api/atlas/v1/mcp");
     assert_eq!(card["authentication"]["type"], "bearer");
+    assert_eq!(
+        card["authentication"]["resource_metadata"],
+        "/.well-known/oauth-protected-resource/api/atlas/v1/mcp"
+    );
     assert!(card.get("tools").is_none(), "the card must not list tools: {card}");
     let text = card.to_string();
     assert!(!text.contains("tenant") && !text.contains("cluster"), "{text}");
@@ -853,4 +868,196 @@ async fn mcp_chargeback_is_tenant_filtered() {
     let r = viewer.call_tool(CallToolRequestParams::new("chargeback")).await;
     assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused");
     viewer.cancel().await.unwrap();
+}
+
+const MCP_META: &str = "/.well-known/oauth-protected-resource/api/atlas/v1/mcp";
+
+/// RFC 9728 metadata is public (no token even with auth on), has the documented shape, and claims
+/// nothing Atlas lacks: no authorization server, no scopes.
+#[tokio::test]
+async fn oauth_protected_resource_metadata_shape() {
+    let (addr, _pool) = spawn(true, "mcp-test-secret-at-least-32-bytes!!").await;
+    let base = format!("http://{addr}");
+
+    let resp = reqwest::get(format!("{base}{MCP_META}")).await.unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::OK);
+    assert_eq!(resp.headers()["cache-control"], "no-store", "Host-derived must not be cached");
+    let doc: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(doc["resource"], format!("{base}/api/atlas/v1/mcp"));
+    assert_eq!(doc["bearer_methods_supported"], serde_json::json!(["header"]));
+    assert!(doc.get("authorization_servers").is_none(), "{doc}");
+    assert!(doc.get("scopes_supported").is_none(), "{doc}");
+
+    // Root form: the resource is the origin (RFC 9728 section 3.3).
+    let root: serde_json::Value = reqwest::get(format!("{base}/.well-known/oauth-protected-resource"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(root["resource"], base);
+    assert_eq!(root["bearer_methods_supported"], serde_json::json!(["header"]));
+
+    // Another suffix is not served as metadata.
+    let other = reqwest::get(format!("{base}/.well-known/oauth-protected-resource/api/atlas/v1/volumes"))
+        .await
+        .unwrap();
+    assert_ne!(other.headers().get("content-type").map(|v| v.to_str().unwrap_or("")), Some("application/json"));
+}
+
+/// A configured public URL is the only source: a forged Host or X-Forwarded-Proto changes nothing,
+/// and the document may be cached. A Host that is not a plain host[:port] is refused when nothing is configured.
+#[tokio::test]
+async fn oauth_metadata_resource_url_source() {
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, _pool) = spawn_with(true, secret, Some("https://atlas.example.com")).await;
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}{MCP_META}"))
+        .header("host", "evil.example")
+        .header("x-forwarded-proto", "http")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.headers()["cache-control"], "public, max-age=300");
+    let doc: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(doc["resource"], "https://atlas.example.com/api/atlas/v1/mcp");
+
+    let (addr, _pool) = spawn(true, secret).await;
+    let doc: serde_json::Value = reqwest::Client::new()
+        .get(format!("http://{addr}{MCP_META}"))
+        .header("host", "atlas.lab.example:30510")
+        .header("x-forwarded-proto", "https")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(doc["resource"], "https://atlas.lab.example:30510/api/atlas/v1/mcp");
+
+    let resp = reqwest::Client::new()
+        .get(format!("http://{addr}{MCP_META}"))
+        .header("host", "a\"b")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::BAD_REQUEST);
+}
+
+/// 401 on the MCP endpoint carries the RFC 9728 challenge; a refused token also says `invalid_token`.
+#[tokio::test]
+async fn mcp_401_carries_resource_metadata_challenge() {
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let (addr, _pool) = spawn(true, secret).await;
+    let want = format!("resource_metadata=\"http://{addr}{MCP_META}\"");
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/api/atlas/v1/mcp"))
+        .header("content-type", "application/json")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(resp.headers()["www-authenticate"], format!("Bearer {want}").as_str());
+    // The body is the same JSON error as on REST routes.
+    let body: serde_json::Value = resp.json().await.unwrap();
+    assert_eq!(body["error"]["code"], "AUTH_ERROR");
+
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/api/atlas/v1/mcp"))
+        .header("authorization", "Bearer not-a-jwt")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        resp.headers()["www-authenticate"],
+        format!("Bearer error=\"invalid_token\", {want}").as_str()
+    );
+
+    // A token signed with another secret is refused the same way.
+    let (other, _, _) =
+        atlas_gateway::auth::mint_token("another-secret-at-least-32-bytes!!!!", "x", "operator", "global", 60)
+            .unwrap();
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/api/atlas/v1/mcp"))
+        .header("authorization", format!("Bearer {other}"))
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
+    assert!(resp.headers()["www-authenticate"].to_str().unwrap().contains("invalid_token"));
+}
+
+/// The challenge uses the configured public URL, not the request's Host.
+#[tokio::test]
+async fn mcp_401_challenge_uses_configured_public_url() {
+    let (addr, _pool) = spawn_with(
+        true,
+        "mcp-test-secret-at-least-32-bytes!!",
+        Some("https://atlas.example.com"),
+    )
+    .await;
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/api/atlas/v1/mcp"))
+        .header("host", "evil.example")
+        .body("{}")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.headers()["www-authenticate"],
+        format!("Bearer resource_metadata=\"https://atlas.example.com{MCP_META}\"").as_str()
+    );
+}
+
+/// REST 401s are untouched: same status and body, and no `WWW-Authenticate`.
+#[tokio::test]
+async fn rest_401_has_no_challenge() {
+    let (addr, _pool) = spawn(true, "mcp-test-secret-at-least-32-bytes!!").await;
+    for path in ["/api/atlas/v1/clusters", "/metrics"] {
+        let resp = reqwest::get(format!("http://{addr}{path}")).await.unwrap();
+        assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED, "{path}");
+        assert!(resp.headers().get("www-authenticate").is_none(), "{path}");
+        let body: serde_json::Value = resp.json().await.unwrap();
+        assert_eq!(body["error"]["code"], "AUTH_ERROR");
+        assert_eq!(body["error"]["message"], "missing bearer token");
+    }
+}
+
+/// An authenticated MCP call still works and carries no challenge; so does a bootstrap-style
+/// open-dev server (auth off) with no token at all.
+#[tokio::test]
+async fn authenticated_mcp_initialize_has_no_challenge() {
+    let secret = "mcp-test-secret-at-least-32-bytes!!";
+    let init = r#"{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-03-26","capabilities":{},"clientInfo":{"name":"t","version":"1"}}}"#;
+    let (addr, _pool) = spawn(true, secret).await;
+    let (token, _, _) =
+        atlas_gateway::auth::mint_token(secret, "agent", "operator", "global", 3600).unwrap();
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/api/atlas/v1/mcp"))
+        .header("authorization", format!("Bearer {token}"))
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(init)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "{}", resp.status());
+    assert!(resp.headers().get("www-authenticate").is_none());
+
+    let (addr, _pool) = spawn(false, secret).await;
+    let resp = reqwest::Client::new()
+        .post(format!("http://{addr}/api/atlas/v1/mcp"))
+        .header("content-type", "application/json")
+        .header("accept", "application/json, text/event-stream")
+        .body(init)
+        .send()
+        .await
+        .unwrap();
+    assert!(resp.status().is_success(), "{}", resp.status());
+    assert!(resp.headers().get("www-authenticate").is_none());
 }
