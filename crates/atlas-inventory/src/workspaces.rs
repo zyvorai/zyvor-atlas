@@ -9,6 +9,15 @@ use anyhow::Result;
 use serde::Serialize;
 use sqlx::{any::AnyRow, AnyPool, Row};
 
+/// Admission in progress: the row exists (so it counts against the tenant's workspace count and the
+/// owner's byte budget) but the clone is not made or not yet recorded. `create` inserts the row in
+/// this state *before* checking the limits, so two racing creates cannot both pass; the row turns
+/// `active` once the clone exists. A crash can leave one behind; the GC discards it after
+/// [`CREATING_STALE_SECS`].
+pub const CREATING: &str = "creating";
+/// How long a `creating` row may stay before the GC treats its creator as gone and tears it down
+/// (snapshot and clone are synchronous on the native backend, so this is generous).
+pub const CREATING_STALE_SECS: i64 = 900;
 pub const ACTIVE: &str = "active";
 pub const RESETTING: &str = "resetting";
 /// A reset that failed after the old clone was deleted: no volume, base snapshot still held.
@@ -108,12 +117,13 @@ pub async fn list(pool: &AnyPool, tenant: Option<&str>) -> Result<Vec<Workspace>
 }
 
 /// Workspaces the GC should act on at `now`: active ones past their expiry, plus any teardown that
-/// was left half-done.
+/// was left half-done, plus `creating` rows whose creator is long gone ([`CREATING_STALE_SECS`]).
 pub async fn due_for_gc(pool: &AnyPool, now_unix: i64) -> Result<Vec<Workspace>> {
-    // Const column list; the state names and the time are binds.
+    // Const column list; the state names and the times are binds.
     let q = sqlx::AssertSqlSafe(format!(
         "SELECT {COLS} FROM agent_workspaces
          WHERE state = $1 OR (state IN ($2, $3, $4) AND expires_at_unix <= $5)
+            OR (state = $6 AND created_at_unix <= $7)
          ORDER BY expires_at_unix, id"
     ));
     let rows = sqlx::query(q)
@@ -122,12 +132,15 @@ pub async fn due_for_gc(pool: &AnyPool, now_unix: i64) -> Result<Vec<Workspace>>
         .bind(RESET_FAILED)
         .bind(RESETTING)
         .bind(now_unix)
+        .bind(CREATING)
+        .bind(now_unix.saturating_sub(CREATING_STALE_SECS))
         .fetch_all(pool)
         .await?;
     Ok(rows.into_iter().map(row).collect())
 }
 
-/// Workspaces of a tenant that still hold resources (every row; a finished teardown deletes its row).
+/// Workspaces of a tenant that still hold resources (every row, `creating` ones included; a
+/// finished teardown deletes its row).
 pub async fn count_for_tenant(pool: &AnyPool, tenant_id: &str) -> Result<i64> {
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) FROM agent_workspaces WHERE tenant_id = $1")
@@ -138,7 +151,8 @@ pub async fn count_for_tenant(pool: &AnyPool, tenant_id: &str) -> Result<i64> {
 }
 
 /// Sum of `max_bytes` over every workspace an owner still holds in a tenant (a finished teardown
-/// deletes its row, so every row is live): the quantity a per-agent byte budget is checked against.
+/// deletes its row, so every row is live, and a `creating` one counts so that a racing create sees
+/// it): the quantity a per-agent byte budget is checked against.
 /// A workspace created without a cap counts 0 here, which is why a budget makes the cap mandatory.
 pub async fn live_max_bytes_for_owner(pool: &AnyPool, tenant_id: &str, owner: &str) -> Result<i64> {
     Ok(sqlx::query_scalar(
@@ -149,6 +163,56 @@ pub async fn live_max_bytes_for_owner(pool: &AnyPool, tenant_id: &str, owner: &s
     .bind(owner)
     .fetch_one(pool)
     .await?)
+}
+
+/// While `id` is still `creating`: record the base snapshot and clone made so far, so a crashed
+/// create can be torn down by the GC. False when the row is no longer `creating` (the GC took it).
+pub async fn set_resources(
+    pool: &AnyPool,
+    id: &str,
+    base_snapshot_id: &str,
+    volume_id: &str,
+) -> Result<bool> {
+    let n = sqlx::query(
+        "UPDATE agent_workspaces SET base_snapshot_id = $1, volume_id = $2
+         WHERE id = $3 AND state = $4",
+    )
+    .bind(base_snapshot_id)
+    .bind(volume_id)
+    .bind(id)
+    .bind(CREATING)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(n == 1)
+}
+
+/// `creating` to `active` with the finished clone. False when the row is no longer `creating` (the
+/// GC took a stale one), in which case the caller must remove what it made.
+pub async fn activate(pool: &AnyPool, id: &str, volume_id: &str) -> Result<bool> {
+    let n = sqlx::query(
+        "UPDATE agent_workspaces SET volume_id = $1, state = $2 WHERE id = $3 AND state = $4",
+    )
+    .bind(volume_id)
+    .bind(ACTIVE)
+    .bind(id)
+    .bind(CREATING)
+    .execute(pool)
+    .await?
+    .rows_affected();
+    Ok(n == 1)
+}
+
+/// Delete a workspace's row only while it is still `creating` (a create that was refused or failed
+/// removes its own row; one the GC already claimed is left to the GC).
+pub async fn delete_if_creating(pool: &AnyPool, id: &str) -> Result<bool> {
+    let n = sqlx::query("DELETE FROM agent_workspaces WHERE id = $1 AND state = $2")
+        .bind(id)
+        .bind(CREATING)
+        .execute(pool)
+        .await?
+        .rows_affected();
+    Ok(n == 1)
 }
 
 /// Move `id` from one of `from` to `to`; true when this caller made the change (so exactly one of

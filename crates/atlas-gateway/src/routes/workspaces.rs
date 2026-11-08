@@ -186,8 +186,9 @@ fn byte_budget(actor: &Actor) -> i64 {
 
 /// Everything that can refuse a new workspace before anything is created: the per-tenant count, the
 /// source against its size cap, and the caller's byte budget. The MCP plan phase calls this too, so a
-/// plan can say up front that the execute would be refused. Not atomic with the insert: two creates
-/// racing, on one pod or two, can both pass (as with the per-tenant count).
+/// plan can say up front that the execute would be refused. This is an early, advisory check: it
+/// reads and does not reserve, so two creates racing can both pass it. The authoritative check is
+/// [`admit`], which `create_workspace` runs after inserting its own row.
 pub(crate) async fn preflight_create(
     s: &AppState,
     actor: &Actor,
@@ -222,6 +223,49 @@ pub(crate) async fn preflight_create(
         }
     }
     Ok(())
+}
+
+/// The authoritative per-tenant count and byte-budget check, run *after* the new workspace's own
+/// `creating` row is in the table (so both figures include it).
+///
+/// Why this cannot over-admit: each create commits its row and only then sums. If creates A and B
+/// race, whichever committed second ran its sum after the first one's row was visible, so at least
+/// one of them sees both rows and the total it computes already contains the other. Two creates that
+/// together exceed a limit therefore cannot both be admitted. The price is that under contention both
+/// may see both rows and both be refused (over-refusal; the caller retries). The same argument holds
+/// across gateway replicas on Postgres, since it only needs committed rows to be visible to later
+/// statements (READ COMMITTED).
+async fn admit(s: &AppState, actor: &Actor, tenant: &str) -> AppResult<()> {
+    let per_tenant = env_i64("ATLAS_WORKSPACE_MAX_PER_TENANT", DEFAULT_MAX_PER_TENANT);
+    if per_tenant > 0 {
+        let n = store::count_for_tenant(&s.pool, tenant).await?;
+        if n > per_tenant {
+            return Err(AppError::Conflict(format!(
+                "tenant {tenant} already has {per_tenant} workspaces (ATLAS_WORKSPACE_MAX_PER_TENANT); discard one first"
+            )));
+        }
+    }
+    let budget = byte_budget(actor);
+    if budget > 0 {
+        let held = store::live_max_bytes_for_owner(&s.pool, tenant, &actor.id).await?;
+        if held > budget {
+            return Err(AppError::Conflict(format!(
+                "{} would hold {held} bytes of workspaces with this one, over its budget of {budget}",
+                actor.id
+            )));
+        }
+    }
+    Ok(())
+}
+
+/// Roll back a create that did not finish: remove what it made, then its own `creating` row. Every
+/// step is best effort (a leftover is retried by the GC through the recorded ids).
+async fn abort_create(s: &AppState, id: &str, snapshot_id: &str, volume_id: &str, owns_snapshot: bool) {
+    let _ = delete_clone(s, volume_id).await;
+    if owns_snapshot {
+        let _ = delete_base_snapshot(s, snapshot_id).await;
+    }
+    let _ = store::delete_if_creating(&s.pool, id).await;
 }
 
 /// `POST /workspaces`
@@ -272,43 +316,11 @@ pub(crate) async fn create_workspace(
         ));
     }
 
-    // Every refusal that needs no side effect comes before the snapshot and clone are made.
+    // Every refusal that needs no side effect comes before anything is created.
     preflight_create(&s, &actor, &tenant, src.size_bytes, max_bytes).await?;
 
     let id = format!("ws_{}", &uuid::Uuid::new_v4().simple().to_string()[..12]);
-    let (snapshot_id, owns_snapshot) = match existing_snapshot {
-        Some(snap) => (snap.id, false),
-        None => {
-            let snap_body = serde_json::from_value(json!({ "name": format!("{id}-base") }))
-                .map_err(|e| AppError::Internal(e.to_string()))?;
-            let (_, Json(out)) = volumes::create_snapshot(
-                State(s.clone()),
-                Extension(actor.clone()),
-                Path(source_volume_id.clone()),
-                Json(snap_body),
-            )
-            .await?;
-            let sid = out["snapshot_id"]
-                .as_str()
-                .ok_or_else(|| AppError::Internal(format!("snapshot returned no id: {out}")))?
-                .to_string();
-            (sid, true)
-        }
-    };
-    let undo_snapshot = |s: AppState, sid: String| async move {
-        if owns_snapshot {
-            let _ = delete_base_snapshot(&s, &sid).await;
-        }
-    };
-
-    let volume_id = match clone_base(&s, &actor, &snapshot_id, &format!("ws-{id}")).await {
-        Ok(v) => v,
-        Err(e) => {
-            undo_snapshot(s.clone(), snapshot_id).await;
-            return Err(e);
-        }
-    };
-    let now = now_unix();
+    let owns_snapshot = existing_snapshot.is_none();
     let name = body
         .name
         .as_deref()
@@ -316,27 +328,94 @@ pub(crate) async fn create_workspace(
         .filter(|n| !n.is_empty())
         .map(|n| n.chars().take(128).collect::<String>())
         .unwrap_or_else(|| id.clone());
-    let ws = Workspace {
+    let now = now_unix();
+    let mut ws = Workspace {
         id: id.clone(),
         tenant_id: tenant.clone(),
         owner: actor.id.clone(),
         name,
-        source_volume_id,
-        base_snapshot_id: snapshot_id.clone(),
+        source_volume_id: source_volume_id.clone(),
+        base_snapshot_id: existing_snapshot.as_ref().map(|sn| sn.id.clone()).unwrap_or_default(),
         owns_base_snapshot: owns_snapshot,
-        volume_id: volume_id.clone(),
+        volume_id: String::new(),
         max_bytes,
-        state: store::ACTIVE.into(),
+        state: store::CREATING.into(),
         reset_count: 0,
         last_error: None,
         created_at_unix: now,
         expires_at_unix: now + ttl,
     };
-    if let Err(e) = store::insert(&s.pool, &ws).await {
-        let _ = delete_clone(&s, &volume_id).await;
-        undo_snapshot(s.clone(), snapshot_id).await;
+
+    // Reserve first, check second (see `admit`): the row goes in as `creating`, which counts toward
+    // the tenant's workspace count and the owner's byte budget, and only then are those limits
+    // checked. A create that would pass a limit only because it could not see a racing one is
+    // refused by whichever of the two committed second.
+    store::insert(&s.pool, &ws).await?;
+    if let Err(e) = admit(&s, &actor, &tenant).await {
+        let _ = store::delete_if_creating(&s.pool, &id).await;
+        return Err(e);
+    }
+
+    let snapshot_id = match existing_snapshot {
+        Some(snap) => snap.id,
+        None => {
+            let snap_body = serde_json::from_value(json!({ "name": format!("{id}-base") }))
+                .map_err(|e| AppError::Internal(e.to_string()))?;
+            let made = volumes::create_snapshot(
+                State(s.clone()),
+                Extension(actor.clone()),
+                Path(source_volume_id.clone()),
+                Json(snap_body),
+            )
+            .await;
+            let sid = match made {
+                Ok((_, Json(out))) => out["snapshot_id"].as_str().map(str::to_string),
+                Err(e) => {
+                    let _ = store::delete_if_creating(&s.pool, &id).await;
+                    return Err(e);
+                }
+            };
+            let Some(sid) = sid else {
+                let _ = store::delete_if_creating(&s.pool, &id).await;
+                return Err(AppError::Internal("snapshot returned no id".into()));
+            };
+            // Recorded straight away so a crash from here on leaves a row the GC can tear down.
+            if let Err(e) = store::set_resources(&s.pool, &id, &sid, "").await {
+                abort_create(&s, &id, &sid, "", owns_snapshot).await;
+                return Err(e.into());
+            }
+            sid
+        }
+    };
+    ws.base_snapshot_id = snapshot_id.clone();
+
+    let volume_id = match clone_base(&s, &actor, &snapshot_id, &format!("ws-{id}")).await {
+        Ok(v) => v,
+        Err(e) => {
+            abort_create(&s, &id, &snapshot_id, "", owns_snapshot).await;
+            return Err(e);
+        }
+    };
+    if let Err(e) = store::set_resources(&s.pool, &id, &snapshot_id, &volume_id).await {
+        abort_create(&s, &id, &snapshot_id, &volume_id, owns_snapshot).await;
         return Err(e.into());
     }
+    match store::activate(&s.pool, &id, &volume_id).await {
+        Ok(true) => {}
+        Ok(false) => {
+            // The GC judged this create stale and claimed the row; it tears down what it recorded.
+            abort_create(&s, &id, &snapshot_id, &volume_id, owns_snapshot).await;
+            return Err(AppError::Conflict(format!(
+                "workspace {id} was discarded while it was being created"
+            )));
+        }
+        Err(e) => {
+            abort_create(&s, &id, &snapshot_id, &volume_id, owns_snapshot).await;
+            return Err(e.into());
+        }
+    }
+    ws.volume_id = volume_id.clone();
+    ws.state = store::ACTIVE.into();
     audit(
         &s,
         Some(&tenant),
@@ -474,7 +553,7 @@ pub(crate) async fn discard_workspace(
         && w.state != store::DISCARDING
     {
         return Err(AppError::Conflict(format!(
-            "workspace {id} is {}; try again when the reset has finished",
+            "workspace {id} is {}; try again when the reset or creation has finished",
             w.state
         )));
     }
@@ -506,7 +585,7 @@ pub async fn gc_once(s: &AppState, now_unix: i64) -> anyhow::Result<GcReport> {
         let claimed = store::transition(
             &s.pool,
             &w.id,
-            &[store::ACTIVE, store::RESET_FAILED, store::RESETTING],
+            &[store::ACTIVE, store::RESET_FAILED, store::RESETTING, store::CREATING],
             store::DISCARDING,
         )
         .await?;

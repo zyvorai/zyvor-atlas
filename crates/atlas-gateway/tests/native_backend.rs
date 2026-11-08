@@ -252,6 +252,34 @@ async fn native_backend_locked_snapshot_refuses_delete() {
     .await;
     assert_eq!(st, 200, "{body}");
     assert!(body["retain_until_unix"].as_u64().unwrap() > 0);
+    let first_until = body["retain_until_unix"].as_i64().unwrap();
+
+    // The expiry is recorded and shown on the snapshot; an unlocked one has no such field.
+    let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
+    let mine = snaps.as_array().unwrap().iter().find(|s| s["id"] == sid.as_str()).unwrap();
+    assert_eq!(mine["locked_until"], first_until, "{mine}");
+    let (st, plain) = send(
+        c.post(format!("{base}/volumes/{vid}/snapshots"))
+            .json(&json!({ "name": "not-locked" })),
+    )
+    .await;
+    assert_eq!(st, 201, "{plain}");
+    let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
+    let other = snaps.as_array().unwrap().iter().find(|s| s["id"] == plain["snapshot_id"]).unwrap();
+    assert!(other.get("locked_until").is_none(), "{other}");
+
+    // Extending moves it out; it never moves back.
+    let (st, body) = send(
+        c.post(format!("{base}/snapshots/{sid}/lock"))
+            .json(&json!({ "retain_secs": 7200 })),
+    )
+    .await;
+    assert_eq!(st, 200, "{body}");
+    let extended = body["retain_until_unix"].as_i64().unwrap();
+    assert!(extended > first_until);
+    let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
+    let mine = snaps.as_array().unwrap().iter().find(|s| s["id"] == sid.as_str()).unwrap();
+    assert_eq!(mine["locked_until"], extended, "{mine}");
 
     let (st, body) = send(c.delete(format!("{base}/snapshots/{sid}"))).await;
     assert_eq!(st, 409, "locked: {body}");
@@ -261,12 +289,62 @@ async fn native_backend_locked_snapshot_refuses_delete() {
     )
     .await;
     assert_eq!(st, 409, "a lock cannot be shortened: {body}");
+    let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
+    let mine = snaps.as_array().unwrap().iter().find(|s| s["id"] == sid.as_str()).unwrap();
+    assert_eq!(mine["locked_until"], extended, "a refused shortening changes nothing");
     let (st, body) = send(
         c.post(format!("{base}/snapshots/nope/lock"))
             .json(&json!({ "retain_secs": 60 })),
     )
     .await;
     assert_eq!(st, 404, "{body}");
+}
+
+#[tokio::test]
+async fn snapshot_create_if_not_exists_reuses_the_same_named_snapshot() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+    let vid = make_fs(&base, &c, "dedupe").await;
+    let other = make_fs(&base, &c, "dedupe-other").await;
+    let url = |v: &str| format!("{base}/volumes/{v}/snapshots");
+    let count = |snaps: &Value, v: &str, name: &str| {
+        snaps.as_array().unwrap().iter().filter(|s| s["volume_id"] == v && s["name"] == name).count()
+    };
+
+    // Default (flag absent or false) keeps the historic behaviour: names are not unique.
+    for _ in 0..2 {
+        let (st, s) = send(c.post(url(&vid)).json(&json!({ "name": "plain" }))).await;
+        assert_eq!(st, 201, "{s}");
+    }
+    let (st, s) = send(c.post(url(&vid)).json(&json!({ "name": "plain", "if_not_exists": false }))).await;
+    assert_eq!(st, 201, "{s}");
+    let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
+    assert_eq!(count(&snaps, &vid, "plain"), 3);
+
+    // With the flag: the first call creates, later ones return it with 200 and make nothing new.
+    let (st, first) = send(c.post(url(&vid)).json(&json!({ "name": "ckpt", "if_not_exists": true }))).await;
+    assert_eq!(st, 201, "{first}");
+    assert!(first.get("existing").is_none());
+    let (st, again) = send(c.post(url(&vid)).json(&json!({ "name": "ckpt", "if_not_exists": true }))).await;
+    assert_eq!(st, 200, "{again}");
+    assert_eq!(again["snapshot_id"], first["snapshot_id"]);
+    assert_eq!(again["existing"], true);
+    assert_eq!(again["name"], "ckpt");
+    assert_eq!(again["volume_id"], vid.as_str());
+    let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
+    assert_eq!(count(&snaps, &vid, "ckpt"), 1);
+
+    // Scoped to the volume: the same name on another volume is a new snapshot.
+    let (st, o) = send(c.post(url(&other)).json(&json!({ "name": "ckpt", "if_not_exists": true }))).await;
+    assert_eq!(st, 201, "{o}");
+    assert_ne!(o["snapshot_id"], first["snapshot_id"]);
+
+    // With duplicates already present it returns the oldest, deterministically.
+    let (st, a) = send(c.post(url(&vid)).json(&json!({ "name": "plain", "if_not_exists": true }))).await;
+    assert_eq!(st, 200, "{a}");
+    let (st, b) = send(c.post(url(&vid)).json(&json!({ "name": "plain", "if_not_exists": true }))).await;
+    assert_eq!(st, 200, "{b}");
+    assert_eq!(a["snapshot_id"], b["snapshot_id"]);
 }
 
 #[tokio::test]
@@ -409,8 +487,12 @@ async fn ransomware_check_and_protect_lock_a_snapshot_only_when_warranted() {
     assert_eq!(st, 201, "{body}");
     let sid = body["snapshot_id"].as_str().unwrap().to_string();
     assert!(body["retain_until_unix"].as_u64().unwrap() > 0);
+    let body_until = body["retain_until_unix"].clone();
     let (st, body) = send(c.delete(format!("{base}/snapshots/{sid}"))).await;
     assert_eq!(st, 409, "the protective snapshot is locked: {body}");
+    let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
+    let guard = snaps.as_array().unwrap().iter().find(|s| s["id"] == sid.as_str()).unwrap();
+    assert_eq!(guard["locked_until"], body_until, "protect records the lock expiry");
 
     let (st, _) = send(c.get(format!("{base}/volumes/nope/ransomware"))).await;
     assert_eq!(st, 404);

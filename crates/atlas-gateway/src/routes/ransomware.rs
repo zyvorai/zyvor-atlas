@@ -365,6 +365,7 @@ async fn protect(
         .lock_snapshot(&snap.backend_native_id, secs)
         .await
         .map_err(super::volumes::driver_error)?;
+    super::volumes::record_locked_until(s, &snap.snapshot_id, until).await;
     super::volumes::audit(
         s,
         Some(&tenant),

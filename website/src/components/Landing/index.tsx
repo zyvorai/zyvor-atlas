@@ -89,8 +89,8 @@ const BLOCKS = [
   {
     tag: 'Agent-ready operations',
     title: 'Let an agent look. Not leap.',
-    body: 'Atlas speaks the Model Context Protocol, so an AI agent can triage storage the way an operator does: the Ops Advisor, anomalies, eBPF I/O risk, DR status and jobs. It is read-only by default; the two opt-in writes (a snapshot, an alert acknowledgement) each need a single-use confirmation token, and MCP can never call out to an external LLM.',
-    items: ['27 read-only gateway tools, 6 on the node agent', 'Same roles, tenant scoping and audit as the REST API', 'Opt-in guarded snapshot and alert ack; failover and delete never exposed'],
+    body: 'Atlas speaks the Model Context Protocol, so an AI agent can triage storage the way an operator does: the Ops Advisor, anomalies, eBPF I/O risk, DR status and jobs. It is read-only by default; the opt-in writes (a snapshot, alert acknowledgement and silencing, agent workspaces) each need a single-use confirmation token, and MCP can never call out to an external LLM.',
+    items: ['53 read-only gateway tools, 10 on the node agent', 'Same roles, tenant scoping and audit as the REST API', 'Opt-in guarded snapshot, alert and workspace writes; failover and delete never exposed'],
     img: '/anim/agent-ops.svg',
     alt: 'An AI agent calling Atlas over MCP: read-only tools and guarded writes',
     to: '/docs/control-plane/mcp',
@@ -181,7 +181,7 @@ const ROWS = [
   ['Backends', 'Ceph, NFS, ZFS, Longhorn, macOS disks, Atlas Native, S3', 'Ceph'],
   ['Cross-site DR', 'Two-way mirroring with a guarded failback; native replication', 'RBD mirroring CRDs'],
   ['Database migration', 'DataBridge: discovery, full load, CDC, cutover', 'Not in scope'],
-  ['AI and agents', 'MCP server (27 read-only tools, opt-in guarded snapshot and alert ack), Ops Advisor, eBPF I/O risk', 'Not in scope'],
+  ['AI and agents', 'MCP server (53 read-only tools, opt-in guarded writes), Ops Advisor, eBPF I/O risk', 'Not in scope'],
 ];
 
 export function Compare(): ReactNode {

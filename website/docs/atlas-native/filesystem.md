@@ -341,6 +341,9 @@ of its file sizes (0 when empty), expanding it is refused, and the requested siz
 only used for tenant quota admission. Block data routes (`/volumes/{id}/data`) refuse filesystems;
 mount them with `atlas-native-mount` instead.
 
+`atlasctl checkpoint seal` snapshots and retention-locks a finished training checkpoint on a
+filesystem and prunes older ones (`docs/CHECKPOINTS.md`).
+
 ## Agent workspaces
 
 An agent workspace is an instant, isolated, disposable copy of an atlas-native volume or filesystem
@@ -379,9 +382,16 @@ block source), `state`, `used_bytes`, `over_cap` and `remaining_secs`.
   `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) refuses a source larger than that at create time. It is an
   admission check, not a hard limit: a native filesystem has no size limit, so growth after creation
   is only reported (`over_cap`), and the tenant byte quota is what bounds it. The per-tenant count
-  is checked before the create, so two simultaneous creates can overshoot it by one. A per-owner
-  budget on the sum of `max_bytes` (token `workspace_bytes`, `ATLAS_AGENT_WORKSPACE_BYTES`) is checked at
-  the same point; see [MCP.md](../control-plane/mcp.md#agent-identity-and-guardrails).
+  and a per-owner budget on the sum of `max_bytes` (token `workspace_bytes`,
+  `ATLAS_AGENT_WORKSPACE_BYTES`; see [MCP.md](../control-plane/mcp.md#agent-identity-and-guardrails)) are checked
+  twice: once up front (cheap, no side effects), and again after the create has inserted its own
+  workspace row in the `creating` state, which counts toward both figures. The second committer of two
+  racing creates always sees both rows, so the limits cannot be exceeded by a race; the cost is that
+  under contention both may see both and both be refused (retry). A refused create removes its own
+  row. The row becomes `active` when the clone exists; a `creating` row whose gateway died is
+  discarded by the GC after 15 minutes (and cannot be reset or discarded by hand until then). Across
+  gateway replicas this relies on Postgres read-committed visibility and is tested in one process on
+  SQLite only.
 - Create, reset, discard and expiry are audited (`workspace.create`, `workspace.reset`,
   `workspace.discard`, `workspace.expire`).
 
@@ -391,7 +401,8 @@ no `atlasctl` command for workspaces yet.
 
 Tested over the fixture driver through the gateway (`crates/atlas-gateway/tests/workspaces.rs`,
 `mcp_workspaces.rs`): create, write, reset and discard with the source untouched, TTL expiry GC,
-quota, size-cap and count refusals, tenant isolation and roles. The fixture driver does not model
+quota, size-cap and count refusals, concurrent creates against the byte budget and the count (in
+process, SQLite), stale `creating` rows, tenant isolation and roles. The fixture driver does not model
 files, so a filesystem workspace is not written through the gateway in these tests (a block source is,
 through `/volumes/{id}/data`); filesystem snapshot and clone themselves are tested against live
 in-process nodes in `crates/atlas-driver-native/tests/nodes.rs`. Not run against a lab cluster.

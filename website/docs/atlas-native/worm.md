@@ -26,6 +26,13 @@ atlasctl lock-snapshot snap_native_… --retain-secs 604800     # 7 days
 # node: POST /v1/snapshots/{id}/lock and POST /v1/fs-snapshots/{id}/lock
 ```
 
+The gateway records the expiry it was given in the snapshot's inventory row and shows it as
+`locked_until` (unix seconds) on `GET /snapshots` (and on the lock response as `retain_until_unix`).
+It only ever moves out, like the lock. It is the gateway's record, not the enforcement: a lock set
+directly on a node (`POST /v1/snapshots/{id}/lock`) or before this field existed is enforced but not
+reflected, and `locked_until` is not read back from the node, so the node's own value wins if the two
+ever differ. A value in the past means the lock has expired.
+
 How it is enforced: the expiry is part of the snapshot in the Raft-replicated catalog.
 `DeleteSnapshot` carries the proposing node's clock, so every replica judges the lock at the same
 instant, and a lagging replica cannot disagree. Catalogs and log entries from before locking load
@@ -68,7 +75,7 @@ executes anything (`can_execute: false`).
 
 `protect` re-assesses on the server and, for `suspicious` or worse, takes a snapshot named
 `ransomware-guard-<time>` and locks it (default 24 hours, at most 7 days, because a false positive
-pins that capacity). On normal activity it returns 409 and does nothing. It is audited as
+pins that capacity; its `locked_until` is recorded like any other lock). On normal activity it returns 409 and does nothing. It is audited as
 `snapshot.ransomware_guard`.
 
 ### Automatic protection (opt-in)
