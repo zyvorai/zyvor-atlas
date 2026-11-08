@@ -47,6 +47,7 @@ tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
 clap = { workspace = true }
 anyhow = { workspace = true }
+thiserror = { workspace = true }
 sqlx = { workspace = true }
 jsonwebtoken = { workspace = true }
 argon2 = { workspace = true }
@@ -95,3 +96,9 @@ tokio-stream = { version = "0.1", features = ["net"] }
 # the old `reqwest-mcp-client = { package = "reqwest", version = "0.13" }` alias that existed only
 # because the workspace default used to be reqwest 0.12).
 rmcp = { version = "3.5", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
+# IdP access-token tests (tests/mcp_idp.rs) sign RS256 and ES256 tokens with throwaway keys generated at
+# test time, so no private key is committed. All three are already in Cargo.lock as jsonwebtoken's own
+# dependencies (rsa 0.9, p256 0.13, rand 0.8); dev-only, never linked into the gateway binary.
+rsa = "0.9"
+p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+rand = "0.8"

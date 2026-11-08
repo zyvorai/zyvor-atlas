@@ -623,8 +623,8 @@ impl ServerHandler for AtlasMcp {
 /// Public discovery card served at `/.well-known/mcp`. Deliberately static and small: it says where
 /// the MCP endpoint is and how to authenticate, and nothing about tools, tenants or inventory (those
 /// need a token). The endpoint is relative to the host the card was fetched from.
-pub(crate) async fn server_card() -> Json<Value> {
-    Json(json!({
+pub(crate) async fn server_card(axum::extract::State(state): axum::extract::State<AppState>) -> Json<Value> {
+    let mut card = json!({
         "name": "atlas",
         "title": "Zyvor Atlas storage control plane",
         "description": "Read-only storage inventory, Ops Advisor, I/O risk and DR tools for agents; \
@@ -641,7 +641,12 @@ pub(crate) async fn server_card() -> Json<Value> {
         },
         "capabilities": ["tools", "prompts", "resources"],
         "documentation": "https://github.com/zyvorai/zyvor-atlas/blob/main/docs/MCP.md"
-    }))
+    });
+    // Public and static per deployment: the IdP issuer is already public in the metadata document.
+    if let Some(idp) = &state.mcp_idp {
+        card["authentication"]["authorization_servers"] = json!([idp.issuer()]);
+    }
+    Json(card)
 }
 
 /// Host-header policy for the streamable-HTTP transport. rmcp's default only accepts

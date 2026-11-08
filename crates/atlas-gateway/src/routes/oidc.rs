@@ -131,13 +131,7 @@ pub(crate) async fn oidc_callback(
         .oidc
         .as_ref()
         .expect("AppState.oidc is Some only when Config.oidc is Some");
-    let role = if groups.iter().any(|g| oidc_cfg.admin_groups.contains(g)) {
-        "admin"
-    } else if groups.iter().any(|g| oidc_cfg.operator_groups.contains(g)) {
-        "operator"
-    } else {
-        "viewer"
-    };
+    let role = crate::auth::role_for_groups(&groups, &oidc_cfg.admin_groups, &oidc_cfg.operator_groups);
     // Tenant scoping (see auth::tenant_scope/require_tenant): read from the configured claim
     // (e.g. a bank's IdP might emit "tenant" or "department") when set, else "global" — admin
     // role bypasses this filter entirely regardless of what's resolved here.

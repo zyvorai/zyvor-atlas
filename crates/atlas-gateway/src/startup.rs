@@ -578,6 +578,9 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         Some(raw) => Some(parse_public_url(&raw).map_err(|e| anyhow::anyhow!("ATLAS_PUBLIC_URL: {e}"))?),
         None => None,
     };
+    // Optional: accept IdP-issued JWT access tokens on `/mcp` (needs ATLAS_PUBLIC_URL for the audience;
+    // a bad setting fails startup, an IdP that is down does not: keys are fetched on first use).
+    let mcp_idp = crate::idp_token::from_env(public_url.as_deref(), config.auth_required)?;
     let state = AppState {
         pool,
         config: Arc::new(config),
@@ -588,6 +591,7 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         rate: crate::state::RateLimiter::new(rpm),
         oidc,
         public_url,
+        mcp_idp,
     };
 
     if opts.initial_discovery {

@@ -4,6 +4,7 @@
 
 pub mod auth;
 pub mod grpc;
+pub mod idp_token;
 #[cfg(feature = "mcp")]
 pub mod mcp;
 pub mod oauth_resource;
