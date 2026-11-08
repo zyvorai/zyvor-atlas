@@ -16,6 +16,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Changed
 
+- MCP: the `atlas_data` tools now forward the call's `X-Atlas-Run-Id` to atlas_data as the same header (none is sent without a run id), so atlas_data's audit events carry the run id of the agent call that caused them. atlas_data already accepted and stored it; only the gateway did not send it. Tested against a fake atlas_data (gateway side) and the real Python service (service side) separately; never run against a deployed atlas_data.
 - Cargo: `cargo update` (arc-swap, educe, jiff), `axum-server` 0.8 to 0.9 (gateway, mac agent) and `atlasctl` moves from `reqwest` 0.12 to 0.13 (`rustls-no-provider` plus the `ring` provider installed in `main`, so it still cross-compiles without a C toolchain). `azure_*` 0.21 stays: the only newer release is the 1.x rewrite with a different API.
 - UI: `jsdom` 30 to 31 (needs Node 22.22.2 or later; `.nvmrc` stays `22`) plus in-range bumps (`vite`, `tailwindcss`, `@tanstack/react-query`, `lucide-react`, `zustand`, `axios`, and others). TypeScript stays on 6.x because `typescript-eslint` caps `<6.1.0`. Docs site: lockfile refresh (Babel and friends).
 - Python: `pyiceberg` 0.10 to 0.12 and the hashed lockfiles recompiled with `uv`. `psycopg` stays at 3.3.6 (LGPL-3.0, which the dependency-review license allow-list rejects whenever its version changes).

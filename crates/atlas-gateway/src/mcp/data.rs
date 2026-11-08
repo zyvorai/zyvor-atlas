@@ -24,8 +24,9 @@
 //! something that parses), wrapped in `{"source":"atlas_data","untrusted":true,...}`, never interpreted,
 //! and errors are mapped to short fixed messages with the credential scrubbed.
 //!
-//! TODO(run_id, docs only): a `run_id` correlation field is being added to MCP calls and to the atlas_data
-//! envelope separately; forward it from `rpc` once that lands.
+//! **Run id.** The call's `X-Atlas-Run-Id` (already validated and scoped around the whole call by
+//! `call_tool`, see mcp/guard.rs) is forwarded on every outbound atlas_data request as the same header,
+//! so atlas_data stores it on the audit events the call causes. A call without a run id sends no header.
 
 use std::collections::HashMap;
 use std::sync::OnceLock;
@@ -146,11 +147,17 @@ fn map_status(status: u16, body: &[u8], token: &str) -> McpError {
 async fn rpc(actor: &Actor, action: &str, args: Value) -> Result<Value, McpError> {
     let base = base_url().ok_or_else(|| McpError::invalid_request("atlas_data is not configured", None))?;
     let token = credential_for(actor)?;
-    let mut response = client()
+    let mut request = client()
         .post(format!("{base}/v1/rpc/{action}"))
         .bearer_auth(&token)
         .timeout(timeout())
-        .json(&args)
+        .json(&args);
+    // Same charset and length rule as atlas_data's `valid_run_id`; `call_tool` has already refused an
+    // invalid one, so this check only keeps a bad value off the wire should that ever change.
+    if let Some(run) = atlas_inventory::audit::current_run_id().filter(|r| atlas_inventory::audit::valid_run_id(r)) {
+        request = request.header(super::guard::RUN_ID_HEADER, run);
+    }
+    let mut response = request
         .send()
         .await
         .map_err(|e| {
