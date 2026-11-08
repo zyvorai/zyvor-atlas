@@ -5,6 +5,8 @@
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
+mod checkpoint;
+
 #[derive(Parser)]
 #[command(name = "atlasctl", about = "Atlas storage control-plane CLI")]
 struct Cli {
@@ -571,6 +573,11 @@ enum Command {
     DatabridgePlans,
     /// POST /api/atlas/v1/databridge/plans/{id}/{stage} — stage ∈ assess|provision|full-load|cdc-start|cdc-stop|cdc-restart|validate|cutover|rollback
     DatabridgeStage { plan_id: String, stage: String },
+    /// Training checkpoints on atlas-native filesystems (seal = snapshot + retention lock + prune)
+    Checkpoint {
+        #[command(subcommand)]
+        cmd: checkpoint::CheckpointCommand,
+    },
     /// Talk to atlas-io-agent (eBPF storage sensor)
     Io {
         #[command(subcommand)]
@@ -694,6 +701,15 @@ async fn main() -> Result<()> {
     let cli = Cli::parse();
     let client = reqwest::Client::new();
     let base = cli.base_url.trim_end_matches('/');
+
+    if let Command::Checkpoint { .. } = &cli.command {
+        let Command::Checkpoint { cmd } = cli.command else { unreachable!() };
+        let code = checkpoint::run(&client, base, cli.token.as_deref(), cmd).await?;
+        if code != 0 {
+            std::process::exit(code);
+        }
+        return Ok(());
+    }
 
     if let Command::Io { cmd } = &cli.command {
         return io_request(&client, &cli.io_url, cli.token.as_deref(), cmd).await;
@@ -1282,6 +1298,7 @@ async fn main() -> Result<()> {
         Command::DatabridgeSources => ("GET", "/api/atlas/v1/databridge/sources".to_string(), None),
         Command::DatabridgePlans => ("GET", "/api/atlas/v1/databridge/plans".to_string(), None),
         Command::Io { .. } => unreachable!("io handled above"),
+        Command::Checkpoint { .. } => unreachable!("checkpoint handled above"),
         Command::DatabridgeStage { plan_id, stage } => {
             let path = match stage.as_str() {
                 "assess" => format!("/api/atlas/v1/databridge/plans/{plan_id}/assess"),

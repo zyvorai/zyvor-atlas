@@ -332,6 +332,9 @@ of its file sizes (0 when empty), expanding it is refused, and the requested siz
 only used for tenant quota admission. Block data routes (`/volumes/{id}/data`) refuse filesystems;
 mount them with `atlas-native-mount` instead.
 
+`atlasctl checkpoint seal` snapshots and retention-locks a finished training checkpoint on a
+filesystem and prunes older ones (`docs/CHECKPOINTS.md`).
+
 ## Agent workspaces
 
 An agent workspace is an instant, isolated, disposable copy of an atlas-native volume or filesystem

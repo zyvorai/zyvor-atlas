@@ -784,10 +784,15 @@ name = "atlasctl"
 version = "0.12.0"
 dependencies = [
  "anyhow",
+ "atlas-common",
+ "atlas-driver-native",
+ "atlas-gateway",
+ "axum",
  "clap",
  "reqwest 0.13.5",
  "rustls",
  "serde_json",
+ "tempfile",
  "tokio",
 ]
 
