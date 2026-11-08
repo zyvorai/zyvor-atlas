@@ -18,7 +18,7 @@ atlas-driver-core = { workspace = true }
 atlas-driver-macos = { workspace = true }
 anyhow = { workspace = true }
 axum = { workspace = true }
-axum-server = { version = "0.8", default-features = false, features = ["tls-rustls-no-provider"] }
+axum-server = { version = "0.9", default-features = false, features = ["tls-rustls-no-provider"] }
 clap = { workspace = true }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
 serde = { workspace = true }

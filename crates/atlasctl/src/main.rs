@@ -689,6 +689,8 @@ async fn get_print(client: &reqwest::Client, token: Option<&str>, url: &str) -> 
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // reqwest is built with `rustls-no-provider` (see Cargo.toml); install ring before any client.
+    let _ = rustls::crypto::ring::default_provider().install_default();
     let cli = Cli::parse();
     let client = reqwest::Client::new();
     let base = cli.base_url.trim_end_matches('/');
