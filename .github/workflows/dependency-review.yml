@@ -18,8 +18,12 @@ jobs:
         with:
           fail-on-severity: high
           # Mirrors deny.toml's [licenses] allow-list, so a PR gets the same signal
-          # cargo-deny already gives main for the Rust side.
+          # cargo-deny already gives main for the Rust side. MIT-0 and 0BSD are permissive
+          # (MIT / BSD without the notice requirement) and appear in the website lockfile.
           allow-licenses: >-
             MIT, Apache-2.0, Apache-2.0 WITH LLVM-exception, BSD-2-Clause, BSD-3-Clause, ISC,
-            Unicode-3.0, Zlib, Unlicense, BSL-1.0, Apache-2.0, CDLA-Permissive-2.0
+            Unicode-3.0, Zlib, Unlicense, BSL-1.0, Apache-2.0, CDLA-Permissive-2.0, MIT-0, 0BSD
+          # caniuse-lite is browser-support data (CC-BY-4.0), build-time only via browserslist in
+          # the website and UI toolchains; exempted by name so CC-BY-4.0 stays rejected elsewhere.
+          allow-dependencies-licenses: pkg:npm/caniuse-lite
           comment-summary-in-pr: always

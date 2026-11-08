@@ -6,7 +6,7 @@
 # purpose. Built with the `bpf` feature: clang + libbpf headers compile the CO-RE object, which is
 # embedded in the binary (the runtime image needs no BPF tooling).
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS builder
+FROM docker.io/library/rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends clang libbpf-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
@@ -14,7 +14,7 @@ COPY . .
 RUN cargo build --release -p atlas-io --features bpf,mcp --bin atlas-io-agent
 
 # ---- runtime ----
-FROM docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
+FROM docker.io/library/debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --system --uid 10001 --home /var/lib/atlas-io atlas-io \

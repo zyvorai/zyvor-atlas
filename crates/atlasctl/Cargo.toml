@@ -10,16 +10,15 @@ authors.workspace = true
 [dependencies]
 clap = { workspace = true }
 # atlasctl is the only crate cross-compiled for release (release.yml's binaries matrix, incl.
-# aarch64-unknown-linux-gnu) — the workspace default (native-tls, via openssl-sys) needs a
-# target-arch OpenSSL that the cross toolchain doesn't have. rustls-tls has no C dependency, so
-# it cross-compiles cleanly; scoped to just this crate (declared directly rather than inheriting
-# `workspace = true`, since a member can't turn default-features off through that path), not the
-# workspace default — the gateway's own HTTPS listener/outbound client elsewhere still use
-# native-tls unchanged. `-native-roots` (rustls-native-certs, reading the OS trust store) instead
-# of plain rustls-tls's bundled webpki-roots: closer parity with native-tls's old behavior
-# (trusts system-configured CAs, e.g. a corporate proxy root) and sidesteps webpki-roots'
-# CDLA-Permissive-2.0 license, which isn't on deny.toml's allow-list.
-reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "rustls-tls-native-roots"] }
+# aarch64-unknown-linux-gnu) — the workspace default (aws-lc-rs) needs a C/cmake toolchain for the
+# target arch that the cross toolchain doesn't have. `rustls-no-provider` + the `ring` provider
+# installed in main() has no such dependency, so it cross-compiles cleanly; scoped to just this
+# crate (declared directly rather than inheriting `workspace = true`, since a member can't turn
+# default-features off through that path), not the workspace default. reqwest 0.13's rustls
+# backend verifies through the OS trust store (rustls-platform-verifier), the same trust model as
+# the former `rustls-tls-native-roots` feature, and keeps webpki-roots out of the graph.
+reqwest = { version = "0.13", default-features = false, features = ["json", "stream", "rustls-no-provider"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 anyhow = { workspace = true }

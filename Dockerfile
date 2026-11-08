@@ -1,20 +1,20 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
 # SPDX-License-Identifier: Apache-2.0
 # ---- UI builder (React Storage Center → dist) ----
-FROM docker.io/library/node:26-alpine@sha256:ef24c5053d50fdc3e4e56eb4e7ddb7861874ab0fdc797046ba897581deb8e868 AS ui
+FROM docker.io/library/node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS ui
 WORKDIR /ui
-# node:22-alpine ships npm 10.9.8, which mis-resolves this lockfile's optional/platform deps
-# (npm ci "succeeds" but leaves node_modules incomplete — vite/rollup then fail to resolve
-# packages like recharts that are present on disk with a valid package.json). npm >=11 installs
-# cleanly against the same lockfile; pin newer npm before `ci` rather than downgrading the base image.
-RUN npm install -g npm@12.0.2
+# npm >=11 is required: node:22-alpine's npm 10.9.8 mis-resolves this lockfile's optional/platform
+# deps (npm ci "succeeds" but leaves node_modules incomplete — vite/rollup then fail to resolve
+# packages like recharts that are present on disk with a valid package.json). The digest-pinned
+# node:26-alpine image bundles npm 11.x, so no global npm upgrade step is needed (it was a
+# download without a hash pin, flagged by Scorecard's PinnedDependencies check).
 COPY crates/atlas-gateway/ui/package.json crates/atlas-gateway/ui/package-lock.json ./
 RUN npm ci
 COPY crates/atlas-gateway/ui/ ./
 RUN npm run build
 
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:9181b56c2a21ab1d5e73cffe04fc762426d30aa7fac3c91141dd033f49a7fc8b AS builder
+FROM docker.io/library/rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
 # protoc for the gRPC crates; cmake for the vendored librdkafka (kafka-lag feature).
 RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler cmake && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
@@ -27,7 +27,7 @@ RUN cargo build --release -p atlas-gateway -p atlasctl \
     --features atlas-gateway/mcp,atlas-databridge/mongodb,atlas-databridge/sqlserver,atlas-databridge/oracle,atlas-databridge/kafka-lag
 
 # ---- runtime ----
-FROM docker.io/library/debian:bookworm-slim@sha256:99c0b25c46d0214d5a2091092e7908907dcaecd6a962cde0ac700acee222b6f3 AS runtime
+FROM docker.io/library/debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
 # ceph/rbd CLIs are only needed when ATLAS_CEPH_DRIVER_MODE=real against a real cluster.
 # zfsutils-linux (zpool/zfs) + util-linux (lsblk/wipefs/findmnt) are only exercised when
 # ATLAS_ZFS_DRIVER_MODE=real against a raw host disk (see docs/DISKS.md) — the container still

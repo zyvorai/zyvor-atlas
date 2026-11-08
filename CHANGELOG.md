@@ -9,6 +9,19 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Security
+
+- UI: `minimatch` is forced to `^11.0.1` through an npm `overrides` entry, closing Dependabot alert #48 (GHSA-g3hv-75wg-m249, pattern amplification in `firstPhasePreProcess`; every 10.x release is affected and `eslint`, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still depend on `^10`, so the override is the only fix). Dependabot alert #44 (`deepmerge`, via `@svgr/webpack` in the docs site) still has no patched release (`deepmerge` 4.3.1 is the latest) and remains open.
+- Dockerfile and Dockerfile.ceph no longer run `npm install -g npm@12.0.2`: the digest-pinned `node:26-alpine` image already bundles npm 11, which is what the UI lockfile needs. This removes the unpinned download behind the Scorecard PinnedDependencies alerts #101 and #102.
+
+### Changed
+
+- Cargo: `cargo update` (arc-swap, educe, jiff), `axum-server` 0.8 to 0.9 (gateway, mac agent) and `atlasctl` moves from `reqwest` 0.12 to 0.13 (`rustls-no-provider` plus the `ring` provider installed in `main`, so it still cross-compiles without a C toolchain). `azure_*` 0.21 stays: the only newer release is the 1.x rewrite with a different API.
+- UI: `jsdom` 30 to 31 (needs Node 22.22.2 or later; `.nvmrc` stays `22`) plus in-range bumps (`vite`, `tailwindcss`, `@tanstack/react-query`, `lucide-react`, `zustand`, `axios`, and others). TypeScript stays on 6.x because `typescript-eslint` caps `<6.1.0`. Docs site: lockfile refresh (Babel and friends).
+- Python: `pyiceberg` 0.10 to 0.12 and the hashed lockfiles recompiled with `uv`. `psycopg` stays at 3.3.6 (LGPL-3.0, which the dependency-review license allow-list rejects whenever its version changes).
+- Container images: refreshed the digests of `node:26-alpine`, `rust:1.99-bookworm`, `debian:bookworm-slim` and `python:3.12-slim`.
+- GitHub Actions: `docker/login-action` 4.8.0, `sigstore/cosign-installer` 4.1.3, `amannn/action-semantic-pull-request` 6.1.2, `github/codeql-action` 4.39.3, `actions/upload-pages-artifact` 5.0.0, and the moving `v2`/`v3` pins of `taiki-e/install-action` and `softprops/action-gh-release`.
+
 ## [0.12.0] — 2026-11-08
 
 ### Added
