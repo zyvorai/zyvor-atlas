@@ -129,6 +129,39 @@ async fn data_tools_map_identity_cap_responses_and_gate_writes() {
     assert!(r.contains("not found"), "{r}");
     a.cancel().await.unwrap();
 
+    // Run id: nothing above sent one, so no request carried the header.
+    assert!(fake.run_ids().iter().all(|r| r.is_empty()), "no run id, no header: {:?}", fake.run_ids());
+    // With one on the MCP connection, every atlas_data request of the call carries exactly that value:
+    // a read, a body-carrying write plan (review) and the execute.
+    let r = connect_with_run(addr, &mint("agent-a", "operator", "tenant-a", &[]), Some("run-7.a:b_c-9")).await;
+    let before = fake.seen.lock().unwrap().len();
+    call(&r, "data_artifact_get", json!({"artifact_id": ART_A})).await.unwrap();
+    let discard = json!({"workspace_id": "ws1"});
+    let plan = call(&r, "data_workspace_discard", discard.clone()).await.unwrap();
+    let mut exec = discard;
+    exec["confirmation_token"] = plan["confirmation_token"].clone();
+    assert_eq!(call(&r, "data_workspace_discard", exec).await.unwrap()["executed"], true);
+    let seen = fake.seen.lock().unwrap().clone();
+    assert!(seen.len() >= before + 3, "{seen:?}");
+    for s in &seen[before..] {
+        assert_eq!(s.run_ids, ["run-7.a:b_c-9"], "{} must carry the run id once", s.action);
+        assert!(s.body.get("run_id").is_none(), "the id travels in the header, not the body: {s:?}");
+    }
+    r.cancel().await.unwrap();
+    // A longest-legal id is forwarded verbatim; an invalid one refuses the call before any request.
+    let long = format!("L{}", "x".repeat(63));
+    let r = connect_with_run(addr, &mint("agent-a", "operator", "tenant-a", &[]), Some(&long)).await;
+    let before = fake.seen.lock().unwrap().len();
+    call(&r, "data_job_ready", json!({"job": "job-a"})).await.unwrap();
+    assert_eq!(fake.seen.lock().unwrap().last().unwrap().run_ids, [long]);
+    r.cancel().await.unwrap();
+    let r = connect_with_run(addr, &mint("agent-a", "operator", "tenant-a", &[]), Some("bad id")).await;
+    let n = fake.seen.lock().unwrap().len();
+    assert_eq!(n, before + 1);
+    assert!(call(&r, "data_job_ready", json!({"job": "job-a"})).await.unwrap_err().contains("X-Atlas-Run-Id"));
+    assert_eq!(fake.seen.lock().unwrap().len(), n, "an invalid run id never reaches atlas_data");
+    r.cancel().await.unwrap();
+
     // A viewer cannot plan a write, and still can read.
     let v = connect(addr, &mint("viewer", "viewer", "tenant-a", &[])).await;
     assert!(call(&v, "data_job_release", json!({"job": "job-a"})).await.is_err());

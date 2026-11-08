@@ -100,16 +100,19 @@ pub fn mint(subject: &str, role: &str, tenant: &str, tools: &[&str]) -> String {
 pub type Client = rmcp::service::RunningService<rmcp::RoleClient, ()>;
 
 pub async fn connect(addr: SocketAddr, token: &str) -> Client {
+    connect_with_run(addr, token, None).await
+}
+
+/// Like [`connect`], optionally sending `X-Atlas-Run-Id` on the MCP connection.
+pub async fn connect_with_run(addr: SocketAddr, token: &str, run_id: Option<&str>) -> Client {
     use rmcp::transport::StreamableHttpClientTransport;
     use rmcp::ServiceExt;
-    let http_client = reqwest::Client::builder()
-        .default_headers({
-            let mut headers = reqwest::header::HeaderMap::new();
-            headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
-            headers
-        })
-        .build()
-        .unwrap();
+    let mut headers = reqwest::header::HeaderMap::new();
+    headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+    if let Some(r) = run_id {
+        headers.insert("x-atlas-run-id", r.parse().unwrap());
+    }
+    let http_client = reqwest::Client::builder().default_headers(headers).build().unwrap();
     let transport = StreamableHttpClientTransport::with_client(
         http_client,
         rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(format!(
@@ -144,6 +147,8 @@ pub struct Seen {
     pub action: String,
     pub bearer: String,
     pub body: Value,
+    /// The `X-Atlas-Run-Id` header values on the request (empty: none sent).
+    pub run_ids: Vec<String>,
 }
 
 #[derive(Default)]
@@ -154,6 +159,11 @@ pub struct Fake {
 impl Fake {
     pub fn count(&self, action: &str) -> usize {
         self.seen.lock().unwrap().iter().filter(|s| s.action == action).count()
+    }
+
+    /// The run-id header values of every request recorded so far, in order.
+    pub fn run_ids(&self) -> Vec<Vec<String>> {
+        self.seen.lock().unwrap().iter().map(|s| s.run_ids.clone()).collect()
     }
 }
 
@@ -173,7 +183,12 @@ async fn rpc(
 ) -> (StatusCode, String) {
     let bearer = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
     let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
-    fake.seen.lock().unwrap().push(Seen { action: action.clone(), bearer, body: body.clone() });
+    let run_ids = headers
+        .get_all("x-atlas-run-id")
+        .iter()
+        .map(|v| v.to_str().unwrap_or("<non-utf8>").to_string())
+        .collect();
+    fake.seen.lock().unwrap().push(Seen { action: action.clone(), bearer, body: body.clone(), run_ids });
     let Some(tenant) = tenant_of(&headers) else {
         return (StatusCode::UNAUTHORIZED, json!({"error": "invalid bearer token"}).to_string());
     };

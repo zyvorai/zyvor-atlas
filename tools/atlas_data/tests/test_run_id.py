@@ -58,6 +58,20 @@ class RunIdTests(unittest.TestCase):
         with self.assertRaises(DataError):
             self.client.request("POST", "/v1/chunks", b"x", headers={"X-Atlas-Run-Id": "a b"})
 
+    def test_the_gateway_wire_form_is_accepted(self):
+        """The Atlas gateway POSTs /v1/rpc/<action> with a lowercase `x-atlas-run-id` and no run_id in the body."""
+        beat = json.dumps({"node": "n1", "capacity": 10, "bandwidth": 1, "labels": {}}).encode()
+        longest = "L" + "x" * 63
+        for run in ("run-7.a:b_c-9", longest, "0", "A"):
+            self.client.request("POST", "/v1/rpc/nodes.heartbeat", beat,
+                                headers={"Content-Type": "application/json", "x-atlas-run-id": run})
+            self.assertEqual({r["run_id"] for r in self.events(run_id=run)}, {run}, run)
+        # One more than the longest legal id is the same 400 the gateway would have refused first.
+        with self.assertRaises(DataError) as c:
+            self.client.request("POST", "/v1/rpc/nodes.heartbeat", beat,
+                                headers={"Content-Type": "application/json", "x-atlas-run-id": longest + "x"})
+        self.assertEqual(c.exception.status, 400)
+
     def test_header_and_field_must_agree(self):
         with self.assertRaises(DataError):
             self.client.request("POST", "/v1/rpc/nodes.heartbeat",
