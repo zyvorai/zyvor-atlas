@@ -348,8 +348,25 @@ pub async fn auth_middleware(
             .get(http::header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
             .and_then(|s| s.strip_prefix("Bearer "));
+        // On the MCP endpoint a 401 also carries the RFC 9728 challenge (`WWW-Authenticate` with
+        // `resource_metadata`) so an MCP client can discover how to authenticate; REST 401s are
+        // unchanged. `invalid` marks a presented-but-refused token (RFC 6750 `invalid_token`).
+        // Built eagerly into owned values: a borrow of `req` (its body is not `Sync`) must not
+        // live across the `.await` below.
+        let challenges = is_mcp_path(req.uri().path()).then(|| {
+            let url = state.public_url.as_deref();
+            (
+                crate::oauth_resource::challenge(url, req.headers(), false),
+                crate::oauth_resource::challenge(url, req.headers(), true),
+            )
+        });
+        let challenge = |invalid: bool| {
+            challenges
+                .as_ref()
+                .map(|(missing, bad)| if invalid { bad } else { missing }.clone())
+        };
         let Some(token) = token else {
-            return unauthorized("missing bearer token");
+            return unauthorized("missing bearer token", challenge(false));
         };
         // Bootstrap admin: raw bearer accepted until the operator mints real JWTs and unsets
         // ATLAS_BOOTSTRAP_ADMIN_TOKEN. Checked before JWT decode so it need not be a valid JWT.
@@ -384,7 +401,7 @@ pub async fn auth_middleware(
                         match atlas_inventory::tokens::is_revoked(&state.pool, &data.claims.jti)
                             .await
                         {
-                            Ok(true) => return unauthorized("token has been revoked"),
+                            Ok(true) => return unauthorized("token has been revoked", challenge(true)),
                             Ok(false) => {}
                             Err(e) => tracing::warn!("token revocation check failed: {e}"),
                         }
@@ -399,21 +416,15 @@ pub async fn auth_middleware(
                         jti: data.claims.jti,
                     }
                 }
-                Err(e) => return unauthorized(&format!("invalid token: {e}")),
+                Err(e) => return unauthorized(&format!("invalid token: {e}"), challenge(true)),
             }
         }
     };
 
     // A scoped agent token is valid only on the MCP edge (`/mcp`, or the full path when the layer
     // sees it unstripped); everywhere else it is refused, not silently given its role's reach.
-    if actor.is_scoped() {
-        let path = req.uri().path();
-        let on_mcp = ["/mcp", "/api/atlas/v1/mcp"]
-            .iter()
-            .any(|p| path == *p || path.strip_prefix(*p).is_some_and(|r| r.starts_with('/')));
-        if !on_mcp {
-            return forbidden("this token is scoped to MCP tools and is not valid on this route");
-        }
+    if actor.is_scoped() && !is_mcp_path(req.uri().path()) {
+        return forbidden("this token is scoped to MCP tools and is not valid on this route");
     }
 
     // Rate limit per actor (day-2 governance; disabled unless ATLAS_RATE_LIMIT_RPM > 0).
@@ -511,12 +522,25 @@ pub(crate) fn normalize_console_role(role: &str) -> Result<&'static str, String>
     }
 }
 
-fn unauthorized(msg: &str) -> Response {
-    (
+/// True for the MCP endpoint (`/mcp`, or the full path when the layer sees it unstripped) and
+/// anything under it.
+fn is_mcp_path(path: &str) -> bool {
+    ["/mcp", "/api/atlas/v1/mcp"]
+        .iter()
+        .any(|p| path == *p || path.strip_prefix(*p).is_some_and(|r| r.starts_with('/')))
+}
+
+/// A 401. `www_authenticate` is set only on the MCP endpoint (see `auth_middleware`).
+fn unauthorized(msg: &str, www_authenticate: Option<http::HeaderValue>) -> Response {
+    let mut resp = (
         StatusCode::UNAUTHORIZED,
         Json(json!({ "error": { "code": "AUTH_ERROR", "message": msg } })),
     )
-        .into_response()
+        .into_response();
+    if let Some(v) = www_authenticate {
+        resp.headers_mut().insert(http::header::WWW_AUTHENTICATE, v);
+    }
+    resp
 }
 
 fn forbidden(msg: &str) -> Response {

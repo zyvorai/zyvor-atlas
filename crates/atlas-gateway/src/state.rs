@@ -351,6 +351,9 @@ pub struct AppState {
     pub rate: RateLimiter,
     /// OIDC/SSO login, when configured and discovery succeeded at startup.
     pub oidc: Option<Arc<OidcRuntime>>,
+    /// Validated `ATLAS_PUBLIC_URL` origin (see `oauth_resource`); `None` derives the URL from the
+    /// request's `Host`. Only the MCP OAuth metadata and 401 challenge read it.
+    pub public_url: Option<String>,
 }
 
 impl AppState {

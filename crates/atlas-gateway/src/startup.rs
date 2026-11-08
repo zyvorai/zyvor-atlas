@@ -17,6 +17,7 @@ use atlas_driver_longhorn::LonghornDriver;
 use atlas_driver_nfs::{FakeNfsDriver, RealNfsDriver};
 use atlas_driver_zfs::{FakeZfsDriver, RealZfsDriver};
 
+use crate::oauth_resource::parse_public_url;
 use crate::state::AppState;
 
 /// The single Ceph backend id used by the MVP.
@@ -568,6 +569,15 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
     // OIDC/SSO: discover the issuer now (once) if configured; `None` on any failure just means
     // no "Sign in with SSO" button, not a failed startup.
     let oidc = crate::state::build_oidc_runtime(&config).await;
+    // Externally visible origin for the MCP OAuth metadata. A bad value fails startup rather than
+    // silently falling back to trusting the Host header.
+    let public_url = match std::env::var("ATLAS_PUBLIC_URL")
+        .ok()
+        .filter(|v| !v.trim().is_empty())
+    {
+        Some(raw) => Some(parse_public_url(&raw).map_err(|e| anyhow::anyhow!("ATLAS_PUBLIC_URL: {e}"))?),
+        None => None,
+    };
     let state = AppState {
         pool,
         config: Arc::new(config),
@@ -577,6 +587,7 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         workers: crate::state::WorkerHealth::default(),
         rate: crate::state::RateLimiter::new(rpm),
         oidc,
+        public_url,
     };
 
     if opts.initial_discovery {

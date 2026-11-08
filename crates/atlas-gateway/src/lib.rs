@@ -6,6 +6,7 @@ pub mod auth;
 pub mod grpc;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+pub mod oauth_resource;
 pub mod routes;
 pub mod startup;
 pub mod state;
