@@ -335,6 +335,11 @@ its prefix digest, splitting a block over the 4 MiB service limit into parts beh
 longest unbroken prefix, treating a lost part as a miss. Unit tested over the local HTTP service
 only; it is not registered with, or tested against, vLLM, and no GPU or speedup claim is made.
 
+This service-backed store is separate from pointing an inference engine's own cold tier at Atlas. For LMCache's
+filesystem and S3 backends on an Atlas mount or the native S3 gateway, and for snapshot recipes for pgvector, Qdrant,
+Lance and Milvus, see [AI_STORAGE_RECIPES.md](AI_STORAGE_RECIPES.md) (documentation and a CPU-only probe; none of those
+products has been run against Atlas).
+
 ## Recovery and cost evidence
 
 A recovery profile is a server-side allowlisted argv array, for example:

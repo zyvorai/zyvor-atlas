@@ -47,6 +47,9 @@ none of this has been exercised against a real engine.
 3. Give the engine that directory (file backend) or bucket (S3 backend) as its cache location.
 4. Run the smoke test below against the same path before trusting it.
 
+For LMCache's `fs` and `s3` L2 adapters specifically (their configuration keys, the S3 adapter's virtual-hosted-only
+addressing, and what the filesystem adapter does to the directory), see [AI_STORAGE_RECIPES.md](AI_STORAGE_RECIPES.md).
+
 ## Smoke test
 
 `deploy/native/kvcache-smoke.sh <dir>` exercises the I/O pattern of a KV-cache tier against any directory, and

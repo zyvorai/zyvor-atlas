@@ -9,6 +9,11 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- `docs/AI_STORAGE_RECIPES.md`: how to point LMCache's `fs`, `fs_native` and `s3` L2 adapters at an `atlas-native-mount` path or the native S3 gateway (the S3 adapter supports virtual-hosted addressing only, so the gateway needs `s3.domains` and wildcard DNS), and a snapshot matrix for pgvector, Qdrant, Lance and Milvus with `atlasctl snapshot-volume` / `lock-snapshot` recipes. Documentation only: none of those products has been run against Atlas. Sources and unconfirmed points are listed in the page.
+- `deploy/native/s3-pattern-probe.py` (standard library only, with offline tests in `deploy/native/test_s3_pattern_probe.py`): replays the request shapes of LMCache's S3 adapter against a gateway, path-style or virtual-hosted, reports how many concurrent `If-None-Match: *` PUTs succeed, and races `link()` calls on a mount. Measures no throughput and does not use LMCache or the AWS CRT client.
+
 ### Security
 
 - UI: `minimatch` is forced to `^11.0.1` through an npm `overrides` entry, closing Dependabot alert #48 (GHSA-g3hv-75wg-m249, pattern amplification in `firstPhasePreProcess`; every 10.x release is affected and `eslint`, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still depend on `^10`, so the override is the only fix). Dependabot alert #44 (`deepmerge`, via `@svgr/webpack` in the docs site) still has no patched release (`deepmerge` 4.3.1 is the latest) and remains open.
@@ -21,6 +26,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - Python: `pyiceberg` 0.10 to 0.12 and the hashed lockfiles recompiled with `uv`. `psycopg` stays at 3.3.6 (LGPL-3.0, which the dependency-review license allow-list rejects whenever its version changes).
 - Container images: refreshed the digests of `node:26-alpine`, `rust:1.99-bookworm`, `debian:bookworm-slim` and `python:3.12-slim`.
 - GitHub Actions: `docker/login-action` 4.8.0, `sigstore/cosign-installer` 4.1.3, `amannn/action-semantic-pull-request` 6.1.2, `github/codeql-action` 4.39.3, `actions/upload-pages-artifact` 5.0.0, and the moving `v2`/`v3` pins of `taiki-e/install-action` and `softprops/action-gh-release`.
+- `docs/NATIVE_S3.md`: records that virtual-hosted-style requests (`Host: <bucket>.<domain>:<port>`, plain-process gateway with `--domain`) passed the probe on 2026-11-08 (Helm `s3.domains`, wildcard DNS, HTTPS and CRT/SDK clients still unverified), and that eight concurrent `If-None-Match: *` PUTs of one key all succeeded, so the condition is not usable as a lock.
 
 ## [0.12.0] — 2026-11-08
 
