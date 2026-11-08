@@ -341,6 +341,61 @@ of its file sizes (0 when empty), expanding it is refused, and the requested siz
 only used for tenant quota admission. Block data routes (`/volumes/{id}/data`) refuse filesystems;
 mount them with `atlas-native-mount` instead.
 
+## Agent workspaces
+
+An agent workspace is an instant, isolated, disposable copy of an atlas-native volume or filesystem
+(or of one of its snapshots) for one agent run. It is the snapshot and clone described above with a
+lifetime, an owner and a size limit around them: nothing is copied, the clone shares extents with its
+snapshot until it is written, and the source is never written.
+
+```
+POST   /api/atlas/v1/workspaces                {"source_volume_id": "vol_native_fs_<id>", "name": "run-42", "ttl_secs": 3600, "max_bytes": 0}
+GET    /api/atlas/v1/workspaces                 (tenant-scoped; admins see every tenant)
+GET    /api/atlas/v1/workspaces/{id}
+POST   /api/atlas/v1/workspaces/{id}/reset      roll back to the base snapshot
+DELETE /api/atlas/v1/workspaces/{id}            discard
+```
+
+Give `source_volume_id` (Atlas snapshots it now) or `source_snapshot_id` (an existing snapshot, which
+Atlas leaves alone when the workspace goes away). The result carries the workspace `id`, its own
+`volume_id` (a normal volume; mount it with `atlas-native-mount`, or use `/volumes/{id}/data` for a
+block source), `state`, `used_bytes`, `over_cap` and `remaining_secs`.
+
+- **Create, reset and discard** need the operator role and a source in the caller's tenant (another
+  tenant gets 404). Only atlas-native sources are accepted.
+- **Reset** deletes the clone and everything written to it and clones again from the same base
+  snapshot. The workspace keeps its id and its expiry (a reset does not extend it); its `volume_id`
+  changes. If the re-clone fails the workspace is `reset_failed` with no volume and `last_error` set;
+  reset again, or discard it.
+- **Discard** deletes the clone, then the snapshot Atlas took for it (kept, and reported as
+  `base_snapshot_retained`, if some other volume was cloned from it), then the record.
+- **TTL**: `ttl_secs` is 60 to `ATLAS_WORKSPACE_MAX_TTL_SECS` (default 7 days), default 3600. A
+  background worker discards expired workspaces and finishes half-done teardowns every
+  `ATLAS_WORKSPACE_GC_SECS` seconds (default 60, minimum 5, `0` turns it off). State changes are
+  compare-and-set, so several gateway replicas on Postgres can run it at once.
+- **Limits**: the clone goes through the normal clone path, so the tenant's byte and volume-count
+  quota applies and a refused create leaves nothing behind. `ATLAS_WORKSPACE_MAX_PER_TENANT`
+  (default 10, `0` = no limit) caps live workspaces per tenant. `max_bytes` (or
+  `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) refuses a source larger than that at create time. It is an
+  admission check, not a hard limit: a native filesystem has no size limit, so growth after creation
+  is only reported (`over_cap`), and the tenant byte quota is what bounds it. The per-tenant count
+  is checked before the create, so two simultaneous creates can overshoot it by one. A per-owner
+  budget on the sum of `max_bytes` (token `workspace_bytes`, `ATLAS_AGENT_WORKSPACE_BYTES`) is checked at
+  the same point; see [MCP.md](../control-plane/mcp.md#agent-identity-and-guardrails).
+- Create, reset, discard and expiry are audited (`workspace.create`, `workspace.reset`,
+  `workspace.discard`, `workspace.expire`).
+
+The same operations are MCP tools for agents (`list_workspaces`, `get_workspace`, and the guarded
+two-phase `create_workspace`, `reset_workspace`, `discard_workspace`); see [MCP.md](../control-plane/mcp.md). There is
+no `atlasctl` command for workspaces yet.
+
+Tested over the fixture driver through the gateway (`crates/atlas-gateway/tests/workspaces.rs`,
+`mcp_workspaces.rs`): create, write, reset and discard with the source untouched, TTL expiry GC,
+quota, size-cap and count refusals, tenant isolation and roles. The fixture driver does not model
+files, so a filesystem workspace is not written through the gateway in these tests (a block source is,
+through `/volumes/{id}/data`); filesystem snapshot and clone themselves are tested against live
+in-process nodes in `crates/atlas-driver-native/tests/nodes.rs`. Not run against a lab cluster.
+
 ## NFS
 
 The FUSE client supports kernel export (`FUSE_EXPORT_SUPPORT`; the node API resolves `.` and `..`
@@ -440,6 +495,59 @@ Checkpoint fast path (large sequential writes, e.g. a training checkpoint):
 - File-backed data-node devices reserve append space under a lock, then write and sync outside
   it, so concurrent appends share the device instead of queueing behind each other's fsync.
 
+### Direct writes (`atlas-native-mount --direct-writes`, off by default)
+
+Implemented and tested in-process only; **not yet run on the lab or measured**, so there is no
+throughput claim. With the flag, a mount sends whole extents to the data nodes itself and the
+metadata leader only allocates and commits:
+
+1. `POST /v1/fs/{fs}/inodes/{ino}/direct-write {offset, len}` (leader): `offset` and `len` are
+   multiples of the filesystem's `extent_bytes` (at most 64 extents). The leader picks the
+   replica targets as it would for its own write, holds their free space in an allocator lease
+   (`inflight`), and returns per extent `replicas + 1` targets (the extra one is a spare for a
+   replica that is down): the data node's address, the device and offset (or "append"), and a
+   write **grant**, together with the leader's term.
+2. The client writes each target with that grant and the term as the fence
+   (`RemoteDevice::write_at_granted` / `append_granted`).
+3. `POST .../direct-commit {lease, cells[{logical_offset, checksum, replicas[{node, device, offset,
+   receipt}]}], failed[]}` (leader): the leader checks every reported replica against the lease
+   (an append must carry the data node's receipt for its offset), requires the usual number of
+   replicas per extent, then commits through the same path as a leader-side write: the Raft
+   proposal is made in the lease's term, so a leader that was replaced cannot commit it. Quota,
+   file size, snapshots and cache-lease recall are unchanged. `POST .../direct-abort {lease}`
+   gives a lease up.
+
+The write credential is separate from read access. Set `grant_key_file` (a secret of at least 16
+bytes, the same file on every metadata and data node). A data node that has it refuses every write
+that lacks a valid HMAC-SHA256 grant from the leader for exactly that node, group, device, fence,
+offset (or append), length and an expiry (30 s by default); the leaders sign their own writes with
+the key. A client that can only read the data nodes (an address, or the cluster client certificate)
+cannot make a grant. Without `grant_key_file` the data nodes accept unauthenticated writes as
+before and the leader refuses to lease direct writes, so the mount keeps writing through the
+leader. Grants travel in the request header, so they are carried the same way over RDMA
+(see "RDMA to the data nodes" below).
+
+Failure handling:
+
+- Any failure of the direct path (no grant key, compression, deduplication or erasure coding
+  enabled, a refused or expired lease, a data node fault with no spare left, a fenced term, a
+  failed commit) is followed by writing that chunk through the leader. A refused lease pauses
+  direct writes for 60 s instead of asking for every run.
+- A client that dies after writing the data nodes but before committing leaves unreferenced
+  bytes and nothing visible. The lease expires; its ranges then stay out of the free list for a
+  grace period (30 s by default, `set_direct_write_timing`) because a write may still be in
+  flight, then the allocator hands them out again. A commit that arrives after expiry is refused.
+- A client holding a lease from an earlier term is refused by the data nodes (`Fenced`) once any
+  newer leader has written to them, and the new leader does not know its lease, so its commit is
+  refused. Leases live in the leader's memory; a failover loses them.
+- Appended (not reused) space that is never committed is not reclaimed, as with a failed
+  leader-side write.
+
+Known gaps: the extent checksum in the commit is the client's word (scrub checks replicas
+against it); direct commits record write volume in the per-minute activity windows but no
+entropy sample, so the ransomware assessment is blinder for them; grants and leases are
+wall-clock based, so leaders and data nodes need roughly synchronized clocks.
+
 Measured 2026-10-05 (release builds; the engine benchmark is `checkpoint_throughput` in
 `tests/datapath_bench.rs`, 1 MiB extents, 3 replicas, 8 MiB writes; the client one is
 `checkpoint_bench` in `atlas-native-fuse/tests/ops.rs`, one file in 128 KiB writes):
@@ -470,8 +578,56 @@ Known limits:
 - The client reuses connections (one per concurrent request) but does not pipeline or batch
   requests, so each metadata operation is one round trip to the leader.
 - A read verifies whole extents, so a small random read transfers and checksums a full extent.
-- Writes always go through the leader; only reads can go direct.
+- Writes go through the leader unless the mount runs with `--direct-writes` (see Direct writes);
+  partial extents, compressed, deduplicated or erasure-coded extents and clusters without a
+  `grant_key_file` always do.
 - Unlink-while-open works only within one mount (see Consistency).
+
+### RDMA to the data nodes (`atlas-native-mount --rdma`, off by default)
+
+`--rdma` (with `--direct-reads` and/or `--direct-writes`) makes the mount's data-node clients ask
+each new connection to switch to RDMA, and keep the resulting connection in the same pool TCP
+connections use. It needs a build with `--features rdma` (Linux, libibverbs), data nodes built the
+same way and started with `ATLAS_NATIVE_RDMA=1`, and `--rdma-gid-index` if the port's GID is not
+index 1. The wire protocol is unchanged, so write grants, receipts and fences work over RDMA
+exactly as over TCP.
+
+- **Plaintext, so never with TLS.** RDMA here carries no encryption. Passing `--rdma` together with
+  a client certificate (`--ca-file` and `--identity-file`, which make the data-node connections
+  mTLS) is a configuration error at startup, as is `RemoteDevice::use_rdma` on a TLS client, and a
+  node never upgrades a TLS connection. Use TLS over TCP, or RDMA on a trusted storage network.
+- **Fallback to TCP.** If a node does not offer RDMA, the transport cannot connect, or a request
+  fails on an RDMA connection, that request or connection is retried over TCP, counted
+  (`RdmaSnapshot`: connects, connect failures, TCP fallback connects, mid-flight errors, requests
+  over RDMA, capped fallbacks, `ENOMEM` failures, live connections), and RDMA is not tried again on that node for 30 s (5 minutes if the node itself
+  declined). A mid-flight retry follows the same rule as a retry on a stale pooled TCP connection:
+  an append can leave an unreferenced copy behind.
+- **Locked memory.** Every RDMA connection pins about 1.06 MiB (17 x 64 KiB) on the client and on
+  the node, counted against `RLIMIT_MEMLOCK`; with a typical 8 MiB limit only a few fit and
+  registering more fails with `ENOMEM`. Raise the limit for the mount and the nodes (systemd
+  `LimitMEMLOCK=infinity`, `ulimit -l unlimited`, a container's `--ulimit memlock=-1:-1` and
+  `IPC_LOCK`; a rootless container cannot exceed its host hard limit; in Kubernetes set the
+  runtime default and add `IPC_LOCK`). As a safeguard the client keeps at most
+  `RdmaConfig::max_connections` RDMA connections alive across all its data-node clients, by default
+  half of the soft limit divided by 1.06 MiB (at least 1; 64 when unlimited). Beyond that, new
+  connections use TCP and are counted as `capped_fallbacks` in `RdmaSnapshot` (not a failure, no
+  back-off); `enomem_failures` counts setups that hit `ENOMEM` anyway, `live_connections` is the
+  current count, and `RdmaStats::diagnostics()` holds the explanations (logged once by the mount).
+  The mount and `atlas-native-node` warn at startup when the soft limit is under 64 MiB. Details
+  and what was verified: `docs/NATIVE_STORAGE.md`, "RDMA and `RLIMIT_MEMLOCK`".
+- **Idle connections.** A pooled RDMA connection may sit idle indefinitely: the node waits for the
+  next request (waking every 500 ms to notice shutdown) rather than closing after the stream's 30 s
+  read timeout. A request that starts and then stalls for 30 s still fails.
+- **One owner thread per RDMA connection.** The verbs objects borrow from one another, so each
+  client connection runs on a worker thread that owns them for the connection's lifetime
+  (`rdma_link::WorkerStream`); the pooled handle talks to it over channels.
+- Verified only on SoftRoCE over loopback on one dev host (`crates/atlas-native-fuse/tests/ops.rs`,
+  `real_rdma_*`, `--ignored`, `--features rdma`): direct reads and direct writes with the memlock
+  limit raised for the test process, and graceful degradation to TCP under the default 8 MiB limit.
+  No RDMA hardware, and no throughput or latency numbers.
+- Not built: pipelined sends, messages larger than the existing 64 KiB, registered-memory
+  zero-copy and one-sided RDMA READ/WRITE. The stream is the same synchronous send/receive as
+  before; nothing here is a performance claim.
 
 ## Verification
 
@@ -484,6 +640,11 @@ Known limits:
   clone isolation, concurrent creates, direct reads (across extents, after a rewrite) and their
   fallback to the leader; `crates/atlas-native-fuse/src/dirs.rs` unit tests page a 2500-entry
   listing through small kernel buffers with one request per page, and rewind on a seek back.
+- `crates/atlas-native/tests/direct_writes.rs` and the `direct_writes_*` / `a_*` tests at the end of
+  `crates/atlas-native-fuse/tests/ops.rs`: direct writes against in-process data nodes that
+  require grants: grant scoping and expiry, a client dying between data and commit (space
+  reclaimed after expiry and quarantine), a stale-term client fenced (also across a real leader
+  failover), a down replica covered by the spare, forged commits, and fallback to the leader.
 - `crates/atlas-native/tests/allocator.rs`: one write's concurrent extent placements reuse
   distinct free ranges (verified by reading back and scrubbing every replica).
 - `crates/atlas-driver-native/tests/nodes.rs` and `crates/atlas-gateway/tests/native_backend.rs`:

@@ -24,10 +24,10 @@ working first implementation, not production parity with ONTAP or a performance 
 | Workflow | Implemented | Boundary |
 |---|---|---|
 | Shared model cache | Immutable model revisions, deduplicated 4 MiB chunks per tenant, resumable chunk uploads, verified exports, shared worker chunk cache, pinned placements | No Hugging Face proxy or peer-to-peer transport; re-running ingest resumes by deduplicating chunks already uploaded |
-| Data-ready scheduling | Label/health/capacity filtering, transfer-time ranking, transactional reservations, readiness gate, stage worker, lease renew/release | External scheduler must use `DataReadyGate`; no automatic Gryvia controller or Kubernetes scheduler plugin |
+| Data-ready scheduling | Label/health/capacity filtering, transfer-time ranking, transactional reservations, readiness gate, stage worker, lease renew/release | External scheduler must use `DataReadyGate`; `JobController`/`NodeAgent` (unit tested with a fake Gryvia adapter); `HttpGryvia` speaks Gryvia's REST gateway (contract-tested against a local fake, **not run against a live Gryvia**); no Kubernetes scheduler plugin |
 | Agent workspaces | Copy-on-write manifests, path overlays/tombstones, optimistic generations, byte/time budgets, review, selective publication, discard | Branch is a virtual file manifest, not an OS sandbox or writable FUSE mount; export published artifacts into FluxVM separately |
 | Permission-aware data access | Tenant and subject identity from credentials, artifact ownership, live ACL revocation across revisions, filename/name search, authorized chunk retrieval, audit trail | Source POSIX ACLs are imported on request with `acl-sync` (below), not continuously; no AD/SMB/NFSv4 ACL synchronization, semantic embeddings, OCR or vector database |
-| Inference context cache | Exact compatibility keys, subject isolation, TTL, 64 MiB subject budget with LRU eviction, byte-block SDK | Blocks <=4 MiB, no tensor conversion, NIXL transport, GPU residency or drop-in vLLM/MLX connector; adapter required in serving runtime |
+| Inference context cache | Exact compatibility keys, subject isolation, TTL, 64 MiB subject budget with LRU eviction, byte-block SDK | Blocks <=4 MiB, no tensor conversion, NIXL transport, GPU residency; `KVConnector` is untested against vLLM/MLX; adapter required in serving runtime |
 | Dataset releases | Immutable file manifests and checksums, provenance, metadata-only branches, revision diff, verified exports | A release captures uploaded files, not an automatically quiesced database; use existing `atlas_recovery` for coordinated live capture |
 | Application-verified recovery | Isolated temporary restore, all-file checksum validation, allowlisted verification process, deadline, durable pass/fail evidence, latest verified release | Hook must actually start/check/stop its application; no isolation from a malicious trusted hook, no malware-clean certification; snapshot age is not measured RPO |
 | Per-job storage costs | Trusted collectors, integer micro-USD estimates, idempotent measurements, per-meter/job totals, placement transfer estimates | User-configured rates and measurements, not a cloud invoice or automatic eBPF attribution; compute cost is excluded |
@@ -191,8 +191,15 @@ Optional-component failure can return 503; unexpected library failures return 50
 | `iceberg.rows` | `name`, optional `limit` (admin) |
 | `iceberg.compact` | `name`, `expected_snapshot`, optional `max_bytes` (admin) |
 | `iceberg.expire` | `name`, `older_than_seconds`, optional `retain_last` (admin) |
-| `audit.list` | none (admin; last 1000 tenant events) |
+| `audit.list` | optional `run_id` (admin; last 1000 tenant events, each with its `run_id`) |
 | `storage.gc` | none (admin) |
+
+Run id: any call may carry an agent run id, as the `X-Atlas-Run-Id` header or a `run_id` field in the action body (1 to 64 characters of
+`[A-Za-z0-9_.:-]`, starting with a letter or digit; both given must agree; an invalid one is a 400). It is stored in the `run_id` column of
+every audit event the call writes (`events.run_id`, added to an existing SQLite or Postgres catalog on open) and `audit.list` can filter on it.
+It is the same id the Atlas gateway stores on its audit rows (`X-Atlas-Run-Id`, [MCP.md](./mcp.md#agent-identity-and-guardrails)), so a run can be
+joined across both trails. It is correlation only, not authentication. Tested over SQLite (`tools/atlas_data/tests/test_run_id.py`); the Postgres
+catalog statement is not run.
 
 Binary upload: `POST /v1/chunks`, optional `X-Content-SHA256`, <=4 MiB.
 Binary retrieval: `GET /v1/chunks/HASH?artifact=ARTIFACT_ID`. The artifact ACL and
@@ -237,7 +244,7 @@ Secrets you create; none is in the file), and `deploy/k8s/atlas-data-gate-exampl
 ```yaml
 initContainers:
   - name: wait-for-data
-    image: ghcr.io/zyvorai/atlas-data:0.11.0
+    image: ghcr.io/zyvorai/atlas-data:0.12.0
     args: ["--url=https://atlas-data.zyvor-system.svc:5120", "--ca=/etc/atlas-data-ca/ca.crt", "gate-wait", "job-123", "--out=/gate/selection.json"]
     env: [{name: ATLAS_DATA_TOKEN, valueFrom: {secretKeyRef: {name: atlas-data-client, key: token}}}]
 ```
@@ -258,6 +265,49 @@ pod has actually run on a cluster, and no Kubernetes admission or scheduler inte
 The caller is responsible for matching node IDs to Kubernetes hostnames, checking
 compute capacity in Gryvia, and mounting the cache into its workload. Cache capacity
 uses conservative logical artifact sizes; shared physical chunks can consume less.
+
+### Controller and node agent (`controller.py`)
+
+`JobController` runs reserve -> trigger staging on the chosen node -> `wait_ready` -> hand the
+node selector to a scheduler -> renew the lease while the job is live -> release on success,
+failure, lost lease or any admit error. `NodeAgent` heartbeats and runs `Client.stage` for
+reserved jobs, then meters `transfer_bytes` (bytes fetched) and `cache_miss_bytes` (logical size of
+artifacts not in the cache) through `CostCollector`; a missing rate is recorded in `meter_errors`
+and never fails staging. `GryviaAdapter` (`apply_node_selector`, `job_state`, `report`) is our own minimal interface;
+`FakeGryvia` is the in-memory double and `HttpGryvia` (`gryvia_adapter.py`) is the HTTP
+implementation. Unit tested over a real local HTTP service with the fake adapter.
+
+#### `HttpGryvia` and Gryvia's API
+
+Mapped from the Gryvia sources (repo `zyvorai/zyvor-gryvia`, `services/api-gateway/`), not from a
+running instance. Auth is `Authorization: Bearer <token>` (API key or OIDC JWT, `main.py:393-430`).
+
+| Adapter call | Gryvia route | Notes |
+|---|---|---|
+| `job_state` | `GET /api/jobs/{name}` (`main.py:967`) | `status.phase`: Pending/Queued/Scheduling or no status -> `pending`, Running -> `running`, Succeeded, Failed/Rejected -> `failed`, Cancelled/Preempted -> `cancelled`; any other phase is an error |
+| `apply_node_selector` | `POST /api/jobs` (`main.py:1017`) | sets `spec.nodeSelector` on the new job; see the limit below |
+| `report` | none | kept in `HttpGryvia.reports` and logged |
+
+Gryvia has no route that modifies a submitted job and none that attaches a message to one, so:
+
+- Placement can only be applied when the job is created. Call
+  `HttpGryvia.register_job(job, manifest)` with the `GryviaAIJob` manifest (job id must be a DNS
+  label equal to `metadata.name`); Gryvia first sees the job when `apply_node_selector` runs, after
+  the data is ready. A job that was not registered gets `GryviaUnsupported`, never a silent no-op.
+  A create answered 409 is accepted only if the existing job has the identical `nodeSelector`.
+- `report` cannot reach Gryvia. Dataset registration/readiness (`/api/datasets` creates a
+  `GryviaDataset` that Gryvia itself fetches from http/s3/nfs) and GPU reservations
+  (`/api/reservations`, GPU capacity, unrelated to Atlas cache leases) are different concepts and
+  are deliberately not mapped.
+
+Behaviour: per-request timeout (default 10 s); up to 3 retries with exponential backoff (cap 8 s,
+`Retry-After` honoured) on connection errors, timeouts, 429/502/503/504, and also 500 for reads; 401/403 raise
+`GryviaAuthError` and are never retried; other 4xx and malformed responses raise `GryviaError`
+(a `DataError`, with the HTTP status). The token never appears in errors. Contract tests
+(`tests/test_gryvia_adapter.py`) run against a local fake gateway whose routes, auth and payloads are
+copied from those sources, with file:line citations. **Nothing was run against a live Gryvia**; the
+Gryvia SDK's job phase names (`Completed`) differ from the CRD's (`Succeeded`), and this adapter
+follows the CRD. No DaemonSet manifest for the agent or cluster run exists.
 
 ## Agent branches and KV cache
 
@@ -286,6 +336,13 @@ blocks of the longest unbroken leading run, stopping at the first miss. It is en
 stdlib-only: the serving runtime still produces and consumes the block bytes, and nothing here
 says a hit makes inference faster. Unit tested with a fake client; not run against vLLM or any
 engine.
+
+`KVConnector(adapter, block_size)` (`kv_connector.py`) has the shape of a vLLM-style connector
+without importing vLLM: `save(token_ids, blocks)` stores one opaque block per full token block under
+its prefix digest, splitting a block over the 4 MiB service limit into parts behind a manifest
+(validated before any write), and `load(token_ids)` returns `(matched_tokens, blocks)` for the
+longest unbroken prefix, treating a lost part as a miss. Unit tested over the local HTTP service
+only; it is not registered with, or tested against, vLLM, and no GPU or speedup claim is made.
 
 ## Recovery and cost evidence
 
@@ -360,3 +417,12 @@ artifacts remain retained; no online artifact deletion is supplied. Expired work
 and KV metadata is retained for inspection. Orphan files from a crash between disk
 write and catalog commit may need offline cleanup; GC must not be used as a retention
 compliance mechanism. Audit metadata is operational evidence, not a tamper-proof log.
+
+## Agents through the gateway's MCP server
+
+With `ATLAS_DATA_URL` (and a per-tenant credential map) set on the gateway, agents can read artifacts and revisions, a job's data-ready
+state, a workspace review and the cost report, and, with `ATLAS_MCP_WRITE_ENABLE=1`, change/publish/discard a workspace or release a job
+through the two-phase confirm. The service sees each call as the atlas_data identity of the credential the gateway chose for the caller's
+tenant (this API cannot take a subject in the request), so its tenant and ACL checks apply unchanged. The tool list, the identity mapping and
+what could not be exposed (workspace listing, per-node status, KV statistics) are in [MCP.md](./mcp.md#ai-data-tools-atlas_data). Verified only
+against a fake service and the Python contract test; not against a deployed atlas_data, and no agent was tried.
