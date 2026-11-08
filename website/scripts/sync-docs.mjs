@@ -44,6 +44,7 @@ const DOCS = [
   ['RELEASING.md', 'control-plane', 'releasing', 17, 'Releasing'],
   ['AI_DATA_SERVICES.md', 'control-plane', 'ai-data-services', 18, 'AI data services (experimental)'],
   ['AI_INFERENCE.md', 'control-plane', 'ai-inference', 21, 'Inference KV-cache storage'],
+  ['AI_STORAGE_RECIPES.md', 'control-plane', 'ai-storage-recipes', 22, 'AI storage recipes'],
   ['IMAGE_IMPORT.md', 'control-plane', 'image-import', 19, 'Image import'],
   ['NVME.md', 'control-plane', 'nvme', 20, 'NVMe'],
 
