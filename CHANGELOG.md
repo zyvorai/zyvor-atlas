@@ -9,6 +9,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-11-08
+
 ### Added
 
 - `docs/AI_STORAGE_RECIPES.md`: how to point LMCache's `fs`, `fs_native` and `s3` L2 adapters at an `atlas-native-mount` path or the native S3 gateway (the S3 adapter supports virtual-hosted addressing only, so the gateway needs `s3.domains` and wildcard DNS), and a snapshot matrix for pgvector, Qdrant, Lance and Milvus with `atlasctl snapshot-volume` / `lock-snapshot` recipes. Documentation only: none of those products has been run against Atlas. Sources and unconfirmed points are listed in the page.

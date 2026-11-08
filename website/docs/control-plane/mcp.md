@@ -201,7 +201,7 @@ header, so a client sets it once per connection and no tool needs an argument). 
 (`workspace.create`, `snapshot.create`). Filter with `list_audit` (`run_id`), `GET /audit?run_id=` and `atlasctl audit --run-id`. An invalid
 id refuses the call and is audited without it. Rows written by work that runs on another task (background jobs a call enqueues) are not
 tagged. The atlas_data service accepts the same id, as the `X-Atlas-Run-Id` header or a `run_id` field in an action body, on its own
-audit events ([AI_DATA_SERVICES.md](./ai-data-services.md)), so one run can be joined across both trails.
+audit events ([AI_DATA_SERVICES.md](./ai-data-services.md)), and the `data_*` tools forward the call's id to it ([below](#ai-data-tools-atlas_data)), so one run can be joined across both trails.
 
 **Dry run.** The plan phase of every two-phase write already changes nothing and is the dry run, so no `dry_run` flag was added. One gap
 was real: the `create_workspace` plan did not say whether the execute would be refused (tenant limit, size cap, byte budget), so the
@@ -251,8 +251,11 @@ known), per-node readiness (only per-job `jobs.status`, which reports `data_read
 has only `kv.put`/`kv.get`, which move cache bytes, not stats). Dataset staging, node heartbeats, billing meters, rates, audit and
 admin calls are also not tools. `data_cost_estimate` needs an operator-role credential upstream because atlas_data checks `write` for it.
 
-`run_id` correlation is not part of these tools yet. TODO: once the MCP layer and the atlas_data envelope carry a `run_id`, forward it from `rpc()`
-in `crates/atlas-gateway/src/mcp/data.rs`. Unknown argument fields are currently ignored, so a client that already sends one is not rejected.
+**Run id.** The connection's `X-Atlas-Run-Id` (see the run id paragraph above) is forwarded to atlas_data on every request a data tool makes, as the
+same `X-Atlas-Run-Id` header, including the read that builds a write plan and the execute call. atlas_data stores it on the audit events the call
+writes (`audit.list` takes `run_id`), so one run reads as one trail across both services. A call without a run id sends no header. An invalid id never
+gets this far: the gateway refuses the whole call first (above), and atlas_data would answer 400 to one regardless. No tool takes a `run_id` argument;
+unknown argument fields are ignored and the id is never taken from one.
 
 Tested over a fake atlas_data HTTP server (`crates/atlas-gateway/tests/mcp_data.rs`, `mcp_data_modes.rs`) plus a Python contract test of the
 action names, argument names and reply fields. **Nothing ran against a deployed atlas_data and no agent was tried.**
