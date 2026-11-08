@@ -66,6 +66,15 @@ Remaining for a full multi-replica cutover (one Phase C item):
 Nothing else on this list — cross-replica rate limiting (see "Cross-replica rate limiting" above)
 was the last code-level gap.
 
+## MCP call budgets
+
+The MCP per-token and per-tool calls-per-minute budgets (`ATLAS_MCP_CALLS_PER_MIN`, `ATLAS_MCP_TOOL_CALLS_PER_MIN`) use the same limiter as the
+request limit, so they share counts through `rate_limit_counters` the same way and are eventually consistent within one
+`ATLAS_RATE_LIMIT_SYNC_SECS`. Their keys carry an `mcp:call:` or `mcp:tool:` prefix so they never mix with the per-actor request counts.
+Two replicas in one process sharing a database are unit-tested (`state.rs`, SQLite), and a gateway test checks the budget's counts reach the
+table; **not verified against Postgres or with real separate pods**. On SQLite each pod has its own database, so the budget is per pod, as
+for the request limit. Budgets are read once at startup.
+
 ## PostgreSQL cutover
 
 Lab Postgres for development (does **not** switch Atlas's own deploy manifests yet):

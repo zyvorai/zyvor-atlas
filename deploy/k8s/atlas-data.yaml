@@ -40,7 +40,7 @@ spec:
         seccompProfile: {type: RuntimeDefault}
       containers:
         - name: atlas-data
-          image: ghcr.io/zyvorai/atlas-data:0.11.0
+          image: ghcr.io/zyvorai/atlas-data:0.12.0
           args:
             - serve
             - --root=/data

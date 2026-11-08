@@ -9,9 +9,30 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.12.0] — 2026-11-08
+
 ### Added
 
 - MCP: RFC 9728 OAuth Protected Resource Metadata at `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/api/atlas/v1/mcp`, and a `WWW-Authenticate: Bearer resource_metadata="..."` challenge on 401s from `/api/atlas/v1/mcp` (REST 401s unchanged); the `/.well-known/mcp` card links it. `ATLAS_PUBLIC_URL` sets the origin used (otherwise derived from `Host`). Atlas still has no OAuth authorization server, so the document lists no `authorization_servers`, and token audience is not enforced; see `docs/MCP.md`.
+- MCP agent guardrails: `X-Atlas-Run-Id` correlation id recorded on audit rows (migration `0038`, `atlasctl --run-id`), DB-backed per-token and per-tool MCP budgets (cross-replica on Postgres), a per-agent live-workspace byte budget, and resource scope (volume, snapshot, workspace, path) on token claims.
+- MCP: `atlas_data` tools — seven reads (`data_artifact_list`, `data_artifact_get`, `data_artifact_revisions`, `data_job_ready`, `data_workspace_review`, `data_cost_report`, `data_cost_estimate`) and four guarded writes (`data_workspace_change`, `data_workspace_publish`, `data_workspace_discard`, `data_job_release`). Unlisted unless `ATLAS_DATA_URL` is set; per-caller credentials via `ATLAS_DATA_TOKENS` / `ATLAS_DATA_TOKENS_FILE`. The gateway does not yet forward the run id to `atlas_data`.
+- Agent workspaces on native filesystem clones: REST routes and MCP tools (`create_workspace`, `reset_workspace`, `discard_workspace`, `list_workspaces`, `get_workspace`) with TTL, quota and GC (migration `0037`).
+- `atlas-native`: direct client writes (leader lease, HMAC write grants, term-fenced commit), a pooled RDMA client with TCP fallback, and a GPU/GDS capability probe reporting `gds | compat | none` from files (no CUDA dependency; the `cufile` feature is a placeholder).
+- `atlas_data`: `HttpGryvia` adapter against Gryvia's REST gateway and a Gryvia job controller. Only exercised against a fake gateway.
+- `deploy/native/bench.sh` benchmark harness and `docs/NATIVE_PERF.md`, `docs/NATIVE_GPU.md`.
+
+### Fixed
+
+- `atlas-native`: RDMA connections no longer fail opaquely under a low `RLIMIT_MEMLOCK` (8 MiB allows about 7 pooled connections): the pool is capped from the limit, `ENOMEM` is reported clearly, and idle pooled connections survive the 30 s stream timeout and shut down cleanly.
+
+### Security
+
+- Dependency pins and upgrades across the Cargo, npm, Python and container images (#344, #346); Dependabot alert #44 (`deepmerge`) has no upstream patch and remains open.
+
+### Not verified
+
+- No real GPU, GPUDirect Storage, RDMA hardware or NVMe was available: RDMA was exercised over SoftRoCE on loopback only, direct writes in-process, and there are no throughput numbers.
+- Migrations `0037` and `0038` and the new MCP budgets ran on SQLite locally; CI ran them on Postgres.
 
 ## [0.11.0] — 2026-11-03
 
