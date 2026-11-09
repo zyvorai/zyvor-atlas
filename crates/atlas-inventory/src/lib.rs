@@ -26,6 +26,7 @@ pub mod dr;
 pub mod events;
 pub mod jobs;
 pub mod leader;
+pub mod mcp_confirm;
 pub mod metrics;
 pub mod protection;
 pub mod rate_limit;

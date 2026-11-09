@@ -6,7 +6,8 @@
 //! rest of the API — see `docs/HERMES_AGENT.md` for how to point a client at it.
 //!
 //! Read-only by default: no tool mutates storage unless the operator sets `ATLAS_MCP_WRITE_ENABLE`
-//! (see `write.rs`: two-phase, single-use confirmation token, audited). That mirrors the Ops
+//! (see `write.rs`: two-phase, single-use confirmation token, audited; `mrtr.rs`: the same confirmation as an
+//! MCP `input_required` round for clients that can elicit). That mirrors the Ops
 //! Advisor's own `can_execute: false` posture (`docs/AI_ADVISOR.md`). Static prompts and
 //! documentation resources live in `content.rs`.
 
@@ -48,6 +49,7 @@ use crate::{
 mod content;
 mod data;
 mod guard;
+mod mrtr;
 mod ops;
 mod workspaces;
 mod write;
@@ -564,7 +566,10 @@ impl ServerHandler for AtlasMcp {
             meta: None,
             next_cursor: None,
             ttl_ms: supports_cache_hints.then_some(0),
-            cache_scope: supports_cache_hints.then_some(rmcp::model::CacheScope::Public),
+            // The list is filtered per caller (token tool allowlist), so it is not "public": the 2026-07-28
+            // spec defines public as "does not contain user-specific data", servable across authorization
+            // contexts by shared intermediaries, and private as reusable only within one authorization context.
+            cache_scope: supports_cache_hints.then_some(rmcp::model::CacheScope::Private),
         })
     }
 

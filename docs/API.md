@@ -734,7 +734,7 @@ the caller, the tool and the exact arguments; the same call with that token exec
 handler (so its role and tenant checks apply). Every proposal, rejection and execution is audited
 as `mcp.<tool>`. Failover, promote/demote, delete, restore/rollback and disk operations are
 never exposed over MCP; use the REST/gRPC API or `atlasctl` for them (`dr_preflight` lets an agent
-prepare a human-run failover). Tokens live in process memory, so a gateway restart invalidates them.
+prepare a human-run failover). The token is signed with a key derived from `ATLAS_JWT_SECRET` and its single use is recorded in the database, so it survives a restart and works on any replica sharing the database and secret, exactly once. A client on protocol 2026-07-28 that declared elicitation is asked to confirm through an `input_required` round instead of handling the token ([MCP.md](MCP.md#confirmation-as-an-input_required-round-2026-07-28)).
 
 ## HTTP status codes
 

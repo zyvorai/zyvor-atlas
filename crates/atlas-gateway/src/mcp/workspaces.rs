@@ -161,7 +161,7 @@ impl AtlasMcp {
         })
         .to_string();
 
-        match gate(&actor.id, CREATE_WORKSPACE, &params, args.confirmation_token.as_deref()) {
+        match gate(s, &actor.id, CREATE_WORKSPACE, &params, args.confirmation_token.as_deref()).await {
             Ok(Gate::Propose(token)) => {
                 // The plan changes nothing, so it is the dry run: it also reports whether the execute
                 // would be refused (tenant count, size cap, byte budget) rather than leave that to be
@@ -271,7 +271,7 @@ impl AtlasMcp {
         require_owner(s.config.auth_required, &actor, &ws.owner, id)?;
 
         let params = json!({ "workspace_id": id }).to_string();
-        match gate(&actor.id, tool, &params, args.confirmation_token.as_deref()) {
+        match gate(s, &actor.id, tool, &params, args.confirmation_token.as_deref()).await {
             Ok(Gate::Propose(token)) => {
                 audit(s, &actor, tool, "workspace", id, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
                 return Ok(ToolJson(json!({

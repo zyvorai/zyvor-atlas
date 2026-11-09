@@ -12,6 +12,9 @@
 //!   `snapshot_id`, `source_snapshot_id`, `workspace_id`, `path` or `paths` is checked, and so is `id`
 //!   on the volume tools; tools that enumerate inventory cannot be narrowed per resource and are
 //!   refused outright under a scope.
+//! * **MRTR confirm.** For a client that can elicit, a write plan is answered as an `input_required`
+//!   result and its retry carries the confirmation (`mrtr.rs`). Each round is a tool call: it spends both
+//!   budgets below and leaves its own `mcp.tool.call` row (`proposed` for the round that asks).
 //! * **Budgets.** Calls per minute per token and per tool, on the in-process limiter that syncs its
 //!   counts through the database (`rate_limit_counters`), so on Postgres the budget holds across
 //!   replicas within one sync interval (`ATLAS_RATE_LIMIT_SYNC_SECS`, default 2 s). On SQLite each pod
@@ -230,32 +233,66 @@ impl AtlasMcp {
                 None,
             ));
         }
-        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        let result = self.tool_router.call(tcc).await;
-        if super::audit_calls_enabled() {
-            let status = match &result {
-                Ok(CallToolResponse::Complete(r)) if r.is_error != Some(true) => "success",
-                _ => "error",
-            };
-            // Off the request path: a slow or failing audit write never delays or fails a tool call.
-            let pool = self.state.pool.clone();
-            tokio::spawn(async move {
-                let _ = atlas_inventory::audit::record_with_run(
-                    &pool,
-                    run_id.as_deref(),
-                    Some(&actor.tenant_id),
-                    &actor.id,
-                    "mcp.tool.call",
-                    "mcp_tool",
-                    &tool,
-                    status,
-                    None,
-                    Some(json!({ "jti": actor.jti, "scoped": actor.is_scoped(), "role": actor.role })),
-                )
-                .await;
-            });
+        // A client that negotiated 2026-07-28 and can elicit confirms a write through MRTR (mrtr.rs); every
+        // other client, and every tool that is not a guarded write, takes the path it always did.
+        let mut request = request;
+        let mrtr = self.tool_router.get(&request.name).is_some_and(super::mrtr::is_confirm_tool)
+            && super::mrtr::client_can_confirm(&context);
+        if mrtr {
+            if let super::mrtr::Retry::Refused(outcome) = super::mrtr::take_retry(&mut request)? {
+                self.spawn_call_audit(&actor, run_id, &tool, outcome);
+                return Ok(CallToolResponse::Complete(super::mrtr::refused_result(&tool, outcome)));
+            }
         }
+        let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
+        let mut result = self.tool_router.call(tcc).await;
+        if mrtr {
+            if let Ok(CallToolResponse::Complete(r)) = &result {
+                if let Some(ask) = super::mrtr::plan_to_input_required(r) {
+                    result = Ok(CallToolResponse::InputRequired(ask));
+                }
+            }
+        }
+        let status = match &result {
+            Ok(CallToolResponse::Complete(r)) if r.is_error != Some(true) => "success",
+            // A plan handed back for the user to confirm: asked, not failed.
+            Ok(CallToolResponse::InputRequired(_)) => "proposed",
+            _ => "error",
+        };
+        self.spawn_call_audit(&actor, run_id, &tool, status);
         result
+    }
+
+    /// The `mcp.tool.call` audit row for one call, unless `ATLAS_MCP_AUDIT_CALLS=0`. Off the request path: a
+    /// slow or failing audit write never delays or fails a tool call.
+    fn spawn_call_audit(&self, actor: &Actor, run_id: Option<String>, tool: &str, status: &'static str) {
+        if !super::audit_calls_enabled() {
+            return;
+        }
+        let pool = self.state.pool.clone();
+        let (tenant, id, jti, scoped, role) = (
+            actor.tenant_id.clone(),
+            actor.id.clone(),
+            actor.jti.clone(),
+            actor.is_scoped(),
+            actor.role.clone(),
+        );
+        let tool = tool.to_string();
+        tokio::spawn(async move {
+            let _ = atlas_inventory::audit::record_with_run(
+                &pool,
+                run_id.as_deref(),
+                Some(&tenant),
+                &id,
+                "mcp.tool.call",
+                "mcp_tool",
+                &tool,
+                status,
+                None,
+                Some(json!({ "jti": jti, "scoped": scoped, "role": role })),
+            )
+            .await;
+        });
     }
 }
 
