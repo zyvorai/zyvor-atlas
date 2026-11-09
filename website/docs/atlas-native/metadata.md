@@ -92,7 +92,8 @@ and ~78 MB spread over 1000, flat from 300k files on as redb's 64 MiB page cache
 directory entries were paged, the same runs peaked at 112–114 MB and were still growing.
 
 Limits: filesystem snapshot trees are still held in memory in full (one `fs_snapshots` record
-each). Checkpoints run on the commit path, under the catalog lock.
+each). How they are stored and loaded today, and a
+proposed versioned-record design, are in [NATIVE_SNAPSHOT_TREE_PAGING.md](https://github.com/zyvorai/zyvor-atlas/blob/main/docs/NATIVE_SNAPSHOT_TREE_PAGING.md). Checkpoints run on the commit path, under the catalog lock.
 
 ## Checkpoint and WAL compaction
 

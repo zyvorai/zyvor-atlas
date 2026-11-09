@@ -73,7 +73,9 @@ The atlas-native roadmap, in order, each phase gated on a published benchmark:
 1. **Data path:** clients read and write data nodes directly (striped across replicas) over a
    binary streaming protocol; an `io_uring` device backend with `O_DIRECT` on raw NVMe. Parallel
    extent I/O, group commit, direct client reads, the `io_uring`/`O_DIRECT` backend and
-   multi-device striping are done; direct client writes and an NVMe benchmark are not.
+   multi-device striping are done. Direct client writes (`atlas-native-mount --direct-writes`, off by
+   default) are built and tested in process only, not run on the lab and not measured
+   (`docs/NATIVE_FS.md`); an NVMe benchmark is not done.
 2. **Metadata scale:** namespace sharded across Raft groups, an on-disk catalog, client leases.
    Commits cost one fsync, Raft replication is pipelined (a 3-voter group sustains ~12–15k
    creates/s on one host), and checkpoints write only changed records to an embedded KV store.
@@ -87,8 +89,11 @@ The atlas-native roadmap, in order, each phase gated on a published benchmark:
 4. **AI:** RDMA transport, a GPUDirect Storage path, a checkpoint fast path, a CSI driver;
    MLPerf Storage results. The checkpoint fast path (unserialized whole-extent writes,
    background parallel write-back), the CSI driver (`docs/NATIVE_CSI.md`) and a dataset
-   locality API (query and pin a dataset's placement per host) are done; RDMA, GPUDirect Storage
-   and MLPerf Storage results are not. (A files-only GPU/GDS capability probe exists in the node's
+   locality API (query and pin a dataset's placement per host) are done. RDMA to the data nodes
+   (`atlas-native-mount --rdma`, `--features rdma`) is built: the verbs transport passed on
+   SoftRoCE, but the pooled client has not run over SoftRoCE or on any RDMA NIC, nothing is
+   measured, and it is plaintext (never with TLS) (`docs/NATIVE_FS.md`, `docs/STATUS.md`).
+   GPUDirect Storage and MLPerf Storage results are not done. (A files-only GPU/GDS capability probe exists in the node's
    `/v1/status`; it is unverified on real GPU hardware and there is no GPU I/O path,
    `docs/NATIVE_GPU.md`.)
 5. **Protocols:** NFS, SMB and S3 front ends over the same namespace; ACLs, quotas, `O_DIRECT`;
