@@ -1271,6 +1271,104 @@ mod bench {
         }
     }
 
+    /// Memory and store size with filesystem snapshots, to show whether snapshot trees (stored whole,
+    /// loaded whole) cost memory in proportion to snapshots x files. Two phases so the second
+    /// process's peak is the cost of loading alone (`VmHWM` only exists on Linux):
+    ///
+    /// ```text
+    /// BENCH_DIR=/data/x BENCH_PHASE=build BENCH_FILES=100000 BENCH_SNAPSHOTS=10 \
+    ///   cargo test --release -p atlas-native --lib store::bench::memory_with_fs_snapshots -- --ignored --nocapture
+    /// BENCH_DIR=/data/x BENCH_PHASE=load  (same command: opens the store and loads it)
+    /// ```
+    ///
+    /// Each snapshot is taken after a few more files, so trees differ a little. Nothing here has
+    /// been run yet; see `docs/NATIVE_SNAPSHOT_TREE_PAGING.md`.
+    #[test]
+    #[ignore]
+    fn memory_with_fs_snapshots() {
+        let env = |k: &str, default: u64| {
+            std::env::var(k)
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(default)
+        };
+        let dir = std::env::var("BENCH_DIR").expect("BENCH_DIR (an empty directory) is required");
+        let path = std::path::Path::new(&dir).join(CATALOG_STORE);
+        let store = CatalogStore::open(&path).unwrap().with_cache_inodes(4096);
+        let files = env("BENCH_FILES", 50_000);
+        let snapshots = env("BENCH_SNAPSHOTS", 10);
+        if std::env::var("BENCH_PHASE").as_deref() == Ok("load") {
+            let t = std::time::Instant::now();
+            let c = store.load().unwrap().expect("no catalog in BENCH_DIR");
+            println!(
+                "loaded {} inodes, {} fs snapshots in {:?}: {}",
+                c.filesystems["f"].inodes.len(),
+                c.fs_snapshots.len(),
+                t.elapsed(),
+                peak_rss()
+            );
+            return;
+        }
+        let mut c = Catalog::default();
+        let mut index = 0;
+        let mut apply = |c: &mut Catalog, op: FsOp| {
+            index += 1;
+            c.apply(1, index, &MetaCommand::Fs { op }).unwrap();
+        };
+        apply(
+            &mut c,
+            FsOp::CreateFs {
+                fs: "f".into(),
+                name: "f".into(),
+                now_ns: 1,
+                extent_bytes: None,
+            },
+        );
+        let per_snapshot = (files / snapshots.max(1)).max(1);
+        let mut taken = 0;
+        for i in 0..files {
+            let name = format!("file-{i}");
+            apply(
+                &mut c,
+                FsOp::Mknode {
+                    fs: "f".into(),
+                    parent: ROOT_INO,
+                    op_id: name.clone(),
+                    name,
+                    node_type: NodeType::File,
+                    target: None,
+                    rdev: 0,
+                    mode: 0o644,
+                    create_mode: None,
+                    uid: 0,
+                    gid: 0,
+                    now_ns: 2,
+                },
+            );
+            if i % 1024 == 1023 {
+                store.checkpoint(&mut c).unwrap();
+            }
+            if taken < snapshots && i % per_snapshot == per_snapshot - 1 {
+                taken += 1;
+                apply(
+                    &mut c,
+                    FsOp::SnapshotFs {
+                        id: format!("s{taken}"),
+                        fs: "f".into(),
+                        name: format!("snap{taken}"),
+                        now_ns: 10,
+                    },
+                );
+            }
+        }
+        store.checkpoint(&mut c).unwrap();
+        println!(
+            "built {files} files, {taken} snapshots: store {} KiB, {}",
+            std::fs::metadata(&path).unwrap().len() / 1024,
+            peak_rss()
+        );
+    }
+
     /// `cargo test --release -p atlas-native --lib store::bench -- --ignored --nocapture`
     #[test]
     #[ignore]
