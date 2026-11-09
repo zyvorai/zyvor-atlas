@@ -9,6 +9,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-11-08
+
 ### Added
 
 - MCP authorization: with `ATLAS_MCP_IDP_ISSUER` set, `/api/atlas/v1/mcp` also accepts JWT access tokens issued by that identity provider (RS256/ES256, signature from the issuer's JWKS, `iss`, `aud` = `<ATLAS_PUBLIC_URL>/api/atlas/v1/mcp`, `exp`, `nbf`, lifetime cap `ATLAS_MCP_IDP_MAX_LIFETIME_SECS`), and the RFC 9728 metadata for the MCP endpoint (plus the `/.well-known/mcp` card) lists the issuer under `authorization_servers`. Off by default; the gateway refuses to start with it enabled but no `ATLAS_PUBLIC_URL`. It applies to the MCP endpoint only (REST, gRPC and `/metrics` still take Atlas HS256 tokens only, and Atlas tokens keep working on `/mcp` unchanged). The role and tenant come from the same `ATLAS_OIDC_ADMIN_GROUP` / `ATLAS_OIDC_OPERATOR_GROUP` / `ATLAS_OIDC_TENANT_CLAIM` mapping as the console SSO login (now one shared `auth::role_for_groups`, and the settings are read even without the console OIDC variables); an IdP actor is unscoped and role-limited, with id `idp-<issuer hash>:<sub>`. Keys are fetched lazily (an IdP outage is a 401, never a startup failure), cached for an hour and refetched at most once per 30 s on an unknown `kid`. A token with no `jti` cannot be revoked in Atlas. Still not done: an authorization server (DCR, CIMD), OAuth scope strings, opaque access tokens. Tested only against an in-process fake JWKS server; never run against a real IdP or Dex (manual steps in `deploy/dex-lab/README.md`, `docs/MCP.md`). New dev-dependencies for the tests: `rsa`, `p256`, `rand` (already in `Cargo.lock`).
