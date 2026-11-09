@@ -16,7 +16,13 @@ custom_edit_url: "https://github.com/zyvorai/zyvor-atlas/edit/main/docs/API.md"
 > (→ job, admin), `CreateSnapshot` (→ job, operator), `ListVolumesByOwner(product, resource_id?)` so a
 > product enumerates only the volumes it owns, `GetJob`, `WatchJob` (server-streaming job updates),
 > `ListAlerts`, `GetMetricsSummary`, `ListBuckets`. Auth: HS256 JWT in `authorization` metadata when
-> `ATLAS_AUTH_REQUIRED=1`, with the same role hierarchy as REST. Server reflection is enabled, so:
+> `ATLAS_AUTH_REQUIRED=1`, with the same role hierarchy as REST. Every call also checks the token's `jti`
+> against the revocation list (a database error lets the call through, as on REST), and a non-admin
+> caller is confined to its own tenant: `ListVolumes`, `GetVolume`, `ListVolumesByOwner`, `ListSnapshots`,
+> `ListBuckets` and `ListTenants` return only that tenant's rows, `GetVolume`, `ExpandVolume` and
+> `CreateSnapshot` answer `not_found` for another tenant's volume, and `CreateVolume` for another tenant is
+> `permission_denied`. Clusters, pools, alerts, metrics and jobs are not tenant-filtered (nor on REST).
+> Server reflection is enabled, so:
 > `grpcurl -plaintext <host>:5111 list` and `grpcurl -plaintext <host>:5111 atlas.v1.AtlasStorage/ListPools`.
 > The proto is at `crates/atlas-gateway/proto/atlas.proto`. Product ownership conventions: [PRODUCTS.md](../core-concepts/products.md).
 > In-console curated map: **API Docs** page (`/api-docs`).
