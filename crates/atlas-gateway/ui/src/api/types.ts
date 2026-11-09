@@ -51,6 +51,9 @@ export interface StorageSnapshot {
   protected: boolean;
   parent_snapshot_id?: string | null;
   created_at?: string | null;
+  /** End of the retention lock in unix seconds, as the gateway recorded it. Absent when the gateway
+   *  never locked the snapshot; a value in the past means the lock has expired. */
+  locked_until?: number | null;
 }
 
 export interface StorageBucket {

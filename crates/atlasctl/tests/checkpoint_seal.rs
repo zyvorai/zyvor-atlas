@@ -243,7 +243,19 @@ fn dcp_is_refused_until_metadata_lands_then_sealed_locked_and_idempotent() {
     );
     assert_eq!(snapshots_of(&vol).len(), 1);
 
-    // Re-run: same snapshot, no second one, and a shorter lock is not an error.
+    // The gateway reports when the lock ends (about two days from now).
+    let until = snapshots_of(&vol)[0]["locked_until"].as_i64().unwrap();
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs() as i64;
+    assert!(
+        (until - now - 2 * 86_400).abs() < 120,
+        "locked_until {until} vs now {now}"
+    );
+
+    // Re-run: same snapshot, no second one, and a shorter lock is not an error. The existing lock
+    // already covers one day, so the lock call is skipped altogether.
     let again = seal(
         &vol,
         root.path(),
@@ -253,7 +265,49 @@ fn dcp_is_refused_until_metadata_lands_then_sealed_locked_and_idempotent() {
     assert_eq!(again.code, 0, "{}{}", again.stdout, again.stderr);
     assert_eq!(again.json()["created"], false);
     assert_eq!(again.json()["snapshot_id"], id.as_str());
+    assert_eq!(again.json()["lock"]["skipped"], true, "{}", again.stdout);
+    assert_eq!(again.json()["lock"]["retain_until_unix"], until);
     assert_eq!(snapshots_of(&vol).len(), 1);
+    assert_eq!(snapshots_of(&vol)[0]["locked_until"], until, "unchanged");
+
+    // A dry run shows the lock state and changes nothing.
+    let dry = seal(
+        &vol,
+        root.path(),
+        "/runs/llama/step_100",
+        &["--preset", "dcp", "--lock-days", "1", "--dry-run"],
+    );
+    assert_eq!(dry.code, 0, "{}{}", dry.stdout, dry.stderr);
+    assert_eq!(dry.json()["locked_until_unix"], until);
+    assert!(
+        dry.json()["lock"].as_str().unwrap().contains("already locked"),
+        "{}",
+        dry.stdout
+    );
+    let dry_long = seal(
+        &vol,
+        root.path(),
+        "/runs/llama/step_100",
+        &["--preset", "dcp", "--lock-days", "30", "--dry-run"],
+    );
+    assert!(
+        dry_long.json()["lock"].as_str().unwrap().contains("would be locked"),
+        "{}",
+        dry_long.stdout
+    );
+    assert_eq!(snapshots_of(&vol)[0]["locked_until"], until, "dry run locks nothing");
+
+    // A longer lock is a real extension: the call is made and the reported expiry moves out.
+    let longer = seal(
+        &vol,
+        root.path(),
+        "/runs/llama/step_100",
+        &["--preset", "dcp", "--lock-days", "5"],
+    );
+    assert_eq!(longer.code, 0, "{}{}", longer.stdout, longer.stderr);
+    assert!(longer.json()["lock"].get("skipped").is_none(), "{}", longer.stdout);
+    let extended = snapshots_of(&vol)[0]["locked_until"].as_i64().unwrap();
+    assert!(extended > until + 2 * 86_400, "{extended} vs {until}");
 }
 
 #[test]

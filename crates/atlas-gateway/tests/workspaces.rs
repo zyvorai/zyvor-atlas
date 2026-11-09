@@ -458,3 +458,187 @@ async fn a_workspace_from_a_named_snapshot_keeps_that_snapshot() {
     assert_eq!(api.delete(&op, &format!("/workspaces/{wid}")).await.0, 200);
     assert_eq!(snapshot_count(&api, &admin).await, before, "the named snapshot survives the workspace");
 }
+
+/// Fire `n` creates at once (one task each) and return their HTTP statuses.
+async fn create_concurrently(api: &Arc<Api>, tok: &str, body: Value, n: usize) -> Vec<u16> {
+    let mut tasks = Vec::new();
+    for _ in 0..n {
+        let (api, tok, body) = (api.clone(), tok.to_string(), body.clone());
+        tasks.push(tokio::spawn(async move { api.post(&tok, "/workspaces", body).await.0 }));
+    }
+    let mut out = Vec::new();
+    for t in tasks {
+        out.push(t.await.unwrap());
+    }
+    out
+}
+
+/// What a refused or failed create must not leave: only `active` rows, one clone and one snapshot per
+/// workspace, nothing stuck in `creating`.
+async fn assert_no_residue(api: &Api, admin: &str, snaps_before: usize, vols_before: usize) -> usize {
+    let (_, list) = api.get(admin, "/workspaces").await;
+    let rows = list.as_array().unwrap();
+    assert!(rows.iter().all(|w| w["state"] == "active"), "no creating row is left behind: {list}");
+    assert_eq!(volume_count(api, admin).await, vols_before + rows.len(), "one clone per workspace");
+    assert_eq!(snapshot_count(api, admin).await, snaps_before + rows.len(), "one base snapshot per workspace");
+    rows.len()
+}
+
+#[tokio::test]
+async fn racing_creates_never_exceed_the_owners_byte_budget() {
+    let (addr, _) = spawn().await;
+    let api = Arc::new(Api::new(addr));
+    let admin = token("root", "admin", "global");
+    // A budget of one 1 MiB workspace (below the per-tenant count of 2 that other tests in this
+    // binary set process-wide, so the budget is the limit that bites): however the creates race,
+    // at most one can be held.
+    let agent = atlas_gateway::auth::mint_agent_token(
+        SECRET, "agent-budget", "operator", "budg", 3600, &[], None, Some(MIB as i64),
+    )
+    .unwrap()
+    .0;
+    let src = api.volume(&admin, "budg", "dataset", MIB).await;
+    let snaps_before = snapshot_count(&api, &admin).await;
+    let vols_before = volume_count(&api, &admin).await;
+
+    let body = json!({ "source_volume_id": src, "max_bytes": MIB });
+    let statuses = create_concurrently(&api, &agent, body.clone(), 8).await;
+    assert!(statuses.iter().all(|s| *s == 201 || *s == 409), "{statuses:?}");
+    let admitted = statuses.iter().filter(|s| **s == 201).count();
+    // Over-refusal under contention is allowed; over-admission is not.
+    assert!(admitted <= 1, "budget exceeded: {admitted} admitted, {statuses:?}");
+    assert_eq!(assert_no_residue(&api, &admin, snaps_before, vols_before).await, admitted);
+
+    // The refused creates released their reservation: the budget still holds exactly one.
+    if admitted == 0 {
+        let (st, ws) = api.post(&agent, "/workspaces", body.clone()).await;
+        assert_eq!(st, 201, "create after the race: {ws}");
+    }
+    let (st, refused) = api.post(&agent, "/workspaces", body).await;
+    assert_eq!(st, 409, "{refused}");
+    assert!(refused.to_string().contains("budget"), "{refused}");
+    assert_eq!(assert_no_residue(&api, &admin, snaps_before, vols_before).await, 1);
+}
+
+#[tokio::test]
+async fn racing_creates_never_exceed_the_tenant_workspace_count() {
+    // Same value the other count test uses: the variable is process-wide.
+    std::env::set_var("ATLAS_WORKSPACE_MAX_PER_TENANT", "2");
+    let (addr, _) = spawn().await;
+    let api = Arc::new(Api::new(addr));
+    let admin = token("root", "admin", "global");
+    let op = token("agent-count", "operator", "cnt");
+    let src = api.volume(&admin, "cnt", "dataset", MIB).await;
+    let snaps_before = snapshot_count(&api, &admin).await;
+    let vols_before = volume_count(&api, &admin).await;
+
+    let body = json!({ "source_volume_id": src });
+    let statuses = create_concurrently(&api, &op, body.clone(), 8).await;
+    assert!(statuses.iter().all(|s| *s == 201 || *s == 409), "{statuses:?}");
+    let admitted = statuses.iter().filter(|s| **s == 201).count();
+    assert!(admitted <= 2, "count limit exceeded: {admitted} admitted, {statuses:?}");
+    assert_eq!(assert_no_residue(&api, &admin, snaps_before, vols_before).await, admitted);
+
+    for _ in admitted..2 {
+        assert_eq!(api.post(&op, "/workspaces", body.clone()).await.0, 201);
+    }
+    assert_eq!(api.post(&op, "/workspaces", body).await.0, 409);
+    assert_eq!(assert_no_residue(&api, &admin, snaps_before, vols_before).await, 2);
+}
+
+#[tokio::test]
+async fn a_creating_row_counts_toward_the_budget_and_a_stale_one_is_reaped() {
+    let (addr, state) = spawn().await;
+    let api = Api::new(addr);
+    let admin = token("root", "admin", "global");
+    let agent = atlas_gateway::auth::mint_agent_token(
+        SECRET, "agent-crash", "operator", "crash", 3600, &[], None, Some(2 * MIB as i64),
+    )
+    .unwrap()
+    .0;
+    let src = api.volume(&admin, "crash", "dataset", MIB).await;
+    let snaps_before = snapshot_count(&api, &admin).await;
+    let vols_before = volume_count(&api, &admin).await;
+
+    // A create that is part-way (its row is in, the clone is not): it holds 2 MiB of the budget.
+    let t = now();
+    let w = atlas_inventory::workspaces::Workspace {
+        id: "ws_halfmade".into(),
+        tenant_id: "crash".into(),
+        owner: "agent-crash".into(),
+        name: "half".into(),
+        source_volume_id: src.clone(),
+        base_snapshot_id: String::new(),
+        owns_base_snapshot: true,
+        volume_id: String::new(),
+        max_bytes: 2 * MIB as i64,
+        state: atlas_inventory::workspaces::CREATING.into(),
+        reset_count: 0,
+        last_error: None,
+        created_at_unix: t,
+        expires_at_unix: t + 3600,
+    };
+    atlas_inventory::workspaces::insert(&state.pool, &w).await.unwrap();
+    let (_, list) = api.get(&agent, "/workspaces").await;
+    assert_eq!(list[0]["state"], "creating", "{list}");
+    assert_eq!(list[0]["volume_id"], "");
+
+    let body = json!({ "source_volume_id": src, "max_bytes": MIB });
+    let (st, refused) = api.post(&agent, "/workspaces", body.clone()).await;
+    assert_eq!(st, 409, "the half-made create's reservation counts: {refused}");
+    // It cannot be reset or discarded by hand while it is being made.
+    assert_eq!(api.post(&agent, "/workspaces/ws_halfmade/reset", json!({})).await.0, 409);
+    assert_eq!(api.delete(&agent, "/workspaces/ws_halfmade").await.0, 409);
+
+    // A fresh one is left alone by the GC; once it is stale (creator gone) the GC removes it and
+    // the budget is free again.
+    let r = routes::workspaces::gc_once(&state, t + 60).await.unwrap();
+    assert_eq!((r.discarded, r.failed), (0, 0));
+    let r = routes::workspaces::gc_once(&state, t + atlas_inventory::workspaces::CREATING_STALE_SECS + 1)
+        .await
+        .unwrap();
+    assert_eq!((r.discarded, r.failed), (1, 0));
+    assert_eq!(api.post(&agent, "/workspaces", body).await.0, 201);
+    assert_eq!(assert_no_residue(&api, &admin, snaps_before, vols_before).await, 1);
+}
+
+#[tokio::test]
+async fn another_owners_reservation_does_not_count_and_a_refusal_leaves_no_row() {
+    let (addr, state) = spawn().await;
+    let api = Api::new(addr);
+    let admin = token("root", "admin", "global");
+    let agent = atlas_gateway::auth::mint_agent_token(
+        SECRET, "agent-two", "operator", "adm", 3600, &[], None, Some(MIB as i64),
+    )
+    .unwrap()
+    .0;
+    let src = api.volume(&admin, "adm", "dataset", MIB).await;
+    let t = now();
+    // A second agent's row would not count; the same owner's does.
+    let mk = |id: &str, owner: &str| atlas_inventory::workspaces::Workspace {
+        id: id.into(),
+        tenant_id: "adm".into(),
+        owner: owner.into(),
+        name: id.into(),
+        source_volume_id: src.clone(),
+        base_snapshot_id: String::new(),
+        owns_base_snapshot: false,
+        volume_id: String::new(),
+        max_bytes: MIB as i64,
+        state: atlas_inventory::workspaces::CREATING.into(),
+        reset_count: 0,
+        last_error: None,
+        created_at_unix: t,
+        expires_at_unix: t + 3600,
+    };
+    atlas_inventory::workspaces::insert(&state.pool, &mk("ws_other_owner", "someone-else")).await.unwrap();
+    let body = json!({ "source_volume_id": src, "max_bytes": MIB });
+    // Another owner's reservation does not eat this agent's budget.
+    let (st, ws) = api.post(&agent, "/workspaces", body.clone()).await;
+    assert_eq!(st, 201, "{ws}");
+    // Now the budget is full; a refused create leaves exactly the rows that were there.
+    let before = atlas_inventory::workspaces::list(&state.pool, None).await.unwrap().len();
+    let (st, _) = api.post(&agent, "/workspaces", body).await;
+    assert_eq!(st, 409);
+    assert_eq!(atlas_inventory::workspaces::list(&state.pool, None).await.unwrap().len(), before);
+}

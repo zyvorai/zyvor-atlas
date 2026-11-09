@@ -290,8 +290,17 @@ unknown volume. Operator role. See [IMAGE_IMPORT.md](../control-plane/image-impo
 ### `POST /api/atlas/v1/volumes/{id}/snapshots`
 Create a VolumeSnapshot from the volume's PVC (async job).
 ```json
-{ "name": "optional-name", "snapshot_class": "zyvor-rbd-snapclass" }
+{ "name": "optional-name", "snapshot_class": "zyvor-rbd-snapclass", "if_not_exists": false }
 ```
+Snapshot names are **not unique**: by default every call makes a new snapshot, even with a name the
+volume already has. `if_not_exists: true` (optional, default `false`) makes the call return the
+volume's existing snapshot of that name instead, as `200 { "snapshot_id", "volume_id", "name",
+"state", "existing": true }` (the oldest one, if there are several). It is best effort, a read
+followed by a create: two requests racing can each pass the check and both create (on one gateway or
+across replicas), and on the Kubernetes path a snapshot whose job has not yet written its row is not
+seen. There is deliberately no unique index (workspaces, protection schedules and other callers rely
+on creating same-named snapshots). `atlasctl checkpoint seal` uses it, then removes its own newer
+duplicate if a race still produced one.
 
 ### `POST /api/atlas/v1/snapshots/{id}/clone`
 Provision a new **independent** volume (PVC) populated from the snapshot (`dataSource`). `name` is
@@ -512,8 +521,12 @@ which have no equivalent bound.
 ```json
 [{ "id": "snap_29a557037a28", "tenant_id": "global", "volume_id": "vol_b16c40e12b76",
    "name": "billing-db-root-29a557037a28", "consistency": "crash", "state": "ready",
-   "protected": false, "parent_snapshot_id": null, "created_at": "..." }]
+   "protected": false, "parent_snapshot_id": null, "created_at": "...", "locked_until": 1793000000 }]
 ```
+`locked_until` (unix seconds) appears only on a snapshot the gateway retention-locked
+(`POST /snapshots/{id}/lock`, ransomware protect); it is the end of the lock, so a value in the past
+means the lock has expired. It is absent for a snapshot the gateway never locked, including one
+locked directly on a native node (see [WORM.md](../atlas-native/worm.md)).
 
 ### `GET /api/atlas/v1/policies`
 The built-in intent → placement catalog (PDF §12.3).

@@ -9,6 +9,17 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- Snapshots report `locked_until` (unix seconds, omitted when the gateway never locked the snapshot) on `GET /snapshots`: the gateway now records the expiry in the existing `storage_snapshots.retention_until` column when it locks a snapshot (`POST /snapshots/{id}/lock`, ransomware protect), extend-only. No migration. Locks set directly on a native node are not reflected. `atlasctl checkpoint seal` reads it to skip the lock call when the snapshot is already locked for `--lock-days` from now, and `--dry-run` shows the lock state (`docs/WORM.md`, `docs/CHECKPOINTS.md`).
+- `POST /volumes/{id}/snapshots` accepts an optional `if_not_exists` (default `false`): when true and the volume already has a snapshot of that name, that snapshot is returned (HTTP 200, `"existing": true`) instead of making another. Best effort, no unique index; two racing requests can still both create (`docs/API.md`). `atlasctl checkpoint seal` uses it and deletes only its own newer duplicate afterwards.
+- MCP: a test (`tests/mcp_tool_counts.rs`) asserts the number of tools a session lists for each gate: 53 read-only, 59 with `ATLAS_MCP_WRITE_ENABLE`, 60 with `ATLAS_DATA_URL`, 70 with both.
+
+### Changed
+
+- Agent workspaces: the per-tenant count and the per-owner byte budget are now checked after the create has inserted its own `creating` row, instead of only before the snapshot and clone, so two racing creates can no longer both pass a limit (the cost: under contention both may be refused). Behaviour change: a workspace in the new `creating` state is visible in `GET /workspaces` and counts toward both limits until it turns `active`; a stale one (gateway died mid-create) is discarded by the workspace GC after 15 minutes. No migration (`state` is free text). Tested in process on SQLite; the Postgres path runs in CI only (`docs/NATIVE_FS.md`).
+- Docs: the MCP tool counts in `docs/STATUS.md`, `docs/COMPARISON.md`, `docs/ROADMAP.md` and the website landing page were stale (27, 32 and 51); the real numbers are 53 read-only tools, 59 with writes enabled, and 60 or 70 with `atlas_data` configured (the `atlas-io` agent has 10).
+
 ## [0.12.1] — 2026-11-08
 
 ### Added
