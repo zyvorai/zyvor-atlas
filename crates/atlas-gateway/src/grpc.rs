@@ -28,6 +28,10 @@ use crate::state::AppState;
 pub struct GrpcActor {
     pub id: String,
     pub role: String,
+    /// The token's tenant (`global` for anonymous/bootstrap); non-admin callers are scoped to it.
+    pub tenant_id: String,
+    /// The token id, checked against the revocation deny-list on every call (empty = not revocable).
+    pub jti: String,
 }
 
 /// Build the tonic service with a JWT auth interceptor. When `auth_required` is false (dev), calls
@@ -51,6 +55,8 @@ pub fn service(
                 GrpcActor {
                     id: "anonymous".into(),
                     role: "viewer".into(),
+                    tenant_id: "global".into(),
+                    jti: String::new(),
                 }
             } else {
                 let token = req
@@ -65,6 +71,8 @@ pub fn service(
                     GrpcActor {
                         id: "bootstrap".into(),
                         role: "admin".into(),
+                        tenant_id: "global".into(),
+                        jti: String::new(),
                     }
                 } else {
                     match crate::auth::decode_token(token, &secret, secret_previous.as_deref()) {
@@ -77,6 +85,8 @@ pub fn service(
                         Ok(data) => GrpcActor {
                             id: data.claims.sub,
                             role: data.claims.role,
+                            tenant_id: data.claims.tenant_id,
+                            jti: data.claims.jti,
                         },
                         Err(e) => {
                             return Err(Status::unauthenticated(format!("invalid token: {e}")))
@@ -104,6 +114,50 @@ fn internal(e: impl std::fmt::Display) -> Status {
 }
 
 impl GrpcService {
+    /// Reject a revoked token and return the tenant a non-admin caller is confined to (`None` =
+    /// unrestricted: auth off, or an admin). The interceptor is synchronous and cannot reach the
+    /// database, so every handler calls this first. Fails open on a database error, exactly like the
+    /// REST middleware, so a transient blip cannot lock everyone out.
+    #[allow(clippy::result_large_err)]
+    async fn authorize<T>(&self, req: &Request<T>) -> Result<Option<String>, Status> {
+        if !self.state.config.auth_required {
+            return Ok(None);
+        }
+        let Some(ga) = req.extensions().get::<GrpcActor>() else {
+            return Ok(None);
+        };
+        if !ga.jti.is_empty() {
+            match atlas_inventory::tokens::is_revoked(&self.state.pool, &ga.jti).await {
+                Ok(true) => return Err(Status::unauthenticated("token has been revoked")),
+                Ok(false) => {}
+                Err(e) => tracing::warn!("grpc token revocation check failed: {e}"),
+            }
+        }
+        if crate::auth::role_level(&ga.role) >= crate::auth::ROLE_ADMIN {
+            Ok(None)
+        } else {
+            Ok(Some(ga.tenant_id.clone()))
+        }
+    }
+
+    /// 404 (not 403, so ids can't be probed) when a tenant-scoped caller names another tenant's volume.
+    #[allow(clippy::result_large_err)]
+    async fn check_volume_tenant(
+        &self,
+        scope: Option<&str>,
+        volume_id: &str,
+    ) -> Result<(), Status> {
+        if let Some(t) = scope {
+            let owner = atlas_inventory::volume_tenant(&self.state.pool, volume_id)
+                .await
+                .map_err(internal)?;
+            if owner != t {
+                return Err(Status::not_found(format!("volume {volume_id}")));
+            }
+        }
+        Ok(())
+    }
+
     /// Resolve the request actor and enforce a minimum role (only when auth is enabled). Returns the
     /// actor id to attribute the job to, or `permission_denied`. Mirrors the REST `require_role`.
     #[allow(clippy::result_large_err)]
@@ -144,7 +198,8 @@ fn health_str(h: atlas_api_types::Health) -> String {
 
 #[tonic::async_trait]
 impl AtlasStorage for GrpcService {
-    async fn health(&self, _req: Request<HealthRequest>) -> Result<Response<HealthReply>, Status> {
+    async fn health(&self, req: Request<HealthRequest>) -> Result<Response<HealthReply>, Status> {
+        self.authorize(&req).await?;
         Ok(Response::new(HealthReply {
             status: "ok".into(),
             version: env!("CARGO_PKG_VERSION").into(),
@@ -153,8 +208,9 @@ impl AtlasStorage for GrpcService {
 
     async fn list_clusters(
         &self,
-        _req: Request<Empty>,
+        req: Request<Empty>,
     ) -> Result<Response<ListClustersReply>, Status> {
+        self.authorize(&req).await?;
         let clusters = atlas_inventory::list_clusters(&self.state.pool)
             .await
             .map_err(internal)?
@@ -171,7 +227,8 @@ impl AtlasStorage for GrpcService {
         Ok(Response::new(ListClustersReply { clusters }))
     }
 
-    async fn list_pools(&self, _req: Request<Empty>) -> Result<Response<ListPoolsReply>, Status> {
+    async fn list_pools(&self, req: Request<Empty>) -> Result<Response<ListPoolsReply>, Status> {
+        self.authorize(&req).await?;
         let pools = atlas_inventory::list_pools(&self.state.pool)
             .await
             .map_err(internal)?
@@ -190,23 +247,32 @@ impl AtlasStorage for GrpcService {
 
     async fn list_volumes(
         &self,
-        _req: Request<Empty>,
+        req: Request<Empty>,
     ) -> Result<Response<ListVolumesReply>, Status> {
-        let volumes = atlas_inventory::list_volumes(&self.state.pool)
-            .await
-            .map_err(internal)?
-            .into_iter()
-            .map(volume_to_proto)
-            .collect();
+        let scope = self.authorize(&req).await?;
+        let volumes = atlas_inventory::list_volumes_filtered(
+            &self.state.pool,
+            None,
+            scope.as_deref(),
+            None,
+            None,
+        )
+        .await
+        .map_err(internal)?
+        .into_iter()
+        .map(volume_to_proto)
+        .collect();
         Ok(Response::new(ListVolumesReply { volumes }))
     }
 
     async fn get_volume(&self, req: Request<GetVolumeRequest>) -> Result<Response<Volume>, Status> {
+        let scope = self.authorize(&req).await?;
         let id = req.into_inner().id;
         let v = atlas_inventory::get_volume(&self.state.pool, &id)
             .await
             .map_err(internal)?
             .ok_or_else(|| Status::not_found(format!("volume {id}")))?;
+        self.check_volume_tenant(scope.as_deref(), &id).await?;
         Ok(Response::new(volume_to_proto(v)))
     }
 
@@ -226,6 +292,7 @@ impl AtlasStorage for GrpcService {
                 return Err(Status::permission_denied("requires operator role"));
             }
         }
+        let scope = self.authorize(&req).await?;
         let r = req.into_inner();
         if r.name.trim().is_empty() {
             return Err(Status::invalid_argument("name is required"));
@@ -246,6 +313,14 @@ impl AtlasStorage for GrpcService {
         } else {
             r.tenant_id
         };
+        // A tenant-scoped operator may only create for its own tenant (mirrors REST create_volume).
+        if let Some(t) = scope.as_deref() {
+            if tenant_id != t {
+                return Err(Status::permission_denied(format!(
+                    "actor '{actor}' may only create volumes for tenant '{t}'"
+                )));
+            }
+        }
         // Tenant quota admission (PDF §14): reject a create that would exceed the tenant's limits.
         match atlas_inventory::tenants::check_admission(&self.state.pool, &tenant_id, r.size_bytes)
             .await
@@ -314,6 +389,7 @@ impl AtlasStorage for GrpcService {
         req: Request<DeleteVolumeRequest>,
     ) -> Result<Response<JobReply>, Status> {
         let actor = self.require_role(&req, crate::auth::ROLE_ADMIN)?;
+        self.authorize(&req).await?;
         let body = req.into_inner();
         let id = body.id;
         let vol = atlas_inventory::get_volume(&self.state.pool, &id)
@@ -361,7 +437,9 @@ impl AtlasStorage for GrpcService {
         req: Request<ExpandVolumeRequest>,
     ) -> Result<Response<JobReply>, Status> {
         let actor = self.require_role(&req, crate::auth::ROLE_OPERATOR)?;
+        let scope = self.authorize(&req).await?;
         let r = req.into_inner();
+        self.check_volume_tenant(scope.as_deref(), &r.id).await?;
         let vol = atlas_inventory::get_volume(&self.state.pool, &r.id)
             .await
             .map_err(internal)?
@@ -400,12 +478,14 @@ impl AtlasStorage for GrpcService {
         &self,
         req: Request<ListSnapshotsRequest>,
     ) -> Result<Response<ListSnapshotsReply>, Status> {
+        let scope = self.authorize(&req).await?;
         let vid = req.into_inner().volume_id;
         let filter = (!vid.trim().is_empty()).then_some(vid.as_str());
         let snapshots = atlas_inventory::snapshots::list_snapshots(&self.state.pool, filter)
             .await
             .map_err(internal)?
             .into_iter()
+            .filter(|s| scope.as_deref().is_none_or(|t| s.tenant_id == t))
             .map(|s| Snapshot {
                 id: s.id,
                 volume_id: s.volume_id,
@@ -423,10 +503,13 @@ impl AtlasStorage for GrpcService {
         req: Request<CreateSnapshotRequest>,
     ) -> Result<Response<JobReply>, Status> {
         let actor = self.require_role(&req, crate::auth::ROLE_OPERATOR)?;
+        let scope = self.authorize(&req).await?;
         let r = req.into_inner();
         if r.volume_id.trim().is_empty() {
             return Err(Status::invalid_argument("volume_id is required"));
         }
+        self.check_volume_tenant(scope.as_deref(), &r.volume_id)
+            .await?;
         let vol = atlas_inventory::get_volume(&self.state.pool, &r.volume_id)
             .await
             .map_err(internal)?
@@ -468,22 +551,30 @@ impl AtlasStorage for GrpcService {
         &self,
         req: Request<ListVolumesByOwnerRequest>,
     ) -> Result<Response<ListVolumesReply>, Status> {
+        let scope = self.authorize(&req).await?;
         let r = req.into_inner();
         if r.product.trim().is_empty() {
             return Err(Status::invalid_argument("product is required"));
         }
         let resource_id = (!r.resource_id.trim().is_empty()).then_some(r.resource_id.as_str());
-        let volumes =
-            atlas_inventory::list_volumes_by_owner(&self.state.pool, &r.product, resource_id)
+        let mut volumes = Vec::new();
+        for v in atlas_inventory::list_volumes_by_owner(&self.state.pool, &r.product, resource_id)
+            .await
+            .map_err(internal)?
+        {
+            if self
+                .check_volume_tenant(scope.as_deref(), &v.id)
                 .await
-                .map_err(internal)?
-                .into_iter()
-                .map(volume_to_proto)
-                .collect();
+                .is_ok()
+            {
+                volumes.push(volume_to_proto(v));
+            }
+        }
         Ok(Response::new(ListVolumesReply { volumes }))
     }
 
     async fn get_job(&self, req: Request<GetJobRequest>) -> Result<Response<Job>, Status> {
+        self.authorize(&req).await?;
         let id = req.into_inner().id;
         let j = atlas_inventory::jobs::get_job(&self.state.pool, &id)
             .await
@@ -496,6 +587,7 @@ impl AtlasStorage for GrpcService {
         &self,
         req: Request<ListJobsRequest>,
     ) -> Result<Response<ListJobsReply>, Status> {
+        self.authorize(&req).await?;
         let r = req.into_inner();
         let limit = if r.limit <= 0 { 50 } else { i64::from(r.limit) };
         let state = (!r.state.trim().is_empty()).then_some(r.state.as_str());
@@ -515,6 +607,7 @@ impl AtlasStorage for GrpcService {
         &self,
         req: Request<GetJobRequest>,
     ) -> Result<Response<Self::WatchJobStream>, Status> {
+        self.authorize(&req).await?;
         let id = req.into_inner().id;
         let pool = self.state.pool.clone();
         let stream = async_stream::try_stream! {
@@ -543,6 +636,7 @@ impl AtlasStorage for GrpcService {
         &self,
         req: Request<ListAlertsRequest>,
     ) -> Result<Response<ListAlertsReply>, Status> {
+        self.authorize(&req).await?;
         let state = req.into_inner().state;
         let filter = (!state.is_empty()).then_some(state.as_str());
         let alerts = atlas_inventory::alerts::list(&self.state.pool, filter)
@@ -563,8 +657,9 @@ impl AtlasStorage for GrpcService {
 
     async fn get_metrics_summary(
         &self,
-        _req: Request<Empty>,
+        req: Request<Empty>,
     ) -> Result<Response<MetricsSummary>, Status> {
+        self.authorize(&req).await?;
         let v = atlas_inventory::metrics_summary(&self.state.pool)
             .await
             .map_err(internal)?;
@@ -591,12 +686,14 @@ impl AtlasStorage for GrpcService {
 
     async fn list_buckets(
         &self,
-        _req: Request<Empty>,
+        req: Request<Empty>,
     ) -> Result<Response<ListBucketsReply>, Status> {
+        let scope = self.authorize(&req).await?;
         let buckets = atlas_inventory::buckets::list_buckets(&self.state.pool)
             .await
             .map_err(internal)?
             .into_iter()
+            .filter(|b| scope.as_deref().is_none_or(|t| b.tenant_id == t))
             .map(|b| Bucket {
                 id: b.id,
                 name: b.name,
@@ -612,13 +709,15 @@ impl AtlasStorage for GrpcService {
 
     async fn list_tenants(
         &self,
-        _req: Request<Empty>,
+        req: Request<Empty>,
     ) -> Result<Response<ListTenantsReply>, Status> {
+        let scope = self.authorize(&req).await?;
         // Inventory overview keys tenants by `tenant_id` only (no separate display name).
         let tenants = atlas_inventory::tenants::list_overview(&self.state.pool)
             .await
             .map_err(internal)?
             .into_iter()
+            .filter(|t| scope.as_deref().is_none_or(|s| t.tenant_id == s))
             .map(|t| Tenant {
                 id: t.tenant_id.clone(),
                 name: t.tenant_id,
