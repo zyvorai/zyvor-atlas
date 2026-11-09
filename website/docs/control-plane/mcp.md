@@ -193,7 +193,7 @@ its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
 | `ATLAS_PUBLIC_URL` | gateway | Origin clients reach the gateway at (`https://atlas.example.com`), used for the RFC 9728 `resource` and the 401 `resource_metadata` URL ([above](#oauth-protected-resource-metadata-rfc-9728)). Unset: derived from `Host`/`X-Forwarded-Proto`. Invalid: the gateway refuses to start. Read once at startup. |
 | `ATLAS_MCP_IDP_ISSUER` / `ATLAS_MCP_IDP_JWKS_URL` / `ATLAS_MCP_IDP_MAX_LIFETIME_SECS` / `ATLAS_MCP_IDP_ALLOW_HTTP` | gateway | Accept an identity provider's JWT access tokens on the MCP endpoint only; see [IdP access tokens](#idp-access-tokens-resource-server). Needs `ATLAS_PUBLIC_URL` (startup fails without it). Read once at startup. |
 | `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot`, `ack_alert`, `silence_alert`, `create_workspace`, `reset_workspace` and `discard_workspace` tools. Off by default. |
-| `ATLAS_MCP_AUDIT_CALLS` | gateway | Every tool call writes an `mcp.tool.call` audit row (caller, tool, `success` or `error`, token `jti`, role, whether the token is scoped), written after the response so it never delays a call. `0` turns it off, for a polling agent where one row per call is too many. Denied calls (`mcp.tool.denied`) and guarded writes are always audited. |
+| `ATLAS_MCP_AUDIT_CALLS` | gateway | Every tool call writes an `mcp.tool.call` audit row (caller, tool, `success`, `error`, `proposed` for a write plan handed back for confirmation, or `declined`/`cancelled` for a refused MRTR confirmation, token `jti`, role, whether the token is scoped), written after the response so it never delays a call. `0` turns it off, for a polling agent where one row per call is too many. Denied calls (`mcp.tool.denied`) and guarded writes are always audited. |
 | `ATLAS_MCP_CALLS_PER_MIN` | gateway | Tool calls per minute each token may make (a token's own `jti`; callers without one share their actor id's budget). Calls over it are refused and audited as `mcp.tool.rate_limited`. Unset or `0` is off. It adds to the per-actor request limit (`ATLAS_RATE_LIMIT_RPM`), which already covers `/mcp`. The count is kept in process and shared through the database (see [HA.md](./ha.md#mcp-call-budgets)), so on Postgres it holds across gateway pods within one sync interval; on SQLite it is per pod. Read once at startup. |
 | `ATLAS_MCP_TOOL_CALLS_PER_MIN` | gateway | Calls per minute each token may make to any one tool, so a loop on one expensive tool cannot use up the whole `ATLAS_MCP_CALLS_PER_MIN` allowance. Calls over it are refused and audited as `mcp.tool.rate_limited` (with `scope: tool`). Only real tool names are counted. Unset or `0` is off. Shared through the database like `ATLAS_MCP_CALLS_PER_MIN`; read once at startup. |
 | `ATLAS_AGENT_WORKSPACE_BYTES` | gateway | Default budget on the bytes of workspaces one caller may hold at once: the sum of the `max_bytes` of every workspace they own in the tenant, checked at create. A token's own `workspace_bytes` overrides it. Unset or `0` is off. While a budget applies `max_bytes` (or `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) must be set, since an uncapped workspace cannot be counted. |
@@ -209,7 +209,44 @@ the exact arguments; the second call with that token executes the REST handler, 
 tenant checks apply. Proposals, rejections and executions are audited as `mcp.<tool>`. `ack_alert` only records that a
 named operator saw an alert (the plan shows its title, severity and state); it does not resolve the alert or
 silence notifications. `silence_alert` silences webhook notifications for one alert for 60 s to 24 h (default 1 h; REST allows 30 days, so a longer window stays a human action); the alert is still tracked and listed, and the token is bound to the alert and the window. All write tools share one gate, so a token for one tool, alert or window never works for another.
-Tokens are held in process memory and die with the gateway.
+
+**Token lifetime and single use.** A confirmation token is a signed JWT (HS256) whose key is derived from `ATLAS_JWT_SECRET` with a
+domain label, so it can never be used as a login or API token and the other way round. Because the key is derived rather than random per
+process, a token issued before a restart, or by another replica with the same `ATLAS_JWT_SECRET`, is still honoured until it expires
+(5 minutes); rotating the secret invalidates tokens still outstanding. Single use is recorded in the database (`mcp_confirm_used`, migration
+`0039`): redeeming a token inserts its `jti`, and a second redemption, on any replica sharing the database and after any restart, hits the
+primary key and is refused as already used. If that insert fails for any other reason the write is refused and nothing runs (it fails
+closed); expired rows are pruned about once a minute. **Behaviour change:** until this release a token lived only in process memory, died
+with the gateway and did not work across replicas.
+
+### Confirmation as an `input_required` round (2026-07-28)
+
+A client that negotiated protocol 2026-07-28 **and** declared the `elicitation` capability in its request metadata (form mode; an empty
+`elicitation: {}` counts as form mode, as the spec defines) does not see the plan JSON or handle a token. The same guard that runs every
+tool turns a write tool's plan into an `input_required` result ([MRTR](https://modelcontextprotocol.io/specification/2026-07-28/basic/patterns/mrtr)):
+
+1. `tools/call create_snapshot {...}` returns `resultType: input_required` with one form elicitation, `confirm` (a boolean), whose message
+   summarises the plan (action and its fields), and `requestState` set to the signed confirmation token. Nothing has changed yet.
+2. The client asks its user and retries the same call with `inputResponses` and the echoed `requestState`.
+3. `accept` with `confirm: true`: the gateway puts the state into the call's `confirmation_token` argument and dispatches it like any
+   other call, so everything above applies unchanged (signature, expiry, the caller, the tool, the exact arguments, single use).
+   `decline`, `cancel`, or `accept` with `confirm: false` return an ordinary non-error result (`executed: false`, `outcome: declined` or
+   `cancelled`) and consume nothing: the same state can still be accepted later, until it expires. A retry with no usable answer plans
+   again and asks again, as the spec asks.
+
+`requestState` is treated as attacker-controlled: it is the signed token, bound to the authenticated caller, the tool and the exact
+arguments, expires in 5 minutes, and its single use is enforced server-side as above. A tampered, expired, replayed, foreign-caller or
+mismatched-arguments state is refused. Sending `requestState` together with an explicit `confirmation_token` argument is refused as
+ambiguous.
+
+Every other client keeps the `confirmation_token` flow exactly as described above: a legacy `initialize` session (whatever it declares),
+a 2026-07-28 client that did not declare elicitation (the spec forbids sending `inputRequests` a client did not declare), and a client that
+declared URL mode only. Every round is a tool call: each spends the per-token and per-tool call budgets, and each leaves its own
+`mcp.tool.call` audit row, with status `proposed` for a round that asked for confirmation (it was `error` for any non-complete result
+before), `declined` or `cancelled` for a refused one. The tool's own `mcp.<tool>` rows (`proposed`, `rejected`, `success`, `failure`) are
+written as before. Tested with the rmcp client in `server/discover` mode (`crates/atlas-gateway/tests/mcp_mrtr.rs`: accept, decline,
+cancel, no elicitation capability, legacy session, tampered, foreign, mismatched, expired and replayed state, a restart and a second
+instance sharing the database, budgets and audit rows); **not tried with a real MCP host**, and whether hosts declare elicitation varies.
 
 The workspace tools follow the same rules. `create_workspace` takes `source_volume_id` or `source_snapshot_id` (an atlas-native volume,
 filesystem or snapshot in the caller's tenant), optional `name`, `ttl_secs` (60 s up to the server maximum, default 1 h) and `max_bytes`;
@@ -245,7 +282,7 @@ MCP-only, like a `--tool` token: it is refused on REST, gRPC and `/metrics`. Tes
 **Budgets.** The per-token and per-tool calls-per-minute budgets share their counts through the database (see
 [HA.md](./ha.md#mcp-call-budgets)). `workspace_bytes` (the token claim, `--workspace-bytes`, or `ATLAS_AGENT_WORKSPACE_BYTES`) caps the sum of
 `max_bytes` over the workspaces the token's subject holds; `create_workspace` over it is refused before the snapshot or clone is made, so
-nothing is left behind. It counts the admitted caps, like `max_bytes` itself, not bytes actually written. The check is not atomic with the insert, so two creates racing can both pass, as with the per-tenant count.
+nothing is left behind. It counts the admitted caps, like `max_bytes` itself, not bytes actually written. The plan phase's check is advisory (it only reads). The authoritative check reserves first: `create_workspace` inserts its own `creating` row, which counts toward the budget and the per-tenant count, and only then checks both, deleting its own row and refusing if over. Two creates racing therefore cannot both pass a limit (under contention both may be refused, so retry); see [NATIVE_FS.md](../atlas-native/filesystem.md#agent-workspaces).
 
 **Run id.** Send `X-Atlas-Run-Id: <id>` on the MCP connection (1 to 64 characters of `[A-Za-z0-9_.:-]`, starting with a letter or digit; a
 header, so a client sets it once per connection and no tool needs an argument). Every audit row the call causes carries it in the

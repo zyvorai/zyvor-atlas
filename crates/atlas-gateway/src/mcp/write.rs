@@ -3,14 +3,15 @@
 //! Guarded action tools for the MCP edge. Off unless `ATLAS_MCP_WRITE_ENABLE=1` (when off the tools
 //! are not even listed). Every write is two-phase: a call without a `confirmation_token` changes
 //! nothing and returns the plan plus a short-lived, single-use token bound to the caller, the tool
-//! and the exact arguments; only a second call with that token executes. Role and tenant checks are
+//! and the exact arguments; only a second call with that token executes. The token's signing key is
+//! derived from `ATLAS_JWT_SECRET` and its single use is recorded in the database
+//! (`mcp_confirm_used`), so a token survives a restart and is honoured by any replica sharing the
+//! database, exactly once. On a 2026-07-28 client that can elicit, `mrtr.rs` carries the same token
+//! as the MRTR `requestState` instead of making the agent echo it. Role and tenant checks are
 //! the wrapped REST handler's own. Only low-blast-radius, reversible actions are exposed — failover,
 //! delete, restore and disk operations stay human REST/CLI actions. The one exception is the agent
 //! workspace tools (`workspaces.rs`), which reset or discard only a disposable clone the agent made
 //! itself, never the volume it was copied from.
-
-use std::collections::HashMap;
-use std::sync::{Mutex, OnceLock};
 
 use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
@@ -47,16 +48,16 @@ pub(super) fn write_enabled() -> bool {
     )
 }
 
-/// Per-process random signing key: a restart invalidates every outstanding token.
-fn key() -> &'static str {
-    static KEY: OnceLock<String> = OnceLock::new();
-    KEY.get_or_init(|| {
-        format!(
-            "{}{}",
-            uuid::Uuid::new_v4().simple(),
-            uuid::Uuid::new_v4().simple()
-        )
-    })
+/// Signing key for confirmation tokens, derived from the gateway's JWT secret with a domain label so a
+/// confirmation token can never verify as a login/API token (those are signed with the raw secret) and the
+/// other way round. Every replica with the same `ATLAS_JWT_SECRET` derives the same key; rotating the
+/// secret invalidates tokens still outstanding (at most `TOKEN_TTL_SECS` old).
+fn key(secret: &str) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut h = Sha256::new();
+    h.update(b"atlas.mcp.confirmation-token.v1\0");
+    h.update(secret.as_bytes());
+    h.finalize().into()
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -75,7 +76,7 @@ fn now_secs() -> u64 {
         .unwrap_or(0)
 }
 
-fn issue(actor: &str, tool: &str, params: &str, now: u64) -> String {
+fn issue(secret: &str, actor: &str, tool: &str, params: &str, now: u64) -> String {
     let claims = Claims {
         jti: uuid::Uuid::new_v4().to_string(),
         sub: actor.into(),
@@ -86,32 +87,55 @@ fn issue(actor: &str, tool: &str, params: &str, now: u64) -> String {
     encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(key().as_bytes()),
+        &EncodingKey::from_secret(&key(secret)),
     )
     .expect("HS256 encode of plain claims cannot fail")
 }
 
-/// Tokens already redeemed (jti → exp), pruned lazily, so a token cannot be replayed in its TTL.
-fn used() -> &'static Mutex<HashMap<String, u64>> {
-    static USED: OnceLock<Mutex<HashMap<String, u64>>> = OnceLock::new();
-    USED.get_or_init(Default::default)
-}
-
-fn redeem(token: &str, actor: &str, tool: &str, params: &str) -> Result<(), &'static str> {
+/// Everything about a token except whether it was already used: signature, expiry, and that it was issued
+/// to this caller for this tool and these exact arguments. Consumes nothing.
+fn verify(secret: &str, token: &str, actor: &str, tool: &str, params: &str) -> Result<Claims, &'static str> {
     let mut v = Validation::new(Algorithm::HS256);
     v.leeway = 0;
     v.set_required_spec_claims(&["exp"]);
-    let data = decode::<Claims>(token, &DecodingKey::from_secret(key().as_bytes()), &v)
+    let data = decode::<Claims>(token, &DecodingKey::from_secret(&key(secret)), &v)
         .map_err(|_| "confirmation token is invalid or expired")?;
     let c = data.claims;
     if c.sub != actor || c.tool != tool || c.params != params {
         return Err("confirmation token was issued for a different caller or arguments");
     }
+    Ok(c)
+}
+
+/// Rows of `mcp_confirm_used` are kept this long past the token's own expiry, so a replica whose clock runs
+/// behind cannot see a pruned row as a fresh token.
+const USED_RETENTION_SECS: i64 = 900;
+
+/// Last time (unix seconds) this process pruned `mcp_confirm_used`; pruning runs at most once a minute.
+static LAST_PRUNE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Redeem a token: verify it, then record its `jti` in the database. The primary key makes the first
+/// redemption win on every replica sharing the database, so a replay (also after a restart or on another
+/// replica) is refused. A database error is not a reason to let the write through: it fails closed.
+async fn redeem(s: &AppState, token: &str, actor: &str, tool: &str, params: &str) -> Result<(), &'static str> {
+    let c = verify(&s.config.jwt_secret, token, actor, tool, params)?;
+    match atlas_inventory::mcp_confirm::mark_used(&s.pool, &c.jti, c.exp as i64).await {
+        Ok(true) => {}
+        Ok(false) => return Err("confirmation token was already used"),
+        Err(e) => {
+            tracing::error!(error = %e, "could not record an MCP confirmation token as used; refusing the write");
+            return Err("confirmation could not be recorded, nothing was executed; try again");
+        }
+    }
     let now = now_secs();
-    let mut map = used().lock().expect("used-token map");
-    map.retain(|_, exp| *exp > now);
-    if map.insert(c.jti, c.exp).is_some() {
-        return Err("confirmation token was already used");
+    let last = LAST_PRUNE.load(std::sync::atomic::Ordering::Relaxed);
+    if now >= last + 60
+        && LAST_PRUNE
+            .compare_exchange(last, now, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed)
+            .is_ok()
+    {
+        // Best effort: a failed prune only leaves old rows for the next one.
+        let _ = atlas_inventory::mcp_confirm::prune_expired(&s.pool, now as i64 - USED_RETENTION_SECS).await;
     }
     Ok(())
 }
@@ -126,10 +150,16 @@ pub(super) enum Gate {
 
 /// The two-phase confirm shared by every write tool. `params` must be the canonical JSON of the
 /// arguments (everything except the token) so a token cannot be replayed with different arguments.
-pub(super) fn gate(actor_id: &str, tool: &str, params: &str, token: Option<&str>) -> Result<Gate, &'static str> {
+pub(super) async fn gate(
+    s: &AppState,
+    actor_id: &str,
+    tool: &str,
+    params: &str,
+    token: Option<&str>,
+) -> Result<Gate, &'static str> {
     match token {
-        None => Ok(Gate::Propose(issue(actor_id, tool, params, now_secs()))),
-        Some(t) => redeem(t, actor_id, tool, params).map(|()| Gate::Execute),
+        None => Ok(Gate::Propose(issue(&s.config.jwt_secret, actor_id, tool, params, now_secs()))),
+        Some(t) => redeem(s, t, actor_id, tool, params).await.map(|()| Gate::Execute),
     }
 }
 
@@ -238,7 +268,7 @@ impl AtlasMcp {
         let params = json!({ "volume_id": args.volume_id, "name": name }).to_string();
         let rid = args.volume_id.as_str();
 
-        match gate(&actor.id, CREATE_SNAPSHOT, &params, args.confirmation_token.as_deref()) {
+        match gate(s, &actor.id, CREATE_SNAPSHOT, &params, args.confirmation_token.as_deref()).await {
             Ok(Gate::Propose(token)) => {
                 audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
                 return Ok(ToolJson(json!({
@@ -303,7 +333,7 @@ impl AtlasMcp {
         let params = json!({ "alert_id": args.alert_id }).to_string();
         let rid = args.alert_id.as_str();
 
-        match gate(&actor.id, ACK_ALERT, &params, args.confirmation_token.as_deref()) {
+        match gate(s, &actor.id, ACK_ALERT, &params, args.confirmation_token.as_deref()).await {
             Ok(Gate::Propose(token)) => {
                 audit(s, &actor, ACK_ALERT, "alert", rid, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
                 return Ok(ToolJson(json!({
@@ -374,7 +404,7 @@ impl AtlasMcp {
         let params = json!({ "alert_id": args.alert_id, "secs": secs }).to_string();
         let rid = args.alert_id.as_str();
 
-        match gate(&actor.id, SILENCE_ALERT, &params, args.confirmation_token.as_deref()) {
+        match gate(s, &actor.id, SILENCE_ALERT, &params, args.confirmation_token.as_deref()).await {
             Ok(Gate::Propose(token)) => {
                 audit(s, &actor, SILENCE_ALERT, "alert", rid, "proposed", json!({ "via": "mcp", "confirmed": false, "secs": secs })).await;
                 return Ok(ToolJson(json!({
@@ -420,42 +450,42 @@ impl AtlasMcp {
 mod tests {
     use super::*;
 
+    const SECRET: &str = "unit-test-secret-at-least-32-bytes!!";
+
     #[test]
-    fn gate_proposes_without_a_token_and_executes_with_a_matching_one() {
-        let params = r#"{"alert_id":"alert_a"}"#;
-        let Ok(Gate::Propose(t)) = gate("alice", ACK_ALERT, params, None) else {
-            panic!("no token must propose");
-        };
-        // A token for another tool or other arguments never opens the gate.
-        assert!(gate("alice", CREATE_SNAPSHOT, params, Some(&t)).is_err());
-        assert!(gate("alice", ACK_ALERT, r#"{"alert_id":"alert_b"}"#, Some(&t)).is_err());
-        assert!(matches!(gate("alice", ACK_ALERT, params, Some(&t)), Ok(Gate::Execute)));
-        assert!(gate("alice", ACK_ALERT, params, Some(&t)).is_err(), "single use");
+    fn token_is_bound_to_caller_tool_and_arguments() {
+        let params = r#"{"volume_id":"vol_a","name":null}"#;
+        let t = issue(SECRET, "alice", CREATE_SNAPSHOT, params, now_secs());
+        // Wrong caller / tool / arguments are rejected.
+        assert!(verify(SECRET, &t, "bob", CREATE_SNAPSHOT, params).is_err());
+        assert!(verify(SECRET, &t, "alice", "delete_volume", params).is_err());
+        assert!(verify(SECRET, &t, "alice", CREATE_SNAPSHOT, r#"{"volume_id":"vol_b","name":null}"#).is_err());
+        // Verifying consumes nothing: the right caller still verifies, as often as asked.
+        assert!(verify(SECRET, &t, "alice", CREATE_SNAPSHOT, params).is_ok());
+        assert!(verify(SECRET, &t, "alice", CREATE_SNAPSHOT, params).is_ok());
     }
 
     #[test]
-    fn token_is_bound_single_use_and_expires() {
-        let params = r#"{"volume_id":"vol_a","name":null}"#;
+    fn tampered_expired_and_foreign_tokens_fail() {
+        let params = r#"{"alert_id":"alert_a"}"#;
         let now = now_secs();
-        let t = issue("alice", CREATE_SNAPSHOT, params, now);
-        // Wrong caller / tool / arguments are rejected without consuming the token.
-        assert!(redeem(&t, "bob", CREATE_SNAPSHOT, params).is_err());
-        assert!(redeem(&t, "alice", "delete_volume", params).is_err());
-        assert!(redeem(&t, "alice", CREATE_SNAPSHOT, r#"{"volume_id":"vol_b","name":null}"#).is_err());
-        // The right caller redeems exactly once.
-        assert!(redeem(&t, "alice", CREATE_SNAPSHOT, params).is_ok());
-        assert_eq!(
-            redeem(&t, "alice", CREATE_SNAPSHOT, params),
-            Err("confirmation token was already used")
-        );
-        // Tampered and expired tokens fail.
+        let t = issue(SECRET, "alice", ACK_ALERT, params, now);
         let mut bad = t.clone();
         bad.push('x');
-        assert!(redeem(&bad, "alice", CREATE_SNAPSHOT, params).is_err());
-        let old = issue("alice", CREATE_SNAPSHOT, params, now.saturating_sub(TOKEN_TTL_SECS + 120));
-        assert_eq!(
-            redeem(&old, "alice", CREATE_SNAPSHOT, params),
-            Err("confirmation token is invalid or expired")
-        );
+        assert_eq!(verify(SECRET, &bad, "alice", ACK_ALERT, params).unwrap_err(), "confirmation token is invalid or expired");
+        let old = issue(SECRET, "alice", ACK_ALERT, params, now.saturating_sub(TOKEN_TTL_SECS + 120));
+        assert_eq!(verify(SECRET, &old, "alice", ACK_ALERT, params).unwrap_err(), "confirmation token is invalid or expired");
+        // Another secret does not verify it (a replica with a different ATLAS_JWT_SECRET)...
+        assert!(verify("another-secret-at-least-32-bytes!!!!", &t, "alice", ACK_ALERT, params).is_err());
+        // ...and the same secret does, which is what makes the token portable across restarts and replicas.
+        assert!(verify(SECRET, &t, "alice", ACK_ALERT, params).is_ok());
+    }
+
+    #[test]
+    fn the_signing_key_is_not_the_login_secret() {
+        // A confirmation token is not a login token and the other way round: the keys differ.
+        assert_ne!(key(SECRET).as_slice(), SECRET.as_bytes());
+        let t = issue(SECRET, "alice", ACK_ALERT, "{}", now_secs());
+        assert!(crate::auth::decode_token(&t, SECRET, None).is_err(), "a confirmation token must not pass as an API token");
     }
 }

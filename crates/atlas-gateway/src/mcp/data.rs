@@ -613,7 +613,7 @@ impl AtlasMcp {
         lookup: Option<(&str, Value, bool)>,
     ) -> Result<ToolJson<Value>, McpError> {
         let s = &self.state;
-        match gate(&actor.id, tool, &params.to_string(), token) {
+        match gate(s, &actor.id, tool, &params.to_string(), token).await {
             Ok(Gate::Propose(issued)) => {
                 let current = match lookup {
                     Some((a, args, is_job)) => match rpc(actor, a, args).await {
