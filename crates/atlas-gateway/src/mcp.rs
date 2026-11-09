@@ -39,8 +39,9 @@ use axum::{Extension, Json};
 use crate::{
     auth::{require_role, tenant_scope, Actor, ROLE_OPERATOR},
     routes::ai::{
-        compute_advisor, compute_anomalies, compute_incidents, compute_what_if, fetch_io_ai, fetch_io_risk,
-        io_agent_from_env, io_ai_unavailable, io_unavailable, AdvisorMode, WhatIfRequest,
+        compute_advisor, compute_anomalies, compute_incidents, compute_what_if, fetch_io_ai,
+        fetch_io_risk, io_agent_from_env, io_ai_unavailable, io_unavailable, AdvisorMode,
+        WhatIfRequest,
     },
     routes::{dr, observability, volume_groups, volumes},
     state::AppState,
@@ -199,7 +200,9 @@ impl AtlasMcp {
         let health = atlas_inventory::cluster_health(&self.state.pool, &args.id)
             .await
             .map_err(internal_error)?
-            .ok_or_else(|| McpError::invalid_params(format!("unknown cluster {}", args.id), None))?;
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("unknown cluster {}", args.id), None)
+            })?;
         Ok(ToolJson(json!(health)))
     }
 
@@ -318,9 +321,15 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
-        let result = compute_anomalies(&self.state, &actor, args.minutes, args.sensitivity, AdvisorMode::Local)
-            .await
-            .map_err(internal_error)?;
+        let result = compute_anomalies(
+            &self.state,
+            &actor,
+            args.minutes,
+            args.sensitivity,
+            AdvisorMode::Local,
+        )
+        .await
+        .map_err(internal_error)?;
         Ok(ToolJson(json!(result)))
     }
 
@@ -414,9 +423,7 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
-        rest(
-            dr::mirror_status(State(self.state.clone()), Extension(actor), Path(args.id)).await,
-        )
+        rest(dr::mirror_status(State(self.state.clone()), Extension(actor), Path(args.id)).await)
     }
 
     #[tool(
@@ -499,7 +506,10 @@ impl AtlasMcp {
 /// `ATLAS_MCP_AUDIT_CALLS=0`. A polling agent writes one row per call, so turn it off if that volume matters.
 fn audit_calls_enabled() -> bool {
     !matches!(
-        std::env::var("ATLAS_MCP_AUDIT_CALLS").ok().as_deref().map(str::trim),
+        std::env::var("ATLAS_MCP_AUDIT_CALLS")
+            .ok()
+            .as_deref()
+            .map(str::trim),
         Some("0" | "false" | "FALSE" | "no")
     )
 }
@@ -628,7 +638,9 @@ impl ServerHandler for AtlasMcp {
 /// Public discovery card served at `/.well-known/mcp`. Deliberately static and small: it says where
 /// the MCP endpoint is and how to authenticate, and nothing about tools, tenants or inventory (those
 /// need a token). The endpoint is relative to the host the card was fetched from.
-pub(crate) async fn server_card(axum::extract::State(state): axum::extract::State<AppState>) -> Json<Value> {
+pub(crate) async fn server_card(
+    axum::extract::State(state): axum::extract::State<AppState>,
+) -> Json<Value> {
     let mut card = json!({
         "name": "atlas",
         "title": "Zyvor Atlas storage control plane",

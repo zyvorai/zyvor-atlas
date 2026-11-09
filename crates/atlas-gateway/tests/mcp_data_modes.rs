@@ -41,8 +41,14 @@ async fn tools_follow_configuration_and_fail_cleanly() {
     let c = connect(addr, &token).await;
     let names = tool_names(&c).await;
     assert_eq!(data_tools(&names).len(), 7, "{names:?}");
-    assert!(!names.iter().any(|n| n == "data_workspace_discard" || n == "data_job_release"));
-    assert!(call(&c, "data_workspace_discard", json!({"workspace_id": "ws1"})).await.is_err());
+    assert!(!names
+        .iter()
+        .any(|n| n == "data_workspace_discard" || n == "data_job_release"));
+    assert!(
+        call(&c, "data_workspace_discard", json!({"workspace_id": "ws1"}))
+            .await
+            .is_err()
+    );
     assert_eq!(fake.count("workspaces.discard"), 0);
     assert!(call(&c, "data_artifact_list", json!({})).await.is_ok());
     c.cancel().await.unwrap();
@@ -51,6 +57,9 @@ async fn tools_follow_configuration_and_fail_cleanly() {
     std::env::set_var("ATLAS_DATA_URL", "http://127.0.0.1:1");
     let c = connect(addr, &token).await;
     let e = call(&c, "data_artifact_list", json!({})).await.unwrap_err();
-    assert!(e.contains("unreachable") && !e.contains("127.0.0.1") && !e.contains(TOK_A), "{e}");
+    assert!(
+        e.contains("unreachable") && !e.contains("127.0.0.1") && !e.contains(TOK_A),
+        "{e}"
+    );
     c.cancel().await.unwrap();
 }

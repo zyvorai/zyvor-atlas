@@ -76,7 +76,10 @@ fn tool_budget() -> &'static RateLimiter {
 }
 
 fn env_u32(name: &str) -> u32 {
-    std::env::var(name).ok().and_then(|v| v.trim().parse().ok()).unwrap_or(0)
+    std::env::var(name)
+        .ok()
+        .and_then(|v| v.trim().parse().ok())
+        .unwrap_or(0)
 }
 
 /// Start (once per process) the background sync that shares both budgets' counts through the
@@ -94,14 +97,26 @@ fn ensure_budget_sync(pool: &sqlx::AnyPool) {
             std::env::var("HOSTNAME").unwrap_or_else(|_| "gateway".into()),
             std::process::id()
         );
-        crate::state::spawn_rate_limit_sync(pool.clone(), call_budget().clone(), replica.clone(), secs);
-        crate::state::spawn_rate_limit_sync(pool.clone(), tool_budget().clone(), format!("{replica}-tool"), secs);
+        crate::state::spawn_rate_limit_sync(
+            pool.clone(),
+            call_budget().clone(),
+            replica.clone(),
+            secs,
+        );
+        crate::state::spawn_rate_limit_sync(
+            pool.clone(),
+            tool_budget().clone(),
+            format!("{replica}-tool"),
+            secs,
+        );
     });
 }
 
 /// The validated run id of this request: `Ok(None)` without the header, `Err` with a reason when it
 /// is present but not a valid id.
-pub(super) fn run_id_from(context: &RequestContext<RoleServer>) -> Result<Option<String>, &'static str> {
+pub(super) fn run_id_from(
+    context: &RequestContext<RoleServer>,
+) -> Result<Option<String>, &'static str> {
     let Some(parts) = context.extensions.get::<axum::http::request::Parts>() else {
         return Ok(None);
     };
@@ -110,13 +125,18 @@ pub(super) fn run_id_from(context: &RequestContext<RoleServer>) -> Result<Option
     };
     match raw.to_str() {
         Ok(v) if atlas_inventory::audit::valid_run_id(v) => Ok(Some(v.to_string())),
-        _ => Err("X-Atlas-Run-Id must be 1 to 64 characters of letters, digits, '_', '.', ':' or '-'"),
+        _ => Err(
+            "X-Atlas-Run-Id must be 1 to 64 characters of letters, digits, '_', '.', ':' or '-'",
+        ),
     }
 }
 
 /// Every resource a call names, by the argument names listed in the module docs. A value of the wrong
 /// type is returned as an empty name, which no scope allows.
-pub(super) fn named_resources(tool: &str, args: Option<&serde_json::Map<String, Value>>) -> Vec<(ResourceKind, String)> {
+pub(super) fn named_resources(
+    tool: &str,
+    args: Option<&serde_json::Map<String, Value>>,
+) -> Vec<(ResourceKind, String)> {
     let Some(args) = args else { return Vec::new() };
     let mut out = Vec::new();
     let mut one = |kind: ResourceKind, v: &Value| match v {
@@ -158,7 +178,11 @@ pub(super) fn check_scope(
     for (kind, name) in named {
         if !scope.allows(kind, &name) {
             return Err((
-                format!("this token's scope does not allow {} '{}'", kind.as_str(), name.chars().take(128).collect::<String>()),
+                format!(
+                    "this token's scope does not allow {} '{}'",
+                    kind.as_str(),
+                    name.chars().take(128).collect::<String>()
+                ),
                 Some((kind, name)),
             ));
         }
@@ -168,7 +192,14 @@ pub(super) fn check_scope(
 
 impl AtlasMcp {
     /// Record a refusal. The tool name and the reason are the only things stored; arguments never are.
-    async fn audit_refusal(&self, actor: &Actor, run_id: Option<&str>, action: &str, tool: &str, detail: Value) {
+    async fn audit_refusal(
+        &self,
+        actor: &Actor,
+        run_id: Option<&str>,
+        action: &str,
+        tool: &str,
+        detail: Value,
+    ) {
         let _ = atlas_inventory::audit::record_with_run(
             &self.state.pool,
             run_id,
@@ -195,29 +226,50 @@ impl AtlasMcp {
         let actor = actor_from(&context)?;
         let tool: String = request.name.chars().take(MAX_AUDITED_TOOL_NAME).collect();
         if !actor.may_call_tool(&request.name) {
-            self.audit_refusal(&actor, run_id.as_deref(), "mcp.tool.denied", &tool, json!({ "reason": "tool not in token allowlist" }))
-                .await;
+            self.audit_refusal(
+                &actor,
+                run_id.as_deref(),
+                "mcp.tool.denied",
+                &tool,
+                json!({ "reason": "tool not in token allowlist" }),
+            )
+            .await;
             return Err(McpError::invalid_request(
                 format!("tool '{}' is not permitted for this token", request.name),
                 None,
             ));
         }
         if let Some(scope) = &actor.scope {
-            if let Err((reason, named)) = check_scope(scope, &request.name, request.arguments.as_ref()) {
+            if let Err((reason, named)) =
+                check_scope(scope, &request.name, request.arguments.as_ref())
+            {
                 let detail = match named {
-                    Some((kind, name)) => json!({ "reason": "resource outside token scope", "kind": kind.as_str(),
-                                                  "resource": name.chars().take(128).collect::<String>() }),
+                    Some((kind, name)) => {
+                        json!({ "reason": "resource outside token scope", "kind": kind.as_str(),
+                                                  "resource": name.chars().take(128).collect::<String>() })
+                    }
                     None => json!({ "reason": "enumerating tool under a resource scope" }),
                 };
-                self.audit_refusal(&actor, run_id.as_deref(), "mcp.tool.denied", &tool, detail).await;
+                self.audit_refusal(&actor, run_id.as_deref(), "mcp.tool.denied", &tool, detail)
+                    .await;
                 return Err(McpError::invalid_request(reason, None));
             }
         }
         ensure_budget_sync(&self.state.pool);
-        let budget_key = if actor.jti.is_empty() { actor.id.as_str() } else { actor.jti.as_str() };
+        let budget_key = if actor.jti.is_empty() {
+            actor.id.as_str()
+        } else {
+            actor.jti.as_str()
+        };
         if !call_budget().allow(&format!("mcp:call:{budget_key}")) {
-            self.audit_refusal(&actor, run_id.as_deref(), "mcp.tool.rate_limited", &tool, json!({ "jti": actor.jti }))
-                .await;
+            self.audit_refusal(
+                &actor,
+                run_id.as_deref(),
+                "mcp.tool.rate_limited",
+                &tool,
+                json!({ "jti": actor.jti }),
+            )
+            .await;
             return Err(McpError::invalid_request(
                 "tool-call budget for this token is used up for this minute; retry later",
                 None,
@@ -226,22 +278,36 @@ impl AtlasMcp {
         if self.tool_router.has_route(&request.name)
             && !tool_budget().allow(&format!("mcp:tool:{budget_key}\u{1f}{}", request.name))
         {
-            self.audit_refusal(&actor, run_id.as_deref(), "mcp.tool.rate_limited", &tool, json!({ "jti": actor.jti, "scope": "tool" }))
-                .await;
+            self.audit_refusal(
+                &actor,
+                run_id.as_deref(),
+                "mcp.tool.rate_limited",
+                &tool,
+                json!({ "jti": actor.jti, "scope": "tool" }),
+            )
+            .await;
             return Err(McpError::invalid_request(
-                format!("call budget for tool '{}' is used up for this minute; retry later", request.name),
+                format!(
+                    "call budget for tool '{}' is used up for this minute; retry later",
+                    request.name
+                ),
                 None,
             ));
         }
         // A client that negotiated 2026-07-28 and can elicit confirms a write through MRTR (mrtr.rs); every
         // other client, and every tool that is not a guarded write, takes the path it always did.
         let mut request = request;
-        let mrtr = self.tool_router.get(&request.name).is_some_and(super::mrtr::is_confirm_tool)
+        let mrtr = self
+            .tool_router
+            .get(&request.name)
+            .is_some_and(super::mrtr::is_confirm_tool)
             && super::mrtr::client_can_confirm(&context);
         if mrtr {
             if let super::mrtr::Retry::Refused(outcome) = super::mrtr::take_retry(&mut request)? {
                 self.spawn_call_audit(&actor, run_id, &tool, outcome);
-                return Ok(CallToolResponse::Complete(super::mrtr::refused_result(&tool, outcome)));
+                return Ok(CallToolResponse::Complete(super::mrtr::refused_result(
+                    &tool, outcome,
+                )));
             }
         }
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
@@ -265,7 +331,13 @@ impl AtlasMcp {
 
     /// The `mcp.tool.call` audit row for one call, unless `ATLAS_MCP_AUDIT_CALLS=0`. Off the request path: a
     /// slow or failing audit write never delays or fails a tool call.
-    fn spawn_call_audit(&self, actor: &Actor, run_id: Option<String>, tool: &str, status: &'static str) {
+    fn spawn_call_audit(
+        &self,
+        actor: &Actor,
+        run_id: Option<String>,
+        tool: &str,
+        status: &'static str,
+    ) {
         if !super::audit_calls_enabled() {
             return;
         }
@@ -316,14 +388,18 @@ mod tests {
     fn resources_are_found_by_argument_name() {
         let n = named_resources(
             "create_workspace",
-            args(json!({ "source_volume_id": "v1", "source_snapshot_id": null, "name": "x" })).as_ref(),
+            args(json!({ "source_volume_id": "v1", "source_snapshot_id": null, "name": "x" }))
+                .as_ref(),
         );
         assert_eq!(n, vec![(ResourceKind::Volume, "v1".to_string())]);
         let n = named_resources("get_volume", args(json!({ "id": "v2" })).as_ref());
         assert_eq!(n, vec![(ResourceKind::Volume, "v2".to_string())]);
         // `id` is a resource only for the volume tools.
         assert!(named_resources("get_job", args(json!({ "id": "j1" })).as_ref()).is_empty());
-        let n = named_resources("x", args(json!({ "paths": ["/a", "/b"], "workspace_id": "ws_1" })).as_ref());
+        let n = named_resources(
+            "x",
+            args(json!({ "paths": ["/a", "/b"], "workspace_id": "ws_1" })).as_ref(),
+        );
         assert_eq!(n.len(), 3);
         // A value of the wrong type becomes an empty name, which nothing allows.
         let n = named_resources("x", args(json!({ "volume_id": 5 })).as_ref());
@@ -337,7 +413,12 @@ mod tests {
         assert!(check_scope(&s, "get_volume", args(json!({ "id": "agent-7" })).as_ref()).is_ok());
         assert!(check_scope(&s, "get_volume", args(json!({ "id": "vol_b" })).as_ref()).is_err());
         // No workspace list at all: naming any workspace is denied.
-        assert!(check_scope(&s, "get_workspace", args(json!({ "workspace_id": "ws_1" })).as_ref()).is_err());
+        assert!(check_scope(
+            &s,
+            "get_workspace",
+            args(json!({ "workspace_id": "ws_1" })).as_ref()
+        )
+        .is_err());
         // A tool naming nothing is not restricted by the scope.
         assert!(check_scope(&s, "ceph_status", None).is_ok());
         // One bad resource among several denies the call.
@@ -350,16 +431,49 @@ mod tests {
         let s = scope(&["vol_a"], &[]);
         assert!(check_scope(&s, "list_volumes", None).is_err());
         assert!(check_scope(&s, "list_backups", args(json!({})).as_ref()).is_err());
-        assert!(check_scope(&s, "list_backups", args(json!({ "volume_id": "vol_a" })).as_ref()).is_ok());
-        assert!(check_scope(&s, "list_backups", args(json!({ "volume_id": "vol_b" })).as_ref()).is_err());
+        assert!(check_scope(
+            &s,
+            "list_backups",
+            args(json!({ "volume_id": "vol_a" })).as_ref()
+        )
+        .is_ok());
+        assert!(check_scope(
+            &s,
+            "list_backups",
+            args(json!({ "volume_id": "vol_b" })).as_ref()
+        )
+        .is_err());
     }
 
     #[test]
     fn paths_cannot_escape_their_pattern() {
-        let s = ResourceScope { paths: vec!["/data/run1/*".into()], ..Default::default() };
-        assert!(check_scope(&s, "x", args(json!({ "path": "/data/run1/out.bin" })).as_ref()).is_ok());
-        assert!(check_scope(&s, "x", args(json!({ "path": "/data/run2/out.bin" })).as_ref()).is_err());
-        assert!(check_scope(&s, "x", args(json!({ "path": "/data/run1/../run2/x" })).as_ref()).is_err());
-        assert!(check_scope(&s, "x", args(json!({ "paths": ["/data/run1/a", "/etc/passwd"] })).as_ref()).is_err());
+        let s = ResourceScope {
+            paths: vec!["/data/run1/*".into()],
+            ..Default::default()
+        };
+        assert!(check_scope(
+            &s,
+            "x",
+            args(json!({ "path": "/data/run1/out.bin" })).as_ref()
+        )
+        .is_ok());
+        assert!(check_scope(
+            &s,
+            "x",
+            args(json!({ "path": "/data/run2/out.bin" })).as_ref()
+        )
+        .is_err());
+        assert!(check_scope(
+            &s,
+            "x",
+            args(json!({ "path": "/data/run1/../run2/x" })).as_ref()
+        )
+        .is_err());
+        assert!(check_scope(
+            &s,
+            "x",
+            args(json!({ "paths": ["/data/run1/a", "/etc/passwd"] })).as_ref()
+        )
+        .is_err());
     }
 }

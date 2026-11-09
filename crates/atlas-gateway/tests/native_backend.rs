@@ -256,7 +256,12 @@ async fn native_backend_locked_snapshot_refuses_delete() {
 
     // The expiry is recorded and shown on the snapshot; an unlocked one has no such field.
     let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
-    let mine = snaps.as_array().unwrap().iter().find(|s| s["id"] == sid.as_str()).unwrap();
+    let mine = snaps
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == sid.as_str())
+        .unwrap();
     assert_eq!(mine["locked_until"], first_until, "{mine}");
     let (st, plain) = send(
         c.post(format!("{base}/volumes/{vid}/snapshots"))
@@ -265,7 +270,12 @@ async fn native_backend_locked_snapshot_refuses_delete() {
     .await;
     assert_eq!(st, 201, "{plain}");
     let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
-    let other = snaps.as_array().unwrap().iter().find(|s| s["id"] == plain["snapshot_id"]).unwrap();
+    let other = snaps
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == plain["snapshot_id"])
+        .unwrap();
     assert!(other.get("locked_until").is_none(), "{other}");
 
     // Extending moves it out; it never moves back.
@@ -278,7 +288,12 @@ async fn native_backend_locked_snapshot_refuses_delete() {
     let extended = body["retain_until_unix"].as_i64().unwrap();
     assert!(extended > first_until);
     let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
-    let mine = snaps.as_array().unwrap().iter().find(|s| s["id"] == sid.as_str()).unwrap();
+    let mine = snaps
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == sid.as_str())
+        .unwrap();
     assert_eq!(mine["locked_until"], extended, "{mine}");
 
     let (st, body) = send(c.delete(format!("{base}/snapshots/{sid}"))).await;
@@ -290,8 +305,16 @@ async fn native_backend_locked_snapshot_refuses_delete() {
     .await;
     assert_eq!(st, 409, "a lock cannot be shortened: {body}");
     let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
-    let mine = snaps.as_array().unwrap().iter().find(|s| s["id"] == sid.as_str()).unwrap();
-    assert_eq!(mine["locked_until"], extended, "a refused shortening changes nothing");
+    let mine = snaps
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == sid.as_str())
+        .unwrap();
+    assert_eq!(
+        mine["locked_until"], extended,
+        "a refused shortening changes nothing"
+    );
     let (st, body) = send(
         c.post(format!("{base}/snapshots/nope/lock"))
             .json(&json!({ "retain_secs": 60 })),
@@ -308,7 +331,12 @@ async fn snapshot_create_if_not_exists_reuses_the_same_named_snapshot() {
     let other = make_fs(&base, &c, "dedupe-other").await;
     let url = |v: &str| format!("{base}/volumes/{v}/snapshots");
     let count = |snaps: &Value, v: &str, name: &str| {
-        snaps.as_array().unwrap().iter().filter(|s| s["volume_id"] == v && s["name"] == name).count()
+        snaps
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|s| s["volume_id"] == v && s["name"] == name)
+            .count()
     };
 
     // Default (flag absent or false) keeps the historic behaviour: names are not unique.
@@ -316,16 +344,28 @@ async fn snapshot_create_if_not_exists_reuses_the_same_named_snapshot() {
         let (st, s) = send(c.post(url(&vid)).json(&json!({ "name": "plain" }))).await;
         assert_eq!(st, 201, "{s}");
     }
-    let (st, s) = send(c.post(url(&vid)).json(&json!({ "name": "plain", "if_not_exists": false }))).await;
+    let (st, s) = send(
+        c.post(url(&vid))
+            .json(&json!({ "name": "plain", "if_not_exists": false })),
+    )
+    .await;
     assert_eq!(st, 201, "{s}");
     let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
     assert_eq!(count(&snaps, &vid, "plain"), 3);
 
     // With the flag: the first call creates, later ones return it with 200 and make nothing new.
-    let (st, first) = send(c.post(url(&vid)).json(&json!({ "name": "ckpt", "if_not_exists": true }))).await;
+    let (st, first) = send(
+        c.post(url(&vid))
+            .json(&json!({ "name": "ckpt", "if_not_exists": true })),
+    )
+    .await;
     assert_eq!(st, 201, "{first}");
     assert!(first.get("existing").is_none());
-    let (st, again) = send(c.post(url(&vid)).json(&json!({ "name": "ckpt", "if_not_exists": true }))).await;
+    let (st, again) = send(
+        c.post(url(&vid))
+            .json(&json!({ "name": "ckpt", "if_not_exists": true })),
+    )
+    .await;
     assert_eq!(st, 200, "{again}");
     assert_eq!(again["snapshot_id"], first["snapshot_id"]);
     assert_eq!(again["existing"], true);
@@ -335,14 +375,26 @@ async fn snapshot_create_if_not_exists_reuses_the_same_named_snapshot() {
     assert_eq!(count(&snaps, &vid, "ckpt"), 1);
 
     // Scoped to the volume: the same name on another volume is a new snapshot.
-    let (st, o) = send(c.post(url(&other)).json(&json!({ "name": "ckpt", "if_not_exists": true }))).await;
+    let (st, o) = send(
+        c.post(url(&other))
+            .json(&json!({ "name": "ckpt", "if_not_exists": true })),
+    )
+    .await;
     assert_eq!(st, 201, "{o}");
     assert_ne!(o["snapshot_id"], first["snapshot_id"]);
 
     // With duplicates already present it returns the oldest, deterministically.
-    let (st, a) = send(c.post(url(&vid)).json(&json!({ "name": "plain", "if_not_exists": true }))).await;
+    let (st, a) = send(
+        c.post(url(&vid))
+            .json(&json!({ "name": "plain", "if_not_exists": true })),
+    )
+    .await;
     assert_eq!(st, 200, "{a}");
-    let (st, b) = send(c.post(url(&vid)).json(&json!({ "name": "plain", "if_not_exists": true }))).await;
+    let (st, b) = send(
+        c.post(url(&vid))
+            .json(&json!({ "name": "plain", "if_not_exists": true })),
+    )
+    .await;
     assert_eq!(st, 200, "{b}");
     assert_eq!(a["snapshot_id"], b["snapshot_id"]);
 }
@@ -491,8 +543,16 @@ async fn ransomware_check_and_protect_lock_a_snapshot_only_when_warranted() {
     let (st, body) = send(c.delete(format!("{base}/snapshots/{sid}"))).await;
     assert_eq!(st, 409, "the protective snapshot is locked: {body}");
     let (_, snaps) = send(c.get(format!("{base}/snapshots"))).await;
-    let guard = snaps.as_array().unwrap().iter().find(|s| s["id"] == sid.as_str()).unwrap();
-    assert_eq!(guard["locked_until"], body_until, "protect records the lock expiry");
+    let guard = snaps
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|s| s["id"] == sid.as_str())
+        .unwrap();
+    assert_eq!(
+        guard["locked_until"], body_until,
+        "protect records the lock expiry"
+    );
 
     let (st, _) = send(c.get(format!("{base}/volumes/nope/ransomware"))).await;
     assert_eq!(st, 404);
@@ -504,7 +564,10 @@ async fn native_reduction_report_has_counters_and_ratios() {
     let c = reqwest::Client::new();
     let (st, r) = send(c.get(format!("{base}/native/reduction"))).await;
     assert_eq!(st, 200, "{r}");
-    assert_eq!(r["logical_bytes"], 0, "the fixture backend stores nothing: {r}");
+    assert_eq!(
+        r["logical_bytes"], 0,
+        "the fixture backend stores nothing: {r}"
+    );
     assert_eq!(r["compression_ratio"], 1.0);
     assert_eq!(r["sharing_ratio"], 1.0);
 }

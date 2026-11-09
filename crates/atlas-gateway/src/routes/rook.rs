@@ -335,7 +335,10 @@ fn validate_layout(body: &AddCephDeviceBody) -> Result<(), String> {
     if body.db_device.is_none() && (body.db_size_mb.is_some() || body.wal_size_mb.is_some()) {
         return Err("db_size_mb and wal_size_mb need db_device".into());
     }
-    for (name, v) in [("db_size_mb", body.db_size_mb), ("wal_size_mb", body.wal_size_mb)] {
+    for (name, v) in [
+        ("db_size_mb", body.db_size_mb),
+        ("wal_size_mb", body.wal_size_mb),
+    ] {
         if v.is_some_and(|v| v == 0 || v > MAX_DB_WAL_MB) {
             return Err(format!("{name} must be between 1 and {MAX_DB_WAL_MB}"));
         }
@@ -344,7 +347,9 @@ fn validate_layout(body: &AddCephDeviceBody) -> Result<(), String> {
         .osds_per_device
         .is_some_and(|n| n == 0 || n > MAX_OSDS_PER_DEVICE)
     {
-        return Err(format!("osds_per_device must be between 1 and {MAX_OSDS_PER_DEVICE}"));
+        return Err(format!(
+            "osds_per_device must be between 1 and {MAX_OSDS_PER_DEVICE}"
+        ));
     }
     if let Some(db) = &body.db_device {
         atlas_common::device::validate_raw_device_path(db)
@@ -371,10 +376,14 @@ fn check_db_device(
         .find(|d| d.get("name").and_then(Value::as_str) == Some(db))
         .ok_or_else(|| format!("db_device {db} is not visible to Rook's discovery on this node"))?;
     if atlas_driver_k8s::rook::classify_device(entry) == "hdd" {
-        return Err(format!("db_device {db} is a rotational disk; refusing to put an OSD DB on it"));
+        return Err(format!(
+            "db_device {db} is a rotational disk; refusing to put an OSD DB on it"
+        ));
     }
     if node.is_some_and(|n| n.devices.iter().any(|d| d.name == db)) {
-        return Err(format!("db_device {db} is already an OSD data device on this node"));
+        return Err(format!(
+            "db_device {db} is already an OSD data device on this node"
+        ));
     }
     let empty = entry.get("empty").and_then(Value::as_bool).unwrap_or(false)
         && !entry
@@ -510,7 +519,8 @@ pub(crate) async fn add_ceph_device(
     // 64s/attempt (engine.rs), so 30 retries gives roughly 25-30 minutes of polling before the job
     // is finally marked failed.
     const CEPH_OSD_ADD_MAX_RETRIES: i64 = 30;
-    let _ = atlas_inventory::jobs::set_max_retries(&s.pool, &job_id, CEPH_OSD_ADD_MAX_RETRIES).await;
+    let _ =
+        atlas_inventory::jobs::set_max_retries(&s.pool, &job_id, CEPH_OSD_ADD_MAX_RETRIES).await;
     let _ = atlas_inventory::audit::record(
         &s.pool,
         None,
@@ -586,7 +596,11 @@ mod tests {
     }
 
     fn node(devices: Vec<CephClusterDeviceSpec>) -> CephClusterNodeSpec {
-        CephClusterNodeSpec { name: "n1".into(), devices, extra: Default::default() }
+        CephClusterNodeSpec {
+            name: "n1".into(),
+            devices,
+            extra: Default::default(),
+        }
     }
 
     fn dev(name: &str, db: Option<&str>) -> CephClusterDeviceSpec {
@@ -594,17 +608,31 @@ mod tests {
         if let Some(db) = db {
             config.insert("metadataDevice".to_string(), db.to_string());
         }
-        CephClusterDeviceSpec { name: name.into(), config, extra: Default::default() }
+        CephClusterDeviceSpec {
+            name: name.into(),
+            config,
+            extra: Default::default(),
+        }
     }
 
     #[test]
     fn layout_fields_are_bounded_and_need_a_db_device() {
         assert!(validate_layout(&body()).is_ok());
-        let sizes_alone = AddCephDeviceBody { db_size_mb: Some(1024), ..body() };
+        let sizes_alone = AddCephDeviceBody {
+            db_size_mb: Some(1024),
+            ..body()
+        };
         assert!(validate_layout(&sizes_alone).is_err());
-        let zero = AddCephDeviceBody { db_device: Some("/dev/nvme1n1".into()), db_size_mb: Some(0), ..body() };
+        let zero = AddCephDeviceBody {
+            db_device: Some("/dev/nvme1n1".into()),
+            db_size_mb: Some(0),
+            ..body()
+        };
         assert!(validate_layout(&zero).is_err());
-        let huge = AddCephDeviceBody { osds_per_device: Some(99), ..body() };
+        let huge = AddCephDeviceBody {
+            osds_per_device: Some(99),
+            ..body()
+        };
         assert!(validate_layout(&huge).is_err());
         let ok = AddCephDeviceBody {
             db_device: Some("/dev/nvme1n1".into()),
@@ -618,11 +646,23 @@ mod tests {
 
     #[test]
     fn db_device_must_be_a_safe_distinct_whole_disk() {
-        let same = AddCephDeviceBody { db_device: Some("/dev/sdb".into()), ..body() };
+        let same = AddCephDeviceBody {
+            db_device: Some("/dev/sdb".into()),
+            ..body()
+        };
         assert!(validate_layout(&same).is_err());
-        let boot = AddCephDeviceBody { db_device: Some("/dev/sda".into()), ..body() };
-        assert!(validate_layout(&boot).is_err(), "the first-disk refusal applies to the DB device too");
-        let part = AddCephDeviceBody { db_device: Some("/dev/nvme1n1p1".into()), ..body() };
+        let boot = AddCephDeviceBody {
+            db_device: Some("/dev/sda".into()),
+            ..body()
+        };
+        assert!(
+            validate_layout(&boot).is_err(),
+            "the first-disk refusal applies to the DB device too"
+        );
+        let part = AddCephDeviceBody {
+            db_device: Some("/dev/nvme1n1p1".into()),
+            ..body()
+        };
         assert!(validate_layout(&part).is_err());
     }
 
@@ -634,13 +674,28 @@ mod tests {
             json!({"name": "sdc", "empty": true, "rotational": true}),
             json!({"name": "sdd", "empty": true, "rotational": false}),
         ];
-        assert!(check_db_device("nvme1n1", None, &disc).is_ok(), "empty flash device");
-        assert!(check_db_device("nvme9n1", None, &disc).is_err(), "unknown to discovery");
+        assert!(
+            check_db_device("nvme1n1", None, &disc).is_ok(),
+            "empty flash device"
+        );
+        assert!(
+            check_db_device("nvme9n1", None, &disc).is_err(),
+            "unknown to discovery"
+        );
         assert!(check_db_device("sdc", None, &disc).is_err(), "rotational");
-        assert!(check_db_device("nvme2n1", None, &disc).is_err(), "in use and not a shared DB device");
+        assert!(
+            check_db_device("nvme2n1", None, &disc).is_err(),
+            "in use and not a shared DB device"
+        );
         let shared = node(vec![dev("sde", Some("nvme2n1"))]);
-        assert!(check_db_device("nvme2n1", Some(&shared), &disc).is_ok(), "already a shared metadataDevice");
+        assert!(
+            check_db_device("nvme2n1", Some(&shared), &disc).is_ok(),
+            "already a shared metadataDevice"
+        );
         let as_data = node(vec![dev("sdd", None)]);
-        assert!(check_db_device("sdd", Some(&as_data), &disc).is_err(), "already an OSD data device");
+        assert!(
+            check_db_device("sdd", Some(&as_data), &disc).is_err(),
+            "already an OSD data device"
+        );
     }
 }

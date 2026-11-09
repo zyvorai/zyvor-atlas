@@ -227,7 +227,11 @@ async fn zfs_pool_destroy_requires_matching_confirmation_and_removes_the_pool() 
         .await
         .unwrap();
     assert!(
-        !pools.as_array().unwrap().iter().any(|p| p["name"] == "tank3"),
+        !pools
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["name"] == "tank3"),
         "destroyed pool should be gone from inventory: {pools}"
     );
 }
@@ -305,7 +309,11 @@ async fn nvmeof_namespace_requires_confirm_and_kubernetes() {
 #[tokio::test]
 async fn io_ai_reports_unavailable_without_an_agent_never_fine() {
     let base = format!("http://{}/api/atlas/v1", spawn(false).await);
-    let r = reqwest::Client::new().get(format!("{base}/io/ai")).send().await.unwrap();
+    let r = reqwest::Client::new()
+        .get(format!("{base}/io/ai"))
+        .send()
+        .await
+        .unwrap();
     assert_eq!(r.status(), reqwest::StatusCode::OK);
     let v: Value = r.json().await.unwrap();
     assert_eq!(v["status"], "unavailable");

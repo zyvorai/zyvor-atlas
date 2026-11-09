@@ -89,7 +89,6 @@ pub async fn spawn() -> (SocketAddr, AppState) {
     (addr, state)
 }
 
-
 pub fn mint(subject: &str, role: &str, tenant: &str, tools: &[&str]) -> String {
     let tools: Vec<String> = tools.iter().map(|t| t.to_string()).collect();
     atlas_gateway::auth::mint_scoped_token(SECRET, subject, role, tenant, 3600, &tools)
@@ -108,30 +107,50 @@ pub async fn connect_with_run(addr: SocketAddr, token: &str, run_id: Option<&str
     use rmcp::transport::StreamableHttpClientTransport;
     use rmcp::ServiceExt;
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
     if let Some(r) = run_id {
         headers.insert("x-atlas-run-id", r.parse().unwrap());
     }
-    let http_client = reqwest::Client::builder().default_headers(headers).build().unwrap();
+    let http_client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap();
     let transport = StreamableHttpClientTransport::with_client(
         http_client,
-        rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(format!(
-            "http://{addr}/api/atlas/v1/mcp"
-        )),
+        rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
+            format!("http://{addr}/api/atlas/v1/mcp"),
+        ),
     );
     ().serve(transport).await.unwrap()
 }
 
 pub async fn tool_names(c: &Client) -> Vec<String> {
-    c.list_tools(Default::default()).await.unwrap().tools.iter().map(|t| t.name.to_string()).collect()
+    c.list_tools(Default::default())
+        .await
+        .unwrap()
+        .tools
+        .iter()
+        .map(|t| t.name.to_string())
+        .collect()
 }
 
 /// Ok(parsed JSON) or Err(error text) for either a protocol error or an `is_error` result.
 pub async fn call(c: &Client, tool: &'static str, v: Value) -> Result<Value, String> {
-    match c.call_tool(CallToolRequestParams::new(tool).with_arguments(v.as_object().unwrap().clone())).await {
+    match c
+        .call_tool(CallToolRequestParams::new(tool).with_arguments(v.as_object().unwrap().clone()))
+        .await
+    {
         Err(e) => Err(e.to_string()),
         Ok(r) => {
-            let text = r.content.first().and_then(|c| c.as_text()).map(|t| t.text.clone()).unwrap_or_default();
+            let text = r
+                .content
+                .first()
+                .and_then(|c| c.as_text())
+                .map(|t| t.text.clone())
+                .unwrap_or_default();
             if r.is_error == Some(true) {
                 Err(text)
             } else {
@@ -158,12 +177,22 @@ pub struct Fake {
 
 impl Fake {
     pub fn count(&self, action: &str) -> usize {
-        self.seen.lock().unwrap().iter().filter(|s| s.action == action).count()
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .filter(|s| s.action == action)
+            .count()
     }
 
     /// The run-id header values of every request recorded so far, in order.
     pub fn run_ids(&self) -> Vec<Vec<String>> {
-        self.seen.lock().unwrap().iter().map(|s| s.run_ids.clone()).collect()
+        self.seen
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|s| s.run_ids.clone())
+            .collect()
     }
 }
 
@@ -181,26 +210,49 @@ async fn rpc(
     headers: HeaderMap,
     body: String,
 ) -> (StatusCode, String) {
-    let bearer = headers.get("authorization").and_then(|v| v.to_str().ok()).unwrap_or("").to_string();
+    let bearer = headers
+        .get("authorization")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
     let body: Value = serde_json::from_str(&body).unwrap_or(Value::Null);
     let run_ids = headers
         .get_all("x-atlas-run-id")
         .iter()
         .map(|v| v.to_str().unwrap_or("<non-utf8>").to_string())
         .collect();
-    fake.seen.lock().unwrap().push(Seen { action: action.clone(), bearer, body: body.clone(), run_ids });
+    fake.seen.lock().unwrap().push(Seen {
+        action: action.clone(),
+        bearer,
+        body: body.clone(),
+        run_ids,
+    });
     let Some(tenant) = tenant_of(&headers) else {
-        return (StatusCode::UNAUTHORIZED, json!({"error": "invalid bearer token"}).to_string());
+        return (
+            StatusCode::UNAUTHORIZED,
+            json!({"error": "invalid bearer token"}).to_string(),
+        );
     };
     let ok = |v: Value| (StatusCode::OK, v.to_string());
-    let missing = || (StatusCode::NOT_FOUND, json!({"error": "resource not found"}).to_string());
+    let missing = || {
+        (
+            StatusCode::NOT_FOUND,
+            json!({"error": "resource not found"}).to_string(),
+        )
+    };
     let own_art = if tenant == "a" { ART_A } else { ART_B };
     let own_ws = if tenant == "a" { "ws1" } else { "ws2" };
     match action.as_str() {
         "artifacts.list" => match body["query"].as_str().unwrap_or("") {
             "huge" => ok(json!({"pad": "x".repeat(400 * 1024)})),
-            "boom" => (StatusCode::INTERNAL_SERVER_ERROR, json!({"error": format!("/srv/secret/path {TOK_A}")}).to_string()),
-            "echo" => (StatusCode::CONFLICT, json!({"error": format!("conflict {TOK_A} here")}).to_string()),
+            "boom" => (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({"error": format!("/srv/secret/path {TOK_A}")}).to_string(),
+            ),
+            "echo" => (
+                StatusCode::CONFLICT,
+                json!({"error": format!("conflict {TOK_A} here")}).to_string(),
+            ),
             "slow" => {
                 tokio::time::sleep(std::time::Duration::from_secs(4)).await;
                 ok(json!([]))
@@ -210,20 +262,28 @@ async fn rpc(
                 {"id": "r1", "kind": "dataset", "name": "ds", "revision": "v1", "created_at": 10.0, "matches": ["f"]},
                 {"id": "o", "kind": "model", "name": "ds-other", "revision": "v1", "created_at": 5.0, "matches": []},
             ])),
-            _ => ok(json!([{"id": own_art, "kind": "dataset", "name": format!("data-{tenant}"), "revision": "v1"}])),
+            _ => ok(
+                json!([{"id": own_art, "kind": "dataset", "name": format!("data-{tenant}"), "revision": "v1"}]),
+            ),
         },
-        "artifacts.get" if body["key"] == own_art => ok(json!({"id": own_art, "name": format!("data-{tenant}"), "files": {}})),
+        "artifacts.get" if body["key"] == own_art => {
+            ok(json!({"id": own_art, "name": format!("data-{tenant}"), "files": {}}))
+        }
         "jobs.status" if body["job"] == format!("job-{tenant}") => ok(json!({
             "id": body["job"], "node": "n1", "artifacts": [own_art], "data_ready": false, "missing": [own_art], "expires_at": 1.0
         })),
-        "costs.report" if body["job"] == format!("job-{tenant}") => ok(json!({"job": body["job"], "micro_usd": 7, "meters": []})),
+        "costs.report" if body["job"] == format!("job-{tenant}") => {
+            ok(json!({"job": body["job"], "micro_usd": 7, "meters": []}))
+        }
         "workspaces.review" if body["key"] == own_ws => ok(json!({
             "id": own_ws, "base": own_art, "generation": 3, "state": "open", "expires_at": 9.0, "budget": 100,
             "overlay": {"a.txt": {"size": 1}}, "changed_bytes": 1
         })),
         "workspaces.discard" if body["key"] == own_ws => ok(json!({"state": "discarded"})),
         "workspaces.change" if body["key"] == own_ws => ok(json!({"generation": 4})),
-        "workspaces.publish" if body["key"] == own_ws => ok(json!({"id": "new", "kind": "dataset"})),
+        "workspaces.publish" if body["key"] == own_ws => {
+            ok(json!({"id": "new", "kind": "dataset"}))
+        }
         "jobs.release" if body["job"] == format!("job-{tenant}") => ok(json!({"released": true})),
         "costs.estimate" => ok(json!({"placements": [], "compute_cost_included": false})),
         _ => missing(),
@@ -233,7 +293,9 @@ async fn rpc(
 /// Fake atlas_data on an ephemeral port. Token A is tenant a, token B is tenant b; anything else 401.
 pub async fn fake_atlas_data() -> (String, Arc<Fake>) {
     let fake = Arc::new(Fake::default());
-    let app = Router::new().route("/v1/rpc/{action}", post(rpc)).with_state(fake.clone());
+    let app = Router::new()
+        .route("/v1/rpc/{action}", post(rpc))
+        .with_state(fake.clone());
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let url = format!("http://{}", listener.local_addr().unwrap());
     tokio::spawn(async move {

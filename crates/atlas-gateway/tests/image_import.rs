@@ -106,7 +106,10 @@ fn image(len: usize) -> Vec<u8> {
 }
 
 fn sha(data: &[u8]) -> String {
-    Sha256::digest(data).iter().map(|b| format!("{b:02x}")).collect()
+    Sha256::digest(data)
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
 }
 
 /// Serves `body` at any path, one response per connection.
@@ -182,7 +185,11 @@ async fn route_and_job() {
     let body = |u: &str, h: &str| json!({ "url": u, "sha256": h });
 
     // Off until an allow-list is configured.
-    let (st, e) = send(c.post(format!("{base}/volumes/{vid}/import")).json(&body(&url, &sha(&img)))).await;
+    let (st, e) = send(
+        c.post(format!("{base}/volumes/{vid}/import"))
+            .json(&body(&url, &sha(&img))),
+    )
+    .await;
     assert_eq!(st, 403, "{e}");
 
     std::env::set_var("ATLAS_IMPORT_ALLOWED_HOSTS", "127.0.0.1");
@@ -195,29 +202,44 @@ async fn route_and_job() {
     assert_eq!(st, 400, "bad sha256");
     let (st, _) = send(post(body("file:///etc/passwd", &sha(&img)))).await;
     assert_eq!(st, 400, "scheme");
-    let (st, _) = send(post(json!({"url": url, "sha256": sha(&img), "size_bytes": 99_999_999_999u64}))).await;
+    let (st, _) = send(post(
+        json!({"url": url, "sha256": sha(&img), "size_bytes": 99_999_999_999u64}),
+    ))
+    .await;
     assert_eq!(st, 400, "larger than the volume");
     let (st, _) = send(
-        c.post(format!("{base}/volumes/vol_missing/import")).json(&body(&url, &sha(&img))),
+        c.post(format!("{base}/volumes/vol_missing/import"))
+            .json(&body(&url, &sha(&img))),
     )
     .await;
     assert_eq!(st, 404, "unknown volume");
 
     // A matching import succeeds, is verified and leaves the bytes on the volume.
-    let (st, acc) = send(post(json!({"url": url, "sha256": sha(&img).to_uppercase(), "size_bytes": img.len()}))).await;
+    let (st, acc) = send(post(
+        json!({"url": url, "sha256": sha(&img).to_uppercase(), "size_bytes": img.len()}),
+    ))
+    .await;
     assert_eq!(st, 202, "{acc}");
     let job = finish(&c, &base, acc["job_id"].as_str().unwrap()).await;
     assert_eq!(job["state"], "succeeded", "{job}");
     assert_eq!(job["result"]["verified"], true, "{job}");
     assert_eq!(job["result"]["bytes"], img.len());
     assert_eq!(job["result"]["sha256"], sha(&img));
-    for (off, len) in [(0usize, 4096usize), (4 * 1024 * 1024 - 100, 200), (img.len() - 321, 321)] {
+    for (off, len) in [
+        (0usize, 4096usize),
+        (4 * 1024 * 1024 - 100, 200),
+        (img.len() - 321, 321),
+    ] {
         let r = c
             .get(format!("{base}/volumes/{vid}/data?offset={off}&len={len}"))
             .send()
             .await
             .unwrap();
-        assert_eq!(&r.bytes().await.unwrap()[..], &img[off..off + len], "at {off}");
+        assert_eq!(
+            &r.bytes().await.unwrap()[..],
+            &img[off..off + len],
+            "at {off}"
+        );
     }
 
     // A wrong checksum fails the job and says why.
@@ -226,15 +248,27 @@ async fn route_and_job() {
     let job = finish(&c, &base, acc["job_id"].as_str().unwrap()).await;
     assert_eq!(job["state"], "failed", "{job}");
     assert!(
-        job["error"].as_str().unwrap_or("").contains("checksum mismatch"),
+        job["error"]
+            .as_str()
+            .unwrap_or("")
+            .contains("checksum mismatch"),
         "{job}"
     );
 
     // Resuming from a job that is not an import, or from one that is not finished, is refused.
-    let (st, _) = send(post(json!({"url": url, "sha256": sha(&img), "resume_from_job": "job_nope"}))).await;
+    let (st, _) = send(post(
+        json!({"url": url, "sha256": sha(&img), "resume_from_job": "job_nope"}),
+    ))
+    .await;
     assert_eq!(st, 404);
-    let (st, _) = send(post(json!({"url": url, "sha256": sha(&img), "resume_from_job": acc["job_id"]}))).await;
-    assert_eq!(st, 202, "resuming from a failed import of the same volume is allowed");
+    let (st, _) = send(post(
+        json!({"url": url, "sha256": sha(&img), "resume_from_job": acc["job_id"]}),
+    ))
+    .await;
+    assert_eq!(
+        st, 202,
+        "resuming from a failed import of the same volume is allowed"
+    );
 }
 
 /// Sends the headers and 1 MiB of a 1 GiB body, then goes quiet, so an import into it stays running.
@@ -246,7 +280,8 @@ async fn stalled_server() -> String {
             tokio::spawn(async move {
                 let mut buf = [0u8; 4096];
                 let _ = sock.read(&mut buf).await;
-                let head = "HTTP/1.1 200 OK\r\nContent-Length: 1073741824\r\nConnection: close\r\n\r\n";
+                let head =
+                    "HTTP/1.1 200 OK\r\nContent-Length: 1073741824\r\nConnection: close\r\n\r\n";
                 let _ = sock.write_all(head.as_bytes()).await;
                 let _ = sock.write_all(&vec![7u8; 1024 * 1024]).await;
                 tokio::time::sleep(Duration::from_secs(3600)).await;
@@ -268,7 +303,10 @@ async fn wait_for_state(c: &reqwest::Client, base: &str, job: &str, want: &str) 
         }
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
-    panic!("job {job} never reached {want}; it is {}", state_of(c, base, job).await);
+    panic!(
+        "job {job} never reached {want}; it is {}",
+        state_of(c, base, job).await
+    );
 }
 
 /// Imports are not held up by, and do not hold up, other jobs; only two run at once; and a running
@@ -306,7 +344,10 @@ async fn imports_run_beside_other_jobs() {
     let (st, acc) = send(c.post(format!("{base}/rbd-images/nvme/img1/qos?iops=1000"))).await;
     assert_eq!(st, 202, "{acc}");
     let other = finish(&c, &base, acc["job_id"].as_str().unwrap()).await;
-    assert!(matches!(other["state"].as_str(), Some("succeeded" | "failed")), "{other}");
+    assert!(
+        matches!(other["state"].as_str(), Some("succeeded" | "failed")),
+        "{other}"
+    );
     assert_eq!(state_of(&c, &base, &jobs[0]).await, "running");
     eprintln!("scenario 2: ordinary job finished beside the imports");
 
@@ -315,7 +356,10 @@ async fn imports_run_beside_other_jobs() {
     assert_eq!(st, 200);
     let done = finish(&c, &base, &jobs[0]).await;
     assert_eq!(done["state"], "failed", "{done}");
-    assert!(done["error"].as_str().unwrap_or("").contains("cancelled"), "{done}");
+    assert!(
+        done["error"].as_str().unwrap_or("").contains("cancelled"),
+        "{done}"
+    );
     eprintln!("scenario 2: first import cancelled");
     wait_for_state(&c, &base, &jobs[2], "running").await;
     eprintln!("scenario 2: waiting import took the freed slot");

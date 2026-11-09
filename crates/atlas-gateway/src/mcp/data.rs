@@ -93,7 +93,10 @@ fn client() -> &'static reqwest::Client {
 /// The credential for this caller, or an error that names no secret. Never falls back to another
 /// caller's or a shared credential.
 fn credential_for(actor: &Actor) -> Result<String, McpError> {
-    let raw = match std::env::var("ATLAS_DATA_TOKENS_FILE").ok().filter(|p| !p.trim().is_empty()) {
+    let raw = match std::env::var("ATLAS_DATA_TOKENS_FILE")
+        .ok()
+        .filter(|p| !p.trim().is_empty())
+    {
         Some(path) => std::fs::read_to_string(path.trim()).ok(),
         None => std::env::var("ATLAS_DATA_TOKENS").ok(),
     };
@@ -114,7 +117,11 @@ fn credential_for(actor: &Actor) -> Result<String, McpError> {
 }
 
 fn scrub(text: &str, token: &str) -> String {
-    let text: String = text.chars().filter(|c| !c.is_control()).take(MAX_ERROR_CHARS).collect();
+    let text: String = text
+        .chars()
+        .filter(|c| !c.is_control())
+        .take(MAX_ERROR_CHARS)
+        .collect();
     if token.is_empty() {
         text
     } else {
@@ -127,7 +134,11 @@ fn scrub(text: &str, token: &str) -> String {
 fn map_status(status: u16, body: &[u8], token: &str) -> McpError {
     let message = serde_json::from_slice::<Value>(body)
         .ok()
-        .and_then(|v| v.get("error").and_then(Value::as_str).map(|m| scrub(m, token)))
+        .and_then(|v| {
+            v.get("error")
+                .and_then(Value::as_str)
+                .map(|m| scrub(m, token))
+        })
         .unwrap_or_default();
     match status {
         401 | 403 => McpError::invalid_request(
@@ -145,7 +156,8 @@ fn map_status(status: u16, body: &[u8], token: &str) -> McpError {
 
 /// POST one atlas_data action as the caller's mapped identity and return the wrapped, size-capped reply.
 async fn rpc(actor: &Actor, action: &str, args: Value) -> Result<Value, McpError> {
-    let base = base_url().ok_or_else(|| McpError::invalid_request("atlas_data is not configured", None))?;
+    let base = base_url()
+        .ok_or_else(|| McpError::invalid_request("atlas_data is not configured", None))?;
     let token = credential_for(actor)?;
     let mut request = client()
         .post(format!("{base}/v1/rpc/{action}"))
@@ -154,22 +166,27 @@ async fn rpc(actor: &Actor, action: &str, args: Value) -> Result<Value, McpError
         .json(&args);
     // Same charset and length rule as atlas_data's `valid_run_id`; `call_tool` has already refused an
     // invalid one, so this check only keeps a bad value off the wire should that ever change.
-    if let Some(run) = atlas_inventory::audit::current_run_id().filter(|r| atlas_inventory::audit::valid_run_id(r)) {
+    if let Some(run) =
+        atlas_inventory::audit::current_run_id().filter(|r| atlas_inventory::audit::valid_run_id(r))
+    {
         request = request.header(super::guard::RUN_ID_HEADER, run);
     }
-    let mut response = request
-        .send()
-        .await
-        .map_err(|e| {
-            if e.is_timeout() {
-                McpError::internal_error("atlas_data timed out", None)
-            } else {
-                McpError::internal_error("atlas_data is unreachable", None)
-            }
-        })?;
+    let mut response = request.send().await.map_err(|e| {
+        if e.is_timeout() {
+            McpError::internal_error("atlas_data timed out", None)
+        } else {
+            McpError::internal_error("atlas_data is unreachable", None)
+        }
+    })?;
     let status = response.status().as_u16();
-    if response.content_length().is_some_and(|n| n as usize > MAX_RESPONSE_BYTES) {
-        return Err(McpError::internal_error("atlas_data response exceeds the size cap and was refused", None));
+    if response
+        .content_length()
+        .is_some_and(|n| n as usize > MAX_RESPONSE_BYTES)
+    {
+        return Err(McpError::internal_error(
+            "atlas_data response exceeds the size cap and was refused",
+            None,
+        ));
     }
     let mut body = Vec::new();
     while let Some(chunk) = response
@@ -178,7 +195,10 @@ async fn rpc(actor: &Actor, action: &str, args: Value) -> Result<Value, McpError
         .map_err(|_| McpError::internal_error("atlas_data connection failed mid-response", None))?
     {
         if body.len() + chunk.len() > MAX_RESPONSE_BYTES {
-            return Err(McpError::internal_error("atlas_data response exceeds the size cap and was refused", None));
+            return Err(McpError::internal_error(
+                "atlas_data response exceeds the size cap and was refused",
+                None,
+            ));
         }
         body.extend_from_slice(&chunk);
     }
@@ -202,12 +222,19 @@ fn bad(msg: impl Into<String>) -> McpError {
 fn ident(value: &str, what: &str) -> Result<String, McpError> {
     let ok = !value.is_empty()
         && value.len() <= 128
-        && value.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
-        && value.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
+        && value
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-'));
     if ok {
         Ok(value.to_string())
     } else {
-        Err(bad(format!("{what} must be 1-128 characters of A-Z a-z 0-9 _ . - and start alphanumeric")))
+        Err(bad(format!(
+            "{what} must be 1-128 characters of A-Z a-z 0-9 _ . - and start alphanumeric"
+        )))
     }
 }
 
@@ -221,7 +248,9 @@ fn logical_path(value: &str) -> Result<String, McpError> {
     if ok {
         Ok(value.to_string())
     } else {
-        Err(bad("path must be relative and normalized (no empty, . or .. parts, no backslash)"))
+        Err(bad(
+            "path must be relative and normalized (no empty, . or .. parts, no backslash)",
+        ))
     }
 }
 
@@ -229,7 +258,9 @@ fn generation(value: i64) -> Result<i64, McpError> {
     if (0..=(1i64 << 53)).contains(&value) {
         Ok(value)
     } else {
-        Err(bad("generation must be a non-negative integer, as returned by data_workspace_review"))
+        Err(bad(
+            "generation must be a non-negative integer, as returned by data_workspace_review",
+        ))
     }
 }
 
@@ -332,7 +363,9 @@ struct JobReleaseArgs {
 /// Small, bounded view of an upstream workspace for a plan.
 fn workspace_summary(ws: &Value) -> Value {
     let overlay = ws.get("overlay").and_then(Value::as_object);
-    let paths: Vec<&String> = overlay.map(|o| o.keys().take(50).collect()).unwrap_or_default();
+    let paths: Vec<&String> = overlay
+        .map(|o| o.keys().take(50).collect())
+        .unwrap_or_default();
     json!({
         "id": ws.get("id"), "base": ws.get("base"), "generation": ws.get("generation"),
         "state": ws.get("state"), "expires_at": ws.get("expires_at"), "budget": ws.get("budget"),
@@ -366,7 +399,9 @@ impl AtlasMcp {
         if query.chars().count() > 200 {
             return Err(bad("query is limited to 200 characters"));
         }
-        Ok(wrap(rpc(&actor, "artifacts.list", json!({ "query": query })).await?))
+        Ok(wrap(
+            rpc(&actor, "artifacts.list", json!({ "query": query })).await?,
+        ))
     }
 
     #[tool(
@@ -381,7 +416,9 @@ impl AtlasMcp {
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
         let key = ident(&args.artifact_id, "artifact_id")?;
-        Ok(wrap(rpc(&actor, "artifacts.get", json!({ "key": key })).await?))
+        Ok(wrap(
+            rpc(&actor, "artifacts.get", json!({ "key": key })).await?,
+        ))
     }
 
     #[tool(
@@ -407,7 +444,11 @@ impl AtlasMcp {
             .map(|a| {
                 a.iter()
                     .filter(|x| x.get("name").and_then(Value::as_str) == Some(name.as_str()))
-                    .filter(|x| args.kind.as_deref().is_none_or(|k| x.get("kind").and_then(Value::as_str) == Some(k)))
+                    .filter(|x| {
+                        args.kind
+                            .as_deref()
+                            .is_none_or(|k| x.get("kind").and_then(Value::as_str) == Some(k))
+                    })
                     .map(|x| {
                         let mut x = x.clone();
                         if let Some(o) = x.as_object_mut() {
@@ -438,7 +479,9 @@ impl AtlasMcp {
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
         let job = ident(&args.job, "job")?;
-        Ok(wrap(rpc(&actor, "jobs.status", json!({ "job": job })).await?))
+        Ok(wrap(
+            rpc(&actor, "jobs.status", json!({ "job": job })).await?,
+        ))
     }
 
     #[tool(
@@ -454,7 +497,9 @@ impl AtlasMcp {
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
         let key = ident(&args.workspace_id, "workspace_id")?;
-        Ok(wrap(rpc(&actor, "workspaces.review", json!({ "key": key })).await?))
+        Ok(wrap(
+            rpc(&actor, "workspaces.review", json!({ "key": key })).await?,
+        ))
     }
 
     #[tool(
@@ -468,7 +513,9 @@ impl AtlasMcp {
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
         let job = ident(&args.job, "job")?;
-        Ok(wrap(rpc(&actor, "costs.report", json!({ "job": job })).await?))
+        Ok(wrap(
+            rpc(&actor, "costs.report", json!({ "job": job })).await?,
+        ))
     }
 
     #[tool(
@@ -485,8 +532,14 @@ impl AtlasMcp {
         if args.artifacts.is_empty() || args.artifacts.len() > 64 {
             return Err(bad("give 1 to 64 artifact ids"));
         }
-        let ids = args.artifacts.iter().map(|a| ident(a, "artifact id")).collect::<Result<Vec<_>, _>>()?;
-        Ok(wrap(rpc(&actor, "costs.estimate", json!({ "artifacts": ids })).await?))
+        let ids = args
+            .artifacts
+            .iter()
+            .map(|a| ident(a, "artifact id"))
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(wrap(
+            rpc(&actor, "costs.estimate", json!({ "artifacts": ids })).await?,
+        ))
     }
 }
 
@@ -511,15 +564,31 @@ impl AtlasMcp {
         let generation = generation(args.generation)?;
         let path = logical_path(&args.path)?;
         let entry = match (&args.entry, args.delete.unwrap_or(false)) {
-            (Some(e), false) if e.is_object() && e.to_string().len() <= MAX_ENTRY_BYTES => e.clone(),
+            (Some(e), false) if e.is_object() && e.to_string().len() <= MAX_ENTRY_BYTES => {
+                e.clone()
+            }
             (None, true) => Value::Null,
-            _ => return Err(bad("give either entry (an object under 64 KiB) or delete=true, not both")),
+            _ => {
+                return Err(bad(
+                    "give either entry (an object under 64 KiB) or delete=true, not both",
+                ))
+            }
         };
-        let params = json!({ "workspace_id": key, "generation": generation, "path": path, "entry": entry });
+        let params =
+            json!({ "workspace_id": key, "generation": generation, "path": path, "entry": entry });
         let call = json!({ "key": key, "generation": generation, "name": path, "entry": entry });
-        self.data_write(&actor, WORKSPACE_CHANGE, "data_workspace", &key, &params, "workspaces.change", call,
-            args.confirmation_token.as_deref(), Some(("workspaces.review", json!({ "key": key }), false)))
-            .await
+        self.data_write(
+            &actor,
+            WORKSPACE_CHANGE,
+            "data_workspace",
+            &key,
+            &params,
+            "workspaces.change",
+            call,
+            args.confirmation_token.as_deref(),
+            Some(("workspaces.review", json!({ "key": key }), false)),
+        )
+        .await
     }
 
     #[tool(
@@ -544,12 +613,25 @@ impl AtlasMcp {
         if args.paths.is_empty() || args.paths.len() > 1000 {
             return Err(bad("give 1 to 1000 paths to publish"));
         }
-        let paths = args.paths.iter().map(|p| logical_path(p)).collect::<Result<Vec<_>, _>>()?;
+        let paths = args
+            .paths
+            .iter()
+            .map(|p| logical_path(p))
+            .collect::<Result<Vec<_>, _>>()?;
         let params = json!({ "workspace_id": key, "generation": generation, "name": name, "revision": revision, "paths": paths });
         let call = json!({ "key": key, "generation": generation, "name": name, "revision": revision, "selected": paths });
-        self.data_write(&actor, WORKSPACE_PUBLISH, "data_workspace", &key, &params, "workspaces.publish", call,
-            args.confirmation_token.as_deref(), Some(("workspaces.review", json!({ "key": key }), false)))
-            .await
+        self.data_write(
+            &actor,
+            WORKSPACE_PUBLISH,
+            "data_workspace",
+            &key,
+            &params,
+            "workspaces.publish",
+            call,
+            args.confirmation_token.as_deref(),
+            Some(("workspaces.review", json!({ "key": key }), false)),
+        )
+        .await
     }
 
     #[tool(
@@ -567,10 +649,18 @@ impl AtlasMcp {
         write_guard(&self.state, &actor)?;
         let key = ident(&args.workspace_id, "workspace_id")?;
         let params = json!({ "workspace_id": key });
-        self.data_write(&actor, WORKSPACE_DISCARD, "data_workspace", &key, &params, "workspaces.discard",
-            json!({ "key": key }), args.confirmation_token.as_deref(),
-            Some(("workspaces.review", json!({ "key": key }), false)))
-            .await
+        self.data_write(
+            &actor,
+            WORKSPACE_DISCARD,
+            "data_workspace",
+            &key,
+            &params,
+            "workspaces.discard",
+            json!({ "key": key }),
+            args.confirmation_token.as_deref(),
+            Some(("workspaces.review", json!({ "key": key }), false)),
+        )
+        .await
     }
 
     #[tool(
@@ -589,9 +679,18 @@ impl AtlasMcp {
         write_guard(&self.state, &actor)?;
         let job = ident(&args.job, "job")?;
         let params = json!({ "job": job });
-        self.data_write(&actor, JOB_RELEASE, "data_job", &job, &params, "jobs.release", json!({ "job": job }),
-            args.confirmation_token.as_deref(), Some(("jobs.status", json!({ "job": job }), true)))
-            .await
+        self.data_write(
+            &actor,
+            JOB_RELEASE,
+            "data_job",
+            &job,
+            &params,
+            "jobs.release",
+            json!({ "job": job }),
+            args.confirmation_token.as_deref(),
+            Some(("jobs.status", json!({ "job": job }), true)),
+        )
+        .await
     }
 }
 
@@ -617,16 +716,37 @@ impl AtlasMcp {
             Ok(Gate::Propose(issued)) => {
                 let current = match lookup {
                     Some((a, args, is_job)) => match rpc(actor, a, args).await {
-                        Ok(v) => Some(if is_job { job_summary(&v) } else { workspace_summary(&v) }),
+                        Ok(v) => Some(if is_job {
+                            job_summary(&v)
+                        } else {
+                            workspace_summary(&v)
+                        }),
                         Err(e) => {
-                            audit(s, actor, tool, resource_type, resource_id, "rejected",
-                                json!({ "via": "mcp", "reason": e.message })).await;
+                            audit(
+                                s,
+                                actor,
+                                tool,
+                                resource_type,
+                                resource_id,
+                                "rejected",
+                                json!({ "via": "mcp", "reason": e.message }),
+                            )
+                            .await;
                             return Err(e);
                         }
                     },
                     None => None,
                 };
-                audit(s, actor, tool, resource_type, resource_id, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
+                audit(
+                    s,
+                    actor,
+                    tool,
+                    resource_type,
+                    resource_id,
+                    "proposed",
+                    json!({ "via": "mcp", "confirmed": false }),
+                )
+                .await;
                 Ok(ToolJson(json!({
                     "executed": false,
                     "plan": { "action": tool, "atlas_data_action": action, "arguments": params, "current": current },
@@ -638,14 +758,46 @@ impl AtlasMcp {
             Ok(Gate::Execute) => {
                 let result = rpc(actor, action, call).await;
                 match &result {
-                    Ok(_) => audit(s, actor, tool, resource_type, resource_id, "success", json!({ "via": "mcp", "confirmed": true })).await,
-                    Err(e) => audit(s, actor, tool, resource_type, resource_id, "failure",
-                        json!({ "via": "mcp", "confirmed": true, "error": e.message })).await,
+                    Ok(_) => {
+                        audit(
+                            s,
+                            actor,
+                            tool,
+                            resource_type,
+                            resource_id,
+                            "success",
+                            json!({ "via": "mcp", "confirmed": true }),
+                        )
+                        .await
+                    }
+                    Err(e) => {
+                        audit(
+                            s,
+                            actor,
+                            tool,
+                            resource_type,
+                            resource_id,
+                            "failure",
+                            json!({ "via": "mcp", "confirmed": true, "error": e.message }),
+                        )
+                        .await
+                    }
                 }
-                Ok(ToolJson(json!({ "executed": true, "result": wrap(result?).0 })))
+                Ok(ToolJson(
+                    json!({ "executed": true, "result": wrap(result?).0 }),
+                ))
             }
             Err(why) => {
-                audit(s, actor, tool, resource_type, resource_id, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                audit(
+                    s,
+                    actor,
+                    tool,
+                    resource_type,
+                    resource_id,
+                    "rejected",
+                    json!({ "via": "mcp", "reason": why }),
+                )
+                .await;
                 Err(bad(why))
             }
         }
@@ -679,10 +831,16 @@ mod tests {
     #[test]
     fn upstream_failures_map_to_fixed_messages() {
         let e = map_status(500, br#"{"error":"/srv/secret/path tok"}"#, "tok");
-        assert!(!e.message.contains("secret") && !e.message.contains("tok"), "{e:?}");
+        assert!(
+            !e.message.contains("secret") && !e.message.contains("tok"),
+            "{e:?}"
+        );
         assert!(map_status(403, b"{}", "tok").message.contains("refused"));
         assert!(map_status(404, b"{}", "tok").message.contains("not found"));
         let e = map_status(409, br#"{"error":"conflict with tok"}"#, "tok");
-        assert!(e.message.contains("[redacted]") && !e.message.contains("with tok"), "{e:?}");
+        assert!(
+            e.message.contains("[redacted]") && !e.message.contains("with tok"),
+            "{e:?}"
+        );
     }
 }

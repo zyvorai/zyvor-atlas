@@ -56,7 +56,9 @@ async fn failed_cr_apply_leaves_the_plan_retryable() {
     plans::insert_plan(&pool, "mplan_t", "global", "orders", "src_t", 3600)
         .await
         .unwrap();
-    plans::set_state(&pool, "mplan_t", "assessed").await.unwrap();
+    plans::set_state(&pool, "mplan_t", "assessed")
+        .await
+        .unwrap();
 
     for _ in 0..2 {
         let err = atlas_databridge::pipeline::provision_edge(&pool, Some(&k8s), "mplan_t")
@@ -65,7 +67,10 @@ async fn failed_cr_apply_leaves_the_plan_retryable() {
         assert!(err.to_string().contains("apply Cluster CR"), "{err}");
         let plan = plans::get_plan(&pool, "mplan_t").await.unwrap().unwrap();
         assert_eq!(plan.state, "assessed");
-        assert!(edge_clusters::list_edge_clusters(&pool).await.unwrap().is_empty());
+        assert!(edge_clusters::list_edge_clusters(&pool)
+            .await
+            .unwrap()
+            .is_empty());
     }
     let _ = std::fs::remove_file(&path);
 }

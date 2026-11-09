@@ -38,7 +38,11 @@ fn source_attribute_counts_match_the_documented_breakdown() {
     let write = tool_attrs(include_str!("../src/mcp/write.rs"));
     let data = tool_attrs(include_str!("../src/mcp/data.rs"));
     assert_eq!((core, ops, ws, write, data), (21, 30, 5, 3, 11));
-    assert_eq!(core + ops + 2, COUNT_READ_ONLY, "2 of the 5 workspace tools are reads");
+    assert_eq!(
+        core + ops + 2,
+        COUNT_READ_ONLY,
+        "2 of the 5 workspace tools are reads"
+    );
     assert_eq!(COUNT_READ_ONLY + write + 3, COUNT_WITH_WRITES);
     assert_eq!(COUNT_READ_ONLY + 7, COUNT_WITH_DATA);
     assert_eq!(COUNT_WITH_WRITES + data, COUNT_WITH_BOTH);
@@ -65,8 +69,17 @@ async fn listed_tools_follow_the_write_and_data_gates() {
     let base = listed(addr, &token).await;
     assert_eq!(base.len(), COUNT_READ_ONLY, "{base:?}");
     assert_eq!(unique(&base), base.len(), "no tool is listed twice");
-    for w in ["create_snapshot", "ack_alert", "create_workspace", "reset_workspace", "discard_workspace"] {
-        assert!(!base.iter().any(|n| n == w), "{w} is a write tool: {base:?}");
+    for w in [
+        "create_snapshot",
+        "ack_alert",
+        "create_workspace",
+        "reset_workspace",
+        "discard_workspace",
+    ] {
+        assert!(
+            !base.iter().any(|n| n == w),
+            "{w} is a write tool: {base:?}"
+        );
     }
     assert!(!base.iter().any(|n| n.starts_with("data_")));
 
@@ -75,7 +88,10 @@ async fn listed_tools_follow_the_write_and_data_gates() {
     let writes = listed(addr, &token).await;
     assert_eq!(writes.len(), COUNT_WITH_WRITES, "{writes:?}");
     assert_eq!(unique(&writes), writes.len());
-    assert!(base.iter().all(|n| writes.contains(n)), "write mode only adds tools");
+    assert!(
+        base.iter().all(|n| writes.contains(n)),
+        "write mode only adds tools"
+    );
     let added: Vec<_> = writes.iter().filter(|n| !base.contains(n)).collect();
     assert_eq!(added.len(), 6, "{added:?}");
 
@@ -85,7 +101,10 @@ async fn listed_tools_follow_the_write_and_data_gates() {
     std::env::set_var("ATLAS_DATA_URL", &url);
     let data_reads = listed(addr, &token).await;
     assert_eq!(data_reads.len(), COUNT_WITH_DATA, "{data_reads:?}");
-    assert_eq!(data_reads.iter().filter(|n| n.starts_with("data_")).count(), 7);
+    assert_eq!(
+        data_reads.iter().filter(|n| n.starts_with("data_")).count(),
+        7
+    );
 
     // Both: the four atlas_data writes join.
     std::env::set_var("ATLAS_MCP_WRITE_ENABLE", "1");

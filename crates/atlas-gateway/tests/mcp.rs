@@ -276,8 +276,14 @@ async fn mcp_list_volumes_is_tenant_scoped() {
         .and_then(|c| c.as_text())
         .map(|t| t.text.clone())
         .unwrap_or_default();
-    assert!(text.contains("vol_tenant_a"), "expected tenant-a's volume in: {text}");
-    assert!(!text.contains("vol_tenant_b"), "leaked tenant-b's volume: {text}");
+    assert!(
+        text.contains("vol_tenant_a"),
+        "expected tenant-a's volume in: {text}"
+    );
+    assert!(
+        !text.contains("vol_tenant_b"),
+        "leaked tenant-b's volume: {text}"
+    );
 
     client.cancel().await.unwrap();
 }
@@ -408,8 +414,15 @@ async fn mcp_dr_job_and_io_risk_read_tools() {
     let io_text = text_of(&io);
     assert!(io_text.contains("\"status\":\"unavailable\""), "{io_text}");
     assert!(io_text.contains("\"level\":null"), "{io_text}");
-    let ai = text_of(&op.call_tool(CallToolRequestParams::new("io_ai")).await.unwrap());
-    assert!(ai.contains("\"status\":\"unavailable\"") && ai.contains("\"devices\":[]"), "{ai}");
+    let ai = text_of(
+        &op.call_tool(CallToolRequestParams::new("io_ai"))
+            .await
+            .unwrap(),
+    );
+    assert!(
+        ai.contains("\"status\":\"unavailable\"") && ai.contains("\"devices\":[]"),
+        "{ai}"
+    );
 
     // Unknown ids are caller errors, not internal ones.
     let missing = op
@@ -468,36 +481,104 @@ async fn mcp_ceph_databridge_policy_and_audit_tools() {
     let tools = op.list_tools(Default::default()).await.unwrap();
     let names: Vec<_> = tools.tools.iter().map(|t| t.name.as_ref()).collect();
     for n in [
-        "ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans",
-        "databridge_cdc_streams", "list_policies", "list_audit", "native_reduction", "volume_ransomware",
-        "osd_ok_to_stop", "ceph_health_rollup", "metrics_forecast", "upgrade_preflight", "protection_status",
+        "ceph_status",
+        "ceph_df",
+        "ceph_osd_tree",
+        "ceph_nvme",
+        "ceph_nvmeof",
+        "ceph_osd_objectstore",
+        "ceph_sizing",
+        "databridge_plans",
+        "databridge_cdc_streams",
+        "list_policies",
+        "list_audit",
+        "native_reduction",
+        "volume_ransomware",
+        "osd_ok_to_stop",
+        "ceph_health_rollup",
+        "metrics_forecast",
+        "upgrade_preflight",
+        "protection_status",
     ] {
         assert!(names.contains(&n), "tools: {names:?}");
     }
 
-    let tree = op.call_tool(CallToolRequestParams::new("ceph_osd_tree")).await.unwrap();
+    let tree = op
+        .call_tool(CallToolRequestParams::new("ceph_osd_tree"))
+        .await
+        .unwrap();
     let tree_text = text_of(&tree);
     assert!(tree_text.contains("\"status\":\"ok\""), "{tree_text}");
-    assert!(tree_text.contains("\"osds_not_serving\":1"), "fake tree has one down OSD: {tree_text}");
-    for n in ["ceph_status", "ceph_df", "ceph_nvme", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_policies", "ceph_health_rollup", "metrics_forecast", "protection_status"] {
+    assert!(
+        tree_text.contains("\"osds_not_serving\":1"),
+        "fake tree has one down OSD: {tree_text}"
+    );
+    for n in [
+        "ceph_status",
+        "ceph_df",
+        "ceph_nvme",
+        "ceph_osd_objectstore",
+        "ceph_sizing",
+        "databridge_plans",
+        "databridge_cdc_streams",
+        "list_policies",
+        "ceph_health_rollup",
+        "metrics_forecast",
+        "protection_status",
+    ] {
         let r = op.call_tool(CallToolRequestParams::new(n)).await.unwrap();
         assert_eq!(r.is_error, Some(false), "{n}: {}", text_of(&r));
     }
 
-    let audit = op.call_tool(CallToolRequestParams::new("list_audit")).await.unwrap();
+    let audit = op
+        .call_tool(CallToolRequestParams::new("list_audit"))
+        .await
+        .unwrap();
     let audit_text = text_of(&audit);
     assert!(audit_text.contains("vol_acme"), "{audit_text}");
-    assert!(!audit_text.contains("vol_globex"), "another tenant's audit leaked: {audit_text}");
-    assert!(!audit_text.contains("do-not-leak") && !audit_text.contains("private"), "{audit_text}");
+    assert!(
+        !audit_text.contains("vol_globex"),
+        "another tenant's audit leaked: {audit_text}"
+    );
+    assert!(
+        !audit_text.contains("do-not-leak") && !audit_text.contains("private"),
+        "{audit_text}"
+    );
     op.cancel().await.unwrap();
 
     let viewer = connect(addr, secret, "viewer").await;
-    for n in ["ceph_status", "ceph_df", "ceph_osd_tree", "ceph_nvme", "ceph_nvmeof", "ceph_osd_objectstore", "ceph_sizing", "databridge_plans", "databridge_cdc_streams", "list_audit", "native_reduction", "ceph_health_rollup", "metrics_forecast", "upgrade_preflight", "protection_status"] {
+    for n in [
+        "ceph_status",
+        "ceph_df",
+        "ceph_osd_tree",
+        "ceph_nvme",
+        "ceph_nvmeof",
+        "ceph_osd_objectstore",
+        "ceph_sizing",
+        "databridge_plans",
+        "databridge_cdc_streams",
+        "list_audit",
+        "native_reduction",
+        "ceph_health_rollup",
+        "metrics_forecast",
+        "upgrade_preflight",
+        "protection_status",
+    ] {
         let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
-        assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
+        assert!(
+            r.is_err() || r.unwrap().is_error == Some(true),
+            "viewer must be refused for {n}"
+        );
     }
-    let policies = viewer.call_tool(CallToolRequestParams::new("list_policies")).await.unwrap();
-    assert_eq!(policies.is_error, Some(false), "the static catalogue is open to any role");
+    let policies = viewer
+        .call_tool(CallToolRequestParams::new("list_policies"))
+        .await
+        .unwrap();
+    assert_eq!(
+        policies.is_error,
+        Some(false),
+        "the static catalogue is open to any role"
+    );
     viewer.cancel().await.unwrap();
 }
 
@@ -559,27 +640,60 @@ async fn mcp_drift_orphans_and_events_respect_tenants() {
     }
 
     let op = connect_as(addr, secret, "operator", "acme").await;
-    let drift = text_of(&op.call_tool(CallToolRequestParams::new("policy_drift")).await.unwrap());
+    let drift = text_of(
+        &op.call_tool(CallToolRequestParams::new("policy_drift"))
+            .await
+            .unwrap(),
+    );
     assert!(drift.contains("vol_drift_acme"), "{drift}");
-    assert!(!drift.contains("globex"), "another tenant's drift leaked: {drift}");
-    let orphans = text_of(&op.call_tool(CallToolRequestParams::new("orphan_backups")).await.unwrap());
+    assert!(
+        !drift.contains("globex"),
+        "another tenant's drift leaked: {drift}"
+    );
+    let orphans = text_of(
+        &op.call_tool(CallToolRequestParams::new("orphan_backups"))
+            .await
+            .unwrap(),
+    );
     assert!(orphans.contains("bak_orphan_acme"), "{orphans}");
-    assert!(!orphans.contains("globex"), "another tenant's orphan leaked: {orphans}");
-    let events = op.call_tool(CallToolRequestParams::new("list_events")).await;
-    assert!(events.is_err() || events.unwrap().is_error == Some(true), "tenant-scoped token must not read the feed");
+    assert!(
+        !orphans.contains("globex"),
+        "another tenant's orphan leaked: {orphans}"
+    );
+    let events = op
+        .call_tool(CallToolRequestParams::new("list_events"))
+        .await;
+    assert!(
+        events.is_err() || events.unwrap().is_error == Some(true),
+        "tenant-scoped token must not read the feed"
+    );
     op.cancel().await.unwrap();
 
     let admin = connect_as(addr, secret, "admin", "global").await;
-    let all = text_of(&admin.call_tool(CallToolRequestParams::new("policy_drift")).await.unwrap());
-    assert!(all.contains("vol_drift_acme") && all.contains("vol_drift_globex"), "{all}");
-    let ev = admin.call_tool(CallToolRequestParams::new("list_events")).await.unwrap();
+    let all = text_of(
+        &admin
+            .call_tool(CallToolRequestParams::new("policy_drift"))
+            .await
+            .unwrap(),
+    );
+    assert!(
+        all.contains("vol_drift_acme") && all.contains("vol_drift_globex"),
+        "{all}"
+    );
+    let ev = admin
+        .call_tool(CallToolRequestParams::new("list_events"))
+        .await
+        .unwrap();
     assert_eq!(ev.is_error, Some(false), "{}", text_of(&ev));
     admin.cancel().await.unwrap();
 
     let viewer = connect(addr, secret, "viewer").await;
     for n in ["policy_drift", "orphan_backups", "list_events"] {
         let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
-        assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
+        assert!(
+            r.is_err() || r.unwrap().is_error == Some(true),
+            "viewer must be refused for {n}"
+        );
     }
     viewer.cancel().await.unwrap();
 }
@@ -623,30 +737,67 @@ async fn mcp_bucket_backup_and_inventory_reads_respect_tenants() {
     }
 
     let op = connect_as(addr, secret, "operator", "acme").await;
-    let buckets = text_of(&op.call_tool(CallToolRequestParams::new("list_buckets")).await.unwrap());
-    assert!(buckets.contains("bkt_acme") && !buckets.contains("globex"), "{buckets}");
-    let backups = text_of(&op.call_tool(CallToolRequestParams::new("list_backups")).await.unwrap());
-    assert!(backups.contains("bak_acme") && !backups.contains("globex"), "{backups}");
-    for n in ["list_schedules", "databridge_validations", "databridge_cutovers", "list_osds"] {
+    let buckets = text_of(
+        &op.call_tool(CallToolRequestParams::new("list_buckets"))
+            .await
+            .unwrap(),
+    );
+    assert!(
+        buckets.contains("bkt_acme") && !buckets.contains("globex"),
+        "{buckets}"
+    );
+    let backups = text_of(
+        &op.call_tool(CallToolRequestParams::new("list_backups"))
+            .await
+            .unwrap(),
+    );
+    assert!(
+        backups.contains("bak_acme") && !backups.contains("globex"),
+        "{backups}"
+    );
+    for n in [
+        "list_schedules",
+        "databridge_validations",
+        "databridge_cutovers",
+        "list_osds",
+    ] {
         let r = op.call_tool(CallToolRequestParams::new(n)).await.unwrap();
         assert_eq!(r.is_error, Some(false), "{n}: {}", text_of(&r));
     }
     op.cancel().await.unwrap();
 
     let admin = connect_as(addr, secret, "admin", "global").await;
-    let all = text_of(&admin.call_tool(CallToolRequestParams::new("list_backups")).await.unwrap());
-    assert!(all.contains("bak_acme") && all.contains("bak_globex"), "{all}");
-    let osds = admin.call_tool(CallToolRequestParams::new("list_osds")).await.unwrap();
+    let all = text_of(
+        &admin
+            .call_tool(CallToolRequestParams::new("list_backups"))
+            .await
+            .unwrap(),
+    );
+    assert!(
+        all.contains("bak_acme") && all.contains("bak_globex"),
+        "{all}"
+    );
+    let osds = admin
+        .call_tool(CallToolRequestParams::new("list_osds"))
+        .await
+        .unwrap();
     assert_eq!(osds.is_error, Some(false), "{}", text_of(&osds));
     admin.cancel().await.unwrap();
 
     let viewer = connect(addr, secret, "viewer").await;
     for n in [
-        "list_buckets", "list_backups", "list_schedules", "list_osds", "databridge_validations",
+        "list_buckets",
+        "list_backups",
+        "list_schedules",
+        "list_osds",
+        "databridge_validations",
         "databridge_cutovers",
     ] {
         let r = viewer.call_tool(CallToolRequestParams::new(n)).await;
-        assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {n}");
+        assert!(
+            r.is_err() || r.unwrap().is_error == Some(true),
+            "viewer must be refused for {n}"
+        );
     }
     viewer.cancel().await.unwrap();
 }
@@ -661,14 +812,25 @@ async fn mcp_native_tools_fail_closed_without_a_native_backend() {
     let (addr, _pool) = spawn(true, secret).await;
     let op = connect(addr, secret, "operator").await;
 
-    let r = op.call_tool(CallToolRequestParams::new("native_reduction")).await;
-    assert!(r.is_err() || r.unwrap().is_error == Some(true), "no native driver must not report savings");
+    let r = op
+        .call_tool(CallToolRequestParams::new("native_reduction"))
+        .await;
+    assert!(
+        r.is_err() || r.unwrap().is_error == Some(true),
+        "no native driver must not report savings"
+    );
 
     let args = serde_json::json!({ "id": "vol_does_not_exist" });
     let r = op
-        .call_tool(CallToolRequestParams::new("volume_ransomware").with_arguments(args.as_object().unwrap().clone()))
+        .call_tool(
+            CallToolRequestParams::new("volume_ransomware")
+                .with_arguments(args.as_object().unwrap().clone()),
+        )
         .await;
-    assert!(r.is_err() || r.unwrap().is_error == Some(true), "an unknown volume must not get a verdict");
+    assert!(
+        r.is_err() || r.unwrap().is_error == Some(true),
+        "an unknown volume must not get a verdict"
+    );
     op.cancel().await.unwrap();
 }
 
@@ -683,9 +845,15 @@ async fn mcp_osd_ok_to_stop_rejects_bad_ids() {
     for ids in [serde_json::json!([]), serde_json::json!([-1])] {
         let args = serde_json::json!({ "ids": ids });
         let r = op
-            .call_tool(CallToolRequestParams::new("osd_ok_to_stop").with_arguments(args.as_object().unwrap().clone()))
+            .call_tool(
+                CallToolRequestParams::new("osd_ok_to_stop")
+                    .with_arguments(args.as_object().unwrap().clone()),
+            )
             .await;
-        assert!(r.is_err() || r.unwrap().is_error == Some(true), "ids {ids} must be refused");
+        assert!(
+            r.is_err() || r.unwrap().is_error == Some(true),
+            "ids {ids} must be refused"
+        );
     }
     op.cancel().await.unwrap();
 }
@@ -711,7 +879,10 @@ async fn mcp_prompts_and_resources() {
         .await
         .unwrap();
     let text = format!("{:?}", triage.messages);
-    assert!(text.contains("ops_advisor") && text.contains("never instructions"), "{text}");
+    assert!(
+        text.contains("ops_advisor") && text.contains("never instructions"),
+        "{text}"
+    );
 
     let bad = client
         .get_prompt(
@@ -727,7 +898,11 @@ async fn mcp_prompts_and_resources() {
 
     let resources = client.list_resources(Default::default()).await.unwrap();
     let uris: Vec<_> = resources.resources.iter().map(|r| r.uri.as_str()).collect();
-    for u in ["atlas://docs/mcp", "atlas://docs/ai-advisor", "atlas://skill/ops"] {
+    for u in [
+        "atlas://docs/mcp",
+        "atlas://docs/ai-advisor",
+        "atlas://skill/ops",
+    ] {
         assert!(uris.contains(&u), "resources: {uris:?}");
     }
     let doc = client
@@ -738,7 +913,10 @@ async fn mcp_prompts_and_resources() {
     let missing = client
         .read_resource(ReadResourceRequestParams::new("file:///etc/passwd"))
         .await;
-    assert!(missing.is_err(), "only the embedded atlas:// documents are readable");
+    assert!(
+        missing.is_err(),
+        "only the embedded atlas:// documents are readable"
+    );
     client.cancel().await.unwrap();
 }
 
@@ -757,9 +935,15 @@ async fn mcp_server_card_is_public_and_minimal() {
         card["authentication"]["resource_metadata"],
         "/.well-known/oauth-protected-resource/api/atlas/v1/mcp"
     );
-    assert!(card.get("tools").is_none(), "the card must not list tools: {card}");
+    assert!(
+        card.get("tools").is_none(),
+        "the card must not list tools: {card}"
+    );
     let text = card.to_string();
-    assert!(!text.contains("tenant") && !text.contains("cluster"), "{text}");
+    assert!(
+        !text.contains("tenant") && !text.contains("cluster"),
+        "{text}"
+    );
 }
 
 /// `get_volume` / `volume_protection` keep the REST routes' tenant checks: a tenant token reads its own volume
@@ -787,7 +971,9 @@ async fn mcp_volume_reads_respect_tenants() {
             pvc_name: Some(format!("{tenant}-vol")),
             storage_class_name: Some("zyvor-rbd-prod".into()),
         };
-        atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", tenant, &vol, None).await.unwrap();
+        atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", tenant, &vol, None)
+            .await
+            .unwrap();
     }
     let by_id = |tool: &'static str, id: &str| {
         CallToolRequestParams::new(tool)
@@ -818,7 +1004,10 @@ async fn mcp_volume_reads_respect_tenants() {
     let viewer = connect(addr, secret, "viewer").await;
     for tool in ["get_volume", "volume_protection"] {
         let r = viewer.call_tool(by_id(tool, "vol_acme")).await;
-        assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused for {tool}");
+        assert!(
+            r.is_err() || r.unwrap().is_error == Some(true),
+            "viewer must be refused for {tool}"
+        );
     }
     viewer.cancel().await.unwrap();
 }
@@ -848,25 +1037,46 @@ async fn mcp_chargeback_is_tenant_filtered() {
             pvc_name: Some(format!("{tenant}-vol")),
             storage_class_name: Some("zyvor-rbd-prod".into()),
         };
-        atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", tenant, &vol, None).await.unwrap();
+        atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", tenant, &vol, None)
+            .await
+            .unwrap();
     }
 
     let admin = connect_as(addr, secret, "admin", "global").await;
-    let all = text_of(&admin.call_tool(CallToolRequestParams::new("chargeback")).await.unwrap());
-    assert!(all.contains("\"acme\"") && all.contains("\"globex\""), "admin sees every tenant: {all}");
+    let all = text_of(
+        &admin
+            .call_tool(CallToolRequestParams::new("chargeback"))
+            .await
+            .unwrap(),
+    );
+    assert!(
+        all.contains("\"acme\"") && all.contains("\"globex\""),
+        "admin sees every tenant: {all}"
+    );
     admin.cancel().await.unwrap();
 
     let op = connect_as(addr, secret, "operator", "acme").await;
-    let own = op.call_tool(CallToolRequestParams::new("chargeback")).await.unwrap();
+    let own = op
+        .call_tool(CallToolRequestParams::new("chargeback"))
+        .await
+        .unwrap();
     assert_eq!(own.is_error, Some(false), "{}", text_of(&own));
     let own = text_of(&own);
-    assert!(own.contains("\"acme\"") && !own.contains("globex"), "tenant token must see only itself: {own}");
+    assert!(
+        own.contains("\"acme\"") && !own.contains("globex"),
+        "tenant token must see only itself: {own}"
+    );
     assert!(own.contains("usd_per_gib_month"), "{own}");
     op.cancel().await.unwrap();
 
     let viewer = connect(addr, secret, "viewer").await;
-    let r = viewer.call_tool(CallToolRequestParams::new("chargeback")).await;
-    assert!(r.is_err() || r.unwrap().is_error == Some(true), "viewer must be refused");
+    let r = viewer
+        .call_tool(CallToolRequestParams::new("chargeback"))
+        .await;
+    assert!(
+        r.is_err() || r.unwrap().is_error == Some(true),
+        "viewer must be refused"
+    );
     viewer.cancel().await.unwrap();
 }
 
@@ -882,29 +1092,51 @@ async fn oauth_protected_resource_metadata_shape() {
 
     let resp = reqwest::get(format!("{base}{MCP_META}")).await.unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::OK);
-    assert_eq!(resp.headers()["cache-control"], "no-store", "Host-derived must not be cached");
+    assert_eq!(
+        resp.headers()["cache-control"],
+        "no-store",
+        "Host-derived must not be cached"
+    );
     let doc: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(doc["resource"], format!("{base}/api/atlas/v1/mcp"));
-    assert_eq!(doc["bearer_methods_supported"], serde_json::json!(["header"]));
-    assert!(doc.get("authorization_servers").is_none(), "no IdP configured: {doc}");
+    assert_eq!(
+        doc["bearer_methods_supported"],
+        serde_json::json!(["header"])
+    );
+    assert!(
+        doc.get("authorization_servers").is_none(),
+        "no IdP configured: {doc}"
+    );
     assert!(doc.get("scopes_supported").is_none(), "{doc}");
 
     // Root form: the resource is the origin (RFC 9728 section 3.3).
-    let root: serde_json::Value = reqwest::get(format!("{base}/.well-known/oauth-protected-resource"))
-        .await
-        .unwrap()
-        .json()
-        .await
-        .unwrap();
+    let root: serde_json::Value =
+        reqwest::get(format!("{base}/.well-known/oauth-protected-resource"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
     assert_eq!(root["resource"], base);
-    assert_eq!(root["bearer_methods_supported"], serde_json::json!(["header"]));
+    assert_eq!(
+        root["bearer_methods_supported"],
+        serde_json::json!(["header"])
+    );
     assert!(root.get("authorization_servers").is_none(), "{root}");
 
     // Another suffix is not served as metadata.
-    let other = reqwest::get(format!("{base}/.well-known/oauth-protected-resource/api/atlas/v1/volumes"))
-        .await
-        .unwrap();
-    assert_ne!(other.headers().get("content-type").map(|v| v.to_str().unwrap_or("")), Some("application/json"));
+    let other = reqwest::get(format!(
+        "{base}/.well-known/oauth-protected-resource/api/atlas/v1/volumes"
+    ))
+    .await
+    .unwrap();
+    assert_ne!(
+        other
+            .headers()
+            .get("content-type")
+            .map(|v| v.to_str().unwrap_or("")),
+        Some("application/json")
+    );
 }
 
 /// A configured public URL is the only source: a forged Host or X-Forwarded-Proto changes nothing,
@@ -922,7 +1154,10 @@ async fn oauth_metadata_resource_url_source() {
         .unwrap();
     assert_eq!(resp.headers()["cache-control"], "public, max-age=300");
     let doc: serde_json::Value = resp.json().await.unwrap();
-    assert_eq!(doc["resource"], "https://atlas.example.com/api/atlas/v1/mcp");
+    assert_eq!(
+        doc["resource"],
+        "https://atlas.example.com/api/atlas/v1/mcp"
+    );
 
     let (addr, _pool) = spawn(true, secret).await;
     let doc: serde_json::Value = reqwest::Client::new()
@@ -935,7 +1170,10 @@ async fn oauth_metadata_resource_url_source() {
         .json()
         .await
         .unwrap();
-    assert_eq!(doc["resource"], "https://atlas.lab.example:30510/api/atlas/v1/mcp");
+    assert_eq!(
+        doc["resource"],
+        "https://atlas.lab.example:30510/api/atlas/v1/mcp"
+    );
 
     let resp = reqwest::Client::new()
         .get(format!("http://{addr}{MCP_META}"))
@@ -961,7 +1199,10 @@ async fn mcp_401_carries_resource_metadata_challenge() {
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
-    assert_eq!(resp.headers()["www-authenticate"], format!("Bearer {want}").as_str());
+    assert_eq!(
+        resp.headers()["www-authenticate"],
+        format!("Bearer {want}").as_str()
+    );
     // The body is the same JSON error as on REST routes.
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"]["code"], "AUTH_ERROR");
@@ -980,9 +1221,14 @@ async fn mcp_401_carries_resource_metadata_challenge() {
     );
 
     // A token signed with another secret is refused the same way.
-    let (other, _, _) =
-        atlas_gateway::auth::mint_token("another-secret-at-least-32-bytes!!!!", "x", "operator", "global", 60)
-            .unwrap();
+    let (other, _, _) = atlas_gateway::auth::mint_token(
+        "another-secret-at-least-32-bytes!!!!",
+        "x",
+        "operator",
+        "global",
+        60,
+    )
+    .unwrap();
     let resp = reqwest::Client::new()
         .post(format!("http://{addr}/api/atlas/v1/mcp"))
         .header("authorization", format!("Bearer {other}"))
@@ -991,7 +1237,10 @@ async fn mcp_401_carries_resource_metadata_challenge() {
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
-    assert!(resp.headers()["www-authenticate"].to_str().unwrap().contains("invalid_token"));
+    assert!(resp.headers()["www-authenticate"]
+        .to_str()
+        .unwrap()
+        .contains("invalid_token"));
 }
 
 /// The challenge uses the configured public URL, not the request's Host.

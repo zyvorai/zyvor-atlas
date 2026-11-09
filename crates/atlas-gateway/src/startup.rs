@@ -49,12 +49,16 @@ pub fn weka_driver_from_env() -> Result<Option<Arc<dyn StorageDriver>>> {
     if atlas_common::config::DriverMode::from_env_str(&mode)
         == atlas_common::config::DriverMode::Fake
     {
-        return Ok(Some(Arc::new(atlas_driver_weka::WekaDriver::fake(WEKA_BACKEND_ID))));
+        return Ok(Some(Arc::new(atlas_driver_weka::WekaDriver::fake(
+            WEKA_BACKEND_ID,
+        ))));
     }
-    let endpoint = var("ATLAS_WEKA_ENDPOINT").context("ATLAS_WEKA_ENDPOINT is required in real mode")?;
-    let username = var("ATLAS_WEKA_USERNAME").context("ATLAS_WEKA_USERNAME is required in real mode")?;
-    let password_file =
-        var("ATLAS_WEKA_PASSWORD_FILE").context("ATLAS_WEKA_PASSWORD_FILE is required in real mode")?;
+    let endpoint =
+        var("ATLAS_WEKA_ENDPOINT").context("ATLAS_WEKA_ENDPOINT is required in real mode")?;
+    let username =
+        var("ATLAS_WEKA_USERNAME").context("ATLAS_WEKA_USERNAME is required in real mode")?;
+    let password_file = var("ATLAS_WEKA_PASSWORD_FILE")
+        .context("ATLAS_WEKA_PASSWORD_FILE is required in real mode")?;
     let password = std::fs::read_to_string(&password_file)
         .with_context(|| format!("ATLAS_WEKA_PASSWORD_FILE={password_file}"))?
         .trim()
@@ -193,7 +197,10 @@ pub async fn attach_macos_driver(
         pool,
         &StorageBackend {
             id: driver.backend_id().into(),
-            name: driver.backend_id().trim_start_matches("bkd_").replace('_', "-"),
+            name: driver
+                .backend_id()
+                .trim_start_matches("bkd_")
+                .replace('_', "-"),
             backend_type: BackendType::Macos,
             mode: BackendMode::External,
             status: "active".into(),
@@ -575,7 +582,9 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         .ok()
         .filter(|v| !v.trim().is_empty())
     {
-        Some(raw) => Some(parse_public_url(&raw).map_err(|e| anyhow::anyhow!("ATLAS_PUBLIC_URL: {e}"))?),
+        Some(raw) => {
+            Some(parse_public_url(&raw).map_err(|e| anyhow::anyhow!("ATLAS_PUBLIC_URL: {e}"))?)
+        }
         None => None,
     };
     // Optional: accept IdP-issued JWT access tokens on `/mcp` (needs ATLAS_PUBLIC_URL for the audience;
@@ -647,7 +656,9 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         for agent in &macos_agents {
             match atlas_discovery::run_discovery(&state.pool, agent.clone(), None, None).await {
                 Ok(sum) => tracing::info!(?sum, "initial macos agent discovery complete"),
-                Err(e) => tracing::warn!("macos agent {} discovery failed: {e:#}", agent.backend_id()),
+                Err(e) => {
+                    tracing::warn!("macos agent {} discovery failed: {e:#}", agent.backend_id())
+                }
             }
         }
     }
@@ -692,7 +703,11 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
             );
         }
         for agent in macos_agents.clone() {
-            spawn_rediscovery(state.pool.clone(), agent, state.config.monitor_interval_secs);
+            spawn_rediscovery(
+                state.pool.clone(),
+                agent,
+                state.config.monitor_interval_secs,
+            );
         }
         // Protection-schedule worker: periodic snapshots + retention (shares the job engine).
         atlas_jobs::spawn_scheduler(

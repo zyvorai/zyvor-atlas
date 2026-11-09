@@ -309,7 +309,10 @@ mod tests {
             "https://a.example/api/atlas/v1/mcp",
             Some("https://idp.example.com"),
         );
-        assert_eq!(d["authorization_servers"], json!(["https://idp.example.com"]));
+        assert_eq!(
+            d["authorization_servers"],
+            json!(["https://idp.example.com"])
+        );
         assert!(d.get("scopes_supported").is_none());
     }
 }

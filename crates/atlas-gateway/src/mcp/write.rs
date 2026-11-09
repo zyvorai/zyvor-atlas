@@ -43,7 +43,10 @@ const DEFAULT_MCP_SILENCE_SECS: i64 = 3600;
 
 pub(super) fn write_enabled() -> bool {
     matches!(
-        std::env::var("ATLAS_MCP_WRITE_ENABLE").ok().as_deref().map(str::trim),
+        std::env::var("ATLAS_MCP_WRITE_ENABLE")
+            .ok()
+            .as_deref()
+            .map(str::trim),
         Some("1" | "true" | "TRUE" | "yes")
     )
 }
@@ -94,7 +97,13 @@ fn issue(secret: &str, actor: &str, tool: &str, params: &str, now: u64) -> Strin
 
 /// Everything about a token except whether it was already used: signature, expiry, and that it was issued
 /// to this caller for this tool and these exact arguments. Consumes nothing.
-fn verify(secret: &str, token: &str, actor: &str, tool: &str, params: &str) -> Result<Claims, &'static str> {
+fn verify(
+    secret: &str,
+    token: &str,
+    actor: &str,
+    tool: &str,
+    params: &str,
+) -> Result<Claims, &'static str> {
     let mut v = Validation::new(Algorithm::HS256);
     v.leeway = 0;
     v.set_required_spec_claims(&["exp"]);
@@ -117,7 +126,13 @@ static LAST_PRUNE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::
 /// Redeem a token: verify it, then record its `jti` in the database. The primary key makes the first
 /// redemption win on every replica sharing the database, so a replay (also after a restart or on another
 /// replica) is refused. A database error is not a reason to let the write through: it fails closed.
-async fn redeem(s: &AppState, token: &str, actor: &str, tool: &str, params: &str) -> Result<(), &'static str> {
+async fn redeem(
+    s: &AppState,
+    token: &str,
+    actor: &str,
+    tool: &str,
+    params: &str,
+) -> Result<(), &'static str> {
     let c = verify(&s.config.jwt_secret, token, actor, tool, params)?;
     match atlas_inventory::mcp_confirm::mark_used(&s.pool, &c.jti, c.exp as i64).await {
         Ok(true) => {}
@@ -131,11 +146,18 @@ async fn redeem(s: &AppState, token: &str, actor: &str, tool: &str, params: &str
     let last = LAST_PRUNE.load(std::sync::atomic::Ordering::Relaxed);
     if now >= last + 60
         && LAST_PRUNE
-            .compare_exchange(last, now, std::sync::atomic::Ordering::Relaxed, std::sync::atomic::Ordering::Relaxed)
+            .compare_exchange(
+                last,
+                now,
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+            )
             .is_ok()
     {
         // Best effort: a failed prune only leaves old rows for the next one.
-        let _ = atlas_inventory::mcp_confirm::prune_expired(&s.pool, now as i64 - USED_RETENTION_SECS).await;
+        let _ =
+            atlas_inventory::mcp_confirm::prune_expired(&s.pool, now as i64 - USED_RETENTION_SECS)
+                .await;
     }
     Ok(())
 }
@@ -158,8 +180,16 @@ pub(super) async fn gate(
     token: Option<&str>,
 ) -> Result<Gate, &'static str> {
     match token {
-        None => Ok(Gate::Propose(issue(&s.config.jwt_secret, actor_id, tool, params, now_secs()))),
-        Some(t) => redeem(s, t, actor_id, tool, params).await.map(|()| Gate::Execute),
+        None => Ok(Gate::Propose(issue(
+            &s.config.jwt_secret,
+            actor_id,
+            tool,
+            params,
+            now_secs(),
+        ))),
+        Some(t) => redeem(s, t, actor_id, tool, params)
+            .await
+            .map(|()| Gate::Execute),
     }
 }
 
@@ -268,9 +298,26 @@ impl AtlasMcp {
         let params = json!({ "volume_id": args.volume_id, "name": name }).to_string();
         let rid = args.volume_id.as_str();
 
-        match gate(s, &actor.id, CREATE_SNAPSHOT, &params, args.confirmation_token.as_deref()).await {
+        match gate(
+            s,
+            &actor.id,
+            CREATE_SNAPSHOT,
+            &params,
+            args.confirmation_token.as_deref(),
+        )
+        .await
+        {
             Ok(Gate::Propose(token)) => {
-                audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
+                audit(
+                    s,
+                    &actor,
+                    CREATE_SNAPSHOT,
+                    "volume",
+                    rid,
+                    "proposed",
+                    json!({ "via": "mcp", "confirmed": false }),
+                )
+                .await;
                 return Ok(ToolJson(json!({
                     "executed": false,
                     "plan": {
@@ -287,7 +334,16 @@ impl AtlasMcp {
             }
             Ok(Gate::Execute) => {}
             Err(why) => {
-                audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                audit(
+                    s,
+                    &actor,
+                    CREATE_SNAPSHOT,
+                    "volume",
+                    rid,
+                    "rejected",
+                    json!({ "via": "mcp", "reason": why }),
+                )
+                .await;
                 return Err(McpError::invalid_params(why, None));
             }
         }
@@ -303,8 +359,30 @@ impl AtlasMcp {
         .await
         .map(|(_, j)| j);
         match &result {
-            Ok(Json(v)) => audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
-            Err(e) => audit(s, &actor, CREATE_SNAPSHOT, "volume", rid, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
+            Ok(Json(v)) => {
+                audit(
+                    s,
+                    &actor,
+                    CREATE_SNAPSHOT,
+                    "volume",
+                    rid,
+                    "success",
+                    json!({ "via": "mcp", "confirmed": true, "result": v }),
+                )
+                .await
+            }
+            Err(e) => {
+                audit(
+                    s,
+                    &actor,
+                    CREATE_SNAPSHOT,
+                    "volume",
+                    rid,
+                    "failure",
+                    json!({ "via": "mcp", "confirmed": true, "error": e.to_string() }),
+                )
+                .await
+            }
         }
         let out = rest(result)?;
         Ok(ToolJson(json!({ "executed": true, "result": out.0 })))
@@ -329,13 +407,32 @@ impl AtlasMcp {
             .map_err(internal_error)?
             .into_iter()
             .find(|a| a.id == args.alert_id)
-            .ok_or_else(|| McpError::invalid_params(format!("unknown alert {}", args.alert_id), None))?;
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("unknown alert {}", args.alert_id), None)
+            })?;
         let params = json!({ "alert_id": args.alert_id }).to_string();
         let rid = args.alert_id.as_str();
 
-        match gate(s, &actor.id, ACK_ALERT, &params, args.confirmation_token.as_deref()).await {
+        match gate(
+            s,
+            &actor.id,
+            ACK_ALERT,
+            &params,
+            args.confirmation_token.as_deref(),
+        )
+        .await
+        {
             Ok(Gate::Propose(token)) => {
-                audit(s, &actor, ACK_ALERT, "alert", rid, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
+                audit(
+                    s,
+                    &actor,
+                    ACK_ALERT,
+                    "alert",
+                    rid,
+                    "proposed",
+                    json!({ "via": "mcp", "confirmed": false }),
+                )
+                .await;
                 return Ok(ToolJson(json!({
                     "executed": false,
                     "plan": {
@@ -353,7 +450,16 @@ impl AtlasMcp {
             }
             Ok(Gate::Execute) => {}
             Err(why) => {
-                audit(s, &actor, ACK_ALERT, "alert", rid, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                audit(
+                    s,
+                    &actor,
+                    ACK_ALERT,
+                    "alert",
+                    rid,
+                    "rejected",
+                    json!({ "via": "mcp", "reason": why }),
+                )
+                .await;
                 return Err(McpError::invalid_params(why, None));
             }
         }
@@ -365,8 +471,30 @@ impl AtlasMcp {
         )
         .await;
         match &result {
-            Ok(Json(v)) => audit(s, &actor, ACK_ALERT, "alert", rid, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
-            Err(e) => audit(s, &actor, ACK_ALERT, "alert", rid, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
+            Ok(Json(v)) => {
+                audit(
+                    s,
+                    &actor,
+                    ACK_ALERT,
+                    "alert",
+                    rid,
+                    "success",
+                    json!({ "via": "mcp", "confirmed": true, "result": v }),
+                )
+                .await
+            }
+            Err(e) => {
+                audit(
+                    s,
+                    &actor,
+                    ACK_ALERT,
+                    "alert",
+                    rid,
+                    "failure",
+                    json!({ "via": "mcp", "confirmed": true, "error": e.to_string() }),
+                )
+                .await
+            }
         }
         let out = rest(result)?;
         Ok(ToolJson(json!({ "executed": true, "result": out.0 })))
@@ -400,13 +528,32 @@ impl AtlasMcp {
             .map_err(internal_error)?
             .into_iter()
             .find(|a| a.id == args.alert_id)
-            .ok_or_else(|| McpError::invalid_params(format!("unknown alert {}", args.alert_id), None))?;
+            .ok_or_else(|| {
+                McpError::invalid_params(format!("unknown alert {}", args.alert_id), None)
+            })?;
         let params = json!({ "alert_id": args.alert_id, "secs": secs }).to_string();
         let rid = args.alert_id.as_str();
 
-        match gate(s, &actor.id, SILENCE_ALERT, &params, args.confirmation_token.as_deref()).await {
+        match gate(
+            s,
+            &actor.id,
+            SILENCE_ALERT,
+            &params,
+            args.confirmation_token.as_deref(),
+        )
+        .await
+        {
             Ok(Gate::Propose(token)) => {
-                audit(s, &actor, SILENCE_ALERT, "alert", rid, "proposed", json!({ "via": "mcp", "confirmed": false, "secs": secs })).await;
+                audit(
+                    s,
+                    &actor,
+                    SILENCE_ALERT,
+                    "alert",
+                    rid,
+                    "proposed",
+                    json!({ "via": "mcp", "confirmed": false, "secs": secs }),
+                )
+                .await;
                 return Ok(ToolJson(json!({
                     "executed": false,
                     "plan": {
@@ -425,7 +572,16 @@ impl AtlasMcp {
             }
             Ok(Gate::Execute) => {}
             Err(why) => {
-                audit(s, &actor, SILENCE_ALERT, "alert", rid, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                audit(
+                    s,
+                    &actor,
+                    SILENCE_ALERT,
+                    "alert",
+                    rid,
+                    "rejected",
+                    json!({ "via": "mcp", "reason": why }),
+                )
+                .await;
                 return Err(McpError::invalid_params(why, None));
             }
         }
@@ -438,8 +594,30 @@ impl AtlasMcp {
         )
         .await;
         match &result {
-            Ok(Json(v)) => audit(s, &actor, SILENCE_ALERT, "alert", rid, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
-            Err(e) => audit(s, &actor, SILENCE_ALERT, "alert", rid, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
+            Ok(Json(v)) => {
+                audit(
+                    s,
+                    &actor,
+                    SILENCE_ALERT,
+                    "alert",
+                    rid,
+                    "success",
+                    json!({ "via": "mcp", "confirmed": true, "result": v }),
+                )
+                .await
+            }
+            Err(e) => {
+                audit(
+                    s,
+                    &actor,
+                    SILENCE_ALERT,
+                    "alert",
+                    rid,
+                    "failure",
+                    json!({ "via": "mcp", "confirmed": true, "error": e.to_string() }),
+                )
+                .await
+            }
         }
         let out = rest(result)?;
         Ok(ToolJson(json!({ "executed": true, "result": out.0 })))
@@ -459,7 +637,14 @@ mod tests {
         // Wrong caller / tool / arguments are rejected.
         assert!(verify(SECRET, &t, "bob", CREATE_SNAPSHOT, params).is_err());
         assert!(verify(SECRET, &t, "alice", "delete_volume", params).is_err());
-        assert!(verify(SECRET, &t, "alice", CREATE_SNAPSHOT, r#"{"volume_id":"vol_b","name":null}"#).is_err());
+        assert!(verify(
+            SECRET,
+            &t,
+            "alice",
+            CREATE_SNAPSHOT,
+            r#"{"volume_id":"vol_b","name":null}"#
+        )
+        .is_err());
         // Verifying consumes nothing: the right caller still verifies, as often as asked.
         assert!(verify(SECRET, &t, "alice", CREATE_SNAPSHOT, params).is_ok());
         assert!(verify(SECRET, &t, "alice", CREATE_SNAPSHOT, params).is_ok());
@@ -472,11 +657,30 @@ mod tests {
         let t = issue(SECRET, "alice", ACK_ALERT, params, now);
         let mut bad = t.clone();
         bad.push('x');
-        assert_eq!(verify(SECRET, &bad, "alice", ACK_ALERT, params).unwrap_err(), "confirmation token is invalid or expired");
-        let old = issue(SECRET, "alice", ACK_ALERT, params, now.saturating_sub(TOKEN_TTL_SECS + 120));
-        assert_eq!(verify(SECRET, &old, "alice", ACK_ALERT, params).unwrap_err(), "confirmation token is invalid or expired");
+        assert_eq!(
+            verify(SECRET, &bad, "alice", ACK_ALERT, params).unwrap_err(),
+            "confirmation token is invalid or expired"
+        );
+        let old = issue(
+            SECRET,
+            "alice",
+            ACK_ALERT,
+            params,
+            now.saturating_sub(TOKEN_TTL_SECS + 120),
+        );
+        assert_eq!(
+            verify(SECRET, &old, "alice", ACK_ALERT, params).unwrap_err(),
+            "confirmation token is invalid or expired"
+        );
         // Another secret does not verify it (a replica with a different ATLAS_JWT_SECRET)...
-        assert!(verify("another-secret-at-least-32-bytes!!!!", &t, "alice", ACK_ALERT, params).is_err());
+        assert!(verify(
+            "another-secret-at-least-32-bytes!!!!",
+            &t,
+            "alice",
+            ACK_ALERT,
+            params
+        )
+        .is_err());
         // ...and the same secret does, which is what makes the token portable across restarts and replicas.
         assert!(verify(SECRET, &t, "alice", ACK_ALERT, params).is_ok());
     }
@@ -486,6 +690,9 @@ mod tests {
         // A confirmation token is not a login token and the other way round: the keys differ.
         assert_ne!(key(SECRET).as_slice(), SECRET.as_bytes());
         let t = issue(SECRET, "alice", ACK_ALERT, "{}", now_secs());
-        assert!(crate::auth::decode_token(&t, SECRET, None).is_err(), "a confirmation token must not pass as an API token");
+        assert!(
+            crate::auth::decode_token(&t, SECRET, None).is_err(),
+            "a confirmation token must not pass as an API token"
+        );
     }
 }

@@ -500,7 +500,9 @@ pub(crate) struct SnapshotBody {
 }
 
 /// The response for a snapshot reused by `if_not_exists`.
-fn existing_snapshot_response(snap: &atlas_api_types::StorageSnapshot) -> (StatusCode, Json<Value>) {
+fn existing_snapshot_response(
+    snap: &atlas_api_types::StorageSnapshot,
+) -> (StatusCode, Json<Value>) {
     (
         StatusCode::OK,
         Json(json!({
@@ -594,7 +596,9 @@ pub(crate) async fn create_snapshot(
     if body.if_not_exists {
         // The row of a snapshot still being created by its job does not exist yet, so a request
         // that races a pending create is not caught here.
-        if let Some(snap) = atlas_inventory::snapshots::find_by_name(&s.pool, &id, &snap_name).await? {
+        if let Some(snap) =
+            atlas_inventory::snapshots::find_by_name(&s.pool, &id, &snap_name).await?
+        {
             return Ok(existing_snapshot_response(&snap));
         }
     }
@@ -749,8 +753,7 @@ pub(crate) async fn delete_snapshot(
 /// stays locked and the API just does not show the expiry until the next lock call.
 pub(crate) async fn record_locked_until(s: &AppState, snapshot_id: &str, until_unix: u64) {
     let until = i64::try_from(until_unix).unwrap_or(i64::MAX);
-    if let Err(e) =
-        atlas_inventory::snapshots::set_locked_until(&s.pool, snapshot_id, until).await
+    if let Err(e) = atlas_inventory::snapshots::set_locked_until(&s.pool, snapshot_id, until).await
     {
         tracing::warn!(snapshot_id, error = %e, "could not record snapshot lock expiry");
     }
@@ -808,7 +811,9 @@ pub(crate) async fn lock_snapshot(
         Some(json!({ "retain_secs": body.retain_secs, "retain_until_unix": until })),
     )
     .await;
-    Ok(Json(json!({ "snapshot_id": id, "retain_until_unix": until })))
+    Ok(Json(
+        json!({ "snapshot_id": id, "retain_until_unix": until }),
+    ))
 }
 
 #[derive(Debug, Deserialize)]

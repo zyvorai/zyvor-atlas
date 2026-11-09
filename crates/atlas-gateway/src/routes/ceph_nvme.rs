@@ -95,7 +95,9 @@ fn report(devid: &str, host: &str, dev: &str, daemons: &Value, metrics: &Value) 
 
 /// Collect the NVMe report from a Ceph driver. A drive whose metrics cannot be read is listed as
 /// not scraped (with the reason) rather than failing the whole report.
-pub(crate) async fn collect(d: &dyn StorageDriver) -> Result<Value, atlas_driver_core::DriverError> {
+pub(crate) async fn collect(
+    d: &dyn StorageDriver,
+) -> Result<Value, atlas_driver_core::DriverError> {
     let listing = d.ceph_device_ls().await?;
     let drives = nvme_drives(&listing);
     let truncated = drives.len() > MAX_DEVICES;
@@ -144,7 +146,11 @@ pub(crate) async fn attention(s: &AppState) -> Vec<String> {
         .into_iter()
         .flatten()
         .filter_map(|v| {
-            let c: Vec<&str> = v["concerns"].as_array()?.iter().filter_map(Value::as_str).collect();
+            let c: Vec<&str> = v["concerns"]
+                .as_array()?
+                .iter()
+                .filter_map(Value::as_str)
+                .collect();
             // The devid comes from drive firmware and the line reaches the advisor's LLM prompt,
             // so keep it to a bounded, plain identifier.
             let id: String = v["devid"]
@@ -200,12 +206,17 @@ mod tests {
 
     #[test]
     fn concerns_flag_wear_errors_spare_and_warnings() {
-        assert!(concerns(&json!({ "percentage_used": 79, "available_spare": 100,
+        assert!(
+            concerns(&json!({ "percentage_used": 79, "available_spare": 100,
             "available_spare_threshold": 10, "media_errors": 0, "critical_warning": 0 }))
-        .is_empty());
+            .is_empty()
+        );
         assert_eq!(concerns(&json!({ "percentage_used": 80 })).len(), 1);
         assert_eq!(concerns(&json!({ "media_errors": 2 })).len(), 1);
-        assert_eq!(concerns(&json!({ "available_spare": 10, "available_spare_threshold": 10 })).len(), 1);
+        assert_eq!(
+            concerns(&json!({ "available_spare": 10, "available_spare_threshold": 10 })).len(),
+            1
+        );
         assert_eq!(concerns(&json!({ "critical_warning": 4 })).len(), 1);
     }
 

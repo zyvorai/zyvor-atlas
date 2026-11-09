@@ -38,7 +38,10 @@ pub(crate) fn summarize_gateway(cr: &Value, pods: &[PodBrief]) -> Value {
     let spec = &cr["spec"];
     let instances = spec["instances"].as_u64().unwrap_or(1);
     let prefix = format!("rook-ceph-nvmeof-{name}-");
-    let mine: Vec<&PodBrief> = pods.iter().filter(|p| p.name.starts_with(&prefix)).collect();
+    let mine: Vec<&PodBrief> = pods
+        .iter()
+        .filter(|p| p.name.starts_with(&prefix))
+        .collect();
     let ready = mine.iter().filter(|p| p.ready).count() as u64;
 
     let mut findings = Vec::new();
@@ -71,7 +74,9 @@ pub(crate) async fn get_ceph_nvmeof(
     let k8s = s.k8s.as_ref().ok_or_else(|| {
         AppError::Unavailable("no kubernetes cluster attached; cannot read Rook resources".into())
     })?;
-    let ns = q.namespace.unwrap_or_else(|| s.config.rook_namespace.clone());
+    let ns = q
+        .namespace
+        .unwrap_or_else(|| s.config.rook_namespace.clone());
     let driver_err = |e: atlas_driver_k8s::K8sError| AppError::Driver(e.to_string());
 
     let Some(crs) = k8s.list_nvmeof_gateways(&ns).await.map_err(driver_err)? else {
@@ -85,7 +90,10 @@ pub(crate) async fn get_ceph_nvmeof(
         .list_pods_by_label(&ns, GATEWAY_POD_SELECTOR)
         .await
         .map_err(driver_err)?;
-    let classes = k8s.list_nvmeof_storage_classes().await.map_err(driver_err)?;
+    let classes = k8s
+        .list_nvmeof_storage_classes()
+        .await
+        .map_err(driver_err)?;
     let gateways: Vec<Value> = crs.iter().map(|cr| summarize_gateway(cr, &pods)).collect();
     Ok(Json(json!({
         "installed": true,
@@ -119,7 +127,9 @@ pub(crate) fn validate_namespace_request(b: &CreateNamespaceBody) -> Result<(), 
         return Err("confirm=true is required to provision an NVMe-oF namespace".into());
     }
     if b.size_bytes <= 0 || b.size_bytes > MAX_NAMESPACE_BYTES {
-        return Err(format!("size_bytes must be between 1 and {MAX_NAMESPACE_BYTES}"));
+        return Err(format!(
+            "size_bytes must be between 1 and {MAX_NAMESPACE_BYTES}"
+        ));
     }
     if b.storage_class.trim().is_empty() {
         return Err("storage_class is required".into());
@@ -228,7 +238,12 @@ mod tests {
     use super::*;
 
     fn pod(name: &str, ready: bool) -> PodBrief {
-        PodBrief { name: name.into(), phase: Some("Running".into()), ready, node: Some("n1".into()) }
+        PodBrief {
+            name: name.into(),
+            phase: Some("Running".into()),
+            ready,
+            node: Some("n1".into()),
+        }
     }
 
     fn cr(name: &str, instances: u64) -> Value {
@@ -246,7 +261,10 @@ mod tests {
         assert_eq!(g["instances"], 1);
         assert_eq!(g["pods_ready"], 1);
         assert_eq!(g["findings"].as_array().unwrap().len(), 1);
-        assert!(g["findings"][0].as_str().unwrap().contains("single gateway"));
+        assert!(g["findings"][0]
+            .as_str()
+            .unwrap()
+            .contains("single gateway"));
     }
 
     #[test]
@@ -264,7 +282,10 @@ mod tests {
 
     #[test]
     fn missing_or_unready_pods_are_reported() {
-        let g = summarize_gateway(&cr("nvmeof", 2), &[pod("rook-ceph-nvmeof-nvmeof-a-1", false)]);
+        let g = summarize_gateway(
+            &cr("nvmeof", 2),
+            &[pod("rook-ceph-nvmeof-nvmeof-a-1", false)],
+        );
         assert_eq!(g["pods_ready"], 0);
         assert!(g["findings"]
             .as_array()
@@ -287,7 +308,9 @@ mod tests {
     #[test]
     fn a_namespace_request_needs_confirm_and_a_sane_size() {
         assert!(validate_namespace_request(&ns_body(1 << 30, true)).is_ok());
-        assert!(validate_namespace_request(&ns_body(1 << 30, false)).unwrap_err().contains("confirm"));
+        assert!(validate_namespace_request(&ns_body(1 << 30, false))
+            .unwrap_err()
+            .contains("confirm"));
         assert!(validate_namespace_request(&ns_body(0, true)).is_err());
         assert!(validate_namespace_request(&ns_body(MAX_NAMESPACE_BYTES + 1, true)).is_err());
         let mut b = ns_body(1 << 30, true);

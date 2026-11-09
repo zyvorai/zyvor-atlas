@@ -37,8 +37,14 @@ pub(crate) fn summarize(meta: &Value) -> Value {
             })
         })
         .collect();
-    let stores = count_by(list.iter().map(|o| o["osd_objectstore"].as_str().unwrap_or("unknown")));
-    let versions = count_by(list.iter().map(|o| o["ceph_version"].as_str().unwrap_or("unknown")));
+    let stores = count_by(
+        list.iter()
+            .map(|o| o["osd_objectstore"].as_str().unwrap_or("unknown")),
+    );
+    let versions = count_by(
+        list.iter()
+            .map(|o| o["ceph_version"].as_str().unwrap_or("unknown")),
+    );
     let known_versions = versions.keys().filter(|v| v.as_str() != "unknown").count();
     json!({
         "summary": {

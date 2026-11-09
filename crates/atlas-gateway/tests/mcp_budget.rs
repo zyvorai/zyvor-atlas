@@ -76,7 +76,6 @@ async fn spawn(auth_required: bool, secret: &str) -> (SocketAddr, sqlx::AnyPool)
     (addr, pool)
 }
 
-
 const SECRET: &str = "mcp-agent-test-secret-at-least-32-bytes!!";
 
 async fn connect_token(
@@ -115,7 +114,8 @@ fn scoped(role: &str, tools: &[&str]) -> String {
 async fn call(
     c: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
 ) -> Result<rmcp::model::CallToolResult, rmcp::service::ServiceError> {
-    c.call_tool(rmcp::model::CallToolRequestParams::new("list_clusters")).await
+    c.call_tool(rmcp::model::CallToolRequestParams::new("list_clusters"))
+        .await
 }
 
 #[tokio::test]
@@ -123,8 +123,12 @@ async fn each_token_has_its_own_call_budget() {
     std::env::set_var("ATLAS_MCP_CALLS_PER_MIN", "3");
     std::env::set_var("ATLAS_RATE_LIMIT_SYNC_SECS", "1");
     let (addr, pool) = spawn(true, SECRET).await;
-    let a = connect_token(addr, &scoped("operator", &["list_clusters"])).await.unwrap();
-    let b = connect_token(addr, &scoped("operator", &["list_clusters"])).await.unwrap();
+    let a = connect_token(addr, &scoped("operator", &["list_clusters"]))
+        .await
+        .unwrap();
+    let b = connect_token(addr, &scoped("operator", &["list_clusters"]))
+        .await
+        .unwrap();
 
     let (mut ok, mut refused) = (0, 0);
     for _ in 0..6 {
@@ -136,14 +140,19 @@ async fn each_token_has_its_own_call_budget() {
     assert_eq!(ok, 3, "the first three calls fit the budget");
     assert_eq!(refused, 3, "the rest are refused");
     // Another token (own jti) is unaffected by the first one running out.
-    assert!(call(&b).await.is_ok(), "a different token has its own budget");
+    assert!(
+        call(&b).await.is_ok(),
+        "a different token has its own budget"
+    );
 
     use sqlx::Row;
-    let n: i64 = sqlx::query("SELECT COUNT(*) AS n FROM storage_audit_logs WHERE action = 'mcp.tool.rate_limited'")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .get("n");
+    let n: i64 = sqlx::query(
+        "SELECT COUNT(*) AS n FROM storage_audit_logs WHERE action = 'mcp.tool.rate_limited'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .get("n");
     assert_eq!(n, 3, "each refusal is audited");
 
     // The budget shares its counts through the database (so it holds across replicas on Postgres): the
@@ -160,5 +169,8 @@ async fn each_token_has_its_own_call_budget() {
         }
         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
     }
-    assert!(total >= 3, "the call budget's counts reach rate_limit_counters, got {total}");
+    assert!(
+        total >= 3,
+        "the call budget's counts reach rate_limit_counters, got {total}"
+    );
 }

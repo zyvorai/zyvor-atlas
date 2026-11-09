@@ -138,7 +138,9 @@ async fn delete_base_snapshot(s: &AppState, snapshot_id: &str) -> AppResult<Opti
         .clone()
         .unwrap_or_else(|| snapshot_id.to_string());
     match native_driver(s)?
-        .delete_snapshot(atlas_api_types::DeleteSnapshotRequest { snapshot_id: native })
+        .delete_snapshot(atlas_api_types::DeleteSnapshotRequest {
+            snapshot_id: native,
+        })
         .await
         .map_err(driver_error)
     {
@@ -158,7 +160,8 @@ async fn clone_base(
 ) -> AppResult<String> {
     let body = serde_json::from_value(json!({ "name": volume_name }))
         .map_err(|e| AppError::Internal(e.to_string()))?;
-    let (_, Json(out)) = volumes::enqueue_clone(s, actor, snapshot_id, "clone", volume_name.into(), body).await?;
+    let (_, Json(out)) =
+        volumes::enqueue_clone(s, actor, snapshot_id, "clone", volume_name.into(), body).await?;
     out["volume_id"]
         .as_str()
         .map(str::to_string)
@@ -169,7 +172,9 @@ async fn clone_base(
 /// (none).
 pub(crate) fn resolve_max_bytes(requested: Option<i64>) -> AppResult<i64> {
     match requested {
-        Some(b) if b < 0 => Err(AppError::Validation("max_bytes must not be negative".into())),
+        Some(b) if b < 0 => Err(AppError::Validation(
+            "max_bytes must not be negative".into(),
+        )),
         Some(b) if b > 0 => Ok(b),
         _ => Ok(env_i64("ATLAS_WORKSPACE_DEFAULT_MAX_BYTES", 0)),
     }
@@ -260,7 +265,13 @@ async fn admit(s: &AppState, actor: &Actor, tenant: &str) -> AppResult<()> {
 
 /// Roll back a create that did not finish: remove what it made, then its own `creating` row. Every
 /// step is best effort (a leftover is retried by the GC through the recorded ids).
-async fn abort_create(s: &AppState, id: &str, snapshot_id: &str, volume_id: &str, owns_snapshot: bool) {
+async fn abort_create(
+    s: &AppState,
+    id: &str,
+    snapshot_id: &str,
+    volume_id: &str,
+    owns_snapshot: bool,
+) {
     let _ = delete_clone(s, volume_id).await;
     if owns_snapshot {
         let _ = delete_base_snapshot(s, snapshot_id).await;
@@ -285,21 +296,27 @@ pub(crate) async fn create_workspace(
     let max_bytes = resolve_max_bytes(body.max_bytes)?;
 
     // Resolve the source and the tenant it belongs to; a caller from another tenant gets a 404.
-    let (source_volume_id, existing_snapshot) = match (&body.source_volume_id, &body.source_snapshot_id) {
-        (Some(v), None) => (v.clone(), None),
-        (None, Some(sn)) => {
-            let snap = atlas_inventory::snapshots::get_snapshot(&s.pool, sn)
-                .await?
-                .ok_or_else(|| AppError::NotFound(format!("snapshot {sn}")))?;
-            require_tenant(s.config.auth_required, &actor, &snap.tenant_id, format!("snapshot {sn}"))?;
-            (snap.volume_id.clone(), Some(snap))
-        }
-        _ => {
-            return Err(AppError::Validation(
-                "give exactly one of source_volume_id and source_snapshot_id".into(),
-            ))
-        }
-    };
+    let (source_volume_id, existing_snapshot) =
+        match (&body.source_volume_id, &body.source_snapshot_id) {
+            (Some(v), None) => (v.clone(), None),
+            (None, Some(sn)) => {
+                let snap = atlas_inventory::snapshots::get_snapshot(&s.pool, sn)
+                    .await?
+                    .ok_or_else(|| AppError::NotFound(format!("snapshot {sn}")))?;
+                require_tenant(
+                    s.config.auth_required,
+                    &actor,
+                    &snap.tenant_id,
+                    format!("snapshot {sn}"),
+                )?;
+                (snap.volume_id.clone(), Some(snap))
+            }
+            _ => {
+                return Err(AppError::Validation(
+                    "give exactly one of source_volume_id and source_snapshot_id".into(),
+                ))
+            }
+        };
     let src = atlas_inventory::get_volume(&s.pool, &source_volume_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("volume {source_volume_id}")))?;
@@ -310,7 +327,10 @@ pub(crate) async fn create_workspace(
         &tenant,
         format!("volume {source_volume_id}"),
     )?;
-    if native_driver_for_volume(&s, &source_volume_id).await?.is_none() {
+    if native_driver_for_volume(&s, &source_volume_id)
+        .await?
+        .is_none()
+    {
         return Err(AppError::Validation(
             "workspaces are only available for atlas-native volumes and filesystems".into(),
         ));
@@ -335,7 +355,10 @@ pub(crate) async fn create_workspace(
         owner: actor.id.clone(),
         name,
         source_volume_id: source_volume_id.clone(),
-        base_snapshot_id: existing_snapshot.as_ref().map(|sn| sn.id.clone()).unwrap_or_default(),
+        base_snapshot_id: existing_snapshot
+            .as_ref()
+            .map(|sn| sn.id.clone())
+            .unwrap_or_default(),
         owns_base_snapshot: owns_snapshot,
         volume_id: String::new(),
         max_bytes,
@@ -466,10 +489,19 @@ pub(crate) async fn reset_workspace(
     if now_unix() >= w.expires_at_unix {
         return Err(AppError::Conflict(format!("workspace {id} has expired")));
     }
-    if !store::transition(&s.pool, &id, &[store::ACTIVE, store::RESET_FAILED], store::RESETTING).await? {
+    if !store::transition(
+        &s.pool,
+        &id,
+        &[store::ACTIVE, store::RESET_FAILED],
+        store::RESETTING,
+    )
+    .await?
+    {
         return Err(AppError::Conflict(format!(
             "workspace {id} is {}; only an active workspace can be reset",
-            store::get(&s.pool, &id).await?.map_or("gone".into(), |w| w.state)
+            store::get(&s.pool, &id)
+                .await?
+                .map_or("gone".into(), |w| w.state)
         )));
     }
     if let Err(e) = delete_clone(&s, &w.volume_id).await {
@@ -484,7 +516,9 @@ pub(crate) async fn reset_workspace(
             if !store::set_reset_done(&s.pool, &id, &volume_id).await? {
                 // Torn down underneath us (expiry): do not leave the new clone behind.
                 let _ = delete_clone(&s, &volume_id).await;
-                return Err(AppError::Conflict(format!("workspace {id} was discarded during the reset")));
+                return Err(AppError::Conflict(format!(
+                    "workspace {id} was discarded during the reset"
+                )));
             }
             audit(
                 &s,
@@ -496,7 +530,9 @@ pub(crate) async fn reset_workspace(
                 Some(json!({ "volume_id": volume_id, "base_snapshot_id": w.base_snapshot_id })),
             )
             .await;
-            let w = store::get(&s.pool, &id).await?.ok_or_else(|| AppError::NotFound(format!("workspace {id}")))?;
+            let w = store::get(&s.pool, &id)
+                .await?
+                .ok_or_else(|| AppError::NotFound(format!("workspace {id}")))?;
             Ok(Json(view(&s, &w).await?))
         }
         Err(e) => {
@@ -549,7 +585,13 @@ pub(crate) async fn discard_workspace(
 ) -> AppResult<Json<Value>> {
     require_role(s.config.auth_required, &actor, ROLE_OPERATOR)?;
     let w = load(&s, &actor, &id).await?;
-    if !store::transition(&s.pool, &id, &[store::ACTIVE, store::RESET_FAILED], store::DISCARDING).await?
+    if !store::transition(
+        &s.pool,
+        &id,
+        &[store::ACTIVE, store::RESET_FAILED],
+        store::DISCARDING,
+    )
+    .await?
         && w.state != store::DISCARDING
     {
         return Err(AppError::Conflict(format!(
@@ -585,7 +627,12 @@ pub async fn gc_once(s: &AppState, now_unix: i64) -> anyhow::Result<GcReport> {
         let claimed = store::transition(
             &s.pool,
             &w.id,
-            &[store::ACTIVE, store::RESET_FAILED, store::RESETTING, store::CREATING],
+            &[
+                store::ACTIVE,
+                store::RESET_FAILED,
+                store::RESETTING,
+                store::CREATING,
+            ],
             store::DISCARDING,
         )
         .await?;
@@ -620,7 +667,11 @@ pub fn spawn_gc(s: AppState) {
             tick.tick().await;
             match gc_once(&s, now_unix()).await {
                 Ok(r) if r.discarded + r.failed > 0 => {
-                    tracing::info!(discarded = r.discarded, failed = r.failed, "workspace GC pass");
+                    tracing::info!(
+                        discarded = r.discarded,
+                        failed = r.failed,
+                        "workspace GC pass"
+                    );
                 }
                 Ok(_) => {}
                 Err(e) => tracing::warn!(error = %e, "workspace GC pass failed"),

@@ -76,7 +76,9 @@ async fn spawn() -> (SocketAddr, AppState) {
     )
     .await
     .expect("build_state");
-    let driver = Arc::new(atlas_driver_native::FakeNativeDriver::new(NATIVE_BACKEND_ID));
+    let driver = Arc::new(atlas_driver_native::FakeNativeDriver::new(
+        NATIVE_BACKEND_ID,
+    ));
     attach_native_driver(&state.pool, &state.drivers, driver)
         .await
         .unwrap();
@@ -89,9 +91,10 @@ async fn spawn() -> (SocketAddr, AppState) {
     (addr, state)
 }
 
-
 fn mint(subject: &str, role: &str, tenant: &str) -> String {
-    atlas_gateway::auth::mint_scoped_token(SECRET, subject, role, tenant, 3600, &[]).unwrap().0
+    atlas_gateway::auth::mint_scoped_token(SECRET, subject, role, tenant, 3600, &[])
+        .unwrap()
+        .0
 }
 
 fn mint_agent(
@@ -103,7 +106,14 @@ fn mint_agent(
 ) -> String {
     let tools: Vec<String> = tools.iter().map(|t| t.to_string()).collect();
     atlas_gateway::auth::mint_agent_token(
-        SECRET, subject, "operator", tenant, 3600, &tools, scope.as_ref(), workspace_bytes,
+        SECRET,
+        subject,
+        "operator",
+        tenant,
+        3600,
+        &tools,
+        scope.as_ref(),
+        workspace_bytes,
     )
     .unwrap()
     .0
@@ -115,16 +125,22 @@ async fn connect_with(addr: SocketAddr, token: &str, run_id: Option<&str>) -> Cl
     use rmcp::transport::StreamableHttpClientTransport;
     use rmcp::ServiceExt;
     let mut headers = reqwest::header::HeaderMap::new();
-    headers.insert(reqwest::header::AUTHORIZATION, format!("Bearer {token}").parse().unwrap());
+    headers.insert(
+        reqwest::header::AUTHORIZATION,
+        format!("Bearer {token}").parse().unwrap(),
+    );
     if let Some(r) = run_id {
         headers.insert("x-atlas-run-id", r.parse().unwrap());
     }
-    let http_client = reqwest::Client::builder().default_headers(headers).build().unwrap();
+    let http_client = reqwest::Client::builder()
+        .default_headers(headers)
+        .build()
+        .unwrap();
     let transport = StreamableHttpClientTransport::with_client(
         http_client,
-        rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(format!(
-            "http://{addr}/api/atlas/v1/mcp"
-        )),
+        rmcp::transport::streamable_http_client::StreamableHttpClientTransportConfig::with_uri(
+            format!("http://{addr}/api/atlas/v1/mcp"),
+        ),
     );
     ().serve(transport).await.unwrap()
 }
@@ -140,7 +156,12 @@ async fn call(c: &Client, tool: &'static str, v: Value) -> Result<Value, String>
     {
         Err(e) => Err(e.to_string()),
         Ok(r) => {
-            let text = r.content.first().and_then(|c| c.as_text()).map(|t| t.text.clone()).unwrap_or_default();
+            let text = r
+                .content
+                .first()
+                .and_then(|c| c.as_text())
+                .map(|t| t.text.clone())
+                .unwrap_or_default();
             if r.is_error == Some(true) {
                 Err(text)
             } else {
@@ -157,7 +178,13 @@ async fn confirmed(c: &Client, tool: &'static str, mut args: Value) -> Result<Va
     call(c, tool, args).await
 }
 
-async fn rest(addr: SocketAddr, tok: &str, m: reqwest::Method, path: &str, body: Option<Value>) -> (u16, Value) {
+async fn rest(
+    addr: SocketAddr,
+    tok: &str,
+    m: reqwest::Method,
+    path: &str,
+    body: Option<Value>,
+) -> (u16, Value) {
     let mut r = reqwest::Client::new()
         .request(m, format!("http://{addr}/api/atlas/v1{path}"))
         .bearer_auth(tok);
@@ -165,14 +192,23 @@ async fn rest(addr: SocketAddr, tok: &str, m: reqwest::Method, path: &str, body:
         r = r.json(&b);
     }
     let resp = r.send().await.unwrap();
-    (resp.status().as_u16(), resp.json().await.unwrap_or(Value::Null))
+    (
+        resp.status().as_u16(),
+        resp.json().await.unwrap_or(Value::Null),
+    )
 }
 
 async fn seed(addr: SocketAddr, admin: &str, tenant: &str, name: &str) -> String {
-    rest(addr, admin, reqwest::Method::POST, "/volumes", Some(json!({
-        "tenant_id": tenant, "name": name, "size_bytes": 8 * MIB,
-        "kubernetes": { "backend_id": NATIVE_BACKEND_ID }
-    })))
+    rest(
+        addr,
+        admin,
+        reqwest::Method::POST,
+        "/volumes",
+        Some(json!({
+            "tenant_id": tenant, "name": name, "size_bytes": 8 * MIB,
+            "kubernetes": { "backend_id": NATIVE_BACKEND_ID }
+        })),
+    )
     .await
     .1["volume_id"]
         .as_str()
@@ -190,7 +226,9 @@ async fn count(pool: &sqlx::AnyPool, table: &'static str) -> i64 {
 }
 
 async fn denied_rows(pool: &sqlx::AnyPool) -> Vec<Value> {
-    atlas_inventory::audit::list(pool, None, Some("mcp.tool.denied"), None, None, 50).await.unwrap()
+    atlas_inventory::audit::list(pool, None, Some("mcp.tool.denied"), None, None, 50)
+        .await
+        .unwrap()
 }
 
 fn scope(volumes: &[&str], workspaces: &[&str]) -> ResourceScope {
@@ -210,16 +248,48 @@ async fn a_resource_scoped_token_names_only_what_it_lists() {
     let ok_vol = seed(addr, &admin, "tenant-a", "agent-data").await;
     let other_vol = seed(addr, &admin, "tenant-a", "secret-data").await;
 
-    let agent = connect(addr, &mint_agent("agent-1", "tenant-a", &[], Some(scope(&[&ok_vol], &["ws_*"])), None)).await;
+    let agent = connect(
+        addr,
+        &mint_agent(
+            "agent-1",
+            "tenant-a",
+            &[],
+            Some(scope(&[&ok_vol], &["ws_*"])),
+            None,
+        ),
+    )
+    .await;
     // Allowed: the listed volume, by every tool that names a volume.
-    assert_eq!(call(&agent, "get_volume", json!({ "id": ok_vol })).await.unwrap()["id"], ok_vol.as_str());
+    assert_eq!(
+        call(&agent, "get_volume", json!({ "id": ok_vol }))
+            .await
+            .unwrap()["id"],
+        ok_vol.as_str()
+    );
     // Denied: any other volume, whichever argument carries it, and nothing is created.
-    let e = call(&agent, "get_volume", json!({ "id": other_vol })).await.unwrap_err();
+    let e = call(&agent, "get_volume", json!({ "id": other_vol }))
+        .await
+        .unwrap_err();
     assert!(e.contains("scope does not allow volume"), "{e}");
-    let e = call(&agent, "create_workspace", json!({ "source_volume_id": other_vol })).await.unwrap_err();
+    let e = call(
+        &agent,
+        "create_workspace",
+        json!({ "source_volume_id": other_vol }),
+    )
+    .await
+    .unwrap_err();
     assert!(e.contains("scope does not allow volume"), "{e}");
-    let e = call(&agent, "create_workspace", json!({ "source_snapshot_id": "snap_any" })).await.unwrap_err();
-    assert!(e.contains("scope does not allow snapshot"), "no snapshot list means no snapshot: {e}");
+    let e = call(
+        &agent,
+        "create_workspace",
+        json!({ "source_snapshot_id": "snap_any" }),
+    )
+    .await
+    .unwrap_err();
+    assert!(
+        e.contains("scope does not allow snapshot"),
+        "no snapshot list means no snapshot: {e}"
+    );
     assert_eq!(count(&pool, "agent_workspaces").await, 0);
     // Inventory-wide listings cannot be narrowed to the scope, so they are refused outright.
     let e = call(&agent, "list_volumes", json!({})).await.unwrap_err();
@@ -227,42 +297,107 @@ async fn a_resource_scoped_token_names_only_what_it_lists() {
     // Tools that name no resource are unaffected by the resource scope.
     assert!(call(&agent, "list_clusters", json!({})).await.is_ok());
     // The workspace the agent makes is named by an id matching `ws_*`.
-    let made = confirmed(&agent, "create_workspace", json!({ "source_volume_id": ok_vol })).await.unwrap();
+    let made = confirmed(
+        &agent,
+        "create_workspace",
+        json!({ "source_volume_id": ok_vol }),
+    )
+    .await
+    .unwrap();
     let wid = made["result"]["id"].as_str().unwrap().to_string();
-    assert!(call(&agent, "get_workspace", json!({ "workspace_id": wid })).await.is_ok());
-    let e = call(&agent, "get_workspace", json!({ "workspace_id": "other" })).await.unwrap_err();
+    assert!(
+        call(&agent, "get_workspace", json!({ "workspace_id": wid }))
+            .await
+            .is_ok()
+    );
+    let e = call(&agent, "get_workspace", json!({ "workspace_id": "other" }))
+        .await
+        .unwrap_err();
     assert!(e.contains("scope does not allow workspace"), "{e}");
     agent.cancel().await.unwrap();
 
     // Every refusal is audited with its reason, never with the arguments.
     let rows = denied_rows(&pool).await;
     assert!(rows.len() >= 5, "{rows:?}");
-    assert!(rows.iter().all(|r| r["status"] == "denied" && r["actor_id"] == "agent-1"));
-    assert!(rows.iter().any(|r| r["result"]["reason"] == "resource outside token scope" && r["result"]["resource"] == other_vol.as_str()));
-    assert!(rows.iter().any(|r| r["result"]["reason"] == "enumerating tool under a resource scope"));
+    assert!(rows
+        .iter()
+        .all(|r| r["status"] == "denied" && r["actor_id"] == "agent-1"));
+    assert!(rows
+        .iter()
+        .any(|r| r["result"]["reason"] == "resource outside token scope"
+            && r["result"]["resource"] == other_vol.as_str()));
+    assert!(rows
+        .iter()
+        .any(|r| r["result"]["reason"] == "enumerating tool under a resource scope"));
 
     // A scope with no list for a kind denies that kind outright (deny by default).
-    let only_vol = connect(addr, &mint_agent("agent-2", "tenant-a", &[], Some(scope(&[&ok_vol], &[])), None)).await;
-    assert!(call(&only_vol, "get_workspace", json!({ "workspace_id": wid })).await.is_err());
+    let only_vol = connect(
+        addr,
+        &mint_agent(
+            "agent-2",
+            "tenant-a",
+            &[],
+            Some(scope(&[&ok_vol], &[])),
+            None,
+        ),
+    )
+    .await;
+    assert!(
+        call(&only_vol, "get_workspace", json!({ "workspace_id": wid }))
+            .await
+            .is_err()
+    );
     only_vol.cancel().await.unwrap();
 
     // The tool allowlist and the resource scope both apply.
-    let both = connect(addr, &mint_agent("agent-3", "tenant-a", &["get_volume"], Some(scope(&[&ok_vol], &[])), None)).await;
-    assert!(call(&both, "get_volume", json!({ "id": ok_vol })).await.is_ok());
-    assert!(call(&both, "get_volume", json!({ "id": other_vol })).await.is_err());
-    assert!(call(&both, "list_clusters", json!({})).await.is_err(), "not on the tool allowlist");
+    let both = connect(
+        addr,
+        &mint_agent(
+            "agent-3",
+            "tenant-a",
+            &["get_volume"],
+            Some(scope(&[&ok_vol], &[])),
+            None,
+        ),
+    )
+    .await;
+    assert!(call(&both, "get_volume", json!({ "id": ok_vol }))
+        .await
+        .is_ok());
+    assert!(call(&both, "get_volume", json!({ "id": other_vol }))
+        .await
+        .is_err());
+    assert!(
+        call(&both, "list_clusters", json!({})).await.is_err(),
+        "not on the tool allowlist"
+    );
     both.cancel().await.unwrap();
 
     // Unscoped tokens behave exactly as before: any volume, any listing.
     let plain = connect(addr, &mint("plain", "operator", "tenant-a")).await;
-    assert!(call(&plain, "get_volume", json!({ "id": other_vol })).await.is_ok());
+    assert!(call(&plain, "get_volume", json!({ "id": other_vol }))
+        .await
+        .is_ok());
     assert!(call(&plain, "list_volumes", json!({})).await.is_ok());
     assert!(call(&plain, "list_workspaces", json!({})).await.is_ok());
     plain.cancel().await.unwrap();
 
     // A token that carries a scope is MCP-only: the scope is not bypassed by using it on REST.
-    let tok = mint_agent("agent-1", "tenant-a", &[], Some(scope(&[&ok_vol], &[])), None);
-    let (status, _) = rest(addr, &tok, reqwest::Method::GET, &format!("/volumes/{other_vol}"), None).await;
+    let tok = mint_agent(
+        "agent-1",
+        "tenant-a",
+        &[],
+        Some(scope(&[&ok_vol], &[])),
+        None,
+    );
+    let (status, _) = rest(
+        addr,
+        &tok,
+        reqwest::Method::GET,
+        &format!("/volumes/{other_vol}"),
+        None,
+    )
+    .await;
     assert_eq!(status, 403);
 }
 
@@ -271,23 +406,46 @@ async fn the_issue_token_endpoint_mints_a_scope_that_is_enforced() {
     let (addr, _state) = spawn().await;
     let admin = mint("root", "admin", "global");
     let vol = seed(addr, &admin, "tenant-a", "v").await;
-    let (status, body) = rest(addr, &admin, reqwest::Method::POST, "/auth/tokens", Some(json!({
-        "subject": "agent-9", "role": "operator", "tenant_id": "tenant-a",
-        "scope": { "volumes": [vol.clone()] }, "workspace_bytes": 1000,
-    }))).await;
+    let (status, body) = rest(
+        addr,
+        &admin,
+        reqwest::Method::POST,
+        "/auth/tokens",
+        Some(json!({
+            "subject": "agent-9", "role": "operator", "tenant_id": "tenant-a",
+            "scope": { "volumes": [vol.clone()] }, "workspace_bytes": 1000,
+        })),
+    )
+    .await;
     assert_eq!(status, 201, "{body}");
     assert_eq!(body["scope"]["volumes"], json!([vol]));
     assert_eq!(body["workspace_bytes"], 1000);
     let c = connect(addr, body["token"].as_str().unwrap()).await;
     assert!(call(&c, "get_volume", json!({ "id": vol })).await.is_ok());
-    assert!(call(&c, "get_volume", json!({ "id": "vol_nope" })).await.is_err());
+    assert!(call(&c, "get_volume", json!({ "id": "vol_nope" }))
+        .await
+        .is_err());
     c.cancel().await.unwrap();
     // A bad entry is refused, and an all-empty scope mints an ordinary unscoped token.
-    let (status, _) = rest(addr, &admin, reqwest::Method::POST, "/auth/tokens", Some(json!({
-        "subject": "a", "scope": { "volumes": [""] } }))).await;
+    let (status, _) = rest(
+        addr,
+        &admin,
+        reqwest::Method::POST,
+        "/auth/tokens",
+        Some(json!({
+        "subject": "a", "scope": { "volumes": [""] } })),
+    )
+    .await;
     assert_eq!(status, 400);
-    let (_, plain) = rest(addr, &admin, reqwest::Method::POST, "/auth/tokens", Some(json!({
-        "subject": "a", "scope": {} }))).await;
+    let (_, plain) = rest(
+        addr,
+        &admin,
+        reqwest::Method::POST,
+        "/auth/tokens",
+        Some(json!({
+        "subject": "a", "scope": {} })),
+    )
+    .await;
     assert_eq!(plain["scope"], Value::Null);
 }
 
@@ -299,52 +457,117 @@ async fn the_workspace_byte_budget_refuses_before_anything_is_created() {
     let admin = mint("root", "admin", "global");
     let src = seed(addr, &admin, "tenant-a", "data").await;
     // Budget 10 MiB; each workspace is capped at 8 MiB (the source is 8 MiB).
-    let agent = connect(addr, &mint_agent("agent-b", "tenant-a", &[], None, Some(10 * MIB as i64))).await;
+    let agent = connect(
+        addr,
+        &mint_agent("agent-b", "tenant-a", &[], None, Some(10 * MIB as i64)),
+    )
+    .await;
     let args = json!({ "source_volume_id": src, "max_bytes": 8 * MIB });
 
     // Without a cap the budget cannot be accounted, so the plan says it would be refused, and so does the execute.
-    let plan = call(&agent, "create_workspace", json!({ "source_volume_id": src })).await.unwrap();
-    assert!(plan["plan"]["would_be_refused"].as_str().unwrap().contains("max_bytes must be set"), "{plan}");
-    let e = confirmed(&agent, "create_workspace", json!({ "source_volume_id": src })).await.unwrap_err();
+    let plan = call(
+        &agent,
+        "create_workspace",
+        json!({ "source_volume_id": src }),
+    )
+    .await
+    .unwrap();
+    assert!(
+        plan["plan"]["would_be_refused"]
+            .as_str()
+            .unwrap()
+            .contains("max_bytes must be set"),
+        "{plan}"
+    );
+    let e = confirmed(
+        &agent,
+        "create_workspace",
+        json!({ "source_volume_id": src }),
+    )
+    .await
+    .unwrap_err();
     assert!(e.contains("max_bytes must be set"), "{e}");
 
-    let plan = call(&agent, "create_workspace", args.clone()).await.unwrap();
+    let plan = call(&agent, "create_workspace", args.clone())
+        .await
+        .unwrap();
     assert_eq!(plan["plan"]["would_be_refused"], Value::Null, "{plan}");
-    let first = confirmed(&agent, "create_workspace", args.clone()).await.unwrap();
+    let first = confirmed(&agent, "create_workspace", args.clone())
+        .await
+        .unwrap();
     let wid = first["result"]["id"].as_str().unwrap().to_string();
 
-    let (vols, snaps, wss) = (count(&pool, "storage_volumes").await, count(&pool, "storage_snapshots").await, count(&pool, "agent_workspaces").await);
+    let (vols, snaps, wss) = (
+        count(&pool, "storage_volumes").await,
+        count(&pool, "storage_snapshots").await,
+        count(&pool, "agent_workspaces").await,
+    );
     assert_eq!(wss, 1);
     // 8 MiB held + 8 MiB more passes the 10 MiB budget: planned as refused, refused on execute, nothing left behind.
-    let plan = call(&agent, "create_workspace", args.clone()).await.unwrap();
-    assert!(plan["plan"]["would_be_refused"].as_str().unwrap().contains("budget of"), "{plan}");
-    let e = confirmed(&agent, "create_workspace", args.clone()).await.unwrap_err();
+    let plan = call(&agent, "create_workspace", args.clone())
+        .await
+        .unwrap();
+    assert!(
+        plan["plan"]["would_be_refused"]
+            .as_str()
+            .unwrap()
+            .contains("budget of"),
+        "{plan}"
+    );
+    let e = confirmed(&agent, "create_workspace", args.clone())
+        .await
+        .unwrap_err();
     assert!(e.contains("budget"), "{e}");
     assert_eq!(
-        (count(&pool, "storage_volumes").await, count(&pool, "storage_snapshots").await, count(&pool, "agent_workspaces").await),
+        (
+            count(&pool, "storage_volumes").await,
+            count(&pool, "storage_snapshots").await,
+            count(&pool, "agent_workspaces").await
+        ),
         (vols, snaps, wss),
         "a refused create must leave no snapshot, clone or workspace row"
     );
 
     // Another agent has its own budget; discarding frees this one's.
-    let other = connect(addr, &mint_agent("agent-c", "tenant-a", &[], None, Some(10 * MIB as i64))).await;
-    assert_eq!(confirmed(&other, "create_workspace", args.clone()).await.unwrap()["executed"], true);
+    let other = connect(
+        addr,
+        &mint_agent("agent-c", "tenant-a", &[], None, Some(10 * MIB as i64)),
+    )
+    .await;
+    assert_eq!(
+        confirmed(&other, "create_workspace", args.clone())
+            .await
+            .unwrap()["executed"],
+        true
+    );
     other.cancel().await.unwrap();
-    confirmed(&agent, "discard_workspace", json!({ "workspace_id": wid })).await.unwrap();
-    assert_eq!(confirmed(&agent, "create_workspace", args.clone()).await.unwrap()["executed"], true);
+    confirmed(&agent, "discard_workspace", json!({ "workspace_id": wid }))
+        .await
+        .unwrap();
+    assert_eq!(
+        confirmed(&agent, "create_workspace", args.clone())
+            .await
+            .unwrap()["executed"],
+        true
+    );
     agent.cancel().await.unwrap();
 }
 
 async fn run_rows(pool: &sqlx::AnyPool, run: &str) -> Vec<Value> {
     // The per-call audit row is written off the request path; give it a moment.
     for _ in 0..50 {
-        let rows = atlas_inventory::audit::list_by_run(pool, None, None, None, None, Some(run), 100).await.unwrap();
+        let rows =
+            atlas_inventory::audit::list_by_run(pool, None, None, None, None, Some(run), 100)
+                .await
+                .unwrap();
         if rows.iter().any(|r| r["action"] == "mcp.tool.call") {
             return rows;
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
-    atlas_inventory::audit::list_by_run(pool, None, None, None, None, Some(run), 100).await.unwrap()
+    atlas_inventory::audit::list_by_run(pool, None, None, None, None, Some(run), 100)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -355,22 +578,63 @@ async fn a_run_id_is_stored_on_every_audit_row_the_call_causes_and_can_be_filter
     let admin = mint("root", "admin", "global");
     let src = seed(addr, &admin, "tenant-a", "data").await;
 
-    let agent = connect_with(addr, &mint("agent-r", "operator", "tenant-a"), Some("run-abc.1")).await;
-    let made = confirmed(&agent, "create_workspace", json!({ "source_volume_id": src })).await.unwrap();
+    let agent = connect_with(
+        addr,
+        &mint("agent-r", "operator", "tenant-a"),
+        Some("run-abc.1"),
+    )
+    .await;
+    let made = confirmed(
+        &agent,
+        "create_workspace",
+        json!({ "source_volume_id": src }),
+    )
+    .await
+    .unwrap();
     assert_eq!(made["executed"], true);
     let rows = run_rows(&pool, "run-abc.1").await;
-    let actions: Vec<_> = rows.iter().map(|r| r["action"].as_str().unwrap().to_string()).collect();
-    for want in ["mcp.create_workspace", "mcp.tool.call", "workspace.create", "snapshot.create"] {
-        assert!(actions.iter().any(|a| a == want), "{want} missing from {actions:?}");
+    let actions: Vec<_> = rows
+        .iter()
+        .map(|r| r["action"].as_str().unwrap().to_string())
+        .collect();
+    for want in [
+        "mcp.create_workspace",
+        "mcp.tool.call",
+        "workspace.create",
+        "snapshot.create",
+    ] {
+        assert!(
+            actions.iter().any(|a| a == want),
+            "{want} missing from {actions:?}"
+        );
     }
     assert!(rows.iter().all(|r| r["run_id"] == "run-abc.1"));
 
     // The agent can read its own run back through list_audit, filtered by run id.
-    let own = call(&agent, "list_audit", json!({ "run_id": "run-abc.1" })).await.unwrap();
-    assert!(own.as_array().unwrap().iter().any(|r| r["action"] == "mcp.create_workspace"), "{own}");
-    assert!(own.as_array().unwrap().iter().all(|r| r["run_id"] == "run-abc.1"));
-    assert!(call(&agent, "list_audit", json!({ "run_id": "run-zzz" })).await.unwrap().as_array().unwrap().is_empty());
-    assert!(call(&agent, "list_audit", json!({ "run_id": "bad id" })).await.is_err());
+    let own = call(&agent, "list_audit", json!({ "run_id": "run-abc.1" }))
+        .await
+        .unwrap();
+    assert!(
+        own.as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["action"] == "mcp.create_workspace"),
+        "{own}"
+    );
+    assert!(own
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["run_id"] == "run-abc.1"));
+    assert!(call(&agent, "list_audit", json!({ "run_id": "run-zzz" }))
+        .await
+        .unwrap()
+        .as_array()
+        .unwrap()
+        .is_empty());
+    assert!(call(&agent, "list_audit", json!({ "run_id": "bad id" }))
+        .await
+        .is_err());
     agent.cancel().await.unwrap();
 
     // Without the header nothing is tagged, and another run's id selects none of these rows.
@@ -378,7 +642,16 @@ async fn a_run_id_is_stored_on_every_audit_row_the_call_causes_and_can_be_filter
     call(&plain, "list_clusters", json!({})).await.unwrap();
     plain.cancel().await.unwrap();
     for _ in 0..50 {
-        let all = atlas_inventory::audit::list(&pool, Some("agent-p"), Some("mcp.tool.call"), None, None, 10).await.unwrap();
+        let all = atlas_inventory::audit::list(
+            &pool,
+            Some("agent-p"),
+            Some("mcp.tool.call"),
+            None,
+            None,
+            10,
+        )
+        .await
+        .unwrap();
         if !all.is_empty() {
             assert_eq!(all[0]["run_id"], Value::Null);
             break;
@@ -387,18 +660,55 @@ async fn a_run_id_is_stored_on_every_audit_row_the_call_causes_and_can_be_filter
     }
 
     // REST filter, and its validation.
-    let (status, body) = rest(addr, &admin, reqwest::Method::GET, "/audit?run_id=run-abc.1", None).await;
+    let (status, body) = rest(
+        addr,
+        &admin,
+        reqwest::Method::GET,
+        "/audit?run_id=run-abc.1",
+        None,
+    )
+    .await;
     assert_eq!(status, 200);
-    assert!(!body.as_array().unwrap().is_empty() && body.as_array().unwrap().iter().all(|r| r["run_id"] == "run-abc.1"));
-    assert_eq!(rest(addr, &admin, reqwest::Method::GET, "/audit?run_id=a%20b", None).await.0, 400);
+    assert!(
+        !body.as_array().unwrap().is_empty()
+            && body
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|r| r["run_id"] == "run-abc.1")
+    );
+    assert_eq!(
+        rest(
+            addr,
+            &admin,
+            reqwest::Method::GET,
+            "/audit?run_id=a%20b",
+            None
+        )
+        .await
+        .0,
+        400
+    );
 
     // A malformed run id is refused before the tool runs, and the refusal is audited without it.
-    let bad = connect_with(addr, &mint("agent-x", "operator", "tenant-a"), Some("not valid!")).await;
+    let bad = connect_with(
+        addr,
+        &mint("agent-x", "operator", "tenant-a"),
+        Some("not valid!"),
+    )
+    .await;
     let before = count(&pool, "agent_workspaces").await;
-    let e = call(&bad, "create_workspace", json!({ "source_volume_id": src })).await.unwrap_err();
+    let e = call(&bad, "create_workspace", json!({ "source_volume_id": src }))
+        .await
+        .unwrap_err();
     assert!(e.contains("X-Atlas-Run-Id"), "{e}");
     assert_eq!(count(&pool, "agent_workspaces").await, before);
     bad.cancel().await.unwrap();
     let refused = denied_rows(&pool).await;
-    assert!(refused.iter().any(|r| r["actor_id"] == "agent-x" && r["result"]["reason"] == "invalid run id" && r["run_id"] == Value::Null), "{refused:?}");
+    assert!(
+        refused.iter().any(|r| r["actor_id"] == "agent-x"
+            && r["result"]["reason"] == "invalid run id"
+            && r["run_id"] == Value::Null),
+        "{refused:?}"
+    );
 }

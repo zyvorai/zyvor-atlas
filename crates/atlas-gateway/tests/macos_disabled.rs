@@ -72,17 +72,35 @@ async fn spawn() -> SocketAddr {
     addr
 }
 
-
 use serde_json::json;
 
 async fn post(base: &str, path: &str, body: serde_json::Value) -> u16 {
-    reqwest::Client::new().post(format!("{base}{path}")).json(&body).send().await.unwrap().status().as_u16()
+    reqwest::Client::new()
+        .post(format!("{base}{path}"))
+        .json(&body)
+        .send()
+        .await
+        .unwrap()
+        .status()
+        .as_u16()
 }
 
 #[tokio::test]
 async fn disabled_backend_is_unavailable() {
     let b = format!("http://{}/api/atlas/v1", spawn().await);
-    let c = post(&b, "/macos/disks/erase", json!({"device":"disk6","confirm_device":"disk6","name":"X"})).await;
+    let c = post(
+        &b,
+        "/macos/disks/erase",
+        json!({"device":"disk6","confirm_device":"disk6","name":"X"}),
+    )
+    .await;
     assert_eq!(c, 503);
-    assert_eq!(reqwest::get(format!("{b}/macos/devices")).await.unwrap().status().as_u16(), 503);
+    assert_eq!(
+        reqwest::get(format!("{b}/macos/devices"))
+            .await
+            .unwrap()
+            .status()
+            .as_u16(),
+        503
+    );
 }

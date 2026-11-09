@@ -86,7 +86,10 @@ pub(super) fn summarise_osd_tree(tree: &Value) -> Value {
         *c = json!(c.as_u64().unwrap_or(0) + 1);
         if ty == "osd" {
             osds += 1;
-            let down = n.get("status").and_then(Value::as_str).is_some_and(|s| s != "up");
+            let down = n
+                .get("status")
+                .and_then(Value::as_str)
+                .is_some_and(|s| s != "up");
             let out = n.get("reweight").and_then(Value::as_f64) == Some(0.0);
             if down || out {
                 not_serving.push(json!({
@@ -152,7 +155,10 @@ struct ListAuditArgs {
 
 #[tool_router(router = ops_router, vis = "pub(super)")]
 impl AtlasMcp {
-    fn operator(&self, context: &RequestContext<RoleServer>) -> Result<crate::auth::Actor, McpError> {
+    fn operator(
+        &self,
+        context: &RequestContext<RoleServer>,
+    ) -> Result<crate::auth::Actor, McpError> {
         let actor = actor_from(context)?;
         require_role(self.state.config.auth_required, &actor, ROLE_OPERATOR)
             .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
@@ -182,9 +188,8 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         self.operator(&context)?;
-        let ToolJson(v) = rest(
-            crate::routes::ceph_nvme::get_ceph_nvme(State(self.state.clone())).await,
-        )?;
+        let ToolJson(v) =
+            rest(crate::routes::ceph_nvme::get_ceph_nvme(State(self.state.clone())).await)?;
         Ok(ToolJson(bounded(v)?))
     }
 
@@ -315,11 +320,20 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         self.operator(&context)?;
-        let ids = args.ids.iter().map(i64::to_string).collect::<Vec<_>>().join(",");
+        let ids = args
+            .ids
+            .iter()
+            .map(i64::to_string)
+            .collect::<Vec<_>>()
+            .join(",");
         let query = serde_json::from_value(json!({ "ids": ids }))
             .map_err(|e| McpError::invalid_params(e.to_string(), None))?;
         let ToolJson(v) = rest(
-            crate::routes::day2::osds_ok_to_stop(State(self.state.clone()), axum::extract::Query(query)).await,
+            crate::routes::day2::osds_ok_to_stop(
+                State(self.state.clone()),
+                axum::extract::Query(query),
+            )
+            .await,
         )?;
         Ok(ToolJson(bounded(v)?))
     }
@@ -373,7 +387,11 @@ impl AtlasMcp {
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = self.operator(&context)?;
         let ToolJson(v) = rest(
-            crate::routes::day2::upgrade_preflight(State(self.state.clone()), axum::Extension(actor)).await,
+            crate::routes::day2::upgrade_preflight(
+                State(self.state.clone()),
+                axum::Extension(actor),
+            )
+            .await,
         )?;
         Ok(ToolJson(bounded(v)?))
     }
@@ -412,7 +430,8 @@ impl AtlasMcp {
     ) -> Result<ToolJson<Value>, McpError> {
         self.operator(&context)?;
         let ToolJson(v) = rest(
-            crate::routes::ceph_objectstore::get_ceph_osd_objectstore(State(self.state.clone())).await,
+            crate::routes::ceph_objectstore::get_ceph_osd_objectstore(State(self.state.clone()))
+                .await,
         )?;
         Ok(ToolJson(bounded(v)?))
     }
@@ -428,9 +447,8 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         self.operator(&context)?;
-        let ToolJson(v) = rest(
-            crate::routes::ceph_sizing::get_ceph_sizing(State(self.state.clone())).await,
-        )?;
+        let ToolJson(v) =
+            rest(crate::routes::ceph_sizing::get_ceph_sizing(State(self.state.clone())).await)?;
         Ok(ToolJson(bounded(v)?))
     }
 
@@ -581,9 +599,10 @@ impl AtlasMcp {
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = self.operator(&context)?;
-        let rows = atlas_inventory::backups::list_backups(&self.state.pool, args.volume_id.as_deref())
-            .await
-            .map_err(internal_error)?;
+        let rows =
+            atlas_inventory::backups::list_backups(&self.state.pool, args.volume_id.as_deref())
+                .await
+                .map_err(internal_error)?;
         let scope = tenant_scope(self.state.config.auth_required, &actor);
         Ok(ToolJson(bounded(scope_by_tenant(json!(rows), scope))?))
     }
@@ -657,7 +676,9 @@ impl AtlasMcp {
         let scope = tenant_scope(self.state.config.auth_required, &actor);
         let mine = scope_by_tenant(json!(orphans), scope);
         let count = mine.as_array().map_or(0, Vec::len);
-        Ok(ToolJson(bounded(json!({ "orphan_backups": mine, "count": count }))?))
+        Ok(ToolJson(bounded(
+            json!({ "orphan_backups": mine, "count": count }),
+        )?))
     }
 
     #[tool(
@@ -705,12 +726,22 @@ impl AtlasMcp {
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = self.operator(&context)?;
         let scope = tenant_scope(self.state.config.auth_required, &actor).map(str::to_owned);
-        let limit = args.limit.unwrap_or(AUDIT_DEFAULT_LIMIT).clamp(1, AUDIT_MAX_LIMIT);
+        let limit = args
+            .limit
+            .unwrap_or(AUDIT_DEFAULT_LIMIT)
+            .clamp(1, AUDIT_MAX_LIMIT);
         // A tenant-scoped caller's rows are filtered after the read, so fetch the maximum and trim.
-        let fetch = if scope.is_some() { AUDIT_MAX_LIMIT * 5 } else { limit };
+        let fetch = if scope.is_some() {
+            AUDIT_MAX_LIMIT * 5
+        } else {
+            limit
+        };
         if let Some(r) = args.run_id.as_deref() {
             if !atlas_inventory::audit::valid_run_id(r) {
-                return Err(McpError::invalid_params("run_id is not a valid run id", None));
+                return Err(McpError::invalid_params(
+                    "run_id is not a valid run id",
+                    None,
+                ));
             }
         }
         let rows = atlas_inventory::audit::list_by_run(
@@ -771,7 +802,10 @@ mod tests {
         assert_eq!(s["osds"], 3);
         assert_eq!(s["osds_not_serving"], 2);
         assert_eq!(s["nodes_by_type"]["root"], 1);
-        assert_eq!(summarise_osd_tree(&json!({"x": 1}))["status"], "unavailable");
+        assert_eq!(
+            summarise_osd_tree(&json!({"x": 1}))["status"],
+            "unavailable"
+        );
     }
 
     #[test]

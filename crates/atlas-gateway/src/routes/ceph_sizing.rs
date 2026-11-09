@@ -60,13 +60,17 @@ pub(crate) struct HostLoad {
 pub(crate) fn host_loads(device_ls: &Value, osd_meta: &Value) -> Vec<HostLoad> {
     let mut nvme: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
     for d in device_ls.as_array().into_iter().flatten() {
-        let Some(devid) = d["devid"].as_str() else { continue };
+        let Some(devid) = d["devid"].as_str() else {
+            continue;
+        };
         for l in d["location"].as_array().into_iter().flatten() {
             let is_nvme = l["dev"]
                 .as_str()
                 .is_some_and(|s| s.trim_start_matches("/dev/").starts_with("nvme"));
             if let (true, Some(host)) = (is_nvme, l["host"].as_str()) {
-                nvme.entry(host.to_string()).or_default().insert(devid.to_string());
+                nvme.entry(host.to_string())
+                    .or_default()
+                    .insert(devid.to_string());
             }
         }
     }
@@ -103,10 +107,16 @@ pub(crate) fn evaluate(load: &HostLoad, cap: Option<&NodeCapacity>, th: &Thresho
     };
     let mut short = Vec::new();
     if cap.cpu_cores < need_cores {
-        short.push(format!("{:.1} CPU cores, rule of thumb asks for {need_cores:.1}", cap.cpu_cores));
+        short.push(format!(
+            "{:.1} CPU cores, rule of thumb asks for {need_cores:.1}",
+            cap.cpu_cores
+        ));
     }
     if cap.memory_gib < need_ram {
-        short.push(format!("{:.1} GiB RAM, rule of thumb asks for {need_ram:.1}", cap.memory_gib));
+        short.push(format!(
+            "{:.1} GiB RAM, rule of thumb asks for {need_ram:.1}",
+            cap.memory_gib
+        ));
     }
     v["node"] = json!(cap.node);
     v["has_cpu_cores"] = json!(cap.cpu_cores);
@@ -192,7 +202,11 @@ mod tests {
     use atlas_driver_core::StorageDriver;
 
     fn cap(cpu: f64, mem: f64) -> NodeCapacity {
-        NodeCapacity { node: "n".into(), cpu_cores: cpu, memory_gib: mem }
+        NodeCapacity {
+            node: "n".into(),
+            cpu_cores: cpu,
+            memory_gib: mem,
+        }
     }
 
     fn th() -> Thresholds {
@@ -201,14 +215,28 @@ mod tests {
 
     #[test]
     fn thresholds_default_and_ignore_bad_overrides() {
-        assert_eq!(th(), Thresholds { cores_per_nvme: 10.0, ram_base_gib: 16.0, ram_per_osd_gib: 5.0 });
+        assert_eq!(
+            th(),
+            Thresholds {
+                cores_per_nvme: 10.0,
+                ram_base_gib: 16.0,
+                ram_per_osd_gib: 5.0
+            }
+        );
         let t = Thresholds::from_lookup(|k| match k {
             "ATLAS_SIZING_CORES_PER_NVME" => Some("4".into()),
             "ATLAS_SIZING_RAM_BASE_GIB" => Some("many".into()),
             "ATLAS_SIZING_RAM_PER_OSD_GIB" => Some("-1".into()),
             _ => None,
         });
-        assert_eq!(t, Thresholds { cores_per_nvme: 4.0, ram_base_gib: 16.0, ram_per_osd_gib: 5.0 });
+        assert_eq!(
+            t,
+            Thresholds {
+                cores_per_nvme: 4.0,
+                ram_base_gib: 16.0,
+                ram_per_osd_gib: 5.0
+            }
+        );
     }
 
     #[test]
@@ -221,14 +249,28 @@ mod tests {
         ]);
         let meta = json!([{ "hostname": "h1" }, { "hostname": "h1" }, { "hostname": "h1" }, { "hostname": "h2" }]);
         let l = host_loads(&ls, &meta);
-        assert_eq!(l, vec![HostLoad { host: "h1".into(), nvme_devices: 2, osds: 3 }]);
+        assert_eq!(
+            l,
+            vec![HostLoad {
+                host: "h1".into(),
+                nvme_devices: 2,
+                osds: 3
+            }]
+        );
     }
 
     #[test]
     fn a_host_is_judged_on_cpu_and_ram_and_unknown_without_capacity() {
-        let load = HostLoad { host: "h1".into(), nvme_devices: 2, osds: 4 };
+        let load = HostLoad {
+            host: "h1".into(),
+            nvme_devices: 2,
+            osds: 4,
+        };
         // needs 20 cores and 16 + 5*4 = 36 GiB
-        assert_eq!(evaluate(&load, Some(&cap(32.0, 128.0)), &th())["status"], "ok");
+        assert_eq!(
+            evaluate(&load, Some(&cap(32.0, 128.0)), &th())["status"],
+            "ok"
+        );
         let low_cpu = evaluate(&load, Some(&cap(8.0, 128.0)), &th());
         assert_eq!(low_cpu["status"], "undersized");
         assert_eq!(low_cpu["shortfalls"].as_array().unwrap().len(), 1);
@@ -236,13 +278,19 @@ mod tests {
         assert_eq!(both["shortfalls"].as_array().unwrap().len(), 2);
         assert_eq!(evaluate(&load, None, &th())["status"], "unknown");
         // exactly meeting the rule is fine
-        assert_eq!(evaluate(&load, Some(&cap(20.0, 36.0)), &th())["status"], "ok");
+        assert_eq!(
+            evaluate(&load, Some(&cap(20.0, 36.0)), &th())["status"],
+            "ok"
+        );
     }
 
     #[tokio::test]
     async fn the_fake_cluster_has_three_nvme_hosts() {
         let d = FakeCephDriver::new("bkd_ceph_lab");
-        let l = host_loads(&d.ceph_device_ls().await.unwrap(), &d.ceph_osd_metadata().await.unwrap());
+        let l = host_loads(
+            &d.ceph_device_ls().await.unwrap(),
+            &d.ceph_osd_metadata().await.unwrap(),
+        );
         assert_eq!(l.len(), 3);
         assert!(l.iter().all(|h| h.nvme_devices == 2 && h.osds == 2));
     }

@@ -342,7 +342,10 @@ async fn protect(
             verdict.verdict
         )));
     }
-    let name = format!("ransomware-guard-{}", chrono::Utc::now().format("%Y%m%dT%H%M%SZ"));
+    let name = format!(
+        "ransomware-guard-{}",
+        chrono::Utc::now().format("%Y%m%dT%H%M%SZ")
+    );
     let snap = driver
         .create_snapshot(CreateSnapshotRequest {
             volume_id: native,
@@ -433,7 +436,9 @@ pub fn spawn_autoprotect(s: AppState) {
                         last.insert(v.id.clone(), std::time::Instant::now());
                     }
                     // Not native, normal activity, or no history yet: nothing to do.
-                    Err(AppError::Conflict(_) | AppError::Validation(_) | AppError::NotFound(_)) => {}
+                    Err(
+                        AppError::Conflict(_) | AppError::Validation(_) | AppError::NotFound(_),
+                    ) => {}
                     Err(e) => tracing::warn!(volume = %v.id, error = %e, "ransomware check failed"),
                 }
             }

@@ -76,7 +76,6 @@ async fn spawn() -> SocketAddr {
     addr
 }
 
-
 use serde_json::json;
 
 async fn post(base: &str, path: &str, body: Value) -> (u16, Value) {
@@ -91,7 +90,12 @@ async fn post(base: &str, path: &str, body: Value) -> (u16, Value) {
 
 async fn job_state(base: &str, id: &str) -> Value {
     for _ in 0..100 {
-        let j: Value = reqwest::get(format!("{base}/jobs/{id}")).await.unwrap().json().await.unwrap();
+        let j: Value = reqwest::get(format!("{base}/jobs/{id}"))
+            .await
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
         if matches!(j["state"].as_str(), Some("succeeded" | "failed")) {
             return j;
         }
@@ -107,58 +111,135 @@ async fn base() -> String {
 #[tokio::test]
 async fn devices_list_marks_what_cannot_be_erased() {
     let b = base().await;
-    let rows: Value = reqwest::get(format!("{b}/macos/devices")).await.unwrap().json().await.unwrap();
-    let by = |d: &str| rows.as_array().unwrap().iter().find(|r| r["device"] == d).cloned().unwrap();
-    assert!(by("disk0")["erase_refusal"].as_str().unwrap().contains("internal"));
+    let rows: Value = reqwest::get(format!("{b}/macos/devices"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let by = |d: &str| {
+        rows.as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["device"] == d)
+            .cloned()
+            .unwrap()
+    };
+    assert!(by("disk0")["erase_refusal"]
+        .as_str()
+        .unwrap()
+        .contains("internal"));
     assert!(by("disk6")["erase_refusal"].is_null());
-    assert!(rows.as_array().unwrap().iter().all(|r| r["device"] != "disk9"));
+    assert!(rows
+        .as_array()
+        .unwrap()
+        .iter()
+        .all(|r| r["device"] != "disk9"));
 }
 
 #[tokio::test]
 async fn erase_needs_the_device_typed_back_and_refuses_internal_disks() {
     let b = base().await;
-    let (c, _) = post(&b, "/macos/disks/erase", json!({"device":"disk6","confirm_device":"disk7","name":"X"})).await;
+    let (c, _) = post(
+        &b,
+        "/macos/disks/erase",
+        json!({"device":"disk6","confirm_device":"disk7","name":"X"}),
+    )
+    .await;
     assert_eq!(c, 400);
-    let (c, v) = post(&b, "/macos/disks/erase", json!({"device":"disk0","confirm_device":"disk0","name":"X"})).await;
+    let (c, v) = post(
+        &b,
+        "/macos/disks/erase",
+        json!({"device":"disk0","confirm_device":"disk0","name":"X"}),
+    )
+    .await;
     assert_eq!(c, 409, "{v}");
-    let (c, _) = post(&b, "/macos/disks/erase", json!({"device":"disk6;ls","confirm_device":"disk6;ls","name":"X"})).await;
+    let (c, _) = post(
+        &b,
+        "/macos/disks/erase",
+        json!({"device":"disk6;ls","confirm_device":"disk6;ls","name":"X"}),
+    )
+    .await;
     assert!(c == 409 || c == 400);
-    let (c, _) = post(&b, "/macos/disks/erase", json!({"device":"disk6","confirm_device":"disk6","name":"-bad"})).await;
+    let (c, _) = post(
+        &b,
+        "/macos/disks/erase",
+        json!({"device":"disk6","confirm_device":"disk6","name":"-bad"}),
+    )
+    .await;
     assert_eq!(c, 400);
-    let (c, _) = post(&b, "/macos/disks/erase", json!({"device":"disk9","confirm_device":"disk9","name":"X"})).await;
+    let (c, _) = post(
+        &b,
+        "/macos/disks/erase",
+        json!({"device":"disk9","confirm_device":"disk9","name":"X"}),
+    )
+    .await;
     assert_eq!(c, 409, "disk images are refused without the test flag");
 }
 
 #[tokio::test]
 async fn external_disk_lifecycle_runs_as_jobs() {
     let b = base().await;
-    let (c, v) = post(&b, "/macos/disks/erase", json!({"device":"disk6","confirm_device":"disk6","name":"Fresh"})).await;
+    let (c, v) = post(
+        &b,
+        "/macos/disks/erase",
+        json!({"device":"disk6","confirm_device":"disk6","name":"Fresh"}),
+    )
+    .await;
     assert_eq!(c, 202, "{v}");
     let j = job_state(&b, v["job_id"].as_str().unwrap()).await;
     assert_eq!(j["state"], "succeeded", "{j}");
-    let (c, v) = post(&b, "/macos/containers/disk7/volumes", json!({"name":"New","quota_bytes":1073741824u64})).await;
+    let (c, v) = post(
+        &b,
+        "/macos/containers/disk7/volumes",
+        json!({"name":"New","quota_bytes":1073741824u64}),
+    )
+    .await;
     assert_eq!(c, 202, "{v}");
-    assert_eq!(job_state(&b, v["job_id"].as_str().unwrap()).await["state"], "succeeded");
-    let (c, v) = post(&b, "/macos/volumes/disk7s2/delete", json!({"confirm_device":"disk7s2"})).await;
+    assert_eq!(
+        job_state(&b, v["job_id"].as_str().unwrap()).await["state"],
+        "succeeded"
+    );
+    let (c, v) = post(
+        &b,
+        "/macos/volumes/disk7s2/delete",
+        json!({"confirm_device":"disk7s2"}),
+    )
+    .await;
     assert_eq!(c, 202, "{v}");
-    assert_eq!(job_state(&b, v["job_id"].as_str().unwrap()).await["state"], "succeeded");
+    assert_eq!(
+        job_state(&b, v["job_id"].as_str().unwrap()).await["state"],
+        "succeeded"
+    );
     let (c, v) = post(&b, "/macos/disks/disk6/eject", json!({})).await;
     assert_eq!(c, 202, "{v}");
-    assert_eq!(job_state(&b, v["job_id"].as_str().unwrap()).await["state"], "succeeded");
+    assert_eq!(
+        job_state(&b, v["job_id"].as_str().unwrap()).await["state"],
+        "succeeded"
+    );
 }
 
 #[tokio::test]
 async fn system_volumes_and_the_boot_container_are_refused() {
     let b = base().await;
     for vol in ["disk3s1", "disk3s5", "disk3s4"] {
-        let (c, _) = post(&b, &format!("/macos/volumes/{vol}/delete"), json!({"confirm_device": vol})).await;
+        let (c, _) = post(
+            &b,
+            &format!("/macos/volumes/{vol}/delete"),
+            json!({"confirm_device": vol}),
+        )
+        .await;
         assert_eq!(c, 409, "{vol}");
     }
-    let (c, _) = post(&b, "/macos/volumes/disk7s2/delete", json!({"confirm_device":"disk7s1"})).await;
+    let (c, _) = post(
+        &b,
+        "/macos/volumes/disk7s2/delete",
+        json!({"confirm_device":"disk7s1"}),
+    )
+    .await;
     assert_eq!(c, 400);
     let (c, _) = post(&b, "/macos/containers/disk3/volumes", json!({"name":"X"})).await;
     assert_eq!(c, 409);
     let (c, _) = post(&b, "/macos/disks/disk0/eject", json!({})).await;
     assert_eq!(c, 409);
 }
-

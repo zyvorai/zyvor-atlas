@@ -540,7 +540,8 @@ fn validate_tool_scope(tools: &[String]) -> AppResult<Vec<String>> {
     for t in tools {
         let ok = !t.is_empty()
             && t.len() <= 64
-            && t.bytes().all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+            && t.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
         if !ok {
             return Err(AppError::Validation(format!("invalid tool name '{t}'")));
         }
@@ -556,7 +557,9 @@ const MAX_SCOPE_ENTRIES: usize = 64;
 
 /// Checks a requested resource scope: bounded lists of non-empty entries without control characters.
 /// Returns `None` when nothing was requested.
-fn validate_resource_scope(scope: Option<&crate::auth::ResourceScope>) -> AppResult<Option<crate::auth::ResourceScope>> {
+fn validate_resource_scope(
+    scope: Option<&crate::auth::ResourceScope>,
+) -> AppResult<Option<crate::auth::ResourceScope>> {
     let Some(scope) = scope.filter(|s| !s.is_empty()) else {
         return Ok(None);
     };
@@ -567,10 +570,18 @@ fn validate_resource_scope(scope: Option<&crate::auth::ResourceScope>) -> AppRes
         ("paths", &scope.paths),
     ] {
         if list.len() > MAX_SCOPE_ENTRIES {
-            return Err(AppError::Validation(format!("at most {MAX_SCOPE_ENTRIES} {kind} per scoped token")));
+            return Err(AppError::Validation(format!(
+                "at most {MAX_SCOPE_ENTRIES} {kind} per scoped token"
+            )));
         }
-        if let Some(bad) = list.iter().find(|e| e.is_empty() || e.len() > 256 || e.chars().any(char::is_control)) {
-            return Err(AppError::Validation(format!("invalid {kind} scope entry '{}'", bad.escape_debug())));
+        if let Some(bad) = list
+            .iter()
+            .find(|e| e.is_empty() || e.len() > 256 || e.chars().any(char::is_control))
+        {
+            return Err(AppError::Validation(format!(
+                "invalid {kind} scope entry '{}'",
+                bad.escape_debug()
+            )));
         }
     }
     Ok(Some(scope.clone()))
@@ -600,7 +611,11 @@ pub(crate) async fn issue_token(
     let tools = validate_tool_scope(body.tools.as_deref().unwrap_or(&[]))?;
     let scope = validate_resource_scope(body.scope.as_ref())?;
     let workspace_bytes = match body.workspace_bytes {
-        Some(b) if b < 0 => return Err(AppError::Validation("workspace_bytes must not be negative".into())),
+        Some(b) if b < 0 => {
+            return Err(AppError::Validation(
+                "workspace_bytes must not be negative".into(),
+            ))
+        }
         Some(b) if b > 0 => Some(b),
         _ => None,
     };
@@ -622,8 +637,10 @@ pub(crate) async fn issue_token(
         "service_account",
         &body.subject,
         "ok",
-        Some(json!({ "role": role, "tenant_id": tenant_id, "ttl_secs": ttl_secs, "jti": jti,
-                     "tools": tools, "scope": scope, "workspace_bytes": workspace_bytes })),
+        Some(
+            json!({ "role": role, "tenant_id": tenant_id, "ttl_secs": ttl_secs, "jti": jti,
+                     "tools": tools, "scope": scope, "workspace_bytes": workspace_bytes }),
+        ),
         None,
     )
     .await;

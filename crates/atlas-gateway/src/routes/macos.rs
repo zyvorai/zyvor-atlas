@@ -42,7 +42,9 @@ fn ops(q: &BackendQuery) -> AppResult<(String, Box<dyn Lifecycle>)> {
                 .ok_or_else(|| AppError::NotFound(format!("macOS agent backend {b}")))?;
             Ok((b.to_string(), Box::new(remote)))
         }
-        Some(b) => Err(AppError::Validation(format!("{b:?} is not a macOS backend"))),
+        Some(b) => Err(AppError::Validation(format!(
+            "{b:?} is not a macOS backend"
+        ))),
     }
 }
 
@@ -84,10 +86,21 @@ async fn enqueue(
         .await
         .map_err(AppError::from)?;
     let _ = atlas_inventory::audit::record(
-        &s.pool, None, &actor.id, action, kind, target, "accepted", Some(detail.clone()), None,
+        &s.pool,
+        None,
+        &actor.id,
+        action,
+        kind,
+        target,
+        "accepted",
+        Some(detail.clone()),
+        None,
     )
     .await;
-    Ok(accepted(&job, json!({ "target": target, "detail": detail })))
+    Ok(accepted(
+        &job,
+        json!({ "target": target, "detail": detail }),
+    ))
 }
 
 fn admin(s: &AppState, actor: &Actor) -> AppResult<()> {
@@ -120,18 +133,30 @@ pub(crate) async fn erase_macos_disk(
 ) -> AppResult<(StatusCode, Json<Value>)> {
     admin(&s, &actor)?;
     if b.confirm_device != b.device {
-        return Err(AppError::Validation("confirm_device must equal device".into()));
+        return Err(AppError::Validation(
+            "confirm_device must equal device".into(),
+        ));
     }
     let (backend, ops) = ops(&q)?;
-    ops.check_erase(&b.device, &b.name).await.map_err(map_check)?;
+    ops.check_erase(&b.device, &b.name)
+        .await
+        .map_err(map_check)?;
     let spec = JobSpec::MacosDiskErase {
         backend_id: backend.clone(),
         device: b.device.clone(),
         confirmed_device: b.confirm_device,
         name: b.name.clone(),
     };
-    enqueue(&s, &actor, spec, "macos.disk.erase.requested", "disk", &b.device, json!({ "name": b.name, "backend": backend }))
-        .await
+    enqueue(
+        &s,
+        &actor,
+        spec,
+        "macos.disk.erase.requested",
+        "disk",
+        &b.device,
+        json!({ "name": b.name, "backend": backend }),
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -154,11 +179,15 @@ pub(crate) async fn add_macos_volume(
     admin(&s, &actor)?;
     if let (Some(q), Some(r)) = (b.quota_bytes, b.reserve_bytes) {
         if r > q {
-            return Err(AppError::Validation("reserve_bytes cannot exceed quota_bytes".into()));
+            return Err(AppError::Validation(
+                "reserve_bytes cannot exceed quota_bytes".into(),
+            ));
         }
     }
     let (backend, ops) = ops(&q)?;
-    ops.check_add_volume(&container, &b.name).await.map_err(map_check)?;
+    ops.check_add_volume(&container, &b.name)
+        .await
+        .map_err(map_check)?;
     let spec = JobSpec::MacosVolumeAdd {
         backend_id: backend.clone(),
         container: container.clone(),
@@ -191,10 +220,14 @@ pub(crate) async fn resize_macos_container(
 ) -> AppResult<(StatusCode, Json<Value>)> {
     admin(&s, &actor)?;
     if b.confirm_device != container {
-        return Err(AppError::Validation("confirm_device must equal the container".into()));
+        return Err(AppError::Validation(
+            "confirm_device must equal the container".into(),
+        ));
     }
     let (backend, ops) = ops(&q)?;
-    ops.check_resize_container(&container, b.size_bytes).await.map_err(map_check)?;
+    ops.check_resize_container(&container, b.size_bytes)
+        .await
+        .map_err(map_check)?;
     let spec = JobSpec::MacosContainerResize {
         backend_id: backend.clone(),
         container: container.clone(),
@@ -202,7 +235,12 @@ pub(crate) async fn resize_macos_container(
         size_bytes: b.size_bytes,
     };
     enqueue(
-        &s, &actor, spec, "macos.container.resize.requested", "container", &container,
+        &s,
+        &actor,
+        spec,
+        "macos.container.resize.requested",
+        "container",
+        &container,
         json!({ "size_bytes": b.size_bytes, "backend": backend }),
     )
     .await
@@ -225,8 +263,19 @@ pub(crate) async fn create_macos_snapshot(
 ) -> AppResult<(StatusCode, Json<Value>)> {
     admin(&s, &actor)?;
     let (backend, _) = ops(&q)?;
-    let spec = JobSpec::MacosSnapshotCreate { backend_id: backend.clone() };
-    enqueue(&s, &actor, spec, "macos.snapshot.create.requested", "mac", &backend, json!({ "backend": backend })).await
+    let spec = JobSpec::MacosSnapshotCreate {
+        backend_id: backend.clone(),
+    };
+    enqueue(
+        &s,
+        &actor,
+        spec,
+        "macos.snapshot.create.requested",
+        "mac",
+        &backend,
+        json!({ "backend": backend }),
+    )
+    .await
 }
 
 /// `POST /macos/snapshots/{date}/delete` — `tmutil deletelocalsnapshots`; the date is typed back and
@@ -240,16 +289,29 @@ pub(crate) async fn delete_macos_snapshot(
 ) -> AppResult<(StatusCode, Json<Value>)> {
     admin(&s, &actor)?;
     if b.confirm_device != date {
-        return Err(AppError::Validation("confirm_device must equal the snapshot date".into()));
+        return Err(AppError::Validation(
+            "confirm_device must equal the snapshot date".into(),
+        ));
     }
     let (backend, ops) = ops(&q)?;
-    ops.check_delete_local_snapshot(&date).await.map_err(map_check)?;
+    ops.check_delete_local_snapshot(&date)
+        .await
+        .map_err(map_check)?;
     let spec = JobSpec::MacosSnapshotDelete {
         backend_id: backend.clone(),
         date: date.clone(),
         confirmed_date: b.confirm_device,
     };
-    enqueue(&s, &actor, spec, "macos.snapshot.delete.requested", "snapshot", &date, json!({ "backend": backend })).await
+    enqueue(
+        &s,
+        &actor,
+        spec,
+        "macos.snapshot.delete.requested",
+        "snapshot",
+        &date,
+        json!({ "backend": backend }),
+    )
+    .await
 }
 
 #[derive(Debug, Deserialize)]
@@ -267,7 +329,9 @@ pub(crate) async fn delete_macos_volume(
 ) -> AppResult<(StatusCode, Json<Value>)> {
     admin(&s, &actor)?;
     if b.confirm_device != device {
-        return Err(AppError::Validation("confirm_device must equal the volume device".into()));
+        return Err(AppError::Validation(
+            "confirm_device must equal the volume device".into(),
+        ));
     }
     let (backend, ops) = ops(&q)?;
     ops.check_delete_volume(&device).await.map_err(map_check)?;
@@ -276,7 +340,16 @@ pub(crate) async fn delete_macos_volume(
         device: device.clone(),
         confirmed_device: b.confirm_device,
     };
-    enqueue(&s, &actor, spec, "macos.volume.delete.requested", "volume", &device, json!({ "backend": backend })).await
+    enqueue(
+        &s,
+        &actor,
+        spec,
+        "macos.volume.delete.requested",
+        "volume",
+        &device,
+        json!({ "backend": backend }),
+    )
+    .await
 }
 
 /// `POST /macos/disks/{device}/eject`.
@@ -293,5 +366,14 @@ pub(crate) async fn eject_macos_disk(
         backend_id: backend.clone(),
         device: device.clone(),
     };
-    enqueue(&s, &actor, spec, "macos.disk.eject.requested", "disk", &device, json!({ "backend": backend })).await
+    enqueue(
+        &s,
+        &actor,
+        spec,
+        "macos.disk.eject.requested",
+        "disk",
+        &device,
+        json!({ "backend": backend }),
+    )
+    .await
 }
