@@ -169,11 +169,7 @@ impl WorkerHealth {
     /// `(worker, seconds_since_last_beat, declared_interval_secs)` for every worker that has beat
     /// at least once.
     pub fn ages(&self) -> Vec<(&'static str, u64, Option<u64>)> {
-        let intervals = self
-            .intervals
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or_default();
+        let intervals = self.intervals.lock().map(|g| g.clone()).unwrap_or_default();
         self.beats
             .lock()
             .map(|g| {
@@ -452,7 +448,11 @@ mod rate_limiter_tests {
     /// SQLite in-process; the SQL is the shared dialect-neutral code the Postgres tests also run.
     #[tokio::test]
     async fn two_replicas_share_a_budget_through_the_database() {
-        let db = format!("{}/atlas-budget-sync-{}.db", std::env::temp_dir().display(), std::process::id());
+        let db = format!(
+            "{}/atlas-budget-sync-{}.db",
+            std::env::temp_dir().display(),
+            std::process::id()
+        );
         let _ = std::fs::remove_file(&db);
         let url = format!("sqlite://{db}?mode=rwc");
         let pool = atlas_inventory::connect(&url).await.unwrap();
@@ -465,12 +465,17 @@ mod rate_limiter_tests {
         }
         // Without a sync, neither replica knows about the other: both would still allow.
         for r in [&a, &b] {
-            super::sync_rate_limits_once(&pool, r, if std::ptr::eq(r, &a) { "a" } else { "b" }).await;
+            super::sync_rate_limits_once(&pool, r, if std::ptr::eq(r, &a) { "a" } else { "b" })
+                .await;
         }
         for r in [&a, &b] {
-            super::sync_rate_limits_once(&pool, r, if std::ptr::eq(r, &a) { "a" } else { "b" }).await;
+            super::sync_rate_limits_once(&pool, r, if std::ptr::eq(r, &a) { "a" } else { "b" })
+                .await;
         }
-        assert!(!a.allow("mcp:call:tok"), "6 calls cluster-wide against a budget of 5");
+        assert!(
+            !a.allow("mcp:call:tok"),
+            "6 calls cluster-wide against a budget of 5"
+        );
         assert!(!b.allow("mcp:call:tok"));
         assert!(a.allow("mcp:call:other"), "another key is unaffected");
         let _ = std::fs::remove_file(&db);

@@ -190,5 +190,9 @@ async fn post_backend_rejects_retired_rustfs_backend_type() {
         .send()
         .await
         .unwrap();
-    assert_eq!(resp.status(), 400, "retired rustfs backend_type must be rejected");
+    assert_eq!(
+        resp.status(),
+        400,
+        "retired rustfs backend_type must be rejected"
+    );
 }

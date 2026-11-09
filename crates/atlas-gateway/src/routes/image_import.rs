@@ -137,10 +137,19 @@ pub(crate) async fn import_volume_image(
                     "job {prev} is not an image import into volume {id}"
                 )));
             }
-            if matches!(job.state.as_str(), "pending" | "queued" | "running" | "verifying") {
-                return Err(AppError::Conflict(format!("job {prev} is still {}", job.state)));
+            if matches!(
+                job.state.as_str(),
+                "pending" | "queued" | "running" | "verifying"
+            ) {
+                return Err(AppError::Conflict(format!(
+                    "job {prev} is still {}",
+                    job.state
+                )));
             }
-            job.result.get("bytes_done").and_then(Value::as_u64).unwrap_or(0)
+            job.result
+                .get("bytes_done")
+                .and_then(Value::as_u64)
+                .unwrap_or(0)
         }
     };
 
@@ -178,7 +187,10 @@ pub(crate) async fn import_volume_image(
         None,
     )
     .await;
-    Ok(accepted(&job, json!({ "volume_id": id, "resume_from": resume_from })))
+    Ok(accepted(
+        &job,
+        json!({ "volume_id": id, "resume_from": resume_from }),
+    ))
 }
 
 #[cfg(test)]
@@ -197,7 +209,11 @@ mod tests {
 
     #[test]
     fn accepts_a_listed_host_and_matches_case_insensitively() {
-        assert!(check_url("https://Images.Internal:8443/a.raw", &allow(&["images.internal"])).is_ok());
+        assert!(check_url(
+            "https://Images.Internal:8443/a.raw",
+            &allow(&["images.internal"])
+        )
+        .is_ok());
         assert!(check_url("http://10.0.0.5:8099/a.raw", &allow(&["10.0.0.5"])).is_ok());
     }
 
@@ -209,7 +225,10 @@ mod tests {
             "http://images.internal.evil.example/a.raw",
             "http://169.254.169.254/latest/meta-data",
         ] {
-            assert!(matches!(check_url(u, &a), Err(AppError::Forbidden(_))), "{u}");
+            assert!(
+                matches!(check_url(u, &a), Err(AppError::Forbidden(_))),
+                "{u}"
+            );
         }
     }
 
@@ -228,7 +247,10 @@ mod tests {
             check_url("https://user:pw@images.internal/a.raw", &a),
             Err(AppError::Validation(_))
         ));
-        assert!(matches!(check_url("not a url", &a), Err(AppError::Validation(_))));
+        assert!(matches!(
+            check_url("not a url", &a),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]

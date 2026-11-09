@@ -14,25 +14,25 @@ pub(crate) mod ceph_objectstore;
 pub(crate) mod ceph_sizing;
 pub(crate) mod databridge;
 pub(crate) mod day2;
-mod image_import;
+mod dedup;
 pub(crate) mod dr;
 pub(crate) mod governance;
+mod image_import;
 pub(crate) mod inventory;
+mod macos;
 mod meta;
 mod object_store;
 pub(crate) mod observability;
 mod oidc;
 pub(crate) mod protection;
 pub mod ransomware;
-pub mod reduction;
-mod dedup;
 mod rbd;
+pub mod reduction;
 mod rook;
 pub(crate) mod util;
 pub(crate) mod volume_groups;
 pub(crate) mod volumes;
 pub mod workspaces;
-mod macos;
 mod zfs;
 
 use axum::{
@@ -52,6 +52,7 @@ use day2::*;
 use dr::*;
 use governance::*;
 use inventory::*;
+use macos::*;
 use meta::*;
 use object_store::*;
 use observability::*;
@@ -61,7 +62,6 @@ use rbd::*;
 use rook::*;
 use volume_groups::*;
 use volumes::*;
-use macos::*;
 use zfs::*;
 
 pub fn router(state: AppState) -> Router {
@@ -150,7 +150,10 @@ pub fn router(state: AppState) -> Router {
         .route("/ceph/devices", get(ceph_devices::get_ceph_devices))
         .route("/ceph/nvme", get(ceph_nvme::get_ceph_nvme))
         .route("/ceph/nvmeof", get(ceph_nvmeof::get_ceph_nvmeof))
-        .route("/ceph/osd-objectstore", get(ceph_objectstore::get_ceph_osd_objectstore))
+        .route(
+            "/ceph/osd-objectstore",
+            get(ceph_objectstore::get_ceph_osd_objectstore),
+        )
         .route("/ceph/sizing", get(ceph_sizing::get_ceph_sizing))
         .route("/ceph/df", get(get_ceph_df))
         .route("/ceph/health-rollup", get(get_ceph_health_rollup))
@@ -182,10 +185,22 @@ pub fn router(state: AppState) -> Router {
         .route("/macos/devices", get(list_macos_devices))
         .route("/macos/disks/erase", post(erase_macos_disk))
         .route("/macos/disks/{device}/eject", post(eject_macos_disk))
-        .route("/macos/containers/{container}/volumes", post(add_macos_volume))
-        .route("/macos/containers/{container}/resize", post(resize_macos_container))
-        .route("/macos/snapshots", get(list_macos_snapshots).post(create_macos_snapshot))
-        .route("/macos/snapshots/{date}/delete", post(delete_macos_snapshot))
+        .route(
+            "/macos/containers/{container}/volumes",
+            post(add_macos_volume),
+        )
+        .route(
+            "/macos/containers/{container}/resize",
+            post(resize_macos_container),
+        )
+        .route(
+            "/macos/snapshots",
+            get(list_macos_snapshots).post(create_macos_snapshot),
+        )
+        .route(
+            "/macos/snapshots/{date}/delete",
+            post(delete_macos_snapshot),
+        )
         .route("/macos/volumes/{device}/delete", post(delete_macos_volume))
         .route("/zfs/devices", get(list_zfs_devices))
         .route("/zfs/pools/from-device", post(create_zfs_pool_from_device))
@@ -203,7 +218,10 @@ pub fn router(state: AppState) -> Router {
                 put(write_volume_data).layer(DefaultBodyLimit::max(volumes::MAX_VOLUME_IO_BYTES)),
             ),
         )
-        .route("/volumes/{id}/import", post(image_import::import_volume_image))
+        .route(
+            "/volumes/{id}/import",
+            post(image_import::import_volume_image),
+        )
         .route("/volumes/{id}/protection", get(get_volume_protection))
         .route("/rbd-images", get(list_rbd_images).post(create_rbd_image))
         .route(
@@ -261,13 +279,19 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/tenants", get(list_tenants))
         .route("/volumes/{id}/snapshots", post(create_snapshot))
-        .route("/volumes/{id}/ransomware", get(ransomware::volume_ransomware))
+        .route(
+            "/volumes/{id}/ransomware",
+            get(ransomware::volume_ransomware),
+        )
         .route(
             "/volumes/{id}/ransomware/protect",
             post(ransomware::protect_volume),
         )
         .route("/native/reduction", get(reduction::native_reduction))
-        .route("/pools/{id}/dedup-estimate", get(dedup::pool_dedup_estimate).post(dedup::start_pool_dedup_estimate))
+        .route(
+            "/pools/{id}/dedup-estimate",
+            get(dedup::pool_dedup_estimate).post(dedup::start_pool_dedup_estimate),
+        )
         .route(
             "/workspaces",
             get(workspaces::list_workspaces).post(workspaces::create_workspace),

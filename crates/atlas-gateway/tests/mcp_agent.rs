@@ -76,7 +76,6 @@ async fn spawn(auth_required: bool, secret: &str) -> (SocketAddr, sqlx::AnyPool)
     (addr, pool)
 }
 
-
 const SECRET: &str = "mcp-agent-test-secret-at-least-32-bytes!!";
 
 async fn connect_token(
@@ -112,12 +111,12 @@ fn scoped(role: &str, tools: &[&str]) -> String {
         .0
 }
 
-async fn denied(
-    c: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
-    tool: &str,
-) -> bool {
+async fn denied(c: &rmcp::service::RunningService<rmcp::RoleClient, ()>, tool: &str) -> bool {
     use rmcp::model::CallToolRequestParams;
-    match c.call_tool(CallToolRequestParams::new(tool.to_string())).await {
+    match c
+        .call_tool(CallToolRequestParams::new(tool.to_string()))
+        .await
+    {
         Err(_) => true,
         Ok(r) => r.is_error == Some(true),
     }
@@ -135,10 +134,19 @@ async fn a_scoped_token_lists_and_calls_only_its_tools() {
     names.sort();
     assert_eq!(names, ["ceph_nvme", "list_clusters"]);
 
-    let ok = c.call_tool(CallToolRequestParams::new("list_clusters")).await.unwrap();
+    let ok = c
+        .call_tool(CallToolRequestParams::new("list_clusters"))
+        .await
+        .unwrap();
     assert_eq!(ok.is_error, Some(false));
     // Tools outside the scope are refused even though the operator role would allow them.
-    for t in ["ops_advisor", "list_volumes", "ceph_status", "create_snapshot", "ack_alert"] {
+    for t in [
+        "ops_advisor",
+        "list_volumes",
+        "ceph_status",
+        "create_snapshot",
+        "ack_alert",
+    ] {
         assert!(denied(&c, t).await, "{t} must be refused outside the scope");
     }
     c.cancel().await.unwrap();
@@ -148,7 +156,9 @@ async fn a_scoped_token_lists_and_calls_only_its_tools() {
 async fn a_scope_never_widens_the_role() {
     // A viewer scoped to an operator-only tool is still refused: scope only narrows.
     let (addr, _pool) = spawn(true, SECRET).await;
-    let c = connect_token(addr, &scoped("viewer", &["ceph_nvme"])).await.unwrap();
+    let c = connect_token(addr, &scoped("viewer", &["ceph_nvme"]))
+        .await
+        .unwrap();
     assert!(denied(&c, "ceph_nvme").await);
     c.cancel().await.unwrap();
 }
@@ -160,7 +170,10 @@ async fn an_unscoped_token_is_unchanged() {
         atlas_gateway::auth::mint_token(SECRET, "agent", "operator", "global", 3600).unwrap();
     let c = connect_token(addr, &token).await.unwrap();
     let n = c.list_tools(Default::default()).await.unwrap().tools.len();
-    assert!(n > 20, "an unscoped operator sees the full tool set, saw {n}");
+    assert!(
+        n > 20,
+        "an unscoped operator sees the full tool set, saw {n}"
+    );
     c.cancel().await.unwrap();
 }
 
@@ -169,7 +182,11 @@ async fn a_scoped_token_is_refused_outside_mcp() {
     let (addr, _pool) = spawn(true, SECRET).await;
     let token = scoped("admin", &["list_clusters"]);
     let http = reqwest::Client::new();
-    for path in ["/api/atlas/v1/clusters", "/api/atlas/v1/volumes", "/metrics"] {
+    for path in [
+        "/api/atlas/v1/clusters",
+        "/api/atlas/v1/volumes",
+        "/metrics",
+    ] {
         let r = http
             .get(format!("http://{addr}{path}"))
             .bearer_auth(&token)
@@ -202,12 +219,23 @@ async fn an_admin_can_issue_a_scoped_token_and_bad_scopes_are_rejected() {
             .json(&serde_json::json!({ "subject": "agent-y", "role": "operator", "tools": tools }))
             .send()
     };
-    let ok = issue(serde_json::json!(["list_clusters", "list_clusters"])).await.unwrap();
+    let ok = issue(serde_json::json!(["list_clusters", "list_clusters"]))
+        .await
+        .unwrap();
     assert_eq!(ok.status(), reqwest::StatusCode::CREATED);
     let body: serde_json::Value = ok.json().await.unwrap();
-    assert_eq!(body["tools"], serde_json::json!(["list_clusters"]), "duplicates dropped");
-    let c = connect_token(addr, body["token"].as_str().unwrap()).await.unwrap();
-    assert_eq!(c.list_tools(Default::default()).await.unwrap().tools.len(), 1);
+    assert_eq!(
+        body["tools"],
+        serde_json::json!(["list_clusters"]),
+        "duplicates dropped"
+    );
+    let c = connect_token(addr, body["token"].as_str().unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        c.list_tools(Default::default()).await.unwrap().tools.len(),
+        1
+    );
     c.cancel().await.unwrap();
 
     for bad in [serde_json::json!(["Not A Tool"]), serde_json::json!([""])] {
@@ -236,7 +264,14 @@ async fn audit_rows(
         if rows.len() >= want {
             return rows
                 .iter()
-                .map(|r| (r.get("actor_id"), r.get("resource_id"), r.get("status"), r.get("result")))
+                .map(|r| {
+                    (
+                        r.get("actor_id"),
+                        r.get("resource_id"),
+                        r.get("status"),
+                        r.get("result"),
+                    )
+                })
                 .collect();
         }
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
@@ -250,19 +285,30 @@ async fn an_agent_call_is_audited_with_its_token_and_a_denial_with_the_tool() {
 
     let (addr, pool) = spawn(true, SECRET).await;
     let tools: Vec<String> = vec!["list_clusters".into()];
-    let (token, _, jti) =
-        atlas_gateway::auth::mint_scoped_token(SECRET, "agent-x", "operator", "global", 3600, &tools).unwrap();
+    let (token, _, jti) = atlas_gateway::auth::mint_scoped_token(
+        SECRET, "agent-x", "operator", "global", 3600, &tools,
+    )
+    .unwrap();
     let c = connect_token(addr, &token).await.unwrap();
 
-    let ok = c.call_tool(CallToolRequestParams::new("list_clusters")).await.unwrap();
+    let ok = c
+        .call_tool(CallToolRequestParams::new("list_clusters"))
+        .await
+        .unwrap();
     assert_eq!(ok.is_error, Some(false));
     assert!(denied(&c, "ceph_nvme").await);
     c.cancel().await.unwrap();
 
     let calls = audit_rows(&pool, "mcp.tool.call", 1).await;
     let (actor, tool, status, result) = &calls[0];
-    assert_eq!((actor.as_str(), tool.as_str(), status.as_str()), ("agent-x", "list_clusters", "success"));
-    assert!(result.contains(&jti), "the row names the token that made the call: {result}");
+    assert_eq!(
+        (actor.as_str(), tool.as_str(), status.as_str()),
+        ("agent-x", "list_clusters", "success")
+    );
+    assert!(
+        result.contains(&jti),
+        "the row names the token that made the call: {result}"
+    );
     assert!(result.contains("\"scoped\":true"), "{result}");
 
     let denials = audit_rows(&pool, "mcp.tool.denied", 1).await;
@@ -281,7 +327,9 @@ async fn name_tricks_do_not_escape_a_scope() {
     use rmcp::model::CallToolRequestParams;
 
     let (addr, _pool) = spawn(true, SECRET).await;
-    let c = connect_token(addr, &scoped("operator", &["list_clusters"])).await.unwrap();
+    let c = connect_token(addr, &scoped("operator", &["list_clusters"]))
+        .await
+        .unwrap();
     let tricks = [
         "List_Clusters",
         " list_clusters",
@@ -294,9 +342,15 @@ async fn name_tricks_do_not_escape_a_scope() {
         "ceph_nvme",
     ];
     for t in tricks {
-        assert!(denied(&c, t).await, "{t:?} must be refused under a list_clusters-only scope");
+        assert!(
+            denied(&c, t).await,
+            "{t:?} must be refused under a list_clusters-only scope"
+        );
     }
-    let ok = c.call_tool(CallToolRequestParams::new("list_clusters")).await.unwrap();
+    let ok = c
+        .call_tool(CallToolRequestParams::new("list_clusters"))
+        .await
+        .unwrap();
     assert_eq!(ok.is_error, Some(false));
     c.cancel().await.unwrap();
 }
@@ -305,12 +359,19 @@ async fn name_tricks_do_not_escape_a_scope() {
 #[tokio::test]
 async fn a_huge_tool_name_is_capped_in_the_audit_trail() {
     let (addr, pool) = spawn(true, SECRET).await;
-    let c = connect_token(addr, &scoped("operator", &["list_clusters"])).await.unwrap();
+    let c = connect_token(addr, &scoped("operator", &["list_clusters"]))
+        .await
+        .unwrap();
     assert!(denied(&c, &"x".repeat(10_000)).await);
     c.cancel().await.unwrap();
 
     let rows = audit_rows(&pool, "mcp.tool.denied", 1).await;
-    assert_eq!(rows[0].1.len(), 64, "the audited name is capped: {}", rows[0].1.len());
+    assert_eq!(
+        rows[0].1.len(),
+        64,
+        "the audited name is capped: {}",
+        rows[0].1.len()
+    );
 }
 
 /// Inventory text is attacker-influenced (a PVC name, a volume label). It comes back as data in the
@@ -337,19 +398,37 @@ async fn hostile_inventory_text_is_data_and_changes_nothing() {
         pvc_name: Some(hostile.into()),
         storage_class_name: Some("zyvor-rbd-prod".into()),
     };
-    atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", "global", &vol, None).await.unwrap();
+    atlas_inventory::upsert_volume(&pool, "bkd_ceph_lab", "global", &vol, None)
+        .await
+        .unwrap();
 
-    let c = connect_token(addr, &scoped("operator", &["list_volumes"])).await.unwrap();
+    let c = connect_token(addr, &scoped("operator", &["list_volumes"]))
+        .await
+        .unwrap();
     let before = c.list_tools(Default::default()).await.unwrap();
-    let r = c.call_tool(CallToolRequestParams::new("list_volumes")).await.unwrap();
+    let r = c
+        .call_tool(CallToolRequestParams::new("list_volumes"))
+        .await
+        .unwrap();
     assert_eq!(r.is_error, Some(false));
     let text = serde_json::to_string(&r.content).unwrap();
-    assert!(text.contains("IGNORE ALL PREVIOUS INSTRUCTIONS"), "the text is returned as data: {text}");
+    assert!(
+        text.contains("IGNORE ALL PREVIOUS INSTRUCTIONS"),
+        "the text is returned as data: {text}"
+    );
 
     let after = c.list_tools(Default::default()).await.unwrap();
     assert_eq!(
-        before.tools.iter().map(|t| t.name.to_string()).collect::<Vec<_>>(),
-        after.tools.iter().map(|t| t.name.to_string()).collect::<Vec<_>>(),
+        before
+            .tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<_>>(),
+        after
+            .tools
+            .iter()
+            .map(|t| t.name.to_string())
+            .collect::<Vec<_>>(),
         "the tool list is unchanged by inventory text"
     );
     for t in ["create_snapshot", "ack_alert"] {

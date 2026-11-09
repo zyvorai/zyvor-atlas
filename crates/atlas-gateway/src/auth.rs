@@ -249,7 +249,9 @@ pub fn mint_scoped_token(
     ttl_secs: u64,
     tools: &[String],
 ) -> atlas_common::AppResult<(String, usize, String)> {
-    mint_agent_token(secret, subject, role, tenant_id, ttl_secs, tools, None, None)
+    mint_agent_token(
+        secret, subject, role, tenant_id, ttl_secs, tools, None, None,
+    )
 }
 
 /// [`mint_scoped_token`] plus a resource scope and a workspace byte budget (see [`Claims::scope`],
@@ -424,7 +426,9 @@ pub async fn auth_middleware(
                 Ok(id) => {
                     if !id.jti.is_empty() {
                         match atlas_inventory::tokens::is_revoked(&state.pool, &id.jti).await {
-                            Ok(true) => return unauthorized("token has been revoked", challenge(true)),
+                            Ok(true) => {
+                                return unauthorized("token has been revoked", challenge(true))
+                            }
                             Ok(false) => {}
                             Err(e) => tracing::warn!("token revocation check failed: {e}"),
                         }
@@ -457,7 +461,9 @@ pub async fn auth_middleware(
                         match atlas_inventory::tokens::is_revoked(&state.pool, &data.claims.jti)
                             .await
                         {
-                            Ok(true) => return unauthorized("token has been revoked", challenge(true)),
+                            Ok(true) => {
+                                return unauthorized("token has been revoked", challenge(true))
+                            }
                             Ok(false) => {}
                             Err(e) => tracing::warn!("token revocation check failed: {e}"),
                         }

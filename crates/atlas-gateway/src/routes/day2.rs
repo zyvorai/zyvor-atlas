@@ -145,13 +145,16 @@ pub(crate) async fn osds_ok_to_stop(
     let driver = s
         .driver_for(super::util::CEPH_BACKEND_ID)
         .ok_or_else(|| AppError::Driver("no ceph driver".into()))?;
-    let detail = driver.ceph_osd_ok_to_stop(&ids).await.map_err(|e| match e {
-        atlas_driver_core::DriverError::Backend(m) if m.contains("does not exist") => {
-            AppError::NotFound(m)
-        }
-        atlas_driver_core::DriverError::Unreachable(m) => AppError::Unavailable(m),
-        other => AppError::Driver(other.to_string()),
-    })?;
+    let detail = driver
+        .ceph_osd_ok_to_stop(&ids)
+        .await
+        .map_err(|e| match e {
+            atlas_driver_core::DriverError::Backend(m) if m.contains("does not exist") => {
+                AppError::NotFound(m)
+            }
+            atlas_driver_core::DriverError::Unreachable(m) => AppError::Unavailable(m),
+            other => AppError::Driver(other.to_string()),
+        })?;
     Ok(Json(json!({
         "ok_to_stop": detail.get("ok_to_stop").and_then(Value::as_bool).unwrap_or(false),
         "osd_ids": ids,
@@ -389,7 +392,10 @@ mod ok_to_stop_tests {
         for bad in ["", " , ", "a", "1,x", "-1", "1.5"] {
             assert!(parse_osd_ids(bad).is_err(), "{bad:?}");
         }
-        let many = (0..=OK_TO_STOP_MAX_IDS).map(|i| i.to_string()).collect::<Vec<_>>().join(",");
+        let many = (0..=OK_TO_STOP_MAX_IDS)
+            .map(|i| i.to_string())
+            .collect::<Vec<_>>()
+            .join(",");
         assert!(parse_osd_ids(&many).is_err());
     }
 }

@@ -175,7 +175,8 @@ pub(crate) async fn bucket_s3_target(
         .ok_or_else(|| AppError::Internal("bucket secret missing AWS_SECRET_ACCESS_KEY".into()))?;
     // `rgw_public_endpoint` is a browser-reachable override for Ceph RGW specifically (so
     // presigned URLs work from outside the cluster).
-    let endpoint = s.config
+    let endpoint = s
+        .config
         .rgw_public_endpoint
         .clone()
         .or(b.endpoint)
@@ -193,7 +194,13 @@ pub(crate) async fn bucket_s3_target(
 /// Bucket-level S3 subresources the console's per-bucket Settings panel reads/writes — a bare
 /// `?<name>` query, no value, matching S3's own convention for all of these. Deliberately narrow
 /// (only what the console actually calls) rather than every subresource S3 defines.
-const BUCKET_SUBRESOURCES: [&str; 5] = ["versioning", "lifecycle", "policy", "object-lock", "versions"];
+const BUCKET_SUBRESOURCES: [&str; 5] = [
+    "versioning",
+    "lifecycle",
+    "policy",
+    "object-lock",
+    "versions",
+];
 
 fn require_subresource(raw: Option<String>) -> AppResult<String> {
     let sub = raw.unwrap_or_default();
@@ -208,7 +215,11 @@ fn require_subresource(raw: Option<String>) -> AppResult<String> {
 
 /// Forwards the backend's own status/content-type/body verbatim — this proxy signs and routes
 /// the request but never reinterprets an S3-compatible server's XML/JSON response.
-fn subresource_response(status: u16, content_type: Option<&str>, body: String) -> AppResult<Response> {
+fn subresource_response(
+    status: u16,
+    content_type: Option<&str>,
+    body: String,
+) -> AppResult<Response> {
     let status = StatusCode::from_u16(status).unwrap_or(StatusCode::BAD_GATEWAY);
     let mut headers = HeaderMap::new();
     if let Some(ct) = content_type {
@@ -267,7 +278,11 @@ pub(crate) async fn bucket_subresource_put(
         "bucket.subresource.put",
         "bucket",
         &id,
-        if (200..300).contains(&status) { "ok" } else { "failed" },
+        if (200..300).contains(&status) {
+            "ok"
+        } else {
+            "failed"
+        },
         Some(json!({ "subresource": sub })),
         None,
     )
@@ -296,7 +311,11 @@ pub(crate) async fn bucket_subresource_delete(
         "bucket.subresource.delete",
         "bucket",
         &id,
-        if (200..300).contains(&status) { "ok" } else { "failed" },
+        if (200..300).contains(&status) {
+            "ok"
+        } else {
+            "failed"
+        },
         Some(json!({ "subresource": sub })),
         None,
     )

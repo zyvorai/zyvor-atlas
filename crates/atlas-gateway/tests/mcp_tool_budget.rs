@@ -76,7 +76,6 @@ async fn spawn(auth_required: bool, secret: &str) -> (SocketAddr, sqlx::AnyPool)
     (addr, pool)
 }
 
-
 const SECRET: &str = "mcp-agent-test-secret-at-least-32-bytes!!";
 
 async fn connect_token(
@@ -116,15 +115,23 @@ async fn call(
     c: &rmcp::service::RunningService<rmcp::RoleClient, ()>,
     tool: &str,
 ) -> Result<rmcp::model::CallToolResult, rmcp::service::ServiceError> {
-    c.call_tool(rmcp::model::CallToolRequestParams::new(tool.to_string())).await
+    c.call_tool(rmcp::model::CallToolRequestParams::new(tool.to_string()))
+        .await
 }
 
 #[tokio::test]
 async fn each_tool_has_its_own_budget_per_token() {
     std::env::set_var("ATLAS_MCP_TOOL_CALLS_PER_MIN", "2");
     let (addr, pool) = spawn(true, SECRET).await;
-    let a = connect_token(addr, &scoped("operator", &["list_clusters", "list_backends"])).await.unwrap();
-    let b = connect_token(addr, &scoped("operator", &["list_clusters"])).await.unwrap();
+    let a = connect_token(
+        addr,
+        &scoped("operator", &["list_clusters", "list_backends"]),
+    )
+    .await
+    .unwrap();
+    let b = connect_token(addr, &scoped("operator", &["list_clusters"]))
+        .await
+        .unwrap();
 
     let (mut ok, mut refused) = (0, 0);
     for _ in 0..5 {
@@ -136,8 +143,14 @@ async fn each_tool_has_its_own_budget_per_token() {
     assert_eq!(ok, 2, "the first two calls of one tool fit its budget");
     assert_eq!(refused, 3, "the rest are refused");
     // Another tool on the same token, and the same tool on another token, are unaffected.
-    assert!(call(&a, "list_backends").await.is_ok(), "a different tool has its own budget");
-    assert!(call(&b, "list_clusters").await.is_ok(), "a different token has its own budget");
+    assert!(
+        call(&a, "list_backends").await.is_ok(),
+        "a different tool has its own budget"
+    );
+    assert!(
+        call(&b, "list_clusters").await.is_ok(),
+        "a different token has its own budget"
+    );
 
     // A name that is not a tool is never counted, so it cannot grow the table or be rate limited.
     for _ in 0..4 {
@@ -146,10 +159,12 @@ async fn each_tool_has_its_own_budget_per_token() {
     }
 
     use sqlx::Row;
-    let n: i64 = sqlx::query("SELECT COUNT(*) AS n FROM storage_audit_logs WHERE action = 'mcp.tool.rate_limited'")
-        .fetch_one(&pool)
-        .await
-        .unwrap()
-        .get("n");
+    let n: i64 = sqlx::query(
+        "SELECT COUNT(*) AS n FROM storage_audit_logs WHERE action = 'mcp.tool.rate_limited'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap()
+    .get("n");
     assert_eq!(n, 3, "each refusal is audited");
 }

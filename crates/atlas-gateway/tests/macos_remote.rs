@@ -90,7 +90,6 @@ async fn spawn() -> SocketAddr {
     addr
 }
 
-
 async fn call(c: &reqwest::Client, method: &str, url: String, body: Option<Value>) -> (u16, Value) {
     let mut r = match method {
         "GET" => c.get(url),
@@ -116,7 +115,10 @@ async fn lifecycle_runs_on_the_named_mac_and_its_refusals_hold() {
     let (st, rows) = call(&c, "GET", format!("{base}/macos/devices?{b}"), None).await;
     assert_eq!(st, 200, "{rows}");
     let rows = rows.as_array().unwrap();
-    let internal = rows.iter().find(|r| r["internal"] == true).expect("internal disk");
+    let internal = rows
+        .iter()
+        .find(|r| r["internal"] == true)
+        .expect("internal disk");
     let external = rows
         .iter()
         .find(|r| r["erase_refusal"].is_null())
@@ -132,7 +134,13 @@ async fn lifecycle_runs_on_the_named_mac_and_its_refusals_hold() {
     )
     .await;
     assert_eq!(st, 409, "{body}");
-    let (st, _) = call(&c, "POST", format!("{base}/macos/disks/{dev}/eject?{b}"), None).await;
+    let (st, _) = call(
+        &c,
+        "POST",
+        format!("{base}/macos/disks/{dev}/eject?{b}"),
+        None,
+    )
+    .await;
     assert_eq!(st, 409);
 
     // An external disk is accepted as a job aimed at that Mac.
@@ -160,7 +168,10 @@ async fn lifecycle_runs_on_the_named_mac_and_its_refusals_hold() {
     }
     assert_eq!(last["state"], "succeeded", "{last}");
     assert_eq!(last["result"]["operation"], "erase");
-    assert!(last["result"]["output"].as_str().unwrap().starts_with("fake: diskutil eraseDisk"));
+    assert!(last["result"]["output"]
+        .as_str()
+        .unwrap()
+        .starts_with("fake: diskutil eraseDisk"));
 
     // Resize: the boot container is refused (409); an external one is accepted and the job runs.
     let (st, _) = call(
@@ -221,9 +232,21 @@ async fn lifecycle_runs_on_the_named_mac_and_its_refusals_hold() {
     assert_eq!(st, 400);
 
     // Unknown agent, and something that is not a macOS backend.
-    let (st, _) = call(&c, "GET", format!("{base}/macos/devices?backend=bkd_macos_nope"), None).await;
+    let (st, _) = call(
+        &c,
+        "GET",
+        format!("{base}/macos/devices?backend=bkd_macos_nope"),
+        None,
+    )
+    .await;
     assert_eq!(st, 404);
-    let (st, _) = call(&c, "GET", format!("{base}/macos/devices?backend=bkd_ceph_lab"), None).await;
+    let (st, _) = call(
+        &c,
+        "GET",
+        format!("{base}/macos/devices?backend=bkd_ceph_lab"),
+        None,
+    )
+    .await;
     assert_eq!(st, 400);
     // No ?backend= means this Mac, which is not enabled in this gateway.
     let (st, _) = call(&c, "GET", format!("{base}/macos/devices"), None).await;

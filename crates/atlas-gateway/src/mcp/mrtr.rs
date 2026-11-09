@@ -46,7 +46,9 @@ const MAX_VALUE_CHARS: usize = 200;
 /// Whether this client can be asked to confirm through MRTR: protocol 2026-07-28 or newer, and form-mode
 /// elicitation declared (an empty `elicitation` object means form mode).
 pub(super) fn client_can_confirm(context: &RequestContext<RoleServer>) -> bool {
-    context.protocol_version().is_some_and(|v| v >= ProtocolVersion::V_2026_07_28)
+    context
+        .protocol_version()
+        .is_some_and(|v| v >= ProtocolVersion::V_2026_07_28)
         && context
             .client_capabilities()
             .and_then(|c| c.elicitation)
@@ -79,7 +81,11 @@ pub(super) fn take_retry(request: &mut CallToolRequestParams) -> Result<Retry, M
         // Not a retry, or one without an answer: a fresh call plans again and asks again.
         return Ok(Retry::Proceed);
     };
-    if request.arguments.as_ref().is_some_and(|a| a.contains_key(TOKEN_ARG)) {
+    if request
+        .arguments
+        .as_ref()
+        .is_some_and(|a| a.contains_key(TOKEN_ARG))
+    {
         return Err(McpError::invalid_params(
             "send either requestState with inputResponses or a confirmation_token argument, not both",
             None,
@@ -90,7 +96,11 @@ pub(super) fn take_retry(request: &mut CallToolRequestParams) -> Result<Retry, M
         .and_then(|v| serde_json::from_value::<ElicitResult>(v.clone()).ok());
     match answer {
         Some(a) if a.action == ElicitationAction::Accept => {
-            let confirmed = a.content.as_ref().and_then(|c| c.get(CONFIRM_KEY)).and_then(Value::as_bool);
+            let confirmed = a
+                .content
+                .as_ref()
+                .and_then(|c| c.get(CONFIRM_KEY))
+                .and_then(Value::as_bool);
             if confirmed == Some(true) {
                 request
                     .arguments
@@ -132,7 +142,8 @@ pub(super) fn plan_to_input_required(result: &CallToolResult) -> Option<InputReq
     let token = plan.get(TOKEN_ARG)?.as_str()?.to_string();
     let schema = ElicitationSchema::builder()
         .required_bool_with(CONFIRM_KEY, |b| {
-            b.title("Confirm").description("true to run this action, false to leave everything unchanged")
+            b.title("Confirm")
+                .description("true to run this action, false to leave everything unchanged")
         })
         .build()
         .ok()?;
@@ -149,9 +160,16 @@ pub(super) fn plan_to_input_required(result: &CallToolResult) -> Option<InputReq
 /// A readable summary of a plan for the user who is asked to confirm. The token is not in it.
 fn summary(plan: &Value) -> String {
     let body = plan.get("plan").and_then(Value::as_object);
-    let action = body.and_then(|p| p.get("action")).and_then(Value::as_str).unwrap_or("this action");
+    let action = body
+        .and_then(|p| p.get("action"))
+        .and_then(Value::as_str)
+        .unwrap_or("this action");
     let mut out = format!("Atlas asks you to confirm: {action}\n");
-    for (k, v) in body.into_iter().flatten().filter(|(k, _)| k.as_str() != "action") {
+    for (k, v) in body
+        .into_iter()
+        .flatten()
+        .filter(|(k, _)| k.as_str() != "action")
+    {
         let text = match v {
             Value::Null => continue,
             Value::String(s) => s.clone(),
@@ -196,10 +214,19 @@ mod tests {
         let ask = &v["inputRequests"]["confirm"];
         assert_eq!(ask["method"], "elicitation/create");
         assert_eq!(ask["params"]["mode"], "form");
-        assert_eq!(ask["params"]["requestedSchema"]["properties"]["confirm"]["type"], "boolean");
+        assert_eq!(
+            ask["params"]["requestedSchema"]["properties"]["confirm"]["type"],
+            "boolean"
+        );
         let message = ask["params"]["message"].as_str().unwrap();
-        assert!(message.contains("create_snapshot") && message.contains("volume_id: vol_a"), "{message}");
-        assert!(!message.contains("tok.en.sig") && !message.contains("snapshot_name"), "{message}");
+        assert!(
+            message.contains("create_snapshot") && message.contains("volume_id: vol_a"),
+            "{message}"
+        );
+        assert!(
+            !message.contains("tok.en.sig") && !message.contains("snapshot_name"),
+            "{message}"
+        );
     }
 
     #[test]
@@ -217,9 +244,15 @@ mod tests {
 
     #[test]
     fn accept_injects_the_token_and_the_state_never_travels_on() {
-        let mut req = retry(json!({ "confirm": { "action": "accept", "content": { "confirm": true } } }), json!({ "volume_id": "vol_a" }));
+        let mut req = retry(
+            json!({ "confirm": { "action": "accept", "content": { "confirm": true } } }),
+            json!({ "volume_id": "vol_a" }),
+        );
         assert!(matches!(take_retry(&mut req), Ok(Retry::Proceed)));
-        assert_eq!(req.arguments.as_ref().unwrap()["confirmation_token"], "tok.en.sig");
+        assert_eq!(
+            req.arguments.as_ref().unwrap()["confirmation_token"],
+            "tok.en.sig"
+        );
         assert!(req.request_state.is_none() && req.input_responses.is_none());
     }
 
@@ -228,7 +261,10 @@ mod tests {
         for (responses, outcome) in [
             (json!({ "confirm": { "action": "decline" } }), "declined"),
             (json!({ "confirm": { "action": "cancel" } }), "cancelled"),
-            (json!({ "confirm": { "action": "accept", "content": { "confirm": false } } }), "declined"),
+            (
+                json!({ "confirm": { "action": "accept", "content": { "confirm": false } } }),
+                "declined",
+            ),
             (json!({ "confirm": { "action": "accept" } }), "declined"),
         ] {
             let mut req = retry(responses, json!({ "volume_id": "vol_a" }));
@@ -236,16 +272,32 @@ mod tests {
                 Ok(Retry::Refused(o)) => assert_eq!(o, outcome),
                 _ => panic!("must refuse"),
             }
-            assert!(req.arguments.as_ref().unwrap().get("confirmation_token").is_none());
+            assert!(req
+                .arguments
+                .as_ref()
+                .unwrap()
+                .get("confirmation_token")
+                .is_none());
         }
     }
 
     #[test]
     fn a_missing_or_garbled_answer_plans_again_and_both_credentials_are_refused() {
-        for responses in [json!({}), json!({ "other": { "action": "accept" } }), json!({ "confirm": "yes" })] {
+        for responses in [
+            json!({}),
+            json!({ "other": { "action": "accept" } }),
+            json!({ "confirm": "yes" }),
+        ] {
             let mut req = retry(responses, json!({ "volume_id": "vol_a" }));
             assert!(matches!(take_retry(&mut req), Ok(Retry::Proceed)));
-            assert!(req.arguments.as_ref().unwrap().get("confirmation_token").is_none(), "no token without an accept");
+            assert!(
+                req.arguments
+                    .as_ref()
+                    .unwrap()
+                    .get("confirmation_token")
+                    .is_none(),
+                "no token without an accept"
+            );
         }
         // Only a state, or only responses: also a fresh call.
         let mut req = CallToolRequestParams::new("create_snapshot").with_request_state("x");

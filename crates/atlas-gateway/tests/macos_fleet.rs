@@ -58,7 +58,10 @@ async fn spawn() -> SocketAddr {
         dr_dataplane_verified: false,
     };
     let agent = atlas_mac_agent::router(
-        Arc::new(atlas_driver_macos::FakeMacosDriver::new("bkd_macos", "mac-lab")),
+        Arc::new(atlas_driver_macos::FakeMacosDriver::new(
+            "bkd_macos",
+            "mac-lab",
+        )),
         Some("fleet-token".into()),
     );
     let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -85,11 +88,15 @@ async fn spawn() -> SocketAddr {
     addr
 }
 
-
 #[tokio::test]
 async fn a_remote_mac_appears_as_its_own_backend_with_pools_and_volumes() {
     let base = format!("http://{}/api/atlas/v1", spawn().await);
-    let backends: Value = reqwest::get(format!("{base}/backends")).await.unwrap().json().await.unwrap();
+    let backends: Value = reqwest::get(format!("{base}/backends"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
     let b = backends
         .as_array()
         .unwrap()
@@ -97,8 +104,26 @@ async fn a_remote_mac_appears_as_its_own_backend_with_pools_and_volumes() {
         .find(|b| b["id"] == "bkd_macos_lab_mac")
         .unwrap_or_else(|| panic!("remote Mac backend missing: {backends}"));
     assert_eq!(b["backend_type"], "macos");
-    let pools: Value = reqwest::get(format!("{base}/pools")).await.unwrap().json().await.unwrap();
-    assert!(pools.as_array().unwrap().iter().any(|p| p["kind"] == "apfs_container"));
-    let vols: Value = reqwest::get(format!("{base}/volumes")).await.unwrap().json().await.unwrap();
-    assert!(vols.as_array().unwrap().iter().any(|v| v["name"] == "Backup"));
+    let pools: Value = reqwest::get(format!("{base}/pools"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(pools
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|p| p["kind"] == "apfs_container"));
+    let vols: Value = reqwest::get(format!("{base}/volumes"))
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(vols
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|v| v["name"] == "Backup"));
 }

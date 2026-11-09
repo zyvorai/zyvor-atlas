@@ -678,8 +678,7 @@ pub(crate) async fn compute_what_if(
 }
 
 async fn recent_failed_jobs(pool: &sqlx::AnyPool) -> AppResult<i64> {
-    let since =
-        atlas_inventory::now_rfc3339(chrono::Utc::now() - chrono::Duration::minutes(15));
+    let since = atlas_inventory::now_rfc3339(chrono::Utc::now() - chrono::Duration::minutes(15));
     let row = sqlx::query(
         "SELECT COUNT(*) AS n FROM storage_jobs WHERE state='failed' AND updated_at >= $1",
     )
@@ -963,8 +962,10 @@ fn anomaly_freshness(
         return (
             "unavailable",
             None,
-            vec!["Latest telemetry timestamp is missing or invalid; anomaly detection is paused"
-                .into()],
+            vec![
+                "Latest telemetry timestamp is missing or invalid; anomaly detection is paused"
+                    .into(),
+            ],
         );
     };
     let age_seconds = now.signed_duration_since(sample_time).num_seconds();
@@ -1206,7 +1207,12 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
             format!(
                 "{} NVMe drive(s) show wear or errors: {}",
                 e.nvme_attention.len(),
-                e.nvme_attention.iter().take(3).cloned().collect::<Vec<_>>().join(" | ")
+                e.nvme_attention
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" | ")
             ),
             "/api/atlas/v1/ceph/nvme",
         ));
@@ -1220,7 +1226,12 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
             format!(
                 "{} host(s) fall short of the NVMe sizing rule of thumb: {}",
                 e.sizing_attention.len(),
-                e.sizing_attention.iter().take(3).cloned().collect::<Vec<_>>().join(" | ")
+                e.sizing_attention
+                    .iter()
+                    .take(3)
+                    .cloned()
+                    .collect::<Vec<_>>()
+                    .join(" | ")
             ),
             "/api/atlas/v1/ceph/sizing",
         ));
@@ -1303,7 +1314,11 @@ pub(crate) fn io_unavailable(detail: impl Into<String>) -> IoRiskView {
 
 /// GET `path` on the atlas-io agent: http(s) only, no redirects (so the bearer token only ever
 /// goes to the configured URL), bounded body. `Err` carries a short, fixed reason.
-async fn fetch_agent_body(base_url: &str, path: &str, timeout: Duration) -> Result<Vec<u8>, String> {
+async fn fetch_agent_body(
+    base_url: &str,
+    path: &str,
+    timeout: Duration,
+) -> Result<Vec<u8>, String> {
     let url = match reqwest::Url::parse(&format!("{base_url}{path}")) {
         Ok(u) if matches!(u.scheme(), "http" | "https") => u,
         _ => return Err("ATLAS_IO_AGENT_URL must be an http(s) URL".into()),
@@ -1681,7 +1696,10 @@ mod tests {
         };
         let (score, actions) = assess(&flagged);
         assert!(score > calm);
-        let a = actions.iter().find(|a| a.inspect == "/api/atlas/v1/ceph/nvme").unwrap();
+        let a = actions
+            .iter()
+            .find(|a| a.inspect == "/api/atlas/v1/ceph/nvme")
+            .unwrap();
         assert!(a.rationale.contains("SAMSUNG_0002"));
     }
 
@@ -1694,7 +1712,9 @@ mod tests {
         };
         let (score, actions) = assess(&flagged);
         assert_eq!(score, calm + 10);
-        assert!(actions.iter().any(|a| a.inspect == "/api/atlas/v1/ceph/sizing"));
+        assert!(actions
+            .iter()
+            .any(|a| a.inspect == "/api/atlas/v1/ceph/sizing"));
     }
 
     #[test]
@@ -1754,8 +1774,15 @@ mod tests {
         for body in [&b"not json"[..], b"{}", b"\"x\""] {
             assert_eq!(parse_io_ai(body).status, "unavailable");
         }
-        let many: Vec<Value> = (0..100).map(|i| json!({ "device": format!("d{i}"), "shape": "mixed" })).collect();
-        assert_eq!(parse_io_ai(json!(many).to_string().as_bytes()).devices.len(), IO_AI_MAX_DEVICES);
+        let many: Vec<Value> = (0..100)
+            .map(|i| json!({ "device": format!("d{i}"), "shape": "mixed" }))
+            .collect();
+        assert_eq!(
+            parse_io_ai(json!(many).to_string().as_bytes())
+                .devices
+                .len(),
+            IO_AI_MAX_DEVICES
+        );
     }
 
     #[test]
@@ -1791,7 +1818,9 @@ mod tests {
     }
 
     /// A stub chat-completions server that records the last request body.
-    async fn stub_model(reply: &'static str) -> (String, std::sync::Arc<std::sync::Mutex<Option<Value>>>) {
+    async fn stub_model(
+        reply: &'static str,
+    ) -> (String, std::sync::Arc<std::sync::Mutex<Option<Value>>>) {
         use axum::{routing::post, Router};
         let seen = std::sync::Arc::new(std::sync::Mutex::new(None));
         let seen2 = seen.clone();
@@ -1826,40 +1855,102 @@ mod tests {
         let (url, seen) = stub_model("stub narrative").await;
 
         // Local never calls the provider at all.
-        let r = narrate_with(Some(provider(url.clone())), AdvisorMode::Local, "x", ANOMALY_NARRATIVE_SYSTEM, 100, &ctx)
-            .await
-            .unwrap();
+        let r = narrate_with(
+            Some(provider(url.clone())),
+            AdvisorMode::Local,
+            "x",
+            ANOMALY_NARRATIVE_SYSTEM,
+            100,
+            &ctx,
+        )
+        .await
+        .unwrap();
         assert_eq!(r, (None, None));
-        assert!(seen.lock().unwrap().is_none(), "local mode must not call out");
+        assert!(
+            seen.lock().unwrap().is_none(),
+            "local mode must not call out"
+        );
 
         // Llm: the narrative arrives, the system prompt carries the untrusted-data rule, and the
         // supplied JSON is the only user content.
-        let r = narrate_with(Some(provider(url.clone())), AdvisorMode::Llm, "x", ANOMALY_NARRATIVE_SYSTEM, 100, &ctx)
-            .await
-            .unwrap();
+        let r = narrate_with(
+            Some(provider(url.clone())),
+            AdvisorMode::Llm,
+            "x",
+            ANOMALY_NARRATIVE_SYSTEM,
+            100,
+            &ctx,
+        )
+        .await
+        .unwrap();
         assert_eq!(r, (Some("llm"), Some("stub narrative".to_string())));
         let body = seen.lock().unwrap().clone().unwrap();
-        assert!(body["messages"][0]["content"].as_str().unwrap().contains("untrusted data"));
+        assert!(body["messages"][0]["content"]
+            .as_str()
+            .unwrap()
+            .contains("untrusted data"));
         assert_eq!(body["messages"][1]["role"], "user");
         assert_eq!(body["max_tokens"], 100);
 
         // Auto without a provider: silently nothing. Llm without one: an error.
-        let r = narrate_with(None, AdvisorMode::Auto, "x", WHAT_IF_NARRATIVE_SYSTEM, 100, &ctx).await.unwrap();
+        let r = narrate_with(
+            None,
+            AdvisorMode::Auto,
+            "x",
+            WHAT_IF_NARRATIVE_SYSTEM,
+            100,
+            &ctx,
+        )
+        .await
+        .unwrap();
         assert_eq!(r, (None, None));
-        assert!(narrate_with(None, AdvisorMode::Llm, "x", WHAT_IF_NARRATIVE_SYSTEM, 100, &ctx).await.is_err());
+        assert!(narrate_with(
+            None,
+            AdvisorMode::Llm,
+            "x",
+            WHAT_IF_NARRATIVE_SYSTEM,
+            100,
+            &ctx
+        )
+        .await
+        .is_err());
 
         // A dead provider: auto degrades to local_fallback, llm fails.
         let dead = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let dead_url = format!("http://{}", dead.local_addr().unwrap());
         drop(dead);
-        let r = narrate_with(Some(provider(dead_url.clone())), AdvisorMode::Auto, "x", WHAT_IF_NARRATIVE_SYSTEM, 100, &ctx)
-            .await
-            .unwrap();
+        let r = narrate_with(
+            Some(provider(dead_url.clone())),
+            AdvisorMode::Auto,
+            "x",
+            WHAT_IF_NARRATIVE_SYSTEM,
+            100,
+            &ctx,
+        )
+        .await
+        .unwrap();
         assert_eq!(r, (Some("local_fallback"), None));
-        assert!(narrate_with(Some(provider(dead_url)), AdvisorMode::Llm, "x", WHAT_IF_NARRATIVE_SYSTEM, 100, &ctx).await.is_err());
+        assert!(narrate_with(
+            Some(provider(dead_url)),
+            AdvisorMode::Llm,
+            "x",
+            WHAT_IF_NARRATIVE_SYSTEM,
+            100,
+            &ctx
+        )
+        .await
+        .is_err());
 
         // Plain HTTP to a non-local host is refused before any request is made.
-        let r = narrate_with(Some(provider("http://example.com".into())), AdvisorMode::Llm, "x", WHAT_IF_NARRATIVE_SYSTEM, 100, &ctx).await;
+        let r = narrate_with(
+            Some(provider("http://example.com".into())),
+            AdvisorMode::Llm,
+            "x",
+            WHAT_IF_NARRATIVE_SYSTEM,
+            100,
+            &ctx,
+        )
+        .await;
         assert!(r.is_err());
     }
 

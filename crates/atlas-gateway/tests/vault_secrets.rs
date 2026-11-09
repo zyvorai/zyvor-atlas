@@ -152,7 +152,10 @@ async fn wrong_vault_token_fails_closed() {
 
     let mut cfg = base_config();
     let err = resolve_vault_secrets(&mut cfg).await.unwrap_err();
-    assert!(err.to_string().contains("403"), "expected a 403 error, got: {err}");
+    assert!(
+        err.to_string().contains("403"),
+        "expected a 403 error, got: {err}"
+    );
     // Original values are untouched on failure.
     assert_eq!(cfg.jwt_secret, "unresolved-dev-secret");
 

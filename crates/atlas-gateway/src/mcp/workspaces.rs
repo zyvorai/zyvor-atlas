@@ -71,7 +71,12 @@ struct WorkspaceActionArgs {
 }
 
 /// A non-admin may only act on a workspace they created.
-fn require_owner(auth_required: bool, actor: &Actor, owner: &str, id: &str) -> Result<(), McpError> {
+fn require_owner(
+    auth_required: bool,
+    actor: &Actor,
+    owner: &str,
+    id: &str,
+) -> Result<(), McpError> {
     if auth_required && actor.level() < ROLE_ADMIN && actor.id != owner {
         return Err(McpError::invalid_request(
             format!("workspace {id} was created by another caller; only its creator or an admin may change it"),
@@ -96,8 +101,10 @@ impl AtlasMcp {
         rest(workspaces::list_workspaces(State(self.state.clone()), Extension(actor)).await)
     }
 
-    #[tool(description = "Get one agent workspace by id: its volume id, state, size, cap and seconds \
-                           left before expiry. The caller's tenant must own it.")]
+    #[tool(
+        description = "Get one agent workspace by id: its volume id, state, size, cap and seconds \
+                           left before expiry. The caller's tenant must own it."
+    )]
     async fn get_workspace(
         &self,
         Parameters(args): Parameters<WorkspaceIdArgs>,
@@ -105,8 +112,12 @@ impl AtlasMcp {
     ) -> Result<ToolJson<Value>, McpError> {
         let actor = actor_from(&context)?;
         rest(
-            workspaces::get_workspace(State(self.state.clone()), Extension(actor), Path(args.workspace_id))
-                .await,
+            workspaces::get_workspace(
+                State(self.state.clone()),
+                Extension(actor),
+                Path(args.workspace_id),
+            )
+            .await,
         )
     }
 }
@@ -151,8 +162,13 @@ impl AtlasMcp {
         let tenant = atlas_inventory::volume_tenant(&s.pool, &source)
             .await
             .map_err(internal_error)?;
-        require_tenant(s.config.auth_required, &actor, &tenant, format!("volume {source}"))
-            .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
+        require_tenant(
+            s.config.auth_required,
+            &actor,
+            &tenant,
+            format!("volume {source}"),
+        )
+        .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
 
         let name = args.name.clone().filter(|n| !n.trim().is_empty());
         let params = json!({
@@ -161,16 +177,35 @@ impl AtlasMcp {
         })
         .to_string();
 
-        match gate(s, &actor.id, CREATE_WORKSPACE, &params, args.confirmation_token.as_deref()).await {
+        match gate(
+            s,
+            &actor.id,
+            CREATE_WORKSPACE,
+            &params,
+            args.confirmation_token.as_deref(),
+        )
+        .await
+        {
             Ok(Gate::Propose(token)) => {
                 // The plan changes nothing, so it is the dry run: it also reports whether the execute
                 // would be refused (tenant count, size cap, byte budget) rather than leave that to be
                 // found out after the token is spent.
                 let preflight = match workspaces::resolve_max_bytes(args.max_bytes) {
-                    Ok(cap) => workspaces::preflight_create(s, &actor, &tenant, vol.size_bytes, cap).await,
+                    Ok(cap) => {
+                        workspaces::preflight_create(s, &actor, &tenant, vol.size_bytes, cap).await
+                    }
                     Err(e) => Err(e),
                 };
-                audit(s, &actor, CREATE_WORKSPACE, "volume", &source, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
+                audit(
+                    s,
+                    &actor,
+                    CREATE_WORKSPACE,
+                    "volume",
+                    &source,
+                    "proposed",
+                    json!({ "via": "mcp", "confirmed": false }),
+                )
+                .await;
                 return Ok(ToolJson(json!({
                     "executed": false,
                     "plan": {
@@ -193,7 +228,16 @@ impl AtlasMcp {
             }
             Ok(Gate::Execute) => {}
             Err(why) => {
-                audit(s, &actor, CREATE_WORKSPACE, "volume", &source, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                audit(
+                    s,
+                    &actor,
+                    CREATE_WORKSPACE,
+                    "volume",
+                    &source,
+                    "rejected",
+                    json!({ "via": "mcp", "reason": why }),
+                )
+                .await;
                 return Err(McpError::invalid_params(why, None));
             }
         }
@@ -205,12 +249,35 @@ impl AtlasMcp {
             ttl_secs: args.ttl_secs,
             max_bytes: args.max_bytes,
         };
-        let result = workspaces::create_workspace(State(s.clone()), Extension(actor.clone()), Json(body))
-            .await
-            .map(|(_, j)| j);
+        let result =
+            workspaces::create_workspace(State(s.clone()), Extension(actor.clone()), Json(body))
+                .await
+                .map(|(_, j)| j);
         match &result {
-            Ok(Json(v)) => audit(s, &actor, CREATE_WORKSPACE, "volume", &source, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
-            Err(e) => audit(s, &actor, CREATE_WORKSPACE, "volume", &source, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
+            Ok(Json(v)) => {
+                audit(
+                    s,
+                    &actor,
+                    CREATE_WORKSPACE,
+                    "volume",
+                    &source,
+                    "success",
+                    json!({ "via": "mcp", "confirmed": true, "result": v }),
+                )
+                .await
+            }
+            Err(e) => {
+                audit(
+                    s,
+                    &actor,
+                    CREATE_WORKSPACE,
+                    "volume",
+                    &source,
+                    "failure",
+                    json!({ "via": "mcp", "confirmed": true, "error": e.to_string() }),
+                )
+                .await
+            }
         }
         let out = rest(result)?;
         Ok(ToolJson(json!({ "executed": true, "result": out.0 })))
@@ -246,7 +313,8 @@ impl AtlasMcp {
         Parameters(args): Parameters<WorkspaceActionArgs>,
         context: RequestContext<RoleServer>,
     ) -> Result<ToolJson<Value>, McpError> {
-        self.workspace_action(DISCARD_WORKSPACE, args, context).await
+        self.workspace_action(DISCARD_WORKSPACE, args, context)
+            .await
     }
 }
 
@@ -266,14 +334,36 @@ impl AtlasMcp {
             .await
             .map_err(internal_error)?
             .ok_or_else(|| McpError::invalid_params(format!("unknown workspace {id}"), None))?;
-        require_tenant(s.config.auth_required, &actor, &ws.tenant_id, format!("workspace {id}"))
-            .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
+        require_tenant(
+            s.config.auth_required,
+            &actor,
+            &ws.tenant_id,
+            format!("workspace {id}"),
+        )
+        .map_err(|e| McpError::invalid_request(e.to_string(), None))?;
         require_owner(s.config.auth_required, &actor, &ws.owner, id)?;
 
         let params = json!({ "workspace_id": id }).to_string();
-        match gate(s, &actor.id, tool, &params, args.confirmation_token.as_deref()).await {
+        match gate(
+            s,
+            &actor.id,
+            tool,
+            &params,
+            args.confirmation_token.as_deref(),
+        )
+        .await
+        {
             Ok(Gate::Propose(token)) => {
-                audit(s, &actor, tool, "workspace", id, "proposed", json!({ "via": "mcp", "confirmed": false })).await;
+                audit(
+                    s,
+                    &actor,
+                    tool,
+                    "workspace",
+                    id,
+                    "proposed",
+                    json!({ "via": "mcp", "confirmed": false }),
+                )
+                .await;
                 return Ok(ToolJson(json!({
                     "executed": false,
                     "plan": {
@@ -294,19 +384,60 @@ impl AtlasMcp {
             }
             Ok(Gate::Execute) => {}
             Err(why) => {
-                audit(s, &actor, tool, "workspace", id, "rejected", json!({ "via": "mcp", "reason": why })).await;
+                audit(
+                    s,
+                    &actor,
+                    tool,
+                    "workspace",
+                    id,
+                    "rejected",
+                    json!({ "via": "mcp", "reason": why }),
+                )
+                .await;
                 return Err(McpError::invalid_params(why, None));
             }
         }
 
         let result = if tool == RESET_WORKSPACE {
-            workspaces::reset_workspace(State(s.clone()), Extension(actor.clone()), Path(id.to_string())).await
+            workspaces::reset_workspace(
+                State(s.clone()),
+                Extension(actor.clone()),
+                Path(id.to_string()),
+            )
+            .await
         } else {
-            workspaces::discard_workspace(State(s.clone()), Extension(actor.clone()), Path(id.to_string())).await
+            workspaces::discard_workspace(
+                State(s.clone()),
+                Extension(actor.clone()),
+                Path(id.to_string()),
+            )
+            .await
         };
         match &result {
-            Ok(Json(v)) => audit(s, &actor, tool, "workspace", id, "success", json!({ "via": "mcp", "confirmed": true, "result": v })).await,
-            Err(e) => audit(s, &actor, tool, "workspace", id, "failure", json!({ "via": "mcp", "confirmed": true, "error": e.to_string() })).await,
+            Ok(Json(v)) => {
+                audit(
+                    s,
+                    &actor,
+                    tool,
+                    "workspace",
+                    id,
+                    "success",
+                    json!({ "via": "mcp", "confirmed": true, "result": v }),
+                )
+                .await
+            }
+            Err(e) => {
+                audit(
+                    s,
+                    &actor,
+                    tool,
+                    "workspace",
+                    id,
+                    "failure",
+                    json!({ "via": "mcp", "confirmed": true, "error": e.to_string() }),
+                )
+                .await
+            }
         }
         let out = rest(result)?;
         Ok(ToolJson(json!({ "executed": true, "result": out.0 })))

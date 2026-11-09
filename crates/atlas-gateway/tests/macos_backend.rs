@@ -130,5 +130,8 @@ async fn macos_backend_registers_and_discovery_fills_pools_and_volumes() {
     for want in ["Backup", "Scratch", "CAMERA"] {
         assert!(names.contains(&want), "{want} missing from {names:?}");
     }
-    assert!(!names.contains(&"Installer"), "disk images stay out of inventory");
+    assert!(
+        !names.contains(&"Installer"),
+        "disk images stay out of inventory"
+    );
 }

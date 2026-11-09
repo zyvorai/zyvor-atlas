@@ -4,7 +4,6 @@
 //! `jti` is revoked, after which the auth middleware rejects it (401) before its TTL expires.
 //! Revocation is admin-only. Auth on.
 
-
 use atlas_common::config::CephDriverMode;
 use atlas_common::Config;
 use atlas_gateway::routes;

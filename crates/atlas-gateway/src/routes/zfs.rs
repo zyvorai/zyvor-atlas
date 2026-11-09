@@ -170,7 +170,9 @@ pub(crate) async fn destroy_zfs_pool(
     }
     let pool_row_id = atlas_driver_zfs::pool_id(&name);
     if !atlas_inventory::pool_row_exists(&s.pool, &pool_row_id).await? {
-        return Err(AppError::NotFound(format!("zfs pool {name} is not in inventory")));
+        return Err(AppError::NotFound(format!(
+            "zfs pool {name} is not in inventory"
+        )));
     }
     let root_volume = atlas_driver_zfs::root_volume_id(&name);
     let extra: Vec<String> = atlas_inventory::volume_ids_in_pool(&s.pool, &pool_row_id)
