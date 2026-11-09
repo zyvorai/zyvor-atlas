@@ -491,6 +491,26 @@ pub(crate) async fn expand_volume(
 pub(crate) struct SnapshotBody {
     name: Option<String>,
     snapshot_class: Option<String>,
+    /// When true and a snapshot of this volume already has the same name, return that one (200,
+    /// `"existing": true`) instead of creating another. Best effort: the check is a read followed
+    /// by a create, and snapshot names are not unique in the catalog, so two concurrent requests
+    /// (even on one gateway) can both pass it. Default false keeps the historic behaviour.
+    #[serde(default)]
+    if_not_exists: bool,
+}
+
+/// The response for a snapshot reused by `if_not_exists`.
+fn existing_snapshot_response(snap: &atlas_api_types::StorageSnapshot) -> (StatusCode, Json<Value>) {
+    (
+        StatusCode::OK,
+        Json(json!({
+            "snapshot_id": snap.id,
+            "volume_id": snap.volume_id,
+            "name": snap.name,
+            "state": snap.state,
+            "existing": true,
+        })),
+    )
 }
 
 /// `POST /volumes/{id}/snapshots`
@@ -516,6 +536,13 @@ pub(crate) async fn create_snapshot(
             .name
             .filter(|n| !n.trim().is_empty())
             .unwrap_or_else(|| format!("{}-snap", vol.name));
+        if body.if_not_exists {
+            if let Some(snap) =
+                atlas_inventory::snapshots::find_by_name(&s.pool, &id, &name).await?
+            {
+                return Ok(existing_snapshot_response(&snap));
+            }
+        }
         let native = vol.backend_native_id.clone().unwrap_or_else(|| id.clone());
         let res = driver
             .create_snapshot(CreateSnapshotRequest {
@@ -564,6 +591,13 @@ pub(crate) async fn create_snapshot(
     let snap_name = body
         .name
         .unwrap_or_else(|| format!("{}-{}", vol.name, &snapshot_id[5..]));
+    if body.if_not_exists {
+        // The row of a snapshot still being created by its job does not exist yet, so a request
+        // that races a pending create is not caught here.
+        if let Some(snap) = atlas_inventory::snapshots::find_by_name(&s.pool, &id, &snap_name).await? {
+            return Ok(existing_snapshot_response(&snap));
+        }
+    }
     let snapshot_class = body
         .snapshot_class
         .unwrap_or_else(|| "zyvor-rbd-snapclass".into());
@@ -710,6 +744,18 @@ pub(crate) async fn delete_snapshot(
     ))
 }
 
+/// Remember a snapshot's lock expiry in the catalog (`locked_until` on the snapshot API). The lock
+/// itself is already set on the backend, so a failure here is logged, not returned: the snapshot
+/// stays locked and the API just does not show the expiry until the next lock call.
+pub(crate) async fn record_locked_until(s: &AppState, snapshot_id: &str, until_unix: u64) {
+    let until = i64::try_from(until_unix).unwrap_or(i64::MAX);
+    if let Err(e) =
+        atlas_inventory::snapshots::set_locked_until(&s.pool, snapshot_id, until).await
+    {
+        tracing::warn!(snapshot_id, error = %e, "could not record snapshot lock expiry");
+    }
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct LockBody {
     retain_secs: u64,
@@ -751,6 +797,7 @@ pub(crate) async fn lock_snapshot(
         .lock_snapshot(&native, body.retain_secs)
         .await
         .map_err(driver_error)?;
+    record_locked_until(&s, &id, until).await;
     audit(
         &s,
         Some(&snap.tenant_id),

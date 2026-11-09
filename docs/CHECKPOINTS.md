@@ -12,7 +12,7 @@ atlasctl checkpoint seal --volume vol_native_fs_<id> --root /mnt/train \
     --path /runs/llama/iter_0001000 --preset megatron --lock-days 7 --keep-last 5
 ```
 
-Unit and integration tested (`crates/atlasctl/src/checkpoint.rs`, `crates/atlasctl/tests/checkpoint_seal.rs`:
+Unit and integration tested (`crates/atlasctl/src/checkpoint.rs` including the lock-skip and duplicate decisions, `crates/atlasctl/tests/checkpoint_seal.rs`:
 the built binary against an in-process gateway on the fixture native driver, with hand-made DCP,
 Megatron and Orbax directory layouts). **Never run against a real training job, real PyTorch,
 Megatron-LM or Orbax output, or a native cluster.** The layouts below come from reading the
@@ -22,17 +22,21 @@ frameworks' source, not from inspecting their output.
 
 1. **Completion check** (see below). If the checkpoint does not look complete the command exits 3
    and creates nothing.
-2. **Snapshot** `POST /volumes/{id}/snapshots`, named `ckpt.<run>.<step>.<hash>` (below). If a
-   snapshot of that volume already has the name, it is reused.
+2. **Snapshot** `POST /volumes/{id}/snapshots` with `if_not_exists`, named
+   `ckpt.<run>.<step>.<hash>` (below). If a snapshot of that volume already has the name, it is
+   reused.
 3. **Lock** `POST /snapshots/{id}/lock` for `--lock-days` (default 7; `0` skips the lock; at most
-   3650). Needs the admin role. A lock can be extended and never shortened.
+   3650). Needs the admin role. A lock can be extended and never shortened. The call is skipped when
+   the gateway already reports the snapshot locked (`locked_until`) for at least `--lock-days` from
+   now.
 4. **Prune** with `--keep-last N`: of the snapshots this command made for the same run on this
    volume, keep the newest N and `DELETE /snapshots/{id}` the rest. The gateway refuses a locked
    snapshot (HTTP 409) until its retention ends, and one with clones; those are reported under
    `retained` and kept. The snapshot sealed by this invocation is never deleted.
 
 The result is JSON on stdout (progress goes to stderr). `--dry-run` runs the completion check and
-the reads, prints what would be created, locked and deleted, and changes nothing.
+the reads, prints what would be created, locked (the current `locked_until_unix` and whether a lock
+call would be made) and deleted, and changes nothing.
 
 | Exit | Meaning |
 |---|---|
@@ -43,7 +47,10 @@ the reads, prints what would be created, locked and deleted, and changes nothing
 | 4 | sealed, but deleting an old snapshot failed for a reason other than a lock |
 
 If the snapshot was created but the lock call failed, the error says so (exit 1); re-running reuses
-the snapshot and retries the lock.
+the snapshot and retries the lock. When the lock call is skipped the result says so
+(`"lock": {"locked": true, "skipped": true, ...}`). If a race made a second same-named snapshot and
+this call removed its own (`"duplicate_removed": true`), `snapshot_id` is the surviving one and
+`created` is `false`.
 
 ## Whole-filesystem snapshots
 
@@ -66,11 +73,22 @@ Slugs keep letters and digits and turn everything else into `-`. `--keep-last` d
 that parse as exactly this form, in the same `run`; a snapshot made any other way is never touched.
 That prefix is a convention, not a permission: anyone can create a snapshot with such a name.
 
-Re-running on the same checkpoint reuses the snapshot. It re-applies the lock, which extends the
-retention to *now + `--lock-days`* (the gateway does not report a snapshot's current lock, so
-the command cannot tell whether one is needed); a shorter `--lock-days` on a re-run is not an error.
-Do not run two seals of the same checkpoint at once: both can pass the "exists" check and make two
-snapshots with the same name.
+Re-running on the same checkpoint reuses the snapshot. The gateway reports a snapshot's lock expiry
+as `locked_until` (`docs/WORM.md`), so a re-run whose `--lock-days` the lock already covers makes no
+lock call at all, and a longer `--lock-days` extends it to *now + `--lock-days`*. "Covers" is exact:
+a lock made seven days ago for seven days no longer reaches seven days from now, so a plain re-run a
+while later extends it again by the elapsed time. A shorter `--lock-days` on a re-run is not an
+error either way (the gateway's 409 "cannot be shortened" is still handled, for a gateway that does
+not report `locked_until` or a lock set directly on a node, which `locked_until` does not show).
+
+The snapshot is created with `if_not_exists`, so a seal that finds the name already taken (by a
+concurrent seal) gets that snapshot back. That check is best effort (snapshot names are not unique
+in the catalog and there is no unique index): two seals can still both pass it. So after creating,
+the command lists the volume's snapshots again; if several share the name, the oldest (creation
+time, then id) is the keeper, and this call deletes **its own** newer snapshot, never one it did not
+make and never a locked one. If the other seal was the newer one, it makes the same decision on its
+side. A tie in creation time can leave both in place; `docs/API.md` and the `if_not_exists` note
+there describe the residual race, which includes two gateway replicas on Postgres.
 
 Pruning orders snapshots by creation time (second resolution), then by the trailing number of the
 step name, then by name.
@@ -161,4 +179,4 @@ only seal volumes of its tenant. Pass `--token` / `ATLAS_TOKEN` as for any `atla
 - Which snapshot holds a *good* checkpoint: nothing verifies the contents or runs a restore.
 - A restore command. Clone or restore the snapshot (`atlasctl clone-snapshot`, `restore-snapshot`)
   and read the checkpoint from the clone.
-- Showing a snapshot's lock expiry; the gateway does not expose it.
+- A lock set directly on a node rather than through the gateway: `locked_until` does not show it.

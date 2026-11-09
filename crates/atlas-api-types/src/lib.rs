@@ -490,6 +490,12 @@ pub struct StorageSnapshot {
     pub protected: bool,
     pub parent_snapshot_id: Option<String>,
     pub created_at: Option<String>,
+    /// End of the retention lock (unix seconds), recorded by the gateway when it locks the
+    /// snapshot (`POST /snapshots/{id}/lock`, ransomware protect). Absent when the gateway never
+    /// locked it; a value in the past means the lock has expired. Locks set directly on a native
+    /// node are not reflected here.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked_until: Option<i64>,
 }
 
 // ---------------------------------------------------------------------------

@@ -376,6 +376,59 @@ pub struct SnapRow {
     pub id: String,
     pub name: String,
     pub created_at: String,
+    /// End of the retention lock (unix seconds) as the gateway recorded it; `None` when it never
+    /// locked the snapshot (or is an older gateway that does not report it).
+    pub locked_until: Option<i64>,
+}
+
+/// The snapshot of `name` every racing `checkpoint seal` agrees is the first one: the oldest by
+/// creation time (second resolution), ties broken by id.
+pub fn canonical<'a>(rows: &'a [SnapRow], name: &str) -> Option<&'a SnapRow> {
+    rows.iter()
+        .filter(|r| r.name == name)
+        .min_by(|a, b| (&a.created_at, &a.id).cmp(&(&b.created_at, &b.id)))
+}
+
+/// Whether `own_id` is a duplicate this invocation should delete: another snapshot of the same
+/// name is canonical, ours is not, and ours is not (known to be) locked. Only ever the caller's own
+/// snapshot: a duplicate made by someone else is left alone.
+pub fn own_duplicate(rows: &[SnapRow], name: &str, own_id: &str, now_unix: i64) -> bool {
+    match (canonical(rows, name), rows.iter().find(|r| r.id == own_id)) {
+        (Some(c), Some(own)) => {
+            c.id != own.id && own.locked_until.is_none_or(|until| until <= now_unix)
+        }
+        _ => false,
+    }
+}
+
+/// What the lock step does for a snapshot locked until `locked_until`, given `lock_secs` wanted
+/// from `now_unix`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LockPlan {
+    /// `--lock-days 0`.
+    Off,
+    /// Already locked at least `lock_secs` from now: no call needed.
+    Covered,
+    /// Not locked (or the lock ends sooner): call the lock endpoint.
+    Lock,
+}
+
+pub fn lock_plan(locked_until: Option<i64>, lock_secs: u64, now_unix: i64) -> LockPlan {
+    if lock_secs == 0 {
+        return LockPlan::Off;
+    }
+    let want = now_unix.saturating_add(i64::try_from(lock_secs).unwrap_or(i64::MAX));
+    match locked_until {
+        Some(until) if until >= want => LockPlan::Covered,
+        _ => LockPlan::Lock,
+    }
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| i64::try_from(d.as_secs()).unwrap_or(i64::MAX))
+        .unwrap_or(0)
 }
 
 /// Snapshots of `run` made by this command beyond the newest `keep`, oldest last. The snapshot
@@ -451,6 +504,7 @@ fn snap_rows(v: &Value, volume: &str) -> Vec<SnapRow> {
                     id: s["id"].as_str().unwrap_or_default().to_string(),
                     name: s["name"].as_str().unwrap_or_default().to_string(),
                     created_at: s["created_at"].as_str().unwrap_or_default().to_string(),
+                    locked_until: s["locked_until"].as_i64(),
                 })
                 .collect()
         })
@@ -530,8 +584,9 @@ pub async fn run(
         bail!("GET /snapshots: HTTP {st}: {}", err_text(&snaps));
     }
     let mut rows = snap_rows(&snaps, &a.volume);
-    // The list is newest first; if a race made two, the oldest is the one that was sealed first.
-    let existing = rows.iter().rev().find(|r| r.name == name).cloned();
+    // If a race made two of this name, the oldest is the one that was sealed first.
+    let existing = canonical(&rows, &name).cloned();
+    let now = unix_now();
 
     let lock_secs = u64::from(a.lock_days) * 86_400;
     let sealed_id = existing
@@ -544,6 +599,7 @@ pub async fn run(
             id: sealed_id.clone(),
             name: name.clone(),
             created_at: "9999-12-31 23:59:59".into(),
+            locked_until: None,
         });
     }
     let candidates = a
@@ -565,6 +621,12 @@ pub async fn run(
                 "snapshot": if existing.is_some() { "exists, would be reused" } else { "would be created" },
                 "snapshot_id": existing.as_ref().map(|r| r.id.clone()),
                 "lock_days": a.lock_days,
+                "locked_until_unix": existing.as_ref().and_then(|r| r.locked_until),
+                "lock": match lock_plan(existing.as_ref().and_then(|r| r.locked_until), lock_secs, now) {
+                    LockPlan::Off => "not requested (--lock-days 0)",
+                    LockPlan::Covered => "already locked for at least --lock-days from now; no lock call",
+                    LockPlan::Lock => "would be locked (or the lock extended)",
+                },
                 "would_try_to_delete": candidates.iter().map(|r| json!({"id": r.id, "name": r.name})).collect::<Vec<_>>(),
                 "note": "a locked snapshot, or one with clones, is refused by the gateway and kept",
             }))?
@@ -572,7 +634,11 @@ pub async fn run(
         return Ok(0);
     }
 
-    // 3. Snapshot (reused when this checkpoint was sealed before).
+    // 3. Snapshot (reused when this checkpoint was sealed before). `if_not_exists` makes the
+    // gateway return a same-named snapshot another run just made (HTTP 200) instead of a second
+    // one; it is best effort, so afterwards look for a duplicate this call still produced.
+    let mut locked_until = existing.as_ref().and_then(|r| r.locked_until);
+    let mut duplicate_removed = false;
     let (snapshot_id, created) = match existing {
         Some(r) => (r.id, false),
         None => {
@@ -580,17 +646,45 @@ pub async fn run(
                 .call(
                     reqwest::Method::POST,
                     &format!("/volumes/{}/snapshots", a.volume),
-                    Some(json!({ "name": name })),
+                    Some(json!({ "name": name, "if_not_exists": true })),
                 )
                 .await?;
-            if st != 201 {
+            if st != 201 && st != 200 {
                 bail!("create snapshot: HTTP {st}: {}", err_text(&body));
             }
-            let id = body["snapshot_id"]
+            let mut id = body["snapshot_id"]
                 .as_str()
                 .context("snapshot response has no snapshot_id")?
                 .to_string();
-            (id, true)
+            let mut created = st == 201;
+            if created {
+                // A race can still leave two; the older one is canonical. Delete only our own
+                // newer duplicate, never a locked one (the gateway refuses that too).
+                let relisted = api.call(reqwest::Method::GET, "/snapshots", None).await;
+                if let Ok((200, v)) = relisted {
+                    let fresh = snap_rows(&v, &a.volume);
+                    if own_duplicate(&fresh, &name, &id, unix_now()) {
+                        let keep = canonical(&fresh, &name).cloned();
+                        let (dst, dbody) = api
+                            .call(reqwest::Method::DELETE, &format!("/snapshots/{id}"), None)
+                            .await?;
+                        match (dst, keep) {
+                            (200 | 404, Some(k)) => {
+                                eprintln!("removed our duplicate {id}; keeping {}", k.id);
+                                duplicate_removed = true;
+                                created = false;
+                                locked_until = k.locked_until;
+                                id = k.id;
+                            }
+                            _ => eprintln!(
+                                "warning: a second snapshot named {name} exists and {id} could not be removed (HTTP {dst}: {})",
+                                err_text(&dbody)
+                            ),
+                        }
+                    }
+                }
+            }
+            (id, created)
         }
     };
     eprintln!(
@@ -602,9 +696,17 @@ pub async fn run(
         }
     );
 
-    // 4. Lock. A lock can only be extended, so a re-run with a shorter --lock-days is not an error.
+    // 4. Lock. A lock can only be extended, so a re-run with a shorter --lock-days is not an error,
+    // and when the gateway already reports the snapshot locked for at least --lock-days from now
+    // there is nothing to do. (A gateway that does not report `locked_until` gets the call.)
     let mut lock = json!({ "days": a.lock_days, "locked": false });
-    if lock_secs > 0 {
+    let plan = lock_plan(locked_until, lock_secs, unix_now());
+    if plan == LockPlan::Covered {
+        lock = json!({ "days": a.lock_days, "locked": true, "skipped": true,
+                       "retain_until_unix": locked_until,
+                       "note": "already locked for at least --lock-days from now" });
+    }
+    if plan == LockPlan::Lock {
         let (st, body) = api
             .call(
                 reqwest::Method::POST,
@@ -659,6 +761,7 @@ pub async fn run(
             "snapshot_id": snapshot_id,
             "snapshot_name": name,
             "created": created,
+            "duplicate_removed": duplicate_removed,
             "lock": lock,
             "run": run,
             "pruned": pruned,
@@ -863,6 +966,7 @@ mod tests {
             id: id.into(),
             name: format!("ckpt.{run}.step{step}.0123abcd"),
             created_at: created.into(),
+            locked_until: None,
         }
     }
 
@@ -877,6 +981,7 @@ mod tests {
                 id: "m".into(),
                 name: "manual".into(),
                 created_at: "2020-01-01 00:00:00".into(),
+                locked_until: None,
             },
         ];
         let ids = |v: Vec<SnapRow>| v.into_iter().map(|r| r.id).collect::<Vec<_>>();
@@ -900,5 +1005,71 @@ mod tests {
             .map(|r| r.id)
             .collect();
         assert_eq!(out, ["s2", "s1"]);
+    }
+
+    #[test]
+    fn canonical_is_the_oldest_same_named_snapshot() {
+        let mut a = row("b-id", "r", 1, "2026-01-01 00:00:02");
+        let mut b = row("a-id", "r", 1, "2026-01-01 00:00:02");
+        let c = row("z-id", "r", 1, "2026-01-01 00:00:01");
+        let other = row("o", "r", 2, "2025-01-01 00:00:00");
+        assert_eq!(canonical(&[a.clone(), b.clone()], &a.name).unwrap().id, "a-id");
+        assert_eq!(
+            canonical(&[a.clone(), b.clone(), c.clone(), other], &a.name).unwrap().id,
+            "z-id"
+        );
+        assert!(canonical(&[a.clone()], "nope").is_none());
+        a.locked_until = Some(1);
+        b.locked_until = Some(2);
+        assert_eq!(canonical(&[a, b], "ckpt.r.step1.0123abcd").unwrap().id, "a-id");
+    }
+
+    #[test]
+    fn only_our_own_newer_duplicate_is_deleted_and_never_a_locked_one() {
+        let first = row("first", "r", 1, "2026-01-01 00:00:01");
+        let mut second = row("second", "r", 1, "2026-01-01 00:00:02");
+        let name = first.name.clone();
+        let now = 1_000;
+        let rows = vec![first.clone(), second.clone()];
+        // We made `second`: it is the newer duplicate, so we remove it.
+        assert!(own_duplicate(&rows, &name, "second", now));
+        // We made `first`: it is the canonical one, nothing to remove (the other racer's duty).
+        assert!(!own_duplicate(&rows, &name, "first", now));
+        // Ours is locked in the future: never deleted.
+        second.locked_until = Some(now + 60);
+        assert!(!own_duplicate(&[first.clone(), second.clone()], &name, "second", now));
+        // An expired lock does not protect it.
+        second.locked_until = Some(now - 1);
+        assert!(own_duplicate(&[first.clone(), second], &name, "second", now));
+        // Alone, or not in the list: nothing to do.
+        assert!(!own_duplicate(&[first], &name, "first", now));
+        assert!(!own_duplicate(&[], &name, "gone", now));
+    }
+
+    #[test]
+    fn lock_is_skipped_only_when_already_long_enough() {
+        let now = 1_000_000;
+        let week: i64 = 7 * 86_400;
+        let secs = week as u64;
+        assert_eq!(lock_plan(None, secs, now), LockPlan::Lock);
+        assert_eq!(lock_plan(Some(now + week), secs, now), LockPlan::Covered);
+        assert_eq!(lock_plan(Some(now + week + 5), secs, now), LockPlan::Covered);
+        assert_eq!(lock_plan(Some(now + week - 1), secs, now), LockPlan::Lock);
+        assert_eq!(lock_plan(Some(now - 10), secs, now), LockPlan::Lock, "expired");
+        assert_eq!(lock_plan(Some(now + week), 0, now), LockPlan::Off);
+        assert_eq!(lock_plan(None, 0, now), LockPlan::Off);
+    }
+
+    #[test]
+    fn snap_rows_reads_locked_until_and_tolerates_its_absence() {
+        let v = json!([
+            {"id": "a", "name": "n", "volume_id": "v", "created_at": "t", "locked_until": 42},
+            {"id": "b", "name": "n", "volume_id": "v", "created_at": "t"},
+            {"id": "c", "name": "n", "volume_id": "other", "created_at": "t"},
+        ]);
+        let rows = snap_rows(&v, "v");
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].locked_until, Some(42));
+        assert_eq!(rows[1].locked_until, None);
     }
 }
