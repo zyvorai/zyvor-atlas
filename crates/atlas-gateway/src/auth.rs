@@ -1,7 +1,9 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: Apache-2.0
 //! JWT auth middleware. When `config.auth_required` is false (dev default), requests pass through
-//! with an anonymous actor; when true, a valid HS256 Bearer token is required.
+//! with an anonymous actor; when true, a valid HS256 Bearer token is required. On the MCP endpoint
+//! only, and only when `ATLAS_MCP_IDP_ISSUER` is set, an RS256/ES256 identity-provider access token
+//! is also accepted (`idp_token.rs`); REST, gRPC and `/metrics` stay Atlas-HS256-only.
 
 use axum::{
     body::Body,
@@ -204,6 +206,25 @@ pub fn role_level(role: &str) -> u8 {
     }
 }
 
+/// Map an identity provider's `groups` claim to an Atlas role: `admin` when any group is in
+/// `admin_groups`, else `operator` when any is in `operator_groups`, else `viewer` (least privilege,
+/// also for a token with no groups at all). One function for the console SSO login
+/// (`routes/oidc.rs`) and the IdP access tokens accepted on `/mcp` (`idp_token.rs`), so the two can
+/// never disagree about who is an admin.
+pub fn role_for_groups(
+    groups: &[String],
+    admin_groups: &[String],
+    operator_groups: &[String],
+) -> &'static str {
+    if groups.iter().any(|g| admin_groups.contains(g)) {
+        "admin"
+    } else if groups.iter().any(|g| operator_groups.contains(g)) {
+        "operator"
+    } else {
+        "viewer"
+    }
+}
+
 /// Mint a signed HS256 service-account token for `subject` with `role`, expiring in `ttl_secs`.
 /// Returns `(token, exp_unix_secs, jti)`. The `jti` identifies the token for later revocation. Used
 /// by the token-issuance endpoint so products (Veyron, Hyper2KVM, …) get least-privilege credentials
@@ -387,6 +408,41 @@ pub async fn auth_middleware(
                 scope: None,
                 workspace_bytes: None,
                 jti: String::new(),
+            }
+        } else if let Some(idp) = state
+            .mcp_idp
+            .as_ref()
+            .filter(|_| is_mcp_path(req.uri().path()) && crate::idp_token::is_idp_token(token))
+        {
+            // An identity-provider access token (RS256/ES256), accepted on the MCP endpoint only and
+            // only when `ATLAS_MCP_IDP_ISSUER` is set. Atlas never mints these algorithms, so routing
+            // on the header cannot let an Atlas token take this path or the reverse, and every other
+            // route (REST, `/metrics`) never reaches this branch. Owned copy: the validator awaits a
+            // key fetch, and nothing borrowed from the request may live across that.
+            let token = token.to_owned();
+            match idp.validate(&token).await {
+                Ok(id) => {
+                    if !id.jti.is_empty() {
+                        match atlas_inventory::tokens::is_revoked(&state.pool, &id.jti).await {
+                            Ok(true) => return unauthorized("token has been revoked", challenge(true)),
+                            Ok(false) => {}
+                            Err(e) => tracing::warn!("token revocation check failed: {e}"),
+                        }
+                    }
+                    Actor {
+                        id: id.actor_id,
+                        role: id.role.to_string(),
+                        tenant_id: id.tenant_id,
+                        tools: Vec::new(),
+                        scope: None,
+                        workspace_bytes: None,
+                        jti: id.jti,
+                    }
+                }
+                Err(e) => {
+                    tracing::warn!(reason = %e, "MCP IdP access token refused");
+                    return unauthorized(&format!("invalid token: {e}"), challenge(true));
+                }
             }
         } else {
             match decode_token(

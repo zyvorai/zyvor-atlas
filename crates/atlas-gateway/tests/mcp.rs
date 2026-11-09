@@ -873,7 +873,8 @@ async fn mcp_chargeback_is_tenant_filtered() {
 const MCP_META: &str = "/.well-known/oauth-protected-resource/api/atlas/v1/mcp";
 
 /// RFC 9728 metadata is public (no token even with auth on), has the documented shape, and claims
-/// nothing Atlas lacks: no authorization server, no scopes.
+/// nothing Atlas lacks: with no IdP configured (`ATLAS_MCP_IDP_ISSUER`, covered in `mcp_idp.rs`, where
+/// `authorization_servers` is present) there is no authorization server, and never any scopes.
 #[tokio::test]
 async fn oauth_protected_resource_metadata_shape() {
     let (addr, _pool) = spawn(true, "mcp-test-secret-at-least-32-bytes!!").await;
@@ -885,7 +886,7 @@ async fn oauth_protected_resource_metadata_shape() {
     let doc: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(doc["resource"], format!("{base}/api/atlas/v1/mcp"));
     assert_eq!(doc["bearer_methods_supported"], serde_json::json!(["header"]));
-    assert!(doc.get("authorization_servers").is_none(), "{doc}");
+    assert!(doc.get("authorization_servers").is_none(), "no IdP configured: {doc}");
     assert!(doc.get("scopes_supported").is_none(), "{doc}");
 
     // Root form: the resource is the origin (RFC 9728 section 3.3).
@@ -897,6 +898,7 @@ async fn oauth_protected_resource_metadata_shape() {
         .unwrap();
     assert_eq!(root["resource"], base);
     assert_eq!(root["bearer_methods_supported"], serde_json::json!(["header"]));
+    assert!(root.get("authorization_servers").is_none(), "{root}");
 
     // Another suffix is not served as metadata.
     let other = reqwest::get(format!("{base}/.well-known/oauth-protected-resource/api/atlas/v1/volumes"))

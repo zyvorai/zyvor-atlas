@@ -203,28 +203,54 @@ fn oidc_from_env() -> Option<OidcConfig> {
         .ok()
         .filter(|s| !s.trim().is_empty())?;
     let client_secret = std::env::var("ATLAS_OIDC_CLIENT_SECRET").unwrap_or_default();
-    let split_csv = |var: &str| -> Vec<String> {
-        std::env::var(var)
-            .ok()
-            .map(|s| {
-                s.split(',')
-                    .map(|x| x.trim().to_string())
-                    .filter(|x| !x.is_empty())
-                    .collect()
-            })
-            .unwrap_or_default()
-    };
+    let mapping = IdentityMapping::from_env();
     Some(OidcConfig {
         issuer_url,
         client_id,
         client_secret,
         redirect_url,
-        admin_groups: split_csv("ATLAS_OIDC_ADMIN_GROUP"),
-        operator_groups: split_csv("ATLAS_OIDC_OPERATOR_GROUP"),
-        tenant_claim: std::env::var("ATLAS_OIDC_TENANT_CLAIM")
-            .ok()
-            .filter(|s| !s.trim().is_empty()),
+        admin_groups: mapping.admin_groups,
+        operator_groups: mapping.operator_groups,
+        tenant_claim: mapping.tenant_claim,
     })
+}
+
+/// How an identity provider's claims map to an Atlas role and tenant: the `groups` claim against
+/// `ATLAS_OIDC_ADMIN_GROUP` / `ATLAS_OIDC_OPERATOR_GROUP` (comma-separated), and the claim named by
+/// `ATLAS_OIDC_TENANT_CLAIM`. Shared by the console SSO login and the IdP access tokens accepted on
+/// `/mcp` (`ATLAS_MCP_IDP_ISSUER`), so both resolve a person to the same role. Read independently of
+/// the rest of the OIDC login settings, which MCP token validation does not need.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct IdentityMapping {
+    pub admin_groups: Vec<String>,
+    pub operator_groups: Vec<String>,
+    pub tenant_claim: Option<String>,
+}
+
+impl IdentityMapping {
+    pub fn from_env() -> Self {
+        Self::from_lookup(|k| std::env::var(k).ok())
+    }
+
+    /// [`Self::from_env`] over an arbitrary variable lookup (tests pass a map instead of mutating
+    /// the process environment).
+    pub fn from_lookup(get: impl Fn(&str) -> Option<String>) -> Self {
+        let split_csv = |var: &str| -> Vec<String> {
+            get(var)
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default()
+        };
+        Self {
+            admin_groups: split_csv("ATLAS_OIDC_ADMIN_GROUP"),
+            operator_groups: split_csv("ATLAS_OIDC_OPERATOR_GROUP"),
+            tenant_claim: get("ATLAS_OIDC_TENANT_CLAIM").filter(|s| !s.trim().is_empty()),
+        }
+    }
 }
 
 impl Config {

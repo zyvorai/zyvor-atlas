@@ -354,6 +354,9 @@ pub struct AppState {
     /// Validated `ATLAS_PUBLIC_URL` origin (see `oauth_resource`); `None` derives the URL from the
     /// request's `Host`. Only the MCP OAuth metadata and 401 challenge read it.
     pub public_url: Option<String>,
+    /// Validator for identity-provider JWT access tokens on `/mcp`, when `ATLAS_MCP_IDP_ISSUER` is
+    /// set (see `idp_token`). `None`: the MCP endpoint accepts Atlas tokens only, as before.
+    pub mcp_idp: Option<Arc<crate::idp_token::IdpValidator>>,
 }
 
 impl AppState {

@@ -5,14 +5,22 @@
 //!
 //! What this is, and is not. The MCP authorization spec (2026-07-28) says an MCP server MUST serve
 //! Protected Resource Metadata and answer unauthenticated requests with
-//! `WWW-Authenticate: Bearer resource_metadata="<url>"`. This module does exactly that and nothing
-//! more. Atlas has **no OAuth authorization server**: tokens are HS256 JWTs Atlas mints itself
-//! (`POST /auth/login`, `POST /auth/tokens`, the OIDC console login), so the metadata document
-//! carries no `authorization_servers` and no `scopes_supported`. In particular it does not point at
-//! the OIDC issuer: that is an identity provider for the console's browser login, and a token it
-//! issues is not accepted by Atlas (only Atlas-signed JWTs are), so advertising it would send an
-//! MCP client down a flow that ends in a 401. Tokens carry no `aud`, so the RFC 8707 audience check
-//! the spec asks of a resource server is not performed.
+//! `WWW-Authenticate: Bearer resource_metadata="<url>"`, and, as an OAuth resource server, must name
+//! its authorization server(s) and accept only tokens issued for it. Atlas has **no OAuth
+//! authorization server** of its own. What it can do, when `ATLAS_MCP_IDP_ISSUER` is set (see
+//! `idp_token`), is validate JWT access tokens an external identity provider issued for the MCP
+//! endpoint (issuer, audience = the MCP URL, expiry, signature from the issuer's JWKS), and then the
+//! path-inserted document (the one whose `resource` is the MCP endpoint) carries
+//! `authorization_servers: [<that issuer>]`. Without it the document has no `authorization_servers`:
+//! the OIDC issuer used for the console's browser login is deliberately not advertised, because a token
+//! it issues is not accepted by Atlas.
+//!
+//! The root-form document (`resource` = the origin) never lists the issuer: the audience Atlas enforces
+//! is the MCP endpoint URL, so a client that took the origin as its RFC 8707 `resource` would get a
+//! token Atlas refuses. Neither document has `scopes_supported`: Atlas has roles and tool/resource
+//! scopes, not OAuth scope strings. Atlas's own HS256 tokens (`POST /auth/login`, `POST /auth/tokens`,
+//! the OIDC console login) carry no `aud`, are not audience-checked, and keep working unchanged; the
+//! audience check applies to IdP tokens only.
 //!
 //! # Where the resource URL comes from
 //! Atlas had no public-URL setting and no `Forwarded` handling anywhere, so this adds one:
@@ -107,14 +115,20 @@ pub fn metadata_url(public_url: Option<&str>, headers: &HeaderMap) -> Option<Str
 
 /// The RFC 9728 document. `resource` is the origin for the root form and the MCP endpoint URL for
 /// the path-inserted form (RFC 9728 section 3.3: it must equal the resource the URL was built
-/// from). No `authorization_servers`, no `scopes_supported`: Atlas has neither (module docs).
-pub fn metadata_document(resource: &str) -> Value {
-    json!({
+/// from). `authorization_server` is the IdP issuer Atlas validates tokens from, passed only for the
+/// MCP endpoint form and only when that is configured. No `scopes_supported`: Atlas has none
+/// (module docs).
+pub fn metadata_document(resource: &str, authorization_server: Option<&str>) -> Value {
+    let mut doc = json!({
         "resource": resource,
         "bearer_methods_supported": ["header"],
         "resource_name": "Zyvor Atlas MCP server",
         "resource_documentation": "https://github.com/zyvorai/zyvor-atlas/blob/main/docs/MCP.md"
-    })
+    });
+    if let Some(issuer) = authorization_server {
+        doc["authorization_servers"] = json!([issuer]);
+    }
+    doc
 }
 
 /// The `WWW-Authenticate` value for a 401 on the MCP endpoint. `invalid_token` is set when a token
@@ -148,6 +162,11 @@ fn respond(state: &AppState, headers: &HeaderMap, path: &str) -> Response {
             .into_response();
     };
     let resource = format!("{origin}{path}");
+    // Only the document whose resource is the MCP endpoint names the IdP: that is the URL the
+    // validator's audience is built from (see the module docs).
+    let issuer = (path == MCP_ENDPOINT_PATH)
+        .then(|| state.mcp_idp.as_ref().map(|i| i.issuer()))
+        .flatten();
     let cache = if configured {
         "public, max-age=300"
     } else {
@@ -155,7 +174,7 @@ fn respond(state: &AppState, headers: &HeaderMap, path: &str) -> Response {
     };
     (
         [(header::CACHE_CONTROL, HeaderValue::from_static(cache))],
-        Json(metadata_document(&resource)),
+        Json(metadata_document(&resource, issuer)),
     )
         .into_response()
 }
@@ -279,10 +298,18 @@ mod tests {
 
     #[test]
     fn document_has_only_what_atlas_can_stand_behind() {
-        let d = metadata_document("https://a.example/api/atlas/v1/mcp");
+        // No IdP configured: no authorization server is claimed.
+        let d = metadata_document("https://a.example/api/atlas/v1/mcp", None);
         assert_eq!(d["resource"], "https://a.example/api/atlas/v1/mcp");
         assert_eq!(d["bearer_methods_supported"], json!(["header"]));
         assert!(d.get("authorization_servers").is_none());
+        assert!(d.get("scopes_supported").is_none());
+        // With one, it is listed, and scopes still are not.
+        let d = metadata_document(
+            "https://a.example/api/atlas/v1/mcp",
+            Some("https://idp.example.com"),
+        );
+        assert_eq!(d["authorization_servers"], json!(["https://idp.example.com"]));
         assert!(d.get("scopes_supported").is_none());
     }
 }

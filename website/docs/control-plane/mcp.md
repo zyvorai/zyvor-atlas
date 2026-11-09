@@ -16,7 +16,7 @@ Neither can fail over, delete, restore or wipe anything.
 
 | Endpoint | Served by | Auth | Built with |
 |---|---|---|---|
-| `POST /api/atlas/v1/mcp` | `atlas-gateway` | the gateway's bearer JWT (operator or higher for most tools) | `--features mcp` (included in `Dockerfile` / `Dockerfile.ceph`) |
+| `POST /api/atlas/v1/mcp` | `atlas-gateway` | the gateway's bearer JWT (operator or higher for most tools); optionally also an identity provider's JWT access token ([below](#idp-access-tokens-resource-server)) | `--features mcp` (included in `Dockerfile` / `Dockerfile.ceph`) |
 | `POST /mcp` on port 5111 | `atlas-io-agent` | `ATLAS_IO_TOKEN` bearer when set | `--features mcp` (included in `Dockerfile.io`) |
 
 Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.md](../api-reference/index.md#mcp-model-context-protocol).
@@ -75,14 +75,14 @@ the auth scheme. It lists no tools and exposes no inventory or tenant data; thos
 
 The [MCP authorization spec](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
 says an MCP server MUST implement RFC 9728 and answer an unauthenticated request with a
-`WWW-Authenticate` header carrying `resource_metadata`. Atlas does the following, and only this:
+`WWW-Authenticate` header carrying `resource_metadata`. Atlas does the following:
 
 | Piece | Behaviour |
 |---|---|
-| `GET /.well-known/oauth-protected-resource/api/atlas/v1/mcp` | Public JSON for the MCP endpoint: `resource` (the MCP endpoint URL), `bearer_methods_supported: ["header"]`, `resource_name`, `resource_documentation`. |
-| `GET /.well-known/oauth-protected-resource` | The root form, same fields; `resource` is the origin (RFC 9728 section 3.3 requires it to match the resource the URL was built from). |
-| 401 on `/api/atlas/v1/mcp` | Adds `WWW-Authenticate: Bearer resource_metadata="<url of the first document>"`; when a token was sent and refused (bad signature, expired, revoked) it is `Bearer error="invalid_token", resource_metadata="..."`. The JSON body is unchanged. REST, gRPC and `/metrics` 401s get no header. |
-| `/.well-known/mcp` | The card now has `authentication.resource_metadata` (a path, relative like `endpoint`). |
+| `GET /.well-known/oauth-protected-resource/api/atlas/v1/mcp` | Public JSON for the MCP endpoint: `resource` (the MCP endpoint URL), `bearer_methods_supported: ["header"]`, `resource_name`, `resource_documentation`, and, **only when `ATLAS_MCP_IDP_ISSUER` is set**, `authorization_servers: ["<issuer>"]`. |
+| `GET /.well-known/oauth-protected-resource` | The root form; `resource` is the origin (RFC 9728 section 3.3 requires it to match the resource the URL was built from). It never lists `authorization_servers`: Atlas enforces the MCP endpoint URL as the token audience, so a client that took the origin as its RFC 8707 `resource` would be issued a token Atlas refuses. |
+| 401 on `/api/atlas/v1/mcp` | Adds `WWW-Authenticate: Bearer resource_metadata="<url of the first document>"`; when a token was sent and refused (bad signature, expired, revoked, wrong audience) it is `Bearer error="invalid_token", resource_metadata="..."`. The JSON body is unchanged. REST, gRPC and `/metrics` 401s get no header. |
+| `/.well-known/mcp` | The card has `authentication.resource_metadata` (a path, relative like `endpoint`) and, with an IdP configured, `authentication.authorization_servers`. |
 
 Only compiled with `--features mcp`, like the endpoint itself.
 
@@ -94,27 +94,78 @@ client is told. When unset the gateway falls back to the request's `Host` (accep
 by the caller unless a proxy overwrites them, so treat the fallback as a convenience for labs and NodePorts and set
 `ATLAS_PUBLIC_URL` in production. Host-derived documents are sent `Cache-Control: no-store`. With no usable
 `Host` and no `ATLAS_PUBLIC_URL`, the metadata routes return `400` and the 401 carries a bare `Bearer`.
+The IdP access-token feature requires `ATLAS_PUBLIC_URL` (see below).
 
-**What this does not do.** Do not read it as OAuth login support.
+**What this still does not do.** Do not read it as full OAuth login support.
 
-- There is **no OAuth authorization server**, so the document has **no `authorization_servers`** (the spec's
-  discovery page says it MUST list at least one) and no `scopes_supported`; the 401 has no `scope`. Atlas tokens
-  are HS256 JWTs minted by Atlas itself (`POST /auth/login`, `POST /auth/tokens`, the SSO console login). A
-  client that cannot be given a token out of band cannot complete an OAuth flow against Atlas.
-- The configured OIDC issuer (`ATLAS_OIDC_ISSUER_URL`) is deliberately **not** advertised. It signs users into
-  the console, after which Atlas mints its own JWT; a token the identity provider issues is not accepted by Atlas,
-  so listing it would lead a client into a flow that ends in a 401.
-- No Dynamic Client Registration, no Client ID Metadata Documents, no PKCE or token endpoint, no RFC 8707
-  `resource` handling.
-- **Audience is not enforced.** Atlas tokens have no `aud` claim and the gateway does not check one, although the
-  spec says an MCP server MUST validate that a token was issued for it. In practice a valid Atlas token works on
-  every Atlas route, MCP and REST alike, unless it is a tool-scoped agent token (MCP only).
-- No `403 insufficient_scope` challenge. Atlas has roles and tool/resource scopes, not OAuth scopes, and its 403s
-  (`FORBIDDEN`, tool denied) are unchanged and carry no `WWW-Authenticate`.
-- Not run against a real MCP client: the tests below only exercise the HTTP behaviour.
+- There is **no OAuth authorization server** in Atlas: no Dynamic Client Registration, no Client ID Metadata
+  Documents, no PKCE or token endpoint. A client authorizes against *your* identity provider (which must
+  support what the spec asks of an authorization server, including audience binding), then calls Atlas with the
+  access token it got. Atlas's own tokens are still HS256 JWTs minted by Atlas (`POST /auth/login`,
+  `POST /auth/tokens`, the SSO console login); a client that cannot be given one out of band and has no IdP
+  token cannot complete an OAuth flow against Atlas.
+- No `scopes_supported` and no `scope` in the 401: Atlas has roles and tool/resource scopes, not OAuth scope
+  strings, and an IdP token's `scope` claim is ignored. There is no `403 insufficient_scope` challenge; Atlas's
+  403s (`FORBIDDEN`, tool denied) are unchanged and carry no `WWW-Authenticate`.
+- **Opaque access tokens are not supported.** Only JWT access tokens (RS256 or ES256) are validated; Atlas does
+  no token introspection (RFC 7662).
+- The configured console OIDC issuer (`ATLAS_OIDC_ISSUER_URL`) is not advertised unless you also set
+  `ATLAS_MCP_IDP_ISSUER` to it. The two settings are independent: console login mints an Atlas token and still
+  works the same way.
+- **Audience is enforced for IdP tokens only.** Atlas's own tokens carry no `aud` and keep working on every Atlas
+  route unchanged (unless they are tool-scoped agent tokens, which are MCP only), so the spec's "validate that a
+  token was issued for this server" is met for the tokens that come from an external authorization server, not for
+  Atlas-minted ones.
+- Not run against a real MCP client or a real identity provider: the tests exercise the HTTP behaviour and an
+  in-process fake JWKS server.
 
 Tests: `crates/atlas-gateway/tests/mcp.rs` (`oauth_*`, `mcp_401_*`, `rest_401_has_no_challenge`,
-`authenticated_mcp_initialize_has_no_challenge`) and the unit tests in `src/oauth_resource.rs`.
+`authenticated_mcp_initialize_has_no_challenge`), `crates/atlas-gateway/tests/mcp_idp.rs` and the unit tests in
+`src/oauth_resource.rs` and `src/idp_token.rs`.
+
+### IdP access tokens (resource server)
+
+With `ATLAS_MCP_IDP_ISSUER` set, `/api/atlas/v1/mcp` also accepts a **JWT access token issued by that identity
+provider**, so an MCP host can authenticate a person through your IdP instead of being handed an Atlas token.
+It is off by default. It applies to the MCP endpoint only: REST, gRPC and `/metrics` never accept an IdP token
+(they validate Atlas HS256 tokens only), which the tests assert.
+
+| Variable | Meaning |
+|---|---|
+| `ATLAS_MCP_IDP_ISSUER` | Issuer URL. `iss` must equal it exactly (a string, no trailing-slash tolerance). Unset: feature off. |
+| `ATLAS_PUBLIC_URL` | **Required** with the above; the gateway refuses to start without it. The token's `aud` must contain `<ATLAS_PUBLIC_URL>/api/atlas/v1/mcp` (the `resource` of the metadata document). It is never taken from request headers. |
+| `ATLAS_MCP_IDP_JWKS_URL` | Where to fetch signing keys. Unset: OIDC discovery (`<issuer>/.well-known/openid-configuration`; its `issuer` must equal the configured one) supplies `jwks_uri`. |
+| `ATLAS_MCP_IDP_MAX_LIFETIME_SECS` | Longest validity accepted, default `86400`. `exp` may be at most this far ahead, and `exp - iat` (when `iat` is present) may not exceed it. |
+| `ATLAS_MCP_IDP_ALLOW_HTTP` | `1` allows plain `http://` for the issuer, discovery and JWKS URLs to a non-loopback host (the Dex lab, [`deploy/dex-lab`](https://github.com/zyvorai/zyvor-atlas/blob/main/deploy/dex-lab/README.md)). Default: `https` required, except loopback hosts. Never use it across an untrusted network: anyone who can alter the JWKS response can mint accepted tokens. |
+| `ATLAS_OIDC_ADMIN_GROUP`, `ATLAS_OIDC_OPERATOR_GROUP`, `ATLAS_OIDC_TENANT_CLAIM` | The same group-to-role and tenant mapping the console SSO login uses (one shared function). `groups` containing an admin group is `admin`, else an operator group is `operator`, else `viewer`; a `role` claim is never read. The tenant is the named string claim, else `global` (admins are not tenant-limited). They need not be set together with `ATLAS_OIDC_ISSUER_URL`. |
+
+What is checked: header `alg` must be `RS256` or `ES256` and a `kid` must be present; the key comes from the
+issuer's JWKS by `kid` and the algorithm is pinned from the key (RSA verifies only RS256, P-256 only ES256), so
+`alg: none`, every `HS*` (including the public key used as an HMAC secret), `PS*`, `ES384` and `EdDSA` are refused
+and symmetric JWKS entries are never imported; signature; `iss`; `aud` (a string, or an array that contains the MCP
+URL); `exp` (required); `nbf` (when present); `sub` (required, at most 256 characters); the lifetime cap above;
+30 seconds of clock leeway. A refusal is a `401` with `WWW-Authenticate: Bearer error="invalid_token", ...` and a
+short reason; the token itself is never logged or echoed.
+
+Keys: fetched on first use, so an IdP that is down at startup does not stop the gateway (that request gets a 401 and
+a log line, the next one retries). Cached for one hour. An unknown `kid` (key rotation) triggers a refetch, but at
+most one fetch attempt per 30 seconds in total, failed ones included, so a flood of made-up `kid`s cannot make the
+gateway hammer the IdP (a freshly rotated key can therefore be refused for up to 30 s). A successful fetch replaces the
+whole key set, so a retired key stops being trusted at the next refresh. If a refresh fails, already cached keys are
+used for up to one more hour, then requests get a 401. Responses over 256 KiB are refused, redirects are not
+followed, RSA keys under 2048 bits and keys with a mismatching `alg`/`use` are skipped.
+
+The resulting actor is **unscoped** (no tool allowlist, no resource scope, like an Atlas operator token) and limited
+only by its role. Its id is `idp-<8 hex of sha256(issuer)>:<sub>`, so an IdP subject cannot take over an Atlas
+subject's audit trail, rate-limit bucket or workspaces. A `jti` is recorded as `<same prefix>:<jti>` and checked
+against the `POST /auth/tokens/{jti}/revoke` deny-list (revoke the prefixed value, which appears in the audit
+`jti` field). **A token without a `jti` cannot be revoked in Atlas**; revoke it at the IdP and rely on the lifetime cap.
+
+Limits to know: the IdP must put the MCP URL in `aud` (RFC 8707 `resource`; many IdPs need an API/resource
+audience configured, and some, such as Dex, cannot set an arbitrary audience at all, see the Dex lab notes); group
+membership is read from the token, so a role change at the IdP takes effect when the token is replaced; Atlas does
+not check `azp`/`client_id`, any client the IdP issues a token to for this audience is accepted; there is no
+per-client allow-list.
 
 ## Connecting an agent
 
@@ -140,6 +191,7 @@ its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
 |---|---|---|
 | `ATLAS_MCP_ALLOWED_HOSTS` | gateway | `Host` allow-list for the transport; `*` disables. Unset: loopback-only without auth, any host when auth is required (the endpoint is bearer-gated). |
 | `ATLAS_PUBLIC_URL` | gateway | Origin clients reach the gateway at (`https://atlas.example.com`), used for the RFC 9728 `resource` and the 401 `resource_metadata` URL ([above](#oauth-protected-resource-metadata-rfc-9728)). Unset: derived from `Host`/`X-Forwarded-Proto`. Invalid: the gateway refuses to start. Read once at startup. |
+| `ATLAS_MCP_IDP_ISSUER` / `ATLAS_MCP_IDP_JWKS_URL` / `ATLAS_MCP_IDP_MAX_LIFETIME_SECS` / `ATLAS_MCP_IDP_ALLOW_HTTP` | gateway | Accept an identity provider's JWT access tokens on the MCP endpoint only; see [IdP access tokens](#idp-access-tokens-resource-server). Needs `ATLAS_PUBLIC_URL` (startup fails without it). Read once at startup. |
 | `ATLAS_MCP_WRITE_ENABLE` | gateway | `1` lists the guarded `create_snapshot`, `ack_alert`, `silence_alert`, `create_workspace`, `reset_workspace` and `discard_workspace` tools. Off by default. |
 | `ATLAS_MCP_AUDIT_CALLS` | gateway | Every tool call writes an `mcp.tool.call` audit row (caller, tool, `success` or `error`, token `jti`, role, whether the token is scoped), written after the response so it never delays a call. `0` turns it off, for a polling agent where one row per call is too many. Denied calls (`mcp.tool.denied`) and guarded writes are always audited. |
 | `ATLAS_MCP_CALLS_PER_MIN` | gateway | Tool calls per minute each token may make (a token's own `jti`; callers without one share their actor id's budget). Calls over it are refused and audited as `mcp.tool.rate_limited`. Unset or `0` is off. It adds to the per-actor request limit (`ATLAS_RATE_LIMIT_RPM`), which already covers `/mcp`. The count is kept in process and shared through the database (see [HA.md](./ha.md#mcp-call-budgets)), so on Postgres it holds across gateway pods within one sync interval; on SQLite it is per pod. Read once at startup. |
