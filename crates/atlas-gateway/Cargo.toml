@@ -101,4 +101,4 @@ rmcp = { version = "3.5", default-features = false, features = ["client", "trans
 # dependencies (rsa 0.9, p256 0.13, rand 0.8); dev-only, never linked into the gateway binary.
 rsa = "0.9"
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
-rand = "0.8"
+rand = "0.10"
