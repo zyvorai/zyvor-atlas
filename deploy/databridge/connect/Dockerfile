@@ -21,7 +21,7 @@
 # Oracle 26ai needs 3.7+: older Oracle connectors look the version up with
 # `BANNER_FULL LIKE 'Oracle Database%'`, which the "Oracle AI Database 26ai" banner never matches,
 # so validation fails with "Failed to resolve Oracle database version".
-FROM quay.io/strimzi/kafka:latest-kafka-4.4.0@sha256:b7a9a2691af3501a901bed19daa83958d6ffcd8bf09b98d71adec4888aa90263
+FROM quay.io/strimzi/kafka:latest-kafka-4.4.0@sha256:d5670aa84d0f1d9164d7b50369126a8bee3a6014382bc54388b5d8ab87a213e0
 USER root
 
 ARG DEBEZIUM_VERSION=3.7.0.Final
