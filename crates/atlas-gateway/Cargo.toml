@@ -100,5 +100,5 @@ rmcp = { version = "3.5", default-features = false, features = ["client", "trans
 # test time, so no private key is committed. All three are already in Cargo.lock as jsonwebtoken's own
 # dependencies (rsa 0.9, p256 0.13, rand 0.8); dev-only, never linked into the gateway binary.
 rsa = "0.9"
-p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+p256 = { version = "0.14", features = ["ecdsa", "pem"] }
 rand = "0.10"

@@ -548,7 +548,7 @@ dependencies = [
  "kube",
  "mime_guess",
  "openidconnect",
- "p256 0.13.2",
+ "p256 0.14.0",
  "prost",
  "rand 0.10.3",
  "reqwest 0.13.5",
