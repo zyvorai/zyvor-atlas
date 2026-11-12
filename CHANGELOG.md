@@ -23,6 +23,11 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - Native leader-lease metadata reads after ReadIndex; cuFile read/write wrappers; RDMA pipeline/registered-memory scaffold (runtime off).
 - Ops Advisor whitelist execute (`silence_alert` / `create_snapshot`) via propose/confirm; MCP lab AS DCR + PKCE; DataBridge Postgres reverse-copy rollback (`ATLAS_DATABRIDGE_ROLLBACK_COPY`); owner workflow intent records; macOS SMART/capacity metrics; native CDC chunker scaffolding + `cross_group_dedup` flag.
 
+### Fixed
+
+- Clippy `-D warnings` needless borrows in `snapshot_volume`; pin gateway test deps `p256` 0.13 / `rand` 0.8 so `mcp_idp` builds after the workspace p256 0.14 bump.
+- STATUS image-import table row broken by an unescaped `|` in `raw|qcow2`; README now matches qcow2 + RBD import.
+
 ### Not verified
 
 - Live SAN iSCSI, AWS/GCP/Azure cloud disks, Longhorn/WEKA/RGW object-lock/RBD import/qcow2 on real clusters, SoftRoCE pooled RDMA, GDS I/O, NFS/ZFS/uring eBPF attach, MCP introspection against a real AS.
