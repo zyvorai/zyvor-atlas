@@ -101,6 +101,6 @@ rmcp = { version = "3.5", default-features = false, features = ["client", "trans
 # IdP access-token tests (tests/mcp_idp.rs) sign RS256 and ES256 tokens with throwaway keys generated at
 # test time, so no private key is committed. All three are already in Cargo.lock as jsonwebtoken's own
 # dependencies (rsa 0.9, p256 0.13, rand 0.8); dev-only, never linked into the gateway binary.
-rsa = "0.9"
+rsa = "0.10"
 p256 = { version = "0.13", features = ["ecdsa", "pem"] }
 rand = "0.8"
