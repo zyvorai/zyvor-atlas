@@ -544,18 +544,18 @@ pub(crate) async fn snapshot_volume(
     id: String,
     body: SnapshotBody,
 ) -> AppResult<(StatusCode, Json<Value>)> {
-    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
+    crate::auth::require_role(s.config.auth_required, actor, crate::auth::ROLE_OPERATOR)?;
     let vol = atlas_inventory::get_volume(&s.pool, &id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("volume {id}")))?;
     let resource_tenant = atlas_inventory::volume_tenant(&s.pool, &id).await?;
     crate::auth::require_tenant(
         s.config.auth_required,
-        &actor,
+        actor,
         &resource_tenant,
         format!("volume {id}"),
     )?;
-    if let Some(driver) = native_driver_for_volume(&s, &id).await? {
+    if let Some(driver) = native_driver_for_volume(s, &id).await? {
         let name = body
             .name
             .filter(|n| !n.trim().is_empty())
@@ -587,9 +587,9 @@ pub(crate) async fn snapshot_volume(
         )
         .await?;
         audit(
-            &s,
+            s,
             Some(&resource_tenant),
-            &actor,
+            actor,
             "snapshot.create",
             "volume",
             &id,
