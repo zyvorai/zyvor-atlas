@@ -9,6 +9,10 @@
 //! default data path stays TCP/TLS, and RDMA is never offered on a TLS connection because it is
 //! unencrypted. It runs on SoftRoCE (`rdma link add rxe0 type rxe netdev lo`) as well as on
 //! hardware, so a passing test on SoftRoCE says the plumbing works, never how fast it is.
+//! Ignored tests in this file are not CI and do not require an RDMA NIC: SoftRoCE on loopback
+//! is enough (GID index 1, or `ATLAS_RDMA_GID_INDEX`). Pipelined sends and registered-memory
+//! zero-copy live in [`crate::rdma_pipeline`] and are not on this stream
+//! ([`crate::rdma_pipeline::runtime_enabled`] is false).
 
 use std::collections::VecDeque;
 use std::io::{self, Read, Write};
@@ -78,9 +82,7 @@ pub fn loopback_roundtrip(payload: &[u8], gid_index: u32) -> io::Result<Vec<u8>>
             match wc.wr_id() {
                 SEND => sent = true,
                 RECV => received = true,
-                other => {
-                    return Err(io::Error::other(format!("unexpected completion {other}")))
-                }
+                other => return Err(io::Error::other(format!("unexpected completion {other}"))),
             }
         }
     }
@@ -134,7 +136,9 @@ impl RdmaStream<'_, '_> {
         let mut wcs = [ibverbs::ibv_wc::default(); 16];
         for wc in self.cq.poll(&mut wcs[..])? {
             if let Some((status, _vendor)) = wc.error() {
-                return Err(io::Error::other(format!("RDMA work request failed: {status:?}")));
+                return Err(io::Error::other(format!(
+                    "RDMA work request failed: {status:?}"
+                )));
             }
             let id = wc.wr_id();
             if id == SEND_ID {
@@ -148,7 +152,10 @@ impl RdmaStream<'_, '_> {
 
     fn repost(&mut self, slot: usize) -> io::Result<()> {
         // Safety: the registered buffer outlives the work request (it lives as long as `self`).
-        unsafe { self.qp.post_receive(self.mr, slot * MSG..(slot + 1) * MSG, slot as u64) }
+        unsafe {
+            self.qp
+                .post_receive(self.mr, slot * MSG..(slot + 1) * MSG, slot as u64)
+        }
     }
 }
 
@@ -162,7 +169,10 @@ impl Read for RdmaStream<'_, '_> {
             self.pump()?;
             if self.ready.is_empty() {
                 if started.elapsed() > self.read_timeout {
-                    return Err(io::Error::new(io::ErrorKind::TimedOut, "RDMA read timed out"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "RDMA read timed out",
+                    ));
                 }
                 std::thread::yield_now();
             }
@@ -188,6 +198,16 @@ impl Write for RdmaStream<'_, '_> {
         }
         let n = data.len().min(MSG);
         let base = DEPTH * MSG;
+        // TODO(runtime): when `rdma_pipeline::runtime_enabled()` (always false today;
+        // `ATLAS_NATIVE_RDMA_PIPELINE=1` does not turn it on), post up to
+        // `rdma_pipeline::PIPELINE_DEPTH` sends and take the bytes from a
+        // `RegisteredRegion` instead of copying into this staging slot.
+        if crate::rdma_pipeline::runtime_enabled() {
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "RDMA pipelined send and registered-memory zero-copy are not wired yet",
+            ));
+        }
         self.mr[base..base + n].copy_from_slice(&data[..n]);
         self.send_done = false;
         // Safety: the staging slot is not touched again until this send completes, below.
@@ -197,7 +217,10 @@ impl Write for RdmaStream<'_, '_> {
             self.pump()?;
             if !self.send_done {
                 if started.elapsed() > STREAM_TIMEOUT {
-                    return Err(io::Error::new(io::ErrorKind::TimedOut, "RDMA write timed out"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "RDMA write timed out",
+                    ));
                 }
                 std::thread::yield_now();
             }
@@ -250,12 +273,15 @@ pub fn with_stream<R>(
     control.read_exact(&mut len)?;
     let len = u32::from_be_bytes(len) as usize;
     if len == 0 || len > 4096 {
-        return Err(io::Error::new(io::ErrorKind::InvalidData, "bad RDMA endpoint message"));
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "bad RDMA endpoint message",
+        ));
     }
     let mut theirs = vec![0u8; len];
     control.read_exact(&mut theirs)?;
-    let remote: ibverbs::QueuePairEndpoint =
-        serde_json::from_slice(&theirs).map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
+    let remote: ibverbs::QueuePairEndpoint = serde_json::from_slice(&theirs)
+        .map_err(|e| io::Error::new(io::ErrorKind::InvalidData, e))?;
     let mut qp = prepared.handshake(remote)?;
 
     let mut mr = pd.allocate::<u8>((DEPTH + 1) * MSG)?;
@@ -283,10 +309,12 @@ pub fn with_stream<R>(
 mod tests {
     use super::*;
 
-    /// Needs an RDMA device (SoftRoCE is enough): `cargo test -p atlas-native --features rdma
-    /// -- --ignored rdma`. Ignored by default so CI hosts without one stay green.
+    /// Needs an RDMA device. SoftRoCE is enough and an RDMA NIC is not required:
+    /// `rdma link add rxe0 type rxe netdev lo` (GID index 1, or `ATLAS_RDMA_GID_INDEX`).
+    /// Not run in CI. A pass on `rxe0` checks the round trip, not throughput.
+    /// `cargo test -p atlas-native --features rdma -- --ignored rdma`.
     #[test]
-    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
+    #[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput"]
     fn rdma_loopback_roundtrip_returns_the_payload() {
         let names = device_names().expect("list RDMA devices");
         assert!(!names.is_empty(), "no RDMA device visible to libibverbs");
@@ -301,8 +329,10 @@ mod tests {
 
     /// Two separate endpoints (a client and a server thread, each with its own context and queue
     /// pair) exchange 1 MiB each way over the SoftRoCE device, through `Read`/`Write`.
+    /// Same SoftRoCE setup as `rdma_loopback_roundtrip_returns_the_payload`: hardware is not
+    /// required, the test is not CI, and a pass on `rxe0` is not a throughput result.
     #[test]
-    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
+    #[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput"]
     fn two_endpoints_exchange_a_megabyte_each_way() {
         use std::net::{TcpListener, TcpStream};
         let gid: u32 = std::env::var("ATLAS_RDMA_GID_INDEX")

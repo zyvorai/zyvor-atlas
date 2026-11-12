@@ -355,8 +355,8 @@ pub struct AppState {
     pub mcp_idp: Option<Arc<crate::idp_token::IdpValidator>>,
     /// RFC 7662 introspection for opaque tokens on `/mcp`, when `ATLAS_MCP_INTROSPECTION_URL` is set.
     pub mcp_introspection: Option<Arc<crate::mcp_introspect::Introspection>>,
-    /// Lab client-credentials token endpoint, when `ATLAS_MCP_AS_ENABLE` is set. Not a full
-    /// authorization server (see `mcp_as`).
+    /// Lab authorization server, when `ATLAS_MCP_AS_ENABLE` is set: client credentials, in-memory
+    /// DCR and PKCE. Not a production authorization server (Dex is). See `mcp_as`.
     pub mcp_as: Option<Arc<crate::mcp_as::LabAs>>,
 }
 

@@ -154,10 +154,7 @@ impl Introspection {
         if token.is_empty() || token.len() > 8 * 1024 {
             return Err(IntroError::Inactive);
         }
-        let body = format!(
-            "token={}&token_type_hint=access_token",
-            form_escape(token)
-        );
+        let body = format!("token={}&token_type_hint=access_token", form_escape(token));
         let resp = self
             .http
             .post(self.url.clone())
@@ -255,13 +252,17 @@ pub fn identity_from_response(
         Some(Value::String(s)) => s.split_whitespace().map(str::to_owned).collect(),
         _ => Vec::new(),
     };
-    let mut role = crate::auth::role_for_groups(&groups, &mapping.admin_groups, &mapping.operator_groups);
+    let mut role =
+        crate::auth::role_for_groups(&groups, &mapping.admin_groups, &mapping.operator_groups);
     let tools = match doc.get("scope") {
         None | Some(Value::Null) => Vec::new(),
         Some(Value::String(s)) => match map_scope_str(Some(s)) {
             ScopeGrant::Absent => Vec::new(),
             ScopeGrant::Insufficient => return Err(IntroError::InsufficientScope),
-            ScopeGrant::Mapped { role: scoped, tools } => {
+            ScopeGrant::Mapped {
+                role: scoped,
+                tools,
+            } => {
                 if let Some(scoped) = scoped {
                     role = scoped;
                 }
@@ -271,7 +272,10 @@ pub fn identity_from_response(
         Some(other) => match map_scope_value(Some(other)) {
             ScopeGrant::Absent => Vec::new(),
             ScopeGrant::Insufficient => return Err(IntroError::InsufficientScope),
-            ScopeGrant::Mapped { role: scoped, tools } => {
+            ScopeGrant::Mapped {
+                role: scoped,
+                tools,
+            } => {
                 if let Some(scoped) = scoped {
                     role = scoped;
                 }
@@ -285,7 +289,11 @@ pub fn identity_from_response(
         .and_then(|c| doc.get(c)?.as_str())
         .filter(|t| !t.is_empty() && t.len() <= 128 && !t.chars().any(char::is_control))
         .map_or_else(|| "global".to_string(), str::to_owned);
-    let jti = match doc.get("jti").and_then(Value::as_str).filter(|j| !j.is_empty()) {
+    let jti = match doc
+        .get("jti")
+        .and_then(Value::as_str)
+        .filter(|j| !j.is_empty())
+    {
         None => String::new(),
         Some(j) if j.len() <= 200 => format!("{tag}:{j}"),
         Some(j) => format!(
@@ -329,7 +337,8 @@ fn check_url(raw: &str, allow_http: bool) -> Result<reqwest::Url, String> {
     let loopback = {
         let h = host.trim_start_matches('[').trim_end_matches(']');
         h.eq_ignore_ascii_case("localhost")
-            || h.parse::<std::net::IpAddr>().is_ok_and(|ip| ip.is_loopback())
+            || h.parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
     };
     match url.scheme() {
         "https" => Ok(url),
@@ -362,7 +371,13 @@ mod tests {
     fn active_scope_and_groups_map_and_inactive_is_refused() {
         let m = mapping();
         assert_eq!(
-            identity_from_response(&json!({"active": false, "sub": "a"}), &m, None, None, "intro-abcd"),
+            identity_from_response(
+                &json!({"active": false, "sub": "a"}),
+                &m,
+                None,
+                None,
+                "intro-abcd"
+            ),
             Err(IntroError::Inactive)
         );
         assert_eq!(
@@ -428,7 +443,9 @@ mod tests {
             (k == "ATLAS_MCP_INTROSPECTION_URL").then(|| "https://idp.example/introspect".into())
         };
         assert!(Introspection::from_lookup(get, None).is_err());
-        assert!(Introspection::from_lookup(|_| None, None).unwrap().is_none());
+        assert!(Introspection::from_lookup(|_| None, None)
+            .unwrap()
+            .is_none());
         assert!(Introspection::from_lookup(
             |k| match k {
                 "ATLAS_MCP_INTROSPECTION_URL" => Some("http://idp.example/introspect".into()),

@@ -635,3 +635,41 @@ fn an_isolated_leader_never_confirms_a_read() {
         other => panic!("expected NotLeader without a known leader, got {other:?}"),
     }
 }
+
+#[test]
+fn read_lease_grants_after_quorum_and_drops_on_expiry_or_commit() {
+    let mut c = Cluster::new(1, 0);
+    let l = c.elect();
+    let index = c.node(&l).commit_index();
+    assert!(index > 0 && c.node(&l).applied_index() >= index);
+    assert!(c.node(&l).read_lease().is_none());
+
+    // Check-quorum on the leader grants. The clock is injected; tick does not move it.
+    // election minimum is 10 ticks, so the 10th tick is the quorum round.
+    let start = 10_000u64;
+    c.node_mut(&l).configure_read_lease_clock(50, start);
+    assert!(c.node(&l).leased_read().is_none());
+    c.run(10);
+    assert_eq!(c.node(&l).leased_read(), Some(c.node(&l).commit_index()));
+
+    let ttl = c.node(&l).read_lease_ttl_ms();
+    assert_eq!(ttl, 125);
+    c.node_mut(&l).observe_lease_now(start + ttl - 1);
+    assert!(c.node(&l).leased_read().is_some());
+    c.node_mut(&l).observe_lease_now(start + ttl);
+    assert!(
+        c.node(&l).leased_read().is_none(),
+        "expired at the deadline"
+    );
+
+    // The same grant ReadIndex's success path uses (`RaftServer::read_barrier`).
+    let covered = c.node(&l).commit_index();
+    assert!(c.node_mut(&l).grant_read_lease(covered));
+    assert_eq!(c.node(&l).leased_read(), Some(covered));
+    assert!(!c.node_mut(&l).grant_read_lease(covered - 1));
+
+    c.node_mut(&l).propose(create("a")).unwrap();
+    assert!(c.node(&l).commit_index() > covered);
+    assert!(c.node(&l).read_lease().is_none(), "commit drops the lease");
+    assert!(c.node(&l).leased_read().is_none());
+}

@@ -43,7 +43,9 @@ pub(crate) async fn dispatch_databridge(
         JobSpec::Cutover { plan_id } => {
             atlas_databridge::pipeline::cutover(pool, k8s.as_deref(), &plan_id).await
         }
-        JobSpec::Rollback { plan_id } => atlas_databridge::pipeline::rollback(pool, &plan_id).await,
+        JobSpec::Rollback { plan_id } => {
+            atlas_databridge::pipeline::rollback(pool, k8s.as_deref(), &plan_id).await
+        }
         JobSpec::ObjectMigrate { migration_id } => {
             // Clone the Arc into an owned Option before awaiting so the borrow of `k8s`
             // isn't held across the (large) copy future — keeps the future Send-inferable.

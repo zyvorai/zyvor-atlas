@@ -37,14 +37,21 @@ mod tests {
 
     #[tokio::test]
     async fn first_use_wins_and_expired_rows_are_pruned() {
-        let db = format!("{}/atlas-mcp-confirm-{}.db", std::env::temp_dir().display(), std::process::id());
+        let db = format!(
+            "{}/atlas-mcp-confirm-{}.db",
+            std::env::temp_dir().display(),
+            std::process::id()
+        );
         let _ = std::fs::remove_file(&db);
         let url = format!("sqlite://{db}?mode=rwc");
         let pool = crate::connect(&url).await.unwrap();
         crate::migrate(&pool, &url).await.unwrap();
 
         assert!(mark_used(&pool, "jti-a", 1_000).await.unwrap());
-        assert!(!mark_used(&pool, "jti-a", 1_000).await.unwrap(), "second use is a unique violation");
+        assert!(
+            !mark_used(&pool, "jti-a", 1_000).await.unwrap(),
+            "second use is a unique violation"
+        );
         assert!(mark_used(&pool, "jti-b", 5_000).await.unwrap());
         assert_eq!(prune_expired(&pool, 2_000).await.unwrap(), 1);
         // The pruned id can be recorded again; the live one cannot.

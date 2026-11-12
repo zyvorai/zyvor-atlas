@@ -114,7 +114,10 @@ mod tests {
             .await
             .unwrap();
         let totals = cluster_totals(&p, 100).await.unwrap();
-        assert_eq!(totals[0].1, 12, "second sync overwrites, doesn't add to, the first");
+        assert_eq!(
+            totals[0].1, 12,
+            "second sync overwrites, doesn't add to, the first"
+        );
     }
 
     #[tokio::test]

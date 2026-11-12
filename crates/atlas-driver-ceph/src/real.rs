@@ -9,24 +9,66 @@ use atlas_api_types::{
 };
 use atlas_driver_core::{DriverError, StorageDriver};
 
-use crate::cmd::{ceph_cmd, rbd_cmd, rbd_du_pool, rbd_export_diff_head_child, rbd_list};
 use crate::dedup::{scan_export_diff, ScanEnd};
+use crate::endpoint::CephEndpoint;
 
 /// Live Ceph backend accessed through the `ceph`/`rbd` CLIs.
 pub struct RealCephDriver {
     backend_id: String,
+    endpoint: CephEndpoint,
 }
 
 impl RealCephDriver {
+    /// The host's default Ceph config (`ceph` / `rbd` with no `--conf` or `--mon-host`).
     pub fn new(backend_id: impl Into<String>) -> Self {
         Self {
             backend_id: backend_id.into(),
+            endpoint: CephEndpoint::default(),
         }
     }
 
+    /// A cluster named by monitor addresses and/or a config file on this host.
+    pub fn external(backend_id: impl Into<String>, endpoint: CephEndpoint) -> Result<Self, String> {
+        if !endpoint.is_configured() {
+            return Err(
+                "invalid: external Ceph needs mon_host or conf_path (a keyring path alone cannot find the monitors)"
+                    .into(),
+            );
+        }
+        Ok(Self {
+            backend_id: backend_id.into(),
+            endpoint,
+        })
+    }
+
+    fn prefix(&self) -> Vec<String> {
+        self.endpoint.cli_args()
+    }
+
+    async fn ceph(&self, args: &[&str]) -> Result<serde_json::Value, DriverError> {
+        crate::cmd::ceph_cmd_at(&self.prefix(), args).await
+    }
+
+    async fn rbd(&self, args: &[&str]) -> Result<serde_json::Value, DriverError> {
+        crate::cmd::rbd_cmd_at(&self.prefix(), args).await
+    }
+
+    fn block_conf(&self) -> Result<String, DriverError> {
+        if let Some(conf) = &self.endpoint.conf_path {
+            return Ok(conf.clone());
+        }
+        if self.endpoint.is_configured() {
+            return Err(DriverError::Backend(
+                "invalid: external Ceph block I/O needs conf_path (a ceph.conf that names the monitors and keyring)"
+                    .into(),
+            ));
+        }
+        Ok(std::env::var("CEPH_CONF").unwrap_or_else(|_| "/etc/ceph/ceph.conf".into()))
+    }
+
     async fn cluster_from_status(&self) -> Result<(StorageCluster, StorageHealth), DriverError> {
-        let status = ceph_cmd(&["status"]).await?;
-        let df = ceph_cmd(&["df", "detail"]).await?;
+        let status = self.ceph(&["status"]).await?;
+        let df = self.ceph(&["df", "detail"]).await?;
 
         let fsid = status
             .get("fsid")
@@ -89,7 +131,7 @@ impl RealCephDriver {
     }
 
     async fn pools_for(&self, cluster_id: &str) -> Result<Vec<StoragePool>, DriverError> {
-        let df = ceph_cmd(&["df", "detail"]).await?;
+        let df = self.ceph(&["df", "detail"]).await?;
         let empty = vec![];
         let pools = df.get("pools").and_then(|v| v.as_array()).unwrap_or(&empty);
         Ok(pools
@@ -121,7 +163,7 @@ impl RealCephDriver {
     }
 
     async fn osds_for(&self, cluster_id: &str) -> Result<Vec<Osd>, DriverError> {
-        let tree = ceph_cmd(&["osd", "tree"]).await?;
+        let tree = self.ceph(&["osd", "tree"]).await?;
         let empty = vec![];
         let nodes = tree
             .get("nodes")
@@ -167,15 +209,22 @@ impl StorageDriver for RealCephDriver {
         pool: &str,
         opts: atlas_api_types::DedupEstimateOptions,
     ) -> Result<atlas_api_types::DedupEstimate, DriverError> {
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(opts.max_secs.max(1));
+        let deadline =
+            std::time::Instant::now() + std::time::Duration::from_secs(opts.max_secs.max(1));
         // Only RBD pools hold images; `pool` goes into `rbd` as an argument, not a shell string.
         let known = self.list_pools().await?;
         if !known.iter().any(|p| p.name == pool && p.kind == "rbd") {
-            return Err(DriverError::Backend(format!("invalid: '{pool}' is not an RBD pool on this cluster")));
+            return Err(DriverError::Backend(format!(
+                "invalid: '{pool}' is not an RBD pool on this cluster"
+            )));
         }
-        let used: std::collections::HashMap<String, i64> = rbd_du_pool(pool).await?.into_iter().collect();
+        let used: std::collections::HashMap<String, i64> =
+            crate::cmd::rbd_du_pool_at(&self.prefix(), pool)
+                .await?
+                .into_iter()
+                .collect();
         let total: u64 = used.values().map(|&u| u.max(0) as u64).sum();
-        let mut images = rbd_list(pool).await?;
+        let mut images = crate::cmd::rbd_list_at(&self.prefix(), pool).await?;
         images.sort_by_key(|i| std::cmp::Reverse(used.get(i).copied().unwrap_or(0)));
         let mut scanner = atlas_driver_core::dedup::DedupScanner::new(
             opts.block_size,
@@ -190,7 +239,8 @@ impl StorageDriver for RealCephDriver {
                 complete = false;
                 break;
             }
-            let mut child = rbd_export_diff_head_child(pool, &image)?;
+            let mut child =
+                crate::cmd::rbd_export_diff_head_child_at(&self.prefix(), pool, &image)?;
             let mut out = child
                 .stdout
                 .take()
@@ -198,7 +248,12 @@ impl StorageDriver for RealCephDriver {
             let left = deadline.saturating_duration_since(std::time::Instant::now());
             let scan = tokio::time::timeout(
                 left,
-                scan_export_diff(&mut out, &mut scanner, opts.max_bytes - spent, opts.block_size),
+                scan_export_diff(
+                    &mut out,
+                    &mut scanner,
+                    opts.max_bytes - spent,
+                    opts.block_size,
+                ),
             )
             .await;
             // The scan usually stops before the stream ends; reap the exporter either way.
@@ -217,8 +272,15 @@ impl StorageDriver for RealCephDriver {
         } else {
             total
         };
-        let mut est = atlas_driver_core::dedup::estimate_from_scan(&self.backend_id, pool, &scan, Some(total));
-        est.note.push_str(" Read from the live images' export-diff streams, so it is not crash-consistent.");
+        let mut est = atlas_driver_core::dedup::estimate_from_scan(
+            &self.backend_id,
+            pool,
+            &scan,
+            Some(total),
+        );
+        est.note.push_str(
+            " Read from the live images' export-diff streams, so it is not crash-consistent.",
+        );
         Ok(est)
     }
 
@@ -258,16 +320,17 @@ impl StorageDriver for RealCephDriver {
     }
 
     async fn list_volumes(&self, pool: &str) -> Result<Vec<StorageVolume>, DriverError> {
-        let out = rbd_cmd(&["ls", "-l", pool]).await?;
+        let out = self.rbd(&["ls", "-l", pool]).await?;
         let empty = vec![];
         let images = out.as_array().unwrap_or(&empty);
         // `rbd ls -l` has no `used_size` field (only `size`, the provisioned size); fetch actual
         // usage separately via `rbd du`.
-        let used: std::collections::HashMap<String, i64> = rbd_du_pool(pool)
-            .await
-            .unwrap_or_default()
-            .into_iter()
-            .collect();
+        let used: std::collections::HashMap<String, i64> =
+            crate::cmd::rbd_du_pool_at(&self.prefix(), pool)
+                .await
+                .unwrap_or_default()
+                .into_iter()
+                .collect();
         Ok(images
             .iter()
             // `rbd ls -l` also lists snapshot rows (with a "snapshot" field); keep base images.
@@ -311,28 +374,28 @@ impl StorageDriver for RealCephDriver {
     }
 
     async fn ceph_status(&self) -> Result<serde_json::Value, DriverError> {
-        ceph_cmd(&["status"]).await
+        self.ceph(&["status"]).await
     }
     async fn ceph_osd_tree(&self) -> Result<serde_json::Value, DriverError> {
-        ceph_cmd(&["osd", "tree"]).await
+        self.ceph(&["osd", "tree"]).await
     }
     async fn ceph_df(&self) -> Result<serde_json::Value, DriverError> {
-        ceph_cmd(&["df", "detail"]).await
+        self.ceph(&["df", "detail"]).await
     }
     async fn ceph_osd_df(&self) -> Result<serde_json::Value, DriverError> {
-        ceph_cmd(&["osd", "df"]).await
+        self.ceph(&["osd", "df"]).await
     }
     async fn ceph_osd_ok_to_stop(&self, osd_ids: &[i64]) -> Result<serde_json::Value, DriverError> {
-        crate::cmd::ceph_osd_ok_to_stop(osd_ids).await
+        crate::cmd::ceph_osd_ok_to_stop_at(&self.prefix(), osd_ids).await
     }
     async fn ceph_device_ls(&self) -> Result<serde_json::Value, DriverError> {
-        ceph_cmd(&["device", "ls"]).await
+        self.ceph(&["device", "ls"]).await
     }
     async fn ceph_osd_metadata(&self) -> Result<serde_json::Value, DriverError> {
-        ceph_cmd(&["osd", "metadata"]).await
+        self.ceph(&["osd", "metadata"]).await
     }
     async fn ceph_device_health(&self, devid: &str) -> Result<serde_json::Value, DriverError> {
-        ceph_cmd(&["device", "get-health-metrics", devid]).await
+        self.ceph(&["device", "get-health-metrics", devid]).await
     }
 
     async fn read_volume(
@@ -342,7 +405,8 @@ impl StorageDriver for RealCephDriver {
         len: u64,
     ) -> Result<Vec<u8>, DriverError> {
         let (pool, image) = crate::cmd::parse_rbd_native_id(volume_id)?;
-        crate::cmd::rbd_read(&pool, &image, offset, len).await
+        let conf = self.block_conf()?;
+        crate::cmd::rbd_read_conf(&conf, &pool, &image, offset, len).await
     }
 
     async fn write_volume(
@@ -352,7 +416,8 @@ impl StorageDriver for RealCephDriver {
         data: Vec<u8>,
     ) -> Result<(), DriverError> {
         let (pool, image) = crate::cmd::parse_rbd_native_id(volume_id)?;
-        crate::cmd::rbd_write(&pool, &image, offset, &data).await
+        let conf = self.block_conf()?;
+        crate::cmd::rbd_write_conf(&conf, &pool, &image, offset, &data).await
     }
 }
 

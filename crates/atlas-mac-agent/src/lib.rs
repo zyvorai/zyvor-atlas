@@ -15,6 +15,7 @@ use std::sync::Arc;
 use atlas_driver_macos::{DeviceRow, Lifecycle};
 use serde::Deserialize;
 
+use atlas_driver_core::{DriverError, StorageDriver};
 use axum::{
     extract::State,
     http::{header, StatusCode},
@@ -22,7 +23,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use atlas_driver_core::{DriverError, StorageDriver};
 
 pub fn router(driver: Arc<dyn StorageDriver>, token: Option<String>) -> Router {
     build(driver, token, None)
@@ -47,9 +47,13 @@ fn build(
     ops: Option<Arc<dyn Lifecycle>>,
 ) -> Router {
     let mut app = Router::new()
-        .route("/health", get(|| async { Json(serde_json::json!({ "status": "ok" })) }))
+        .route(
+            "/health",
+            get(|| async { Json(serde_json::json!({ "status": "ok" })) }),
+        )
         .route("/v1/discover", get(discover))
         .route("/v1/metrics", get(metrics))
+        .route("/v1/alerts", get(alerts))
         .with_state(driver);
     if let Some(ops) = ops {
         let writes = Router::new()
@@ -93,7 +97,11 @@ async fn require_bearer(
         .and_then(|v| v.strip_prefix("Bearer "));
     match presented {
         Some(p) if ct_eq(p.as_bytes(), token.as_bytes()) => next.run(req).await,
-        _ => (StatusCode::UNAUTHORIZED, [(header::WWW_AUTHENTICATE, "Bearer")], "unauthorized")
+        _ => (
+            StatusCode::UNAUTHORIZED,
+            [(header::WWW_AUTHENTICATE, "Bearer")],
+            "unauthorized",
+        )
             .into_response(),
     }
 }
@@ -120,12 +128,37 @@ async fn metrics(State(d): State<Arc<dyn StorageDriver>>) -> Response {
     }
 }
 
+/// SMART and capacity conditions the driver encoded as `macos_alert` samples.
+async fn alerts(State(d): State<Arc<dyn StorageDriver>>) -> Response {
+    match d.metrics().await {
+        Ok(m) => {
+            let rows: Vec<serde_json::Value> = m
+                .into_iter()
+                .filter(|s| s.name == "macos_alert")
+                .map(|s| {
+                    serde_json::json!({
+                        "id": s.labels.get("id"),
+                        "severity": s.labels.get("severity"),
+                        "title": s.labels.get("title"),
+                        "resource_id": s.labels.get("resource"),
+                        "value": s.value,
+                    })
+                })
+                .collect();
+            Json(rows).into_response()
+        }
+        Err(e) => fail(e),
+    }
+}
+
 /// A refusal is a 409, a bad request a 400, an unreachable `diskutil` a 503.
 fn op_fail(e: DriverError) -> Response {
     match e {
-        DriverError::Backend(m) if m.starts_with("refused: ") => {
-            (StatusCode::CONFLICT, m.trim_start_matches("refused: ").to_string()).into_response()
-        }
+        DriverError::Backend(m) if m.starts_with("refused: ") => (
+            StatusCode::CONFLICT,
+            m.trim_start_matches("refused: ").to_string(),
+        )
+            .into_response(),
         DriverError::Backend(m) => (StatusCode::BAD_REQUEST, m).into_response(),
         other => fail(other),
     }
@@ -150,7 +183,9 @@ struct EraseBody {
 
 async fn erase(State(ops): Ops, Json(b): Json<EraseBody>) -> Response {
     let r = if b.dry_run {
-        ops.check_erase(&b.device, &b.name).await.map(|()| String::new())
+        ops.check_erase(&b.device, &b.name)
+            .await
+            .map(|()| String::new())
     } else {
         tracing::info!(device = %b.device, "erase requested");
         ops.erase_disk(&b.device, &b.name).await
@@ -172,10 +207,13 @@ struct AddVolumeBody {
 
 async fn add_volume(State(ops): Ops, Json(b): Json<AddVolumeBody>) -> Response {
     let r = if b.dry_run {
-        ops.check_add_volume(&b.container, &b.name).await.map(|()| String::new())
+        ops.check_add_volume(&b.container, &b.name)
+            .await
+            .map(|()| String::new())
     } else {
         tracing::info!(container = %b.container, "add volume requested");
-        ops.add_volume(&b.container, &b.name, b.quota_bytes, b.reserve_bytes).await
+        ops.add_volume(&b.container, &b.name, b.quota_bytes, b.reserve_bytes)
+            .await
     };
     done(r, b.dry_run)
 }
@@ -211,7 +249,9 @@ struct SnapshotDeleteBody {
 
 async fn snapshot_delete(State(ops): Ops, Json(b): Json<SnapshotDeleteBody>) -> Response {
     let r = if b.dry_run {
-        ops.check_delete_local_snapshot(&b.date).await.map(|()| String::new())
+        ops.check_delete_local_snapshot(&b.date)
+            .await
+            .map(|()| String::new())
     } else {
         tracing::info!(date = %b.date, "local snapshot delete requested");
         ops.delete_local_snapshot(&b.date).await
@@ -229,7 +269,9 @@ struct ResizeBody {
 
 async fn resize_container(State(ops): Ops, Json(b): Json<ResizeBody>) -> Response {
     let r = if b.dry_run {
-        ops.check_resize_container(&b.container, b.size_bytes).await.map(|()| String::new())
+        ops.check_resize_container(&b.container, b.size_bytes)
+            .await
+            .map(|()| String::new())
     } else {
         tracing::info!(container = %b.container, size_bytes = b.size_bytes, "resize requested");
         ops.resize_container(&b.container, b.size_bytes).await
@@ -246,7 +288,9 @@ struct DeviceBody {
 
 async fn delete_volume(State(ops): Ops, Json(b): Json<DeviceBody>) -> Response {
     let r = if b.dry_run {
-        ops.check_delete_volume(&b.device).await.map(|()| String::new())
+        ops.check_delete_volume(&b.device)
+            .await
+            .map(|()| String::new())
     } else {
         tracing::info!(device = %b.device, "delete volume requested");
         ops.delete_volume(&b.device).await
@@ -266,7 +310,9 @@ async fn eject(State(ops): Ops, Json(b): Json<DeviceBody>) -> Response {
 
 fn done(r: Result<String, DriverError>, dry_run: bool) -> Response {
     match r {
-        Ok(output) => Json(serde_json::json!({ "output": output, "dry_run": dry_run })).into_response(),
+        Ok(output) => {
+            Json(serde_json::json!({ "output": output, "dry_run": dry_run })).into_response()
+        }
         Err(e) => op_fail(e),
     }
 }

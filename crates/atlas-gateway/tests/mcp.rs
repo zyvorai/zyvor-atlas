@@ -1119,13 +1119,14 @@ async fn oauth_protected_resource_metadata_shape() {
         .as_array()
         .expect("scopes_supported");
     let scopes: Vec<&str> = scopes.iter().filter_map(|s| s.as_str()).collect();
-    for role in ["atlas:role:viewer", "atlas:role:operator", "atlas:role:admin"] {
+    for role in [
+        "atlas:role:viewer",
+        "atlas:role:operator",
+        "atlas:role:admin",
+    ] {
         assert!(scopes.contains(&role), "{scopes:?}");
     }
-    assert!(
-        scopes.contains(&"atlas:tool:list_clusters"),
-        "{scopes:?}"
-    );
+    assert!(scopes.contains(&"atlas:tool:list_clusters"), "{scopes:?}");
 
     // Root form: the resource is the origin (RFC 9728 section 3.3).
     let root: serde_json::Value =
@@ -1226,7 +1227,10 @@ async fn mcp_401_carries_resource_metadata_challenge() {
     assert!(ch.starts_with("Bearer "), "{ch}");
     assert!(!ch.contains("error="), "{ch}");
     assert!(ch.contains(&want), "{ch}");
-    assert!(ch.contains("scope=\"") && ch.contains("atlas:role:operator"), "{ch}");
+    assert!(
+        ch.contains("scope=\"") && ch.contains("atlas:role:operator"),
+        "{ch}"
+    );
     assert!(ch.contains("atlas:tool:list_clusters"), "{ch}");
     // The body is the same JSON error as on REST routes.
     let body: serde_json::Value = resp.json().await.unwrap();

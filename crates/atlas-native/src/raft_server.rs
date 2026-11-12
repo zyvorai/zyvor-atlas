@@ -48,6 +48,14 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long [`RaftServer::read_barrier`] waits for an answer before asking again.
 pub const READ_RETRY: Duration = Duration::from_millis(500);
 
+/// Monotonic milliseconds since the first call in this process. The read lease is checked
+/// against this clock, not against Raft ticks.
+fn lease_now_ms() -> u64 {
+    static EPOCH: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    let ms = EPOCH.get_or_init(Instant::now).elapsed().as_millis();
+    u64::try_from(ms).unwrap_or(u64::MAX)
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RaftStatus {
     pub id: NodeId,
@@ -446,7 +454,9 @@ impl RaftServer {
         }
         let tls_handshake_failures = mux.shared.tls_handshake_failures.clone();
         let addr = mux.local_addr();
-        let node = RaftNode::open(cfg.clone())?;
+        let mut node = RaftNode::open(cfg.clone())?;
+        let tick_ms = u64::try_from(tick.as_millis()).unwrap_or(u64::MAX);
+        node.configure_read_lease_clock(tick_ms, 0);
 
         let stop = Arc::new(AtomicBool::new(false));
         let mut threads = Vec::new();
@@ -642,9 +652,17 @@ impl RaftServer {
     /// committed before the call, leader or not (Raft's ReadIndex: the leader's commit index,
     /// confirmed by a quorum, then applied here). A lost request or answer is asked again after
     /// [`READ_RETRY`]. Returns the index waited for.
+    ///
+    /// The leader skips the quorum round while a [`crate::ReadLease`] from the last successful
+    /// barrier or check-quorum round still covers this term and commit index. A follower always
+    /// asks. After a full barrier the leader grants a new lease.
     pub fn read_barrier(&self, timeout: Duration) -> Result<u64, RaftError> {
         let deadline = Instant::now() + timeout;
         let mut node = self.shared.lock()?;
+        node.observe_lease_now(lease_now_ms());
+        if let Some(index) = node.leased_read() {
+            return Ok(index);
+        }
         let mut asked: Option<(u64, Instant)> = None;
         let index = loop {
             if self.shared.stop.load(Ordering::SeqCst) {
@@ -705,6 +723,8 @@ impl RaftServer {
                 .map_err(|_| RaftError::Shutdown)?
                 .0;
         }
+        node.observe_lease_now(lease_now_ms());
+        node.grant_read_lease(index);
         Ok(index)
     }
 
@@ -999,6 +1019,7 @@ fn drive(shared: &Shared, inbound: Receiver<Envelope>, tick: Duration) {
             result = result.and_then(|_| node.step(env));
         }
         if Instant::now() >= next_tick {
+            node.observe_lease_now(lease_now_ms());
             result = result.and_then(|_| node.tick());
             next_tick += tick;
             if next_tick < Instant::now() {

@@ -15,7 +15,8 @@ duplicated.
 
 ## Storage & drivers
 - **[DISKS.md](DISKS.md)** — raw disk provisioning: device pickers, `POST /zfs/pools/from-device`, `POST /ceph/devices`.
-- **[LONGHORN.md](LONGHORN.md)** — Longhorn driver: CRD discovery and native volume/snapshot writes.
+- **[LONGHORN.md](LONGHORN.md)** — Longhorn driver: CRD discovery, volume/snapshot writes, clone, backup and replica placement.
+- **[CEPH_EXTERNAL.md](CEPH_EXTERNAL.md)** — register an existing Ceph cluster (mons, config, keyring path) as a live backend.
 - **[RUSTFS.md](RUSTFS.md)** — history of the now-removed first-party RustFS integration; Ceph RGW is the default object backend today.
 - **[DEDUP_ESTIMATE.md](DEDUP_ESTIMATE.md)** — what dedup would save on a Ceph or ZFS pool, before you enable anything: methods, reading the result, limits.
 - **[NATIVE_DATA_REDUCTION.md](NATIVE_DATA_REDUCTION.md)** — atlas-native LZ4 compression and extent deduplication: what they do, the savings report, limits.

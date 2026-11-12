@@ -32,8 +32,9 @@ Atlas centralizes it:
 - **Backend-agnostic model** — a `StorageVolume` may be backed by RBD now and SAN tomorrow.
 - **Ownership + audit** — every volume maps to product/resource/tenant/policy/pool/cluster.
 - **Explainable AI Ops Advisor** — deterministic risk scoring, incident correlation, what-if
-  capacity planning, and anomaly detection layered on the same inventory, read-only
-  (`can_execute: false`). The gateway exposes it, plus inventory, I/O risk, DR and job state, as 51
+  capacity planning, and anomaly detection layered on the same inventory. The advisor response
+  stays `can_execute: false`. `silence_alert` and `create_snapshot` set that flag on the action
+  and run only through a separate two-person propose/confirm. The gateway exposes it, plus inventory, I/O risk, DR and job state, as 51
   read-only MCP tools (and three opt-in guarded writes, `create_snapshot`, `ack_alert` and `silence_alert`); the `atlas-io` agent serves 10 more at its
   own authenticated `/mcp` — see [MCP.md](../control-plane/mcp.md) and [AI_ADVISOR.md](../control-plane/ai-advisor.md).
 
@@ -107,14 +108,14 @@ purely additive.
 
 | Driver | Crate | What it does | Notes |
 |---|---|---|---|
-| Real Ceph | `atlas-driver-ceph` | Parses `ceph status`, `ceph df detail`, `ceph osd tree`, `rbd ls -l` into DTOs | Arg-arrays only, `--format json`. `ATLAS_CEPH_DRIVER_MODE=real`. |
+| Real Ceph | `atlas-driver-ceph` | Parses `ceph status`, `ceph df detail`, `ceph osd tree`, `rbd ls -l` into DTOs | Arg-arrays only, `--format json`. `ATLAS_CEPH_DRIVER_MODE=real`. An extra cluster is `POST /backends` with `mon_host` / `conf_path` / `keyring_path`, or `ATLAS_CEPH_EXTERNAL_*`. See `docs/CEPH_EXTERNAL.md`. |
 | Fake Ceph | `atlas-driver-ceph` | Deterministic fixtures | For local dev/tests/demo. `ATLAS_CEPH_DRIVER_MODE=fake` (default). |
 | Real NFS | `atlas-driver-nfs` | `showmount -e` for exports → pools; `/proc/mounts` + `df` for capacity when the export happens to already be locally mounted, `None` otherwise | `ATLAS_NFS_DRIVER_MODE=real`. Never fabricates: an export the server doesn't have is dropped, not invented; unreachable → `DriverError::Unreachable`. Needs `nfs-common`/`showmount` on `PATH`. |
 | Fake NFS | `atlas-driver-nfs` | Deterministic fixtures | `ATLAS_NFS_DRIVER_MODE=fake` (default). |
 | Real ZFS | `atlas-driver-zfs` | `zpool list -Hp`/`zfs list -Hp` **locally**, on whatever host the gateway process itself runs on | `ATLAS_ZFS_DRIVER_MODE=real`. No remote/SSH support yet — ZFS has no remote query protocol the way `ceph`/`rbd` does. Never fabricates. Needs `zfsutils-linux`. Also the target of `POST /zfs/pools/from-device` (raw-disk provisioning, see `docs/DISKS.md`). |
 | Fake ZFS | `atlas-driver-zfs` | Deterministic fixtures | `ATLAS_ZFS_DRIVER_MODE=fake` (default). |
 | Ceph RGW (object) | `atlas-driver-rgw` | Generic SigV4 S3 client (`S3Target`) for bucket/object CRUD, presigned URLs | Default backend for `POST /buckets` (`bkd_ceph_lab`, via Rook `ObjectBucketClaim`). Also used for any bring-your-own S3-compatible endpoint (MinIO, Garage, AWS, a customer-run RustFS) — see `docs/RUSTFS.md` for the history of Atlas's now-removed first-party RustFS integration. |
-| Longhorn | `atlas-driver-longhorn` | Longhorn v1beta2 CRDs: discover `nodes`/`volumes`; create, delete and expand `volumes`; create and delete `snapshots` | `ATLAS_LONGHORN_ENABLE=1`. `POST /volumes` still provisions a PVC. Clone and backup are not implemented. See `docs/LONGHORN.md`. |
+| Longhorn | `atlas-driver-longhorn` | Longhorn v1beta2 CRDs: discover `nodes`/`volumes`/`replicas`; create, delete and expand `volumes` (disk and node selectors); create and delete `snapshots`; clone a snapshot; create, list and delete `backups` | `ATLAS_LONGHORN_ENABLE=1`. `POST /volumes` still provisions a PVC. See `docs/LONGHORN.md`. |
 | WEKA | `atlas-driver-weka` | WEKA REST v2: discover the cluster and filesystems; create and delete a filesystem (`POST`/`DELETE /fileSystems`) | `ATLAS_WEKA_ENABLE=1`. Fake mode mutates an in-memory list; real mode calls the API. The gateway volume routes do not dispatch these writes. See `docs/COMPARISON.md`. |
 | atlas-native | `atlas-driver-native` | `atlas-native-node` HTTP API (`/v1/status`, `/v1/volumes`, snapshots): one cluster, one replicated `native` pool, block volumes; create/expand/delete volumes, create/delete snapshots, clone/restore from a snapshot (copy-on-write); block reads/writes (`/volumes/{id}/data`) | `ATLAS_NATIVE_ENABLE=1` registers `bkd_native`; `ATLAS_NATIVE_DRIVER_MODE=real` + `ATLAS_NATIVE_ENDPOINTS` for a live cluster (fake keeps volumes in memory). The only driver whose write methods the gateway calls: `POST /volumes` with `kubernetes.backend_id: bkd_native`, expand, and the snapshot/clone/restore routes run synchronously through it. See `docs/NATIVE_NODE.md`. |
 | Kubernetes | `atlas-driver-k8s` | Lists StorageClasses / PVCs / PVs via `kube-rs`; tags Ceph-backed classes | Always live when a cluster is reachable. Also the mechanism behind `POST /ceph/devices` (patches the `CephCluster` CR for raw-disk-to-OSD provisioning, see `docs/DISKS.md`). |
@@ -192,6 +193,7 @@ secret-redacting `Debug`:
 | `ATLAS_BIND_ADDR` | `127.0.0.1:5110` | Gateway listen address |
 | `ATLAS_DATABASE_URL` | `sqlite://atlas.db?mode=rwc` | SQLite URL (WAL + FK on), or `postgres://...` for HA/multi-replica — see [HA.md](../control-plane/ha.md) |
 | `ATLAS_CEPH_DRIVER_MODE` | `fake` | `real` (ceph/rbd CLI) or `fake` (fixtures) |
+| `ATLAS_CEPH_EXTERNAL_MON_HOST` / `_CONF` / `_KEYRING` / `_USER` / `_ID` / `_NAME` | *(unset)* | Register a second, live Ceph backend at startup. See [CEPH_EXTERNAL.md](../control-plane/ceph-external.md) |
 | `ATLAS_NFS_DRIVER_MODE` / `ATLAS_ZFS_DRIVER_MODE` | `fake` | `real` (live `showmount`/`zpool`/`zfs` discovery) or `fake` (fixtures) |
 | `ATLAS_MACOS_ENABLE` / `ATLAS_MACOS_DRIVER_MODE` / `ATLAS_MACOS_AGENTS` | off / `fake` | macOS backend for the Mac the gateway runs on, and the list of `atlas-mac-agent` URLs for a fleet — see [MACOS.md](../control-plane/macos.md) |
 | `ATLAS_S3_CA_CERT` | *(unset)* | Path to a mounted CA cert to additionally trust for any S3-compatible endpoint (private CA / self-signed) — never disables verification, only adds one root |

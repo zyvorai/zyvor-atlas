@@ -14,7 +14,9 @@
 //! Pre-vote keeps a partitioned node from inflating its term: it only starts a real election after
 //! a majority confirms it could win. Check-quorum makes a leader that has not heard from a
 //! majority within an election timeout step down, and lets nodes with a live leader ignore
-//! disruptive vote requests.
+//! disruptive vote requests. A leader that has just confirmed a quorum (ReadIndex, or that
+//! check-quorum round) may serve later local reads from a short [`ReadLease`] until the lease
+//! expires or a write advances the term or commit index. Followers always take ReadIndex.
 //!
 //! Membership changes use joint consensus ([`RaftNode::change_membership`]): a `Joint` config
 //! entry needs majorities of both the old and new voter sets; once it commits the leader appends
@@ -31,6 +33,8 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+
+pub use crate::read_lease::ReadLease;
 
 use crate::{
     durable,
@@ -345,6 +349,12 @@ pub struct RaftNode {
     next_read_id: u64,
     /// Barriers this node asked for: id to the index to wait for (None: ask again).
     read_results: BTreeMap<u64, Option<u64>>,
+    /// Leader only: skip ReadIndex while this covers the current term and commit index.
+    read_lease: Option<ReadLease>,
+    /// Metadata tick length in milliseconds. Zero disables grants (callers that never opt in).
+    lease_tick_ms: u64,
+    /// Monotonic milliseconds supplied by the server or a test. Not advanced by [`Self::tick`].
+    lease_now_ms: u64,
 }
 
 impl RaftNode {
@@ -446,6 +456,9 @@ impl RaftNode {
             pending_reads: Vec::new(),
             next_read_id: 1,
             read_results: BTreeMap::new(),
+            read_lease: None,
+            lease_tick_ms: 0,
+            lease_now_ms: 0,
             cfg,
         };
         node.refresh_membership();
@@ -646,8 +659,8 @@ impl RaftNode {
         let Membership::Stable { voters } = self.membership.clone() else {
             return Err(RaftError::MembershipBusy);
         };
-        let steps = Membership::remove_voter_steps(&voters, id)
-            .map_err(|m| RaftError::Config(m.into()))?;
+        let steps =
+            Membership::remove_voter_steps(&voters, id).map_err(|m| RaftError::Config(m.into()))?;
         let Some([joint, _]) = steps else {
             return Ok(self.commit_index);
         };
@@ -709,6 +722,84 @@ impl RaftNode {
         self.read_results.remove(&id);
         self.pending_reads
             .retain(|r| !(r.from.is_none() && r.id == id));
+    }
+
+    /// Enables leader-lease reads. `tick_ms` is the metadata tick (0 disables grants). `now_ms`
+    /// is the caller's monotonic clock. [`Self::tick`] does not advance that clock.
+    pub fn configure_read_lease_clock(&mut self, tick_ms: u64, now_ms: u64) {
+        self.lease_tick_ms = tick_ms;
+        self.lease_now_ms = now_ms;
+    }
+
+    /// Moves the lease clock without changing the tick length.
+    pub fn observe_lease_now(&mut self, now_ms: u64) {
+        self.lease_now_ms = now_ms;
+    }
+
+    /// One quarter of the minimum election timeout, in milliseconds. See [`crate::read_lease::ttl_ms`].
+    pub fn read_lease_ttl_ms(&self) -> u64 {
+        crate::read_lease::ttl_ms(self.cfg.election_ticks.0, self.lease_tick_ms)
+    }
+
+    /// The lease currently stored, including one that [`Self::leased_read`] would refuse.
+    pub fn read_lease(&self) -> Option<ReadLease> {
+        self.read_lease
+    }
+
+    /// Commit index a local leader read may return without a fresh ReadIndex.
+    ///
+    /// None unless this node is leader, the lease deadline is still ahead, and the term and
+    /// commit index are exactly the ones recorded at grant (a write drops the lease; a term
+    /// change does too). The index must already be applied.
+    pub fn leased_read(&self) -> Option<u64> {
+        let lease = self.read_lease?;
+        if !lease.allows_leader(
+            self.is_leader(),
+            self.lease_now_ms,
+            self.hard.term,
+            self.commit_index,
+        ) {
+            return None;
+        }
+        if self.catalog.applied_index < lease.index() {
+            return None;
+        }
+        Some(lease.index())
+    }
+
+    /// Records a leader lease covering `index` after a confirmed ReadIndex or a check-quorum
+    /// round. Refuses unless this node is leader, the clock is enabled, `index` is the current
+    /// commit index of this term, and that index is applied. Returns whether a lease is held.
+    pub fn grant_read_lease(&mut self, index: u64) -> bool {
+        if self.lease_tick_ms == 0 || !self.is_leader() || index != self.commit_index {
+            return false;
+        }
+        if self.term_at(self.commit_index) != Some(self.hard.term) {
+            return false;
+        }
+        if self.catalog.applied_index < index {
+            return false;
+        }
+        self.read_lease = Some(ReadLease::grant(
+            self.hard.term,
+            index,
+            self.lease_now_ms,
+            self.read_lease_ttl_ms(),
+        ));
+        true
+    }
+
+    fn invalidate_read_lease(&mut self) {
+        self.read_lease = None;
+    }
+
+    /// Moves the commit index. A change drops the read lease: the previous quorum proof does
+    /// not cover the new index.
+    fn set_commit_index(&mut self, index: u64) {
+        if index != self.commit_index {
+            self.read_lease = None;
+            self.commit_index = index;
+        }
     }
 
     /// Leader only: registers a barrier at the commit index, or returns false if this leader
@@ -808,6 +899,9 @@ impl RaftNode {
                 if !self.membership.has_quorum(&active) {
                     return self.become_follower(self.hard.term, None);
                 }
+                // The majority answered within an election timeout. That is the leader proof a
+                // read lease needs; a later commit drops it again.
+                self.grant_read_lease(self.commit_index);
             }
             self.heartbeat_elapsed += 1;
             if self.heartbeat_elapsed >= self.cfg.heartbeat_ticks {
@@ -1151,7 +1245,8 @@ impl RaftNode {
         }
         self.refresh_membership();
         if leader_commit > self.commit_index {
-            self.commit_index = leader_commit.min(match_index).max(self.commit_index);
+            let new_commit = leader_commit.min(match_index).max(self.commit_index);
+            self.set_commit_index(new_commit);
             self.apply_committed()?;
         }
         Ok((true, match_index))
@@ -1228,7 +1323,7 @@ impl RaftNode {
         self.wal.raise_floor(si);
         self.snapshot_index = si;
         self.snapshot_term = st;
-        self.commit_index = si;
+        self.set_commit_index(si);
         self.refresh_membership();
         Ok(())
     }
@@ -1269,6 +1364,7 @@ impl RaftNode {
     }
 
     fn campaign(&mut self) -> Result<(), RaftError> {
+        self.invalidate_read_lease();
         self.counters.elections += 1;
         self.role = Role::Candidate;
         self.hard.term += 1;
@@ -1292,6 +1388,8 @@ impl RaftNode {
     }
 
     fn become_follower(&mut self, term: u64, leader: Option<NodeId>) -> Result<(), RaftError> {
+        // A new term, or a leader stepping down, ends any read lease immediately.
+        self.invalidate_read_lease();
         // Only a leader has unsynced entries; a follower or candidate advertises a durable log.
         self.wal.sync()?;
         if term > self.hard.term {
@@ -1313,6 +1411,7 @@ impl RaftNode {
     }
 
     fn become_leader(&mut self) -> Result<(), RaftError> {
+        self.invalidate_read_lease();
         self.counters.leader_terms += 1;
         self.role = Role::Leader;
         self.spec = None;
@@ -1439,7 +1538,7 @@ impl RaftNode {
             if new_commit <= self.commit_index {
                 break;
             }
-            self.commit_index = new_commit;
+            self.set_commit_index(new_commit);
             self.apply_committed()?;
             self.broadcast_append();
             let last = self.last_index();

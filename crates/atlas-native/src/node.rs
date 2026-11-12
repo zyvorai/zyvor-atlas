@@ -144,6 +144,10 @@ pub struct MetadataRole {
     /// that understands shared installs before it is turned on).
     #[serde(default)]
     pub dedup: bool,
+    /// Content-defined fingerprint switch. Off: dedup stays whole-extent and inside this group.
+    /// On: the reduction report says so. Writes do not share across groups yet (`cdc`).
+    #[serde(default)]
+    pub cross_group_dedup: bool,
     #[serde(default = "default_extent_bytes")]
     pub extent_bytes: usize,
     #[serde(default = "default_tick_ms")]
@@ -712,6 +716,7 @@ impl NativeNode {
                     ecfg.erasure_min_bytes = m.erasure_min_bytes;
                     ecfg.compression = m.compression;
                     ecfg.dedup = m.dedup;
+                    ecfg.cross_group_dedup = m.cross_group_dedup;
                     ecfg.grant_key = grant_key.clone();
                     ecfg.meta_group = g;
                     ecfg.catalog_cache_inodes = m.cache_inodes;
@@ -1298,6 +1303,7 @@ fn volume_route(sh: &NodeShared, req: &Request, segs: &[&str]) -> Response {
                     total.logical_bytes += g.logical_bytes;
                     total.referenced_bytes += g.referenced_bytes;
                     total.stored_bytes += g.stored_bytes;
+                    total.cross_group_dedup |= g.cross_group_dedup;
                 }
                 Response::json(200, &json!({ "total": total, "groups": groups }))
             }),

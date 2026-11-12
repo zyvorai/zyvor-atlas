@@ -4,9 +4,10 @@
 //! A read-only GPU / GPUDirect Storage (GDS) capability probe.
 //!
 //! **UNVERIFIED on real GPU hardware.** This module was written and tested against fixture
-//! directory trees only; the development host has no GPU, no CUDA and no `nvidia_fs`. No GPU I/O
-//! path exists in Atlas, and the probe performs none: it reads a handful of files and reports what
-//! they say. It never links CUDA or cuFile.
+//! directory trees only; the development host has no GPU, no CUDA and no `nvidia_fs`. The probe
+//! performs no GPU I/O: it reads a handful of files and reports what they say. It never links
+//! CUDA or cuFile. The optional `cufile` feature (`cufile` module) dlopens `libcufile` and can
+//! call `cuFileDriverOpen`, `cuFileRead` and `cuFileWrite` when those symbols exist.
 //!
 //! What it reads, relative to a root directory (`/` in production, a fixture tree in tests):
 //! `proc/modules`, `proc/driver/nvidia-fs/`, `proc/driver/nvidia/version`,
@@ -20,10 +21,12 @@
 //! - [`GpuIoStatus::Gds`]: every condition in [`probe`] is corroborated by a file. A file that is
 //!   missing, unreadable or malformed counts as "not corroborated", never as a pass.
 //!
-//! `Gds` means "the machine looks capable", not "GDS works": that would need a real cuFile run.
+//! `Gds` means "the machine looks capable", not "GDS works": that would need a cuFile read or
+//! write of a real buffer. The `cufile` feature's driver-open test call is not that run.
 //!
-//! The `cufile` cargo feature compiles `cufile`, a dlopen probe. Its report is attached as
-//! `cufile` on [`GpuReport`] only in that build. It does not change `status`.
+//! The `cufile` cargo feature compiles `cufile`. Its report is attached as `cufile` on
+//! [`GpuReport`] only in that build. It does not change `status`. `cufile.io_performed` is true
+//! only when that module's `cuFileDriverOpen` test call succeeds.
 
 use std::{
     fs,
@@ -199,10 +202,9 @@ pub fn probe(root: &Path, backends: &[DeviceBackend]) -> GpuReport {
 
     let modules = read(root, "proc/modules", &mut problems);
     let has_module = |name: &str| {
-        modules.as_deref().is_some_and(|m| {
-            m.lines()
-                .any(|l| l.split_whitespace().next() == Some(name))
-        })
+        modules
+            .as_deref()
+            .is_some_and(|m| m.lines().any(|l| l.split_whitespace().next() == Some(name)))
     };
     let (nvidia_module, nvidia_fs_module, nvidia_peermem_module) = (
         has_module("nvidia"),
@@ -285,10 +287,12 @@ pub fn probe(root: &Path, backends: &[DeviceBackend]) -> GpuReport {
     // Each unmet condition is a reason the GDS path is not claimed.
     let mut gds_blockers: Vec<String> = Vec::new();
     if !nvidia_fs_module {
-        gds_blockers.push("nvidia_fs is not listed in /proc/modules (cuFile would use compat mode)".into());
+        gds_blockers
+            .push("nvidia_fs is not listed in /proc/modules (cuFile would use compat mode)".into());
     }
     if !nvidia_fs_proc {
-        gds_blockers.push("/proc/driver/nvidia-fs is absent, so nvidia_fs is not corroborated".into());
+        gds_blockers
+            .push("/proc/driver/nvidia-fs is absent, so nvidia_fs is not corroborated".into());
     }
     match kernel_ok {
         Some(true) => {}
@@ -389,7 +393,11 @@ mod tests {
     fn gds_tree() -> tempfile::TempDir {
         let t = tempfile::tempdir().unwrap();
         let r = t.path();
-        put(r, "proc/modules", "nvidia 1 0 - Live 0x0\nnvidia_fs 1 0 - Live 0x0\nnvidia_peermem 1 0 - Live 0x0\n");
+        put(
+            r,
+            "proc/modules",
+            "nvidia 1 0 - Live 0x0\nnvidia_fs 1 0 - Live 0x0\nnvidia_peermem 1 0 - Live 0x0\n",
+        );
         put(r, "proc/driver/nvidia-fs/stats", "x\n");
         put(r, "proc/driver/nvidia/version", OPEN_570);
         put(r, "proc/sys/kernel/osrelease", "6.8.0-45-generic\n");
@@ -479,7 +487,11 @@ mod tests {
         assert_eq!(r.evidence.allow_compat_mode, None);
         // The GDS conditions are still met; the malformed file is reported, not hidden.
         assert!(has(&r, "not that GDS works"));
-        put(t.path(), "etc/cufile.json", r#"{"properties":{"force_compat_mode":"yes"}}"#);
+        put(
+            t.path(),
+            "etc/cufile.json",
+            r#"{"properties":{"force_compat_mode":"yes"}}"#,
+        );
         assert!(has(&probe(t.path(), URING), "not a boolean"));
         put(t.path(), "etc/cufile.json", r#"{"other":1}"#);
         assert!(has(&probe(t.path(), URING), "no \"properties\""));
@@ -527,7 +539,11 @@ mod tests {
     #[test]
     fn old_kernel_is_compat() {
         let t = gds_tree();
-        put(t.path(), "proc/sys/kernel/osrelease", "5.15.0-100-generic\n");
+        put(
+            t.path(),
+            "proc/sys/kernel/osrelease",
+            "5.15.0-100-generic\n",
+        );
         let r = probe(t.path(), URING);
         assert_eq!(r.status, GpuIoStatus::Compat);
         assert_eq!(r.evidence.kernel_ok, Some(false));
@@ -537,7 +553,11 @@ mod tests {
     #[test]
     fn closed_or_old_driver_is_compat() {
         let t = gds_tree();
-        put(t.path(), "proc/driver/nvidia/version", "NVRM version: NVIDIA UNIX x86_64 Kernel Module  550.54.14\n");
+        put(
+            t.path(),
+            "proc/driver/nvidia/version",
+            "NVRM version: NVIDIA UNIX x86_64 Kernel Module  550.54.14\n",
+        );
         let r = probe(t.path(), URING);
         assert_eq!(r.status, GpuIoStatus::Compat);
         assert!(has(&r, "open kernel module"));

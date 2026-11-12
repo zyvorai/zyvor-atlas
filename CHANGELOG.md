@@ -18,10 +18,15 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 - MCP OAuth scopes / IdP `scope` mapping / RFC 7662 introspection / lab `ATLAS_MCP_AS_ENABLE` client_credentials endpoint (no DCR).
 - atlas-io NFS/ZFS/io_uring probe scaffolding, cgroup→volume map API, Observatory heatmap UI.
 - Native joint add/remove voter path hardening, `ATLAS_NATIVE_DATA_AUTH`, TLS cert reload; `cufile` dlopen probe; gRPC `ListSchedules`; DataBridge Oracle TCPS DSN + rollback-drill read-only API/`atlasctl`.
+- Longhorn clone-from-snapshot, Backup/BackupTarget CRDs, disk/node selectors; replica discovery as OSDs.
+- External Ceph import: live `POST /backends` with `mon_host`/`conf_path` (or `ATLAS_CEPH_EXTERNAL_*`) activates `RealCephDriver` (`docs/CEPH_EXTERNAL.md`).
+- Native leader-lease metadata reads after ReadIndex; cuFile read/write wrappers; RDMA pipeline/registered-memory scaffold (runtime off).
+- Ops Advisor whitelist execute (`silence_alert` / `create_snapshot`) via propose/confirm; MCP lab AS DCR + PKCE; DataBridge Postgres reverse-copy rollback (`ATLAS_DATABRIDGE_ROLLBACK_COPY`); owner workflow intent records; macOS SMART/capacity metrics; native CDC chunker scaffolding + `cross_group_dedup` flag.
 
 ### Not verified
 
 - Live SAN iSCSI, AWS/GCP/Azure cloud disks, Longhorn/WEKA/RGW object-lock/RBD import/qcow2 on real clusters, SoftRoCE pooled RDMA, GDS I/O, NFS/ZFS/uring eBPF attach, MCP introspection against a real AS.
+- Live Longhorn clone/backup, external Ceph against a real cluster, cuFile with `libcufile` present, RDMA pipeline on verbs, advisor execute on lab, MCP DCR/PKCE with a real host, Postgres reverse-copy rollback, CDC/cross-group dedup on writes.
 
 ## [0.13.0] — 2026-11-09
 

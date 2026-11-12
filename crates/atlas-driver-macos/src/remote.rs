@@ -147,7 +147,9 @@ impl RemoteMacosOps {
         path: &str,
         body: Option<serde_json::Value>,
     ) -> Result<serde_json::Value, DriverError> {
-        let mut req = self.client.request(method, format!("{}{path}", self.base_url));
+        let mut req = self
+            .client
+            .request(method, format!("{}{path}", self.base_url));
         if let Some(t) = &self.token {
             req = req.bearer_auth(t);
         }
@@ -170,7 +172,9 @@ impl RemoteMacosOps {
             409 => Err(DriverError::Backend(format!("refused: {text}"))),
             400 | 403 => Err(DriverError::Backend(format!("invalid: mac agent: {text}"))),
             503 => Err(DriverError::Unreachable(format!("mac agent: {text}"))),
-            code => Err(DriverError::Backend(format!("mac agent answered HTTP {code}: {text}"))),
+            code => Err(DriverError::Backend(format!(
+                "mac agent answered HTTP {code}: {text}"
+            ))),
         }
     }
 
@@ -181,7 +185,13 @@ impl RemoteMacosOps {
         dry_run: bool,
     ) -> Result<String, DriverError> {
         body["dry_run"] = dry_run.into();
-        let v = self.call(reqwest::Method::POST, &format!("/v1/ops/{name}"), Some(body)).await?;
+        let v = self
+            .call(
+                reqwest::Method::POST,
+                &format!("/v1/ops/{name}"),
+                Some(body),
+            )
+            .await?;
         Ok(v["output"].as_str().unwrap_or_default().to_string())
     }
 }
@@ -190,46 +200,97 @@ impl RemoteMacosOps {
 impl Lifecycle for RemoteMacosOps {
     async fn devices(&self) -> Result<Vec<DeviceRow>, DriverError> {
         let v = self.call(reqwest::Method::GET, "/v1/devices", None).await?;
-        serde_json::from_value(v).map_err(|e| DriverError::Parse(format!("mac agent /v1/devices: {e}")))
+        serde_json::from_value(v)
+            .map_err(|e| DriverError::Parse(format!("mac agent /v1/devices: {e}")))
     }
     async fn check_erase(&self, whole: &str, name: &str) -> Result<(), DriverError> {
-        self.op("erase", serde_json::json!({ "device": whole, "name": name }), true).await.map(drop)
+        self.op(
+            "erase",
+            serde_json::json!({ "device": whole, "name": name }),
+            true,
+        )
+        .await
+        .map(drop)
     }
     async fn check_add_volume(&self, container: &str, name: &str) -> Result<(), DriverError> {
-        self.op("add-volume", serde_json::json!({ "container": container, "name": name }), true)
-            .await
-            .map(drop)
+        self.op(
+            "add-volume",
+            serde_json::json!({ "container": container, "name": name }),
+            true,
+        )
+        .await
+        .map(drop)
     }
     async fn check_delete_volume(&self, volume: &str) -> Result<(), DriverError> {
-        self.op("delete-volume", serde_json::json!({ "device": volume }), true).await.map(drop)
+        self.op(
+            "delete-volume",
+            serde_json::json!({ "device": volume }),
+            true,
+        )
+        .await
+        .map(drop)
     }
-    async fn check_resize_container(&self, container: &str, size_bytes: u64) -> Result<(), DriverError> {
-        self.op("resize-container", serde_json::json!({ "container": container, "size_bytes": size_bytes }), true)
+    async fn check_resize_container(
+        &self,
+        container: &str,
+        size_bytes: u64,
+    ) -> Result<(), DriverError> {
+        self.op(
+            "resize-container",
+            serde_json::json!({ "container": container, "size_bytes": size_bytes }),
+            true,
+        )
+        .await
+        .map(drop)
+    }
+    async fn resize_container(
+        &self,
+        container: &str,
+        size_bytes: u64,
+    ) -> Result<String, DriverError> {
+        self.op(
+            "resize-container",
+            serde_json::json!({ "container": container, "size_bytes": size_bytes }),
+            false,
+        )
+        .await
+    }
+    async fn list_local_snapshots(&self) -> Result<Vec<String>, DriverError> {
+        let v = self
+            .call(reqwest::Method::GET, "/v1/snapshots", None)
+            .await?;
+        serde_json::from_value(v)
+            .map_err(|e| DriverError::Parse(format!("mac agent /v1/snapshots: {e}")))
+    }
+    async fn create_local_snapshot(&self) -> Result<String, DriverError> {
+        self.op("snapshot-create", serde_json::json!({}), false)
+            .await
+    }
+    async fn check_delete_local_snapshot(&self, date: &str) -> Result<(), DriverError> {
+        self.op("snapshot-delete", serde_json::json!({ "date": date }), true)
             .await
             .map(drop)
     }
-    async fn resize_container(&self, container: &str, size_bytes: u64) -> Result<String, DriverError> {
-        self.op("resize-container", serde_json::json!({ "container": container, "size_bytes": size_bytes }), false)
-            .await
-    }
-    async fn list_local_snapshots(&self) -> Result<Vec<String>, DriverError> {
-        let v = self.call(reqwest::Method::GET, "/v1/snapshots", None).await?;
-        serde_json::from_value(v).map_err(|e| DriverError::Parse(format!("mac agent /v1/snapshots: {e}")))
-    }
-    async fn create_local_snapshot(&self) -> Result<String, DriverError> {
-        self.op("snapshot-create", serde_json::json!({}), false).await
-    }
-    async fn check_delete_local_snapshot(&self, date: &str) -> Result<(), DriverError> {
-        self.op("snapshot-delete", serde_json::json!({ "date": date }), true).await.map(drop)
-    }
     async fn delete_local_snapshot(&self, date: &str) -> Result<String, DriverError> {
-        self.op("snapshot-delete", serde_json::json!({ "date": date }), false).await
+        self.op(
+            "snapshot-delete",
+            serde_json::json!({ "date": date }),
+            false,
+        )
+        .await
     }
     async fn check_eject(&self, whole: &str) -> Result<(), DriverError> {
-        self.op("eject", serde_json::json!({ "device": whole }), true).await.map(drop)
+        self.op("eject", serde_json::json!({ "device": whole }), true)
+            .await
+            .map(drop)
     }
     async fn erase_disk(&self, whole: &str, name: &str) -> Result<String, DriverError> {
-        self.op("erase", serde_json::json!({ "device": whole, "name": name }), false).await
+        self.op(
+            "erase",
+            serde_json::json!({ "device": whole, "name": name }),
+            false,
+        )
+        .await
     }
     async fn add_volume(
         &self,
@@ -247,10 +308,16 @@ impl Lifecycle for RemoteMacosOps {
         .await
     }
     async fn delete_volume(&self, volume: &str) -> Result<String, DriverError> {
-        self.op("delete-volume", serde_json::json!({ "device": volume }), false).await
+        self.op(
+            "delete-volume",
+            serde_json::json!({ "device": volume }),
+            false,
+        )
+        .await
     }
     async fn eject(&self, whole: &str) -> Result<String, DriverError> {
-        self.op("eject", serde_json::json!({ "device": whole }), false).await
+        self.op("eject", serde_json::json!({ "device": whole }), false)
+            .await
     }
 }
 
@@ -267,7 +334,10 @@ pub fn agents_from_env() -> Result<Vec<RemoteMacosDriver>, String> {
     let Some(list) = var("ATLAS_MACOS_AGENTS") else {
         return Ok(Vec::new());
     };
-    let token = match (var("ATLAS_MACOS_AGENT_TOKEN"), var("ATLAS_MACOS_AGENT_TOKEN_FILE")) {
+    let token = match (
+        var("ATLAS_MACOS_AGENT_TOKEN"),
+        var("ATLAS_MACOS_AGENT_TOKEN_FILE"),
+    ) {
         (Some(t), _) => Some(t.trim().to_string()),
         (None, Some(f)) => Some(
             std::fs::read_to_string(&f)
@@ -278,7 +348,9 @@ pub fn agents_from_env() -> Result<Vec<RemoteMacosDriver>, String> {
         _ => None,
     };
     let ca = match var("ATLAS_MACOS_AGENT_CA_CERT") {
-        Some(f) => Some(std::fs::read(&f).map_err(|e| format!("ATLAS_MACOS_AGENT_CA_CERT {f}: {e}"))?),
+        Some(f) => {
+            Some(std::fs::read(&f).map_err(|e| format!("ATLAS_MACOS_AGENT_CA_CERT {f}: {e}"))?)
+        }
         None => None,
     };
     let mut out = Vec::new();
@@ -289,9 +361,13 @@ pub fn agents_from_env() -> Result<Vec<RemoteMacosDriver>, String> {
             .ok_or_else(|| format!("ATLAS_MACOS_AGENTS entry {entry:?} is not name=url"))?;
         let ok = !name.is_empty()
             && name.len() <= 40
-            && name.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-');
         if !ok {
-            return Err(format!("ATLAS_MACOS_AGENTS name {name:?} must be lowercase letters, digits or '-'"));
+            return Err(format!(
+                "ATLAS_MACOS_AGENTS name {name:?} must be lowercase letters, digits or '-'"
+            ));
         }
         if !seen.insert(name.to_string()) {
             return Err(format!("ATLAS_MACOS_AGENTS lists {name:?} twice"));

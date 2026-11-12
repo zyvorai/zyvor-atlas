@@ -259,7 +259,10 @@ pub async fn provision_edge(
             crate::cr::psmdb::cluster_spec(1, "zyvor-rbd-prod", size_gib),
         ),
     };
-    if let Err(e) = k8s.apply_cr(group, version, kind, namespace, &cr_name, spec).await {
+    if let Err(e) = k8s
+        .apply_cr(group, version, kind, namespace, &cr_name, spec)
+        .await
+    {
         // Nothing was created in the cluster, so hand the plan back to `assessed` for a retry; left
         // in `provisioning` with no CR, the reconciler never advances it and `try_transition`
         // refuses every later provision.
@@ -1025,7 +1028,31 @@ pub fn rollback_steps() -> Vec<(&'static str, &'static str)> {
             "cdc",
             "a CDC stream rollback stopped stays stopped; starting it again is a separate cdc-start",
         ),
+        (
+            "reverse_copy",
+            "when ATLAS_DATABRIDGE_ROLLBACK_COPY=1, a homogeneous Postgres source with an endpoint, and Kubernetes, pipeline::rollback applies a reverse pg_dump|psql Job from the edge back to the source. Otherwise this step does not restore source rows",
+        ),
     ]
+}
+
+/// `ATLAS_DATABRIDGE_ROLLBACK_COPY=1|true|yes`.
+pub fn rollback_copy_enabled_from(value: Option<&str>) -> bool {
+    value.is_some_and(|v| matches!(v.trim(), "1" | "true" | "yes"))
+}
+
+pub fn rollback_copy_enabled() -> bool {
+    rollback_copy_enabled_from(
+        std::env::var("ATLAS_DATABRIDGE_ROLLBACK_COPY")
+            .ok()
+            .as_deref(),
+    )
+}
+
+/// Homogeneous Postgres with a recorded endpoint. Other engines, including MySQL, stay a state flip.
+pub fn reverse_copy_applies(enabled: bool, kind: &str, endpoint: Option<&str>) -> bool {
+    enabled
+        && crate::SourceKind::parse(kind) == Some(crate::SourceKind::Postgres)
+        && endpoint.is_some_and(|e| !e.trim().is_empty())
 }
 
 /// Read-only view of a reverse cutover: the steps [`rollback`] will run, and whether the
@@ -1061,7 +1088,16 @@ pub async fn rollback_drill(pool: &AnyPool, plan_id: &str) -> Result<serde_json:
 }
 
 /// Roll back a cutover within its window: revert the active endpoint to the source.
-pub async fn rollback(pool: &AnyPool, plan_id: &str) -> Result<serde_json::Value> {
+///
+/// The state flip always happens. When [`rollback_copy_enabled`] and the source is homogeneous
+/// Postgres with an endpoint, a reverse `pg_dump | psql` Job is applied if Kubernetes is
+/// available. A missing edge, a non-Postgres source, or no client leaves the rows where they are
+/// and says so on `reverse_copy`.
+pub async fn rollback(
+    pool: &AnyPool,
+    k8s: Option<&atlas_driver_k8s::K8sDriver>,
+    plan_id: &str,
+) -> Result<serde_json::Value> {
     let plan = atlas_inventory::databridge::plans::get_plan(pool, plan_id)
         .await?
         .ok_or_else(|| anyhow!("plan {plan_id} not found"))?;
@@ -1070,7 +1106,106 @@ pub async fn rollback(pool: &AnyPool, plan_id: &str) -> Result<serde_json::Value
         atlas_inventory::databridge::cutovers::set_complete(pool, &cut.id, "rolled_back").await?;
     }
     atlas_inventory::databridge::plans::set_state(pool, plan_id, "rolled_back").await?;
-    Ok(serde_json::json!({ "plan_id": plan.id, "state": "rolled_back" }))
+    let reverse_copy = reverse_copy(pool, k8s, &plan).await;
+    Ok(serde_json::json!({
+        "plan_id": plan.id,
+        "state": "rolled_back",
+        "reverse_copy": reverse_copy,
+    }))
+}
+
+async fn reverse_copy(
+    pool: &AnyPool,
+    k8s: Option<&atlas_driver_k8s::K8sDriver>,
+    plan: &atlas_api_types::MigrationPlan,
+) -> serde_json::Value {
+    if !rollback_copy_enabled() {
+        return serde_json::json!({ "state": "off" });
+    }
+    let source = match atlas_inventory::databridge::sources::get_source(pool, &plan.source_id).await
+    {
+        Ok(Some(s)) => s,
+        _ => {
+            return serde_json::json!({ "state": "skipped", "reason": "source not recorded" });
+        }
+    };
+    if !reverse_copy_applies(true, &source.kind, source.endpoint.as_deref()) {
+        return serde_json::json!({
+            "state": "skipped",
+            "reason": "not homogeneous postgres with a recorded endpoint",
+        });
+    }
+    let (Some(source_secret), Some(src_host)) = (
+        source.secret_ref.as_deref().filter(|s| !s.is_empty()),
+        source.endpoint.as_deref().filter(|s| !s.trim().is_empty()),
+    ) else {
+        return serde_json::json!({ "state": "skipped", "reason": "source secret or endpoint missing" });
+    };
+    let Some(edge_id) = plan.edge_cluster_id.as_deref() else {
+        return serde_json::json!({ "state": "skipped", "reason": "plan has no edge cluster" });
+    };
+    let edge = match atlas_inventory::databridge::edge_clusters::get_edge_cluster(pool, edge_id)
+        .await
+    {
+        Ok(Some(e)) => e,
+        _ => {
+            return serde_json::json!({ "state": "skipped", "reason": "edge cluster not recorded" });
+        }
+    };
+    let Some(edge_secret) = edge.secret_ref.as_deref().filter(|s| !s.is_empty()) else {
+        return serde_json::json!({ "state": "skipped", "reason": "edge cluster has no credentials secret" });
+    };
+    let spec = crate::loader::pg_reverse_job_spec(
+        source_secret,
+        edge_secret,
+        src_host,
+        source.port.unwrap_or(5432),
+        source.database.as_deref().unwrap_or("appdb"),
+        &source.tls_mode,
+    );
+    let job_name = crate::loader::rollback_job_name(&plan.id);
+    let Some(k8s) = k8s else {
+        return serde_json::json!({
+            "state": "prepared",
+            "job": job_name,
+            "applied": false,
+            "direction": "edge_to_source",
+            "note": "job spec built; no kubernetes client to apply it",
+        });
+    };
+    if source.driver_mode == "fake" {
+        return serde_json::json!({
+            "state": "prepared",
+            "job": job_name,
+            "applied": false,
+            "direction": "edge_to_source",
+            "mode": "fake",
+        });
+    }
+    match k8s
+        .apply_cr(
+            crate::loader::JOB_GROUP,
+            crate::loader::JOB_VERSION,
+            crate::loader::JOB_KIND,
+            &edge.namespace,
+            &job_name,
+            spec,
+        )
+        .await
+    {
+        Ok(()) => serde_json::json!({
+            "state": "running",
+            "job": job_name,
+            "applied": true,
+            "direction": "edge_to_source",
+        }),
+        Err(e) => serde_json::json!({
+            "state": "failed",
+            "job": job_name,
+            "applied": false,
+            "error": e.to_string(),
+        }),
+    }
 }
 
 /// The sink connector applying the CDC topics to the edge: the Debezium JDBC sink for the
@@ -1130,5 +1265,26 @@ mod tests {
             .join(" ");
         assert!(!text.to_ascii_lowercase().contains("copy rows"));
         assert!(text.contains("rolled_back"));
+        assert!(text.contains("ATLAS_DATABRIDGE_ROLLBACK_COPY"));
+        assert!(text.contains("does not restore source rows"));
+    }
+
+    #[test]
+    fn reverse_copy_is_postgres_only_and_needs_an_endpoint() {
+        assert!(!rollback_copy_enabled_from(None));
+        assert!(!rollback_copy_enabled_from(Some("0")));
+        assert!(rollback_copy_enabled_from(Some("1")));
+        assert!(reverse_copy_applies(true, "postgres", Some("db.example")));
+        assert!(reverse_copy_applies(true, "postgresql", Some("db.example")));
+        assert!(!reverse_copy_applies(false, "postgres", Some("db.example")));
+        assert!(!reverse_copy_applies(true, "postgres", Some("  ")));
+        assert!(!reverse_copy_applies(true, "postgres", None));
+        assert!(!reverse_copy_applies(true, "mysql", Some("db.example")));
+        assert!(!reverse_copy_applies(true, "oracle", Some("db.example")));
+        assert!(!reverse_copy_applies(
+            true,
+            "mongodb",
+            Some("mongo.example")
+        ));
     }
 }

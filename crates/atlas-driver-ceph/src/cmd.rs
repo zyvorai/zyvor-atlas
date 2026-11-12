@@ -29,17 +29,40 @@ fn cmd(bin: &str) -> tokio::process::Command {
 
 /// Run `ceph <args...> --format json` and parse stdout as JSON.
 pub async fn ceph_cmd(args: &[&str]) -> Result<serde_json::Value, DriverError> {
-    run_json("ceph", args).await
+    ceph_cmd_at(&[], args).await
+}
+
+/// [`ceph_cmd`] with global options (`--conf`, `--keyring`, `--mon-host`, `--name`) first.
+pub(crate) async fn ceph_cmd_at(
+    prefix: &[String],
+    args: &[&str],
+) -> Result<serde_json::Value, DriverError> {
+    let mut all: Vec<&str> = prefix.iter().map(String::as_str).collect();
+    all.extend_from_slice(args);
+    // An external cluster that does not answer must not pin the request on Ceph's mon hunt.
+    let limit = (!prefix.is_empty()).then_some(Duration::from_secs(30));
+    run_json_bounded("ceph", &all, limit).await
 }
 
 /// `ceph osd ok-to-stop <ids...>`: whether stopping all of `osd_ids` at once keeps every PG
 /// available. Ceph answers "no" with a non-zero exit status and JSON on stdout, so a refusal is a
 /// normal result here (`ok_to_stop: false`), not an error.
 pub async fn ceph_osd_ok_to_stop(osd_ids: &[i64]) -> Result<serde_json::Value, DriverError> {
+    ceph_osd_ok_to_stop_at(&[], osd_ids).await
+}
+
+pub(crate) async fn ceph_osd_ok_to_stop_at(
+    prefix: &[String],
+    osd_ids: &[i64],
+) -> Result<serde_json::Value, DriverError> {
     let ids: Vec<String> = osd_ids.iter().map(|i| i.to_string()).collect();
     let mut args = vec!["osd", "ok-to-stop"];
     args.extend(ids.iter().map(String::as_str));
-    let output = cmd("ceph")
+    let mut command = cmd("ceph");
+    if !prefix.is_empty() {
+        command.args(prefix);
+    }
+    let output = command
         .args(&args)
         .arg("--format")
         .arg("json")
@@ -65,7 +88,8 @@ fn interpret_ok_to_stop(
     match (success, parsed) {
         (true, Some(mut v)) => {
             if let Some(o) = v.as_object_mut() {
-                o.entry("ok_to_stop").or_insert(serde_json::Value::Bool(true));
+                o.entry("ok_to_stop")
+                    .or_insert(serde_json::Value::Bool(true));
             }
             Ok(v)
         }
@@ -86,7 +110,17 @@ fn interpret_ok_to_stop(
 
 /// Run `rbd <args...> --format json` and parse stdout as JSON.
 pub async fn rbd_cmd(args: &[&str]) -> Result<serde_json::Value, DriverError> {
-    run_json("rbd", args).await
+    rbd_cmd_at(&[], args).await
+}
+
+pub(crate) async fn rbd_cmd_at(
+    prefix: &[String],
+    args: &[&str],
+) -> Result<serde_json::Value, DriverError> {
+    let mut all: Vec<&str> = prefix.iter().map(String::as_str).collect();
+    all.extend_from_slice(args);
+    let limit = (!prefix.is_empty()).then_some(Duration::from_secs(30));
+    run_json_bounded("rbd", &all, limit).await
 }
 
 /// Create an RBD snapshot `pool/image@snap` (idempotent-ish; errors if it already exists).
@@ -613,8 +647,12 @@ pub fn mirror_promote_blocker(
 /// Actual used (allocated) bytes of every image in a pool (`rbd du --pool <pool> --format json`),
 /// as `(image_name, used_size)` pairs. Used to enrich `rbd ls -l` (which has no `used_size` field).
 /// The pool goes in `--pool`: a bare positional is an image spec in the default pool (`rbd`).
-pub async fn rbd_du_pool(pool: &str) -> Result<Vec<(String, i64)>, DriverError> {
-    let v = rbd_cmd(&["du", "--pool", pool]).await?;
+/// `prefix` is the external-cluster `--conf` / `--keyring` / `--mon-host` / `--name` argv.
+pub(crate) async fn rbd_du_pool_at(
+    prefix: &[String],
+    pool: &str,
+) -> Result<Vec<(String, i64)>, DriverError> {
+    let v = rbd_cmd_at(prefix, &["du", "--pool", pool]).await?;
     Ok(parse_du_images(&v))
 }
 
@@ -725,7 +763,11 @@ async fn snap_op(op: &[&str], pool: &str, image: &str, snap: &str) -> Result<(),
 
 /// List RBD image names in a pool (`rbd ls pool --format json`).
 pub async fn rbd_list(pool: &str) -> Result<Vec<String>, DriverError> {
-    let v = rbd_cmd(&["ls", pool]).await?;
+    rbd_list_at(&[], pool).await
+}
+
+pub(crate) async fn rbd_list_at(prefix: &[String], pool: &str) -> Result<Vec<String>, DriverError> {
+    let v = rbd_cmd_at(prefix, &["ls", pool]).await?;
     Ok(v.as_array()
         .map(|a| {
             a.iter()
@@ -793,9 +835,18 @@ pub fn rbd_export_diff_child(
 
 /// Spawn `rbd export-diff pool/image -` of the image head (no snapshot), stdout piped. Read-only;
 /// the caller reads at most what it needs and then kills the child.
-pub fn rbd_export_diff_head_child(pool: &str, image: &str) -> Result<tokio::process::Child, DriverError> {
+/// `prefix` is the external-cluster `--conf` / `--keyring` / `--mon-host` / `--name` argv.
+pub(crate) fn rbd_export_diff_head_child_at(
+    prefix: &[String],
+    pool: &str,
+    image: &str,
+) -> Result<tokio::process::Child, DriverError> {
     let spec = format!("{pool}/{image}");
-    cmd("rbd")
+    let mut command = cmd("rbd");
+    if !prefix.is_empty() {
+        command.args(prefix);
+    }
+    command
         .args(["export-diff", &spec, "-"])
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1068,12 +1119,10 @@ fn rbd_python_bin() -> String {
     std::env::var("ATLAS_RBD_PYTHON").unwrap_or_else(|_| "python3".into())
 }
 
-fn ceph_conf() -> String {
-    std::env::var("CEPH_CONF").unwrap_or_else(|_| "/etc/ceph/ceph.conf".into())
-}
-
 /// Read `len` bytes at `offset` via the python `rbd` module (librbd). Never-written bytes are zeros.
-pub async fn rbd_read(
+/// `conf` is the ceph.conf path (`CEPH_CONF` or `/etc/ceph/ceph.conf` for the default cluster).
+pub(crate) async fn rbd_read_conf(
+    conf: &str,
     pool: &str,
     image: &str,
     offset: u64,
@@ -1095,7 +1144,7 @@ pub async fn rbd_read(
         .arg(pool)
         .arg(image)
         .arg(offset.to_string())
-        .arg(ceph_conf())
+        .arg(conf)
         .arg(len.to_string())
         .output()
         .await
@@ -1116,7 +1165,9 @@ pub async fn rbd_read(
 }
 
 /// Write `data` at `offset` via the python `rbd` module (librbd).
-pub async fn rbd_write(
+/// `conf` is the ceph.conf path (`CEPH_CONF` or `/etc/ceph/ceph.conf` for the default cluster).
+pub(crate) async fn rbd_write_conf(
+    conf: &str,
     pool: &str,
     image: &str,
     offset: u64,
@@ -1139,7 +1190,7 @@ pub async fn rbd_write(
         .arg(pool)
         .arg(image)
         .arg(offset.to_string())
-        .arg(ceph_conf())
+        .arg(conf)
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .stderr(std::process::Stdio::piped())
@@ -1166,17 +1217,29 @@ pub async fn rbd_write(
     Ok(())
 }
 
-async fn run_json(bin: &str, args: &[&str]) -> Result<serde_json::Value, DriverError> {
-    let output = cmd(bin)
-        .args(args)
-        .arg("--format")
-        .arg("json")
-        .output()
-        .await
-        .map_err(|e| {
-            // e.g. binary missing, or no permission — treat as backend unreachable.
-            DriverError::Unreachable(format!("failed to spawn `{bin}`: {e}"))
-        })?;
+async fn run_json_bounded(
+    bin: &str,
+    args: &[&str],
+    limit: Option<Duration>,
+) -> Result<serde_json::Value, DriverError> {
+    let mut command = cmd(bin);
+    command.args(args).arg("--format").arg("json");
+    let waited = match limit {
+        Some(limit) => match tokio::time::timeout(limit, command.output()).await {
+            Ok(result) => result,
+            Err(_) => {
+                return Err(DriverError::Unreachable(format!(
+                    "`{bin}` timed out after {}s",
+                    limit.as_secs()
+                )))
+            }
+        },
+        None => command.output().await,
+    };
+    let output = waited.map_err(|e| {
+        // e.g. binary missing, or no permission — treat as backend unreachable.
+        DriverError::Unreachable(format!("failed to spawn `{bin}`: {e}"))
+    })?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
@@ -1218,7 +1281,10 @@ mod tests {
             "total_provisioned_size":1074790400,"total_used_size":51380224});
         assert_eq!(
             parse_du_images(&squid),
-            vec![("csi-vol-8ae5".to_string(), 50331648), ("dedup-live".to_string(), 1048576)]
+            vec![
+                ("csi-vol-8ae5".to_string(), 50331648),
+                ("dedup-live".to_string(), 1048576)
+            ]
         );
         let older = json!({"images":[{"image":"a","used_size":7}]});
         assert_eq!(parse_du_images(&older), vec![("a".to_string(), 7)]);
@@ -1232,8 +1298,14 @@ mod tests {
         assert_eq!(v["ok_to_stop"], true);
         assert_eq!(v["num_ok_pgs"], 12);
         // Older Ceph omits the flag on success; it is added.
-        assert_eq!(interpret_ok_to_stop(true, b"{}", "").unwrap()["ok_to_stop"], true);
-        assert_eq!(interpret_ok_to_stop(true, b"", "").unwrap()["ok_to_stop"], true);
+        assert_eq!(
+            interpret_ok_to_stop(true, b"{}", "").unwrap()["ok_to_stop"],
+            true
+        );
+        assert_eq!(
+            interpret_ok_to_stop(true, b"", "").unwrap()["ok_to_stop"],
+            true
+        );
     }
 
     #[test]
@@ -1250,7 +1322,8 @@ mod tests {
 
     #[test]
     fn ok_to_stop_failure_without_json_is_an_error_with_cephs_message() {
-        let e = interpret_ok_to_stop(false, b"", "Error ENOENT: osd.99 does not exist\n").unwrap_err();
+        let e =
+            interpret_ok_to_stop(false, b"", "Error ENOENT: osd.99 does not exist\n").unwrap_err();
         assert!(e.to_string().contains("osd.99 does not exist"), "{e}");
         assert!(interpret_ok_to_stop(false, b"not json", "boom").is_err());
         assert!(interpret_ok_to_stop(false, b"[1,2]", "boom").is_err());

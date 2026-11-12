@@ -515,12 +515,34 @@ fn existing_snapshot_response(
     )
 }
 
+impl SnapshotBody {
+    /// A named snapshot with no class override and no `if_not_exists` reuse.
+    pub(crate) fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: Some(name.into()),
+            snapshot_class: None,
+            if_not_exists: false,
+        }
+    }
+}
+
 /// `POST /volumes/{id}/snapshots`
 pub(crate) async fn create_snapshot(
     State(s): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
     Json(body): Json<SnapshotBody>,
+) -> AppResult<(StatusCode, Json<Value>)> {
+    snapshot_volume(&s, &actor, id, body).await
+}
+
+/// Create a snapshot of `id`. Shared by `POST /volumes/{id}/snapshots` and the advisor's
+/// two-person `create_snapshot` confirm.
+pub(crate) async fn snapshot_volume(
+    s: &AppState,
+    actor: &Actor,
+    id: String,
+    body: SnapshotBody,
 ) -> AppResult<(StatusCode, Json<Value>)> {
     crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
     let vol = atlas_inventory::get_volume(&s.pool, &id)

@@ -2,11 +2,12 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # GPU / GPUDirect Storage capability probe (atlas-native)
 
-**Status: UNVERIFIED on real GPU hardware.** The probe (`crates/atlas-native/src/gpu.rs`) was
+**Status: UNVERIFIED on real GPU hardware.** The files probe (`crates/atlas-native/src/gpu.rs`) was
 written and tested against fixture directory trees only. The development host has no GPU, no CUDA
-and no `nvidia_fs`. **No GPU I/O path exists in Atlas**, and none was tested: no cuFile or GDS read
-or write is performed anywhere. The probe only reads files and says so in every report
-(`"probe only, no I/O was performed; unverified on real GPU hardware"`).
+and no `nvidia_fs`. That probe only reads files and says so in every report
+(`"probe only, no I/O was performed; unverified on real GPU hardware"`). No cuFile read or write
+of a GPU buffer has been run. With `--features cufile`, thin wrappers can call `cuFileRead` and
+`cuFileWrite` when `libcufile` is present; see below. `io_performed` is not that transfer.
 
 ## Where it shows up
 
@@ -44,7 +45,8 @@ needs privileges was added to the gateway.
 - `gds`: only when **all** of these are corroborated: GPU present, `nvidia_fs` in `/proc/modules`
   **and** `/proc/driver/nvidia-fs` present, kernel >= 6.2, open driver >= 570, an `io_uring`
   backend, and `force_compat_mode` not true. This means "the machine looks capable", not "GDS
-  works".
+  works": that would need a cuFile read or write of a real buffer. The `cufile` feature's
+  driver-open test call is not that run.
 - `compat`: a GPU is present but a condition above is unmet, so cuFile would use its POSIX
   bounce-buffer path (or refuse, if `allow_compat_mode` is false; the report says so).
 
@@ -66,14 +68,39 @@ unknown.
 ## The `cufile` cargo feature
 
 `cufile` is declared in `crates/atlas-native/Cargo.toml`, default-off. It compiles
-`crates/atlas-native/src/cufile.rs`, which `dlopen`s `libcufile.so.0` (then `libcufile.so`) and
-reports whether `cuFileDriverOpen`, `cuFileRead` and `cuFileWrite` resolve. Nothing is linked at
-build time, and none of those symbols are called: `io_performed` is always false. On a host
-without the library the probe reports `library_present: false` and still succeeds.
+`crates/atlas-native/src/cufile.rs`. Nothing is linked at build time. The module `dlopen`s
+`libcufile.so.0` (then `libcufile.so`) and looks up `cuFileDriverOpen`, `cuFileDriverClose`,
+`cuFileRead` and `cuFileWrite`.
 
-When the feature is on, `gpu_io` in `/v1/status` gains a `cufile` object. The files-only `status`
-(`gds` / `compat` / `none`) does not change. `dlopen` may run the library's constructors; that is
-not a cuFile read or write.
+- **Library or symbol missing.** [`read`](../crates/atlas-native/src/cufile.rs), `write`,
+  `driver_open` and `driver_close` return `CuFileError` (`LibraryAbsent` or `SymbolMissing`).
+  They do not panic and they do not call into cuFile. The unit test
+  `absent_library_performs_no_io_and_the_wrappers_error` covers a host without the library
+  (this development host). On that host `io_performed` is false.
+- **Symbols present.** `read` and `write` call `cuFileRead` / `cuFileWrite` with the caller's
+  `CUfileHandle_t` and buffer. They do not allocate a GPU buffer, register memory, or open a
+  file. A negative return is `CuFileError::Io`. A zero-length buffer is refused
+  (`CuFileError::Empty`) so it cannot be reported as a transfer. The caller must
+  `driver_open` first; the wrapper does not hide that.
+- **Test call.** Once per process, `probe` calls `cuFileDriverOpen` when that symbol exists.
+  `io_performed` is true only when the returned `CUfileOpError` is success (`0`). The probe then
+  calls `cuFileDriverClose` if that symbol exists. This is not a read or write of a device
+  buffer. A failed open leaves `io_performed` false and puts the op/cu codes in `io_error`.
+  The mapping is kept for the process (not `dlclose`d) so a later call is not a use-after-unload.
+  `dlopen` may run the library's constructors.
 
-The feature stays out of `make native-features` because it performs no I/O and the files-only
-probe does not need it. A real cuFile binding would go there.
+When the feature is on, `gpu_io` in `/v1/status` gains a `cufile` object:
+
+```json
+{ "library_present": false, "library": null, "driver_open_symbol": false,
+  "read_symbol": false, "write_symbol": false, "io_performed": false,
+  "io_error": "libcufile is not installed",
+  "note": "libcufile was not found; no cuFile call was made; ..." }
+```
+
+The files-only `status` (`gds` / `compat` / `none`) does not change, and that report's
+`probe_only` stays true: the file probe did not transfer GPU bytes. `cufile.io_performed` is the
+driver-open result, not a GDS read or write.
+
+The feature stays out of `make native-features`. CI hosts have no `libcufile`, and the files-only
+probe does not need the feature. A transfer of a real GPU buffer has not been run.

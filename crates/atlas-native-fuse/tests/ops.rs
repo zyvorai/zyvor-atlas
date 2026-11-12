@@ -121,6 +121,7 @@ impl Cluster {
                     erasure_min_bytes: 64 << 10,
                     compression: false,
                     dedup: false,
+                    cross_group_dedup: false,
                     rebuild_delay_secs: 60,
                     rebuild_bytes_per_sec: 0,
                     scrub_bytes_per_sec: 0,
@@ -1185,7 +1186,13 @@ fn new_file(ops: &Ops, name: &str) -> u64 {
 }
 
 /// What a client holds after `POST .../direct-write`: the targets and their grants.
-fn lease_over_http(c: &Cluster, fs: &str, ino: u64, offset: u64, len: u64) -> atlas_native::engine::DirectLease {
+fn lease_over_http(
+    c: &Cluster,
+    fs: &str,
+    ino: u64,
+    offset: u64,
+    len: u64,
+) -> atlas_native::engine::DirectLease {
     let v = c
         .client()
         .json(
@@ -1227,7 +1234,10 @@ fn direct_writes_send_whole_extents_to_the_data_nodes() {
     ops.write(f, 0, &a).unwrap();
     ops.flush(f).unwrap();
     let (direct, fallbacks) = ops.direct_write_counts();
-    assert!(direct >= 1 && fallbacks == 0, "direct {direct}, fallbacks {fallbacks}");
+    assert!(
+        direct >= 1 && fallbacks == 0,
+        "direct {direct}, fallbacks {fallbacks}"
+    );
 
     // Unaligned: the head and tail go through the leader, the whole extents in between direct.
     let g = new_file(&ops, "ragged.bin");
@@ -1464,7 +1474,10 @@ fn direct_reads_use_tcp_when_the_nodes_do_not_offer_rdma() {
     assert_eq!(ops.direct_fallbacks(), 0);
     let s = ops.cfg.rdma_stats().unwrap();
     assert_eq!(s.requests, 0, "{s:?}");
-    assert!(s.connect_failures >= 1 && s.tcp_fallback_connects >= 1, "{s:?}");
+    assert!(
+        s.connect_failures >= 1 && s.tcp_fallback_connects >= 1,
+        "{s:?}"
+    );
 }
 
 #[test]
@@ -1481,7 +1494,10 @@ fn direct_writes_go_over_rdma_to_nodes_that_require_grants() {
     ops.write(f, 0, &a).unwrap();
     ops.flush(f).unwrap();
     let (direct, fallbacks) = ops.direct_write_counts();
-    assert!(direct >= 1 && fallbacks == 0, "direct {direct}, fallbacks {fallbacks}");
+    assert!(
+        direct >= 1 && fallbacks == 0,
+        "direct {direct}, fallbacks {fallbacks}"
+    );
     let s = ops.cfg.rdma_stats().unwrap();
     assert!(s.requests >= 8 && s.connects >= 1, "{s:?}");
     assert_eq!((s.connect_failures, s.midflight_errors), (0, 0), "{s:?}");
@@ -1529,10 +1545,13 @@ fn rdma_with_a_tls_identity_is_a_configuration_error() {
     assert!(direct(None).validate().is_ok());
 }
 
-// ---- RDMA to the data nodes over a REAL verbs device (SoftRoCE rxe0 or hardware) ----
+// ---- RDMA to the data nodes over a REAL verbs device (SoftRoCE rxe0; hardware not required) ----
 //
 // These mirror the fake-transport tests above but use `rdma_link::verbs_transport()`, so they need
-// a build with `--features rdma` on Linux and an RDMA device. Every RDMA connection pins about
+// a build with `--features rdma` on Linux and an RDMA device. SoftRoCE is enough and is not CI:
+//   rdma link add rxe0 type rxe netdev lo
+// GID index 1 unless ATLAS_RDMA_GID_INDEX is set. A pass on rxe0 checks plumbing only, not an
+// RDMA NIC and not throughput. Every RDMA connection pins about
 // 1 MiB on each end (and these tests hold both ends in one process), so the first two need a high
 // RLIMIT_MEMLOCK (e.g. `ulimit -l unlimited`); the third runs under the default limit.
 //   ATLAS_RDMA_GID_INDEX=<n> cargo test -p atlas-native-fuse --features rdma --test ops -- --ignored real_rdma
@@ -1548,7 +1567,7 @@ fn verbs() -> (Arc<dyn atlas_native::rdma_link::RdmaTransport>, u32) {
 }
 
 #[test]
-#[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0), --features rdma and a high RLIMIT_MEMLOCK"]
+#[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput. Also --features rdma and a high RLIMIT_MEMLOCK"]
 fn real_rdma_direct_reads_use_the_verbs_transport() {
     let c = Cluster::start();
     create_fs(&c, "vr");
@@ -1573,7 +1592,7 @@ fn real_rdma_direct_reads_use_the_verbs_transport() {
 }
 
 #[test]
-#[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0), --features rdma and a high RLIMIT_MEMLOCK"]
+#[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput. Also --features rdma and a high RLIMIT_MEMLOCK"]
 fn real_rdma_direct_writes_use_the_verbs_transport() {
     let c = Cluster::start_granted(3);
     create_fs(&c, "vw");
@@ -1589,7 +1608,10 @@ fn real_rdma_direct_writes_use_the_verbs_transport() {
     ops.write(f, 0, &a).unwrap();
     ops.flush(f).unwrap();
     let (direct, fallbacks) = ops.direct_write_counts();
-    assert!(direct >= 1 && fallbacks == 0, "direct {direct}, fallbacks {fallbacks}");
+    assert!(
+        direct >= 1 && fallbacks == 0,
+        "direct {direct}, fallbacks {fallbacks}"
+    );
     let s = ops.cfg.rdma_stats().unwrap();
     assert!(s.requests >= 8 && s.connects >= 1, "{s:?}");
     assert_eq!((s.connect_failures, s.midflight_errors), (0, 0), "{s:?}");
@@ -1604,7 +1626,7 @@ fn real_rdma_direct_writes_use_the_verbs_transport() {
 /// off and the data is intact. Run it under the default limit; it does nothing when the limit is
 /// high enough that the cap would not bite.
 #[test]
-#[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0) and --features rdma; run under a low RLIMIT_MEMLOCK"]
+#[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput. Also --features rdma; run under a low RLIMIT_MEMLOCK"]
 fn real_rdma_degrades_gracefully_under_a_low_memlock_limit() {
     use atlas_native::rdma_link::{soft_memlock, Memlock};
     let Some(Memlock::Bytes(limit)) = soft_memlock() else {
@@ -1652,7 +1674,17 @@ fn real_rdma_degrades_gracefully_under_a_low_memlock_limit() {
     }
     assert_eq!(ops.direct_fallbacks(), 0);
     let s = ops.cfg.rdma_stats().unwrap();
-    assert_eq!((s.connect_failures, s.midflight_errors, s.enomem_failures), (0, 0, 0), "{s:?}");
-    assert!(s.capped_fallbacks > 0, "the cap should have been reached: {s:?}");
-    assert!(s.live_connections <= cap as u64 && s.requests > 0, "cap {cap}: {s:?}");
+    assert_eq!(
+        (s.connect_failures, s.midflight_errors, s.enomem_failures),
+        (0, 0, 0),
+        "{s:?}"
+    );
+    assert!(
+        s.capped_fallbacks > 0,
+        "the cap should have been reached: {s:?}"
+    );
+    assert!(
+        s.live_connections <= cap as u64 && s.requests > 0,
+        "cap {cap}: {s:?}"
+    );
 }

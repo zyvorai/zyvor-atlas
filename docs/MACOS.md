@@ -15,7 +15,7 @@ volumes, snapshots) and a Mac agent for fleets come in later slices (see the roa
 | APFS container (`disk3`) | pool, `kind = apfs_container`; `max_bytes` = container capacity, `used_bytes` = capacity minus free |
 | APFS volume (`Macintosh HD`, `Data`, an external `Backup`) | filesystem volume; size is its quota if one is set, else the container capacity; `used_bytes` = bytes in use; mount point in `storage_class_name` |
 | Partition with another filesystem (exFAT stick, HFS+, FAT) | pool of `kind = partition` with one volume (usage is not reported by `diskutil list`) |
-| Disk health | SMART status of the disk behind the pool: `Failing` makes the pool and cluster **critical**; `Not Supported` (most USB bridges) is not penalised and not counted |
+| Disk health | SMART status of the disk behind the pool: `Failing` makes the pool and cluster **critical**; `Not Supported` (most USB bridges) is not penalised and not counted. The same parse emits metrics: `macos_smart_status` (1 failing, 0 verified; `Not Supported` omitted), `macos_capacity_used_ratio` for APFS containers and for volumes with a quota, and one `macos_alert` sample when SMART is failing or a ratio is at least 0.85 (warning) or 0.95 (critical) |
 
 Device class comes from `diskutil info`: `nvme` (Apple fabric/NVMe), `ssd` or `hdd`. Ids use the volume or
 container UUID, so a drive keeps its Atlas id when it is replugged and macOS renumbers it.
@@ -96,8 +96,11 @@ sudo scripts/install-mac-agent.sh ./atlas-mac-agent 0.0.0.0:5112 /path/cert.pem 
 The agent refuses to listen on a non-loopback address without a token and TLS. Settings:
 `ATLAS_MAC_BIND` (default `127.0.0.1:5112`), `ATLAS_MAC_MODE` (`fake` default, `real`), `ATLAS_MAC_HOST`,
 `ATLAS_MAC_TOKEN` or `ATLAS_MAC_TOKEN_FILE`, `ATLAS_MAC_TLS_CERT` / `ATLAS_MAC_TLS_KEY`,
-`ATLAS_MAC_ALLOW_DISK_IMAGES`. Endpoints: `GET /health` (open), `GET /v1/discover`, `GET /v1/metrics`
-(bearer token).
+`ATLAS_MAC_ALLOW_DISK_IMAGES`. Endpoints: `GET /health` (open), `GET /v1/discover`, `GET /v1/metrics`,
+`GET /v1/alerts` (the `macos_alert` samples from the same parse: `id`, `severity`, `title`,
+`resource_id`, `value`). Discover, metrics and alerts need the bearer token. Fake mode uses the
+recorded plists; real mode uses whatever `diskutil` returned. A bridge that reports `Not Supported`
+produces no SMART alert.
 
 On the gateway, list the agents and restart:
 
@@ -142,4 +145,4 @@ page against a live gateway (it has component tests only).
 2. Volume lifecycle with hard refusals: erase, add/delete volumes, eject (this document). Still to come:
    container resize, local snapshots, a Disks page.
 3. A Mac agent and a remote driver (read-only above, lifecycle behind `ATLAS_MAC_ALLOW_WRITES`). Container resize, local snapshots (Mac-wide) and a Disks page are in.
-4. Macs as clients of Atlas storage: NFS/SMB mounts and `atlasctl` are documented in [`MACOS_CLIENT.md`](MACOS_CLIENT.md); the native FUSE mount is a no-go until a spike on a Mac says otherwise.
+4. Macs as clients of Atlas storage: NFS/SMB mounts and `atlasctl` are documented in [`MACOS_CLIENT.md`](MACOS_CLIENT.md); the native FUSE mount is a no-go until a spike on a Mac says otherwise. SMART and capacity alerts are metric samples from the parser (`macos_smart_status`, `macos_capacity_used_ratio`, `macos_alert`) and `GET /v1/alerts` on the agent. They are best-effort on a real Mac and fixture-tested; they do not page anyone by themselves.

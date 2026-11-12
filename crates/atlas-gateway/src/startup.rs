@@ -24,6 +24,8 @@ use crate::state::AppState;
 
 /// The single Ceph backend id used by the MVP.
 pub const CEPH_BACKEND_ID: &str = "bkd_ceph_lab";
+/// Extra Ceph cluster registered from `ATLAS_CEPH_EXTERNAL_*` (see `docs/CEPH_EXTERNAL.md`).
+pub const EXTERNAL_CEPH_BACKEND_ID: &str = "bkd_ceph_external";
 /// Optional second NFS backend id (enabled via `ATLAS_NFS_ENABLE`).
 pub const NFS_BACKEND_ID: &str = "bkd_nfs_lab";
 /// Optional third ZFS backend id (enabled via `ATLAS_ZFS_ENABLE`).
@@ -330,6 +332,60 @@ pub async fn resolve_vault_secrets(config: &mut Config) -> Result<()> {
     Ok(())
 }
 
+/// Register another live Ceph driver when `ATLAS_CEPH_EXTERNAL_MON_HOST` or
+/// `ATLAS_CEPH_EXTERNAL_CONF` is set. The keyring path is stored as a reference; the file is not
+/// read. Absent variables leave the primary Ceph backend as the only one.
+async fn register_external_ceph(
+    pool: &sqlx::AnyPool,
+    registry: &DriverRegistry,
+) -> Result<Option<Arc<dyn StorageDriver>>> {
+    let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
+    let mon = var("ATLAS_CEPH_EXTERNAL_MON_HOST");
+    let conf = var("ATLAS_CEPH_EXTERNAL_CONF");
+    let keyring = var("ATLAS_CEPH_EXTERNAL_KEYRING");
+    if mon.is_none() && conf.is_none() && keyring.is_none() {
+        return Ok(None);
+    }
+    let endpoint =
+        atlas_driver_ceph::CephEndpoint::new(mon, conf, keyring, var("ATLAS_CEPH_EXTERNAL_USER"))
+            .map_err(|e| anyhow::anyhow!(e))?;
+    endpoint
+        .validate_readable()
+        .map_err(|e| anyhow::anyhow!(e))?;
+    let id = var("ATLAS_CEPH_EXTERNAL_ID").unwrap_or_else(|| EXTERNAL_CEPH_BACKEND_ID.into());
+    if id == CEPH_BACKEND_ID {
+        anyhow::bail!("ATLAS_CEPH_EXTERNAL_ID must not be {CEPH_BACKEND_ID}");
+    }
+    let name = var("ATLAS_CEPH_EXTERNAL_NAME").unwrap_or_else(|| "external-ceph".into());
+    let driver: Arc<dyn StorageDriver> =
+        Arc::new(RealCephDriver::external(&id, endpoint.clone()).map_err(|e| anyhow::anyhow!(e))?);
+    atlas_inventory::upsert_backend(
+        pool,
+        &StorageBackend {
+            id: id.clone(),
+            name,
+            backend_type: BackendType::Ceph,
+            mode: BackendMode::External,
+            status: "active".into(),
+            capabilities: Capabilities {
+                block: true,
+                file: true,
+                object: true,
+                snapshots: true,
+                clone: true,
+                expansion: true,
+                replication: true,
+            },
+            connection_ref: Some(endpoint.connection_ref()),
+            cordoned: false,
+        },
+    )
+    .await?;
+    registry.register(driver.clone());
+    tracing::info!(%id, "external ceph backend registered");
+    Ok(Some(driver))
+}
+
 /// Build fully-wired application state from config.
 pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState> {
     let pool = atlas_inventory::connect(&config.database_url).await?;
@@ -368,6 +424,8 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
 
     let registry = DriverRegistry::new();
     registry.register(driver.clone());
+
+    let external_ceph = register_external_ceph(&pool, &registry).await?;
 
     // Optionally register a second NFS backend — demonstrates that a non-Ceph driver flows through
     // the same discovery → inventory → REST/gRPC surface (PDF §17.2 pluggable drivers).
@@ -720,6 +778,12 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         {
             Ok(sum) => tracing::info!(?sum, "initial discovery complete"),
             Err(e) => tracing::warn!("initial discovery failed: {e:#}"),
+        }
+        if let Some(external) = &external_ceph {
+            match atlas_discovery::run_discovery(&state.pool, external.clone(), None, None).await {
+                Ok(sum) => tracing::info!(?sum, "initial external ceph discovery complete"),
+                Err(e) => tracing::warn!("initial external ceph discovery failed: {e:#}"),
+            }
         }
         if let Some(nfs) = &nfs_driver {
             match atlas_discovery::run_discovery(&state.pool, nfs.clone(), None, None).await {

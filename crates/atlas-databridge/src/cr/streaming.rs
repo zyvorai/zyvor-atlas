@@ -211,6 +211,19 @@ fn mongo_debezium_source_spec(
     json!({ "class": config["connector.class"], "tasksMax": 1, "config": config })
 }
 
+/// How a Debezium Mongo change-stream event should be treated.
+///
+/// `c`/`u`/`d`/`r` are document writes. `i` is an invalidate (collection drop or rename): it has no
+/// `fullDocument`, and handing it to the oplog `MongoDbHandler` fails the task the same way an
+/// update without `patch` does. The sink stays on `ChangeStreamHandler` and skips invalidates.
+pub fn mongo_change_stream_disposition(op: &str) -> &'static str {
+    match op {
+        "c" | "u" | "d" | "r" => "apply",
+        "i" => "skip_invalidate",
+        _ => "skip_unknown",
+    }
+}
+
 /// **MongoDB** sink connector config: the MongoDB Kafka Connect sink applying the Debezium Mongo CDC
 /// topics to the edge Percona Server for MongoDB. `edge_host` is the edge replica-set service; the
 /// user/pass come from the PSMDB users Secret via Strimzi's config-provider. Each change event is
@@ -517,6 +530,17 @@ mod tests {
         assert!(conn.contains("authSource=admin"));
         assert!(s["config"].get("database.hostname").is_none());
         assert_eq!(s["config"]["snapshot.mode"], "no_data");
+    }
+
+    #[test]
+    fn mongo_invalidate_is_not_applied_as_a_document_write() {
+        assert_eq!(mongo_change_stream_disposition("c"), "apply");
+        assert_eq!(mongo_change_stream_disposition("u"), "apply");
+        assert_eq!(mongo_change_stream_disposition("d"), "apply");
+        assert_eq!(mongo_change_stream_disposition("r"), "apply");
+        assert_eq!(mongo_change_stream_disposition("i"), "skip_invalidate");
+        assert_eq!(mongo_change_stream_disposition(""), "skip_unknown");
+        assert_ne!(mongo_change_stream_disposition("i"), "apply");
     }
 
     #[test]

@@ -235,15 +235,36 @@ mod tests {
     async fn locked_until_is_written_read_everywhere_and_only_raised() {
         let pool = temp_db().await;
         snap(&pool, "s1", "one").await;
-        assert_eq!(get_snapshot(&pool, "s1").await.unwrap().unwrap().locked_until, None);
+        assert_eq!(
+            get_snapshot(&pool, "s1")
+                .await
+                .unwrap()
+                .unwrap()
+                .locked_until,
+            None
+        );
 
         assert!(set_locked_until(&pool, "s1", 2_000).await.unwrap());
-        assert_eq!(get_snapshot(&pool, "s1").await.unwrap().unwrap().locked_until, Some(2_000));
+        assert_eq!(
+            get_snapshot(&pool, "s1")
+                .await
+                .unwrap()
+                .unwrap()
+                .locked_until,
+            Some(2_000)
+        );
         // A lower or equal value is ignored; a higher one replaces it. (Compared as numbers: 900 is
         // below 2000 although "900" sorts after "2000" as text.)
         assert!(!set_locked_until(&pool, "s1", 900).await.unwrap());
         assert!(!set_locked_until(&pool, "s1", 2_000).await.unwrap());
-        assert_eq!(get_snapshot(&pool, "s1").await.unwrap().unwrap().locked_until, Some(2_000));
+        assert_eq!(
+            get_snapshot(&pool, "s1")
+                .await
+                .unwrap()
+                .unwrap()
+                .locked_until,
+            Some(2_000)
+        );
         assert!(set_locked_until(&pool, "s1", 10_000).await.unwrap());
         assert!(!set_locked_until(&pool, "s1", 9_999).await.unwrap());
 
@@ -252,13 +273,26 @@ mod tests {
         assert_eq!(listed[0].locked_until, Some(10_000));
         let latest = latest_by_volume(&pool).await.unwrap();
         assert_eq!(latest["vol1"].locked_until, Some(10_000));
-        assert_eq!(find_by_name(&pool, "vol1", "one").await.unwrap().unwrap().locked_until, Some(10_000));
-        assert_eq!(list_by_state(&pool, "ready").await.unwrap()[0].locked_until, Some(10_000));
+        assert_eq!(
+            find_by_name(&pool, "vol1", "one")
+                .await
+                .unwrap()
+                .unwrap()
+                .locked_until,
+            Some(10_000)
+        );
+        assert_eq!(
+            list_by_state(&pool, "ready").await.unwrap()[0].locked_until,
+            Some(10_000)
+        );
 
         // An unlocked snapshot omits the field in JSON; a locked one carries a number.
         snap(&pool, "s2", "two").await;
         let s2 = get_snapshot(&pool, "s2").await.unwrap().unwrap();
-        assert!(serde_json::to_value(&s2).unwrap().get("locked_until").is_none());
+        assert!(serde_json::to_value(&s2)
+            .unwrap()
+            .get("locked_until")
+            .is_none());
         let s1 = get_snapshot(&pool, "s1").await.unwrap().unwrap();
         assert_eq!(serde_json::to_value(&s1).unwrap()["locked_until"], 10_000);
     }
@@ -274,7 +308,10 @@ mod tests {
         let again = find_by_name(&pool, "vol1", "dup").await.unwrap().unwrap();
         assert_eq!(first.id, again.id);
         assert!(first.id == "a" || first.id == "b");
-        assert!(find_by_name(&pool, "vol1", "missing").await.unwrap().is_none());
+        assert!(find_by_name(&pool, "vol1", "missing")
+            .await
+            .unwrap()
+            .is_none());
         assert!(find_by_name(&pool, "vol2", "dup").await.unwrap().is_none());
     }
 }

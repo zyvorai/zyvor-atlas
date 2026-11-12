@@ -20,6 +20,11 @@ pub fn job_name(plan_id: &str) -> String {
     format!("load-{}", &plan_id[plan_id.len().saturating_sub(8)..])
 }
 
+/// Deterministic reverse-copy Job name for a plan rollback (kept ≤ 63 chars, DNS-1123).
+pub fn rollback_job_name(plan_id: &str) -> String {
+    format!("rollback-{}", &plan_id[plan_id.len().saturating_sub(8)..])
+}
+
 /// Terminal state of a batch Job, derived from its `status`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum JobOutcome {
@@ -84,6 +89,37 @@ SRC_DSN="postgresql://${SRC_USER}:${SRC_PASS}@${SRC_HOST}:${SRC_PORT}/${SRC_DB}?
 echo "full-load: pg_dump ${SRC_HOST}:${SRC_PORT}/${SRC_DB} -> edge"
 pg_dump --no-owner --no-privileges --format=plain "$SRC_DSN" | psql "$EDGE_URI"
 echo "full-load complete"
+"#;
+    container_job(
+        "ghcr.io/cloudnative-pg/postgresql:16",
+        script,
+        vec![
+            env_val("SRC_HOST", src_host),
+            env_val("SRC_PORT", &src_port.to_string()),
+            env_val("SRC_DB", src_db),
+            env_val("SRC_SSL", src_ssl),
+            env_secret("SRC_USER", source_secret, "username"),
+            env_secret("SRC_PASS", source_secret, "password"),
+            env_secret("EDGE_URI", edge_secret, "uri"),
+        ],
+    )
+}
+
+/// Postgres reverse copy: `pg_dump` the edge (CNPG `uri`) and pipe it into `psql` on the source.
+/// The opposite direction of [`pg_job_spec`]. Used when a rollback is asked to restore rows.
+pub fn pg_reverse_job_spec(
+    source_secret: &str,
+    edge_secret: &str,
+    src_host: &str,
+    src_port: i64,
+    src_db: &str,
+    src_ssl: &str,
+) -> Value {
+    let script = r#"set -euo pipefail
+SRC_DSN="postgresql://${SRC_USER}:${SRC_PASS}@${SRC_HOST}:${SRC_PORT}/${SRC_DB}?sslmode=${SRC_SSL}"
+echo "rollback-copy: edge -> ${SRC_HOST}:${SRC_PORT}/${SRC_DB}"
+pg_dump --no-owner --no-privileges --format=plain "$EDGE_URI" | psql "$SRC_DSN"
+echo "rollback-copy complete"
 "#;
     container_job(
         "ghcr.io/cloudnative-pg/postgresql:16",
@@ -232,8 +268,39 @@ mod tests {
             .iter()
             .any(|e| e["name"] == "SRC_PASS"
                 && e["valueFrom"]["secretKeyRef"]["name"] == "src-creds"));
-        assert!(env.iter().any(|e| e["name"] == "SRC_SSL" && e["value"] == "require"));
-        assert!(c["args"][0].as_str().unwrap().contains("sslmode=${SRC_SSL}"));
+        assert!(env
+            .iter()
+            .any(|e| e["name"] == "SRC_SSL" && e["value"] == "require"));
+        assert!(c["args"][0]
+            .as_str()
+            .unwrap()
+            .contains("sslmode=${SRC_SSL}"));
+    }
+
+    #[test]
+    fn pg_reverse_job_dumps_the_edge_into_the_source() {
+        let spec = pg_reverse_job_spec(
+            "src-creds",
+            "edge-app",
+            "prod.rds.aws",
+            5432,
+            "appdb",
+            "require",
+        );
+        let c = &spec["template"]["spec"]["containers"][0];
+        let script = c["args"][0].as_str().unwrap();
+        assert!(script.contains("pg_dump --no-owner --no-privileges --format=plain \"$EDGE_URI\""));
+        assert!(script.contains("psql \"$SRC_DSN\""));
+        assert!(!script.contains("psql \"$EDGE_URI\""));
+        assert!(script.contains("rollback-copy: edge ->"));
+        let env = c["env"].as_array().unwrap();
+        assert!(env.iter().any(
+            |e| e["name"] == "EDGE_URI" && e["valueFrom"]["secretKeyRef"]["name"] == "edge-app"
+        ));
+        assert!(env
+            .iter()
+            .any(|e| e["name"] == "SRC_HOST" && e["value"] == "prod.rds.aws"));
+        assert_eq!(rollback_job_name("mplan_abcdef12"), "rollback-abcdef12");
     }
 
     /// Live full-load over TLS is not executed here. The Job spec is the same one
@@ -244,13 +311,18 @@ mod tests {
     fn live_pg_full_load_over_tls() {
         let dsn = std::env::var("DATABRIDGE_TEST_PG").expect("set DATABRIDGE_TEST_PG");
         let mode = std::env::var("DATABRIDGE_TEST_PG_TLS").unwrap_or_else(|_| "require".into());
-        assert_ne!(mode, "disable", "this scaffolding is the TLS path, not plaintext");
+        assert_ne!(
+            mode, "disable",
+            "this scaffolding is the TLS path, not plaintext"
+        );
         let spec = pg_job_spec("src-creds", "edge-app", "db.example", 5432, "appdb", &mode);
         let c = &spec["template"]["spec"]["containers"][0];
         let script = c["args"][0].as_str().unwrap();
         assert!(script.contains("sslmode=${SRC_SSL}"));
         let env = c["env"].as_array().unwrap();
-        assert!(env.iter().any(|e| e["name"] == "SRC_SSL" && e["value"] == mode));
+        assert!(env
+            .iter()
+            .any(|e| e["name"] == "SRC_SSL" && e["value"] == mode));
         // No dump is started: this process has no Kubernetes Job runner. The DSN is the
         // operator's target for a later live run.
         assert!(dsn.contains("host=") || dsn.contains("postgres"));

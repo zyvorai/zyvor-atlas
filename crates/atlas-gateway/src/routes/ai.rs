@@ -46,13 +46,25 @@ pub(crate) struct AdvisorRequest {
     mode: AdvisorMode,
 }
 
+/// Action ids the advisor may mark executable. Anything else stays `can_execute: false`.
+pub(crate) const EXECUTABLE_ACTION_IDS: &[&str] = &["silence_alert", "create_snapshot"];
+
 #[derive(Debug, Clone, Serialize)]
 struct AdvisorAction {
     priority: u8,
+    /// Stable id. `can_execute` is true only for [`EXECUTABLE_ACTION_IDS`] that name a subject.
+    id: String,
     title: String,
     rationale: String,
     /// Safe, read-only Atlas endpoint operators can inspect before taking action.
     inspect: String,
+    /// True only for a whitelist id bound to a real subject (`silence_alert` needs an alert id;
+    /// `create_snapshot` needs a volume id and a non-empty volume name).
+    can_execute: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    subject_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -70,6 +82,14 @@ struct AdvisorEvidence {
     nvme_attention: Vec<String>,
     /// Hosts with NVMe drives that fall short of the CPU/RAM rule of thumb (see `ceph_sizing`).
     sizing_attention: Vec<String>,
+    /// Open alert the guarded `silence_alert` action is bound to, when one exists.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    silence_alert_id: Option<String>,
+    /// Named volume the guarded `create_snapshot` action is bound to.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_volume_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    snapshot_volume_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -315,7 +335,8 @@ pub(crate) struct AdvisorResponse {
     io_ai: Option<IoAiView>,
     actions: Vec<AdvisorAction>,
     warnings: Vec<String>,
-    /// Deliberately false: this endpoint advises but cannot execute a runbook.
+    /// Deliberately false: this response does not run a runbook. Individual actions carry
+    /// `can_execute`, and it is true only for [`EXECUTABLE_ACTION_IDS`].
     can_execute: bool,
     /// Row written to `advisor_findings` for this run.
     finding_id: String,
@@ -346,6 +367,15 @@ pub(crate) async fn compute_advisor(
     let mut evidence = build_evidence(&metrics, &forecast, &alerts, failed_jobs_15m);
     evidence.nvme_attention = super::ceph_nvme::attention(s).await;
     evidence.sizing_attention = super::ceph_sizing::attention(s).await;
+    if let Some(alert) = pick_silence_alert(&alerts) {
+        evidence.silence_alert_id = Some(alert.id.clone());
+    }
+    if let Ok(volumes) = atlas_inventory::list_volumes(&s.pool).await {
+        if let Some(volume) = pick_snapshot_volume(&volumes) {
+            evidence.snapshot_volume_id = Some(volume.id.clone());
+            evidence.snapshot_volume_name = Some(volume.name.clone());
+        }
+    }
     let (risk_score, mut actions) = assess(&evidence);
     actions.sort_by_key(|a| a.priority);
     let risk_level = risk_level(risk_score);
@@ -476,6 +506,276 @@ pub(crate) async fn list_advisor_findings(
     let tenant = crate::auth::tenant_scope(s.config.auth_required, &actor);
     let rows = atlas_inventory::advisor::list(&s.pool, tenant, limit).await?;
     Ok(Json(json!(rows)))
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+fn advisor_kind(action_id: &str) -> Option<&'static str> {
+    if !EXECUTABLE_ACTION_IDS.contains(&action_id) {
+        return None;
+    }
+    match action_id {
+        "silence_alert" => Some("advisor_silence_alert"),
+        "create_snapshot" => Some("advisor_create_snapshot"),
+        _ => None,
+    }
+}
+
+fn encode_action_reason(note: &str, secs: Option<i64>) -> String {
+    json!({ "note": note, "secs": secs }).to_string()
+}
+
+fn decode_action_secs(raw: &str) -> Option<i64> {
+    serde_json::from_str::<Value>(raw)
+        .ok()
+        .and_then(|v| v.get("secs").and_then(Value::as_i64))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AdvisorProposeBody {
+    action_id: String,
+    subject_id: String,
+    #[serde(default)]
+    reason: String,
+    /// Silence window in seconds. Used only for `silence_alert` (default 1 h, 60 s to 24 h).
+    #[serde(default)]
+    secs: Option<i64>,
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AdvisorConfirmBody {
+    proposal_id: String,
+    action_id: String,
+    subject_id: String,
+}
+
+fn snapshot_name_for(volume_name: &str) -> Option<String> {
+    let slug: String = volume_name
+        .chars()
+        .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+        .take(24)
+        .collect();
+    if slug.is_empty() {
+        None
+    } else {
+        Some(format!("advisor-{slug}"))
+    }
+}
+
+/// `POST /ai/advisor/actions/propose` — first operator asks to run one whitelist action.
+/// Nothing changes until a different operator confirms.
+pub(crate) async fn propose_advisor_action(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Json(body): Json<AdvisorProposeBody>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
+    let kind = advisor_kind(&body.action_id).ok_or_else(|| {
+        AppError::Validation(
+            "action_id must be silence_alert or create_snapshot; other actions are not executable"
+                .into(),
+        )
+    })?;
+    let subject = body.subject_id.trim();
+    if subject.is_empty() || subject.len() > 128 {
+        return Err(AppError::Validation(
+            "subject_id must be 1 to 128 characters".into(),
+        ));
+    }
+    let note = body.reason.trim();
+    if note.chars().count() > 512 {
+        return Err(AppError::Validation(
+            "reason must be at most 512 characters".into(),
+        ));
+    }
+    let secs = match body.action_id.as_str() {
+        "silence_alert" => {
+            if !atlas_inventory::alerts::exists(&s.pool, subject).await? {
+                return Err(AppError::NotFound(format!("alert {subject}")));
+            }
+            let secs = body.secs.unwrap_or(3600);
+            if !(60..=86_400).contains(&secs) {
+                return Err(AppError::Validation(
+                    "secs must be from 60 to 86400 (24 hours)".into(),
+                ));
+            }
+            if !can_execute_action("silence_alert", Some(subject), None) {
+                return Err(AppError::Validation(
+                    "silence_alert is not executable".into(),
+                ));
+            }
+            Some(secs)
+        }
+        "create_snapshot" => {
+            let vol = atlas_inventory::get_volume(&s.pool, subject)
+                .await?
+                .ok_or_else(|| AppError::NotFound(format!("volume {subject}")))?;
+            if !can_execute_action("create_snapshot", Some(subject), Some(&vol.name)) {
+                return Err(AppError::Validation(
+                    "create_snapshot requires a volume with a name".into(),
+                ));
+            }
+            let resource_tenant = atlas_inventory::volume_tenant(&s.pool, subject).await?;
+            crate::auth::require_tenant(
+                s.config.auth_required,
+                &actor,
+                &resource_tenant,
+                format!("volume {subject}"),
+            )?;
+            None
+        }
+        _ => None,
+    };
+    let proposal_id = ids::proposal_id();
+    let expires_unix = unix_now().saturating_add(atlas_inventory::proposals::TTL_SECS);
+    atlas_inventory::proposals::insert(
+        &s.pool,
+        &proposal_id,
+        kind,
+        subject,
+        &actor.tenant_id,
+        &actor.id,
+        &encode_action_reason(note, secs),
+        expires_unix,
+    )
+    .await?;
+    let _ = atlas_inventory::audit::record(
+        &s.pool,
+        Some(&actor.tenant_id),
+        &actor.id,
+        "advisor.action.proposed",
+        "advisor_action",
+        subject,
+        "proposed",
+        Some(json!({ "proposal_id": proposal_id, "action_id": body.action_id })),
+        None,
+    )
+    .await;
+    Ok(Json(json!({
+        "proposal_id": proposal_id,
+        "action_id": body.action_id,
+        "subject_id": subject,
+        "expires_unix": expires_unix,
+        "state": "pending",
+        "can_execute": true,
+    })))
+}
+
+/// `POST /ai/advisor/actions/confirm` — a second operator runs the proposed whitelist action.
+pub(crate) async fn confirm_advisor_action(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Json(body): Json<AdvisorConfirmBody>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
+    let kind = advisor_kind(&body.action_id).ok_or_else(|| {
+        AppError::Validation(
+            "action_id must be silence_alert or create_snapshot; other actions are not executable"
+                .into(),
+        )
+    })?;
+    let subject = body.subject_id.trim();
+    atlas_inventory::proposals::begin_confirm(
+        &s.pool,
+        &body.proposal_id,
+        kind,
+        subject,
+        &actor.id,
+        unix_now(),
+    )
+    .await
+    .map_err(super::volumes::proposal_error)?;
+    let reason = proposal_reason(&s.pool, &body.proposal_id).await?;
+    let executed = match body.action_id.as_str() {
+        "silence_alert" => {
+            let secs = decode_action_secs(&reason)
+                .unwrap_or(3600)
+                .clamp(60, 86_400);
+            match atlas_inventory::alerts::silence(&s.pool, subject, secs).await {
+                Ok(true) => Ok(json!({ "id": subject, "silenced_secs": secs })),
+                Ok(false) => Err(AppError::NotFound(format!("alert {subject}"))),
+                Err(e) => Err(AppError::Internal(e.to_string())),
+            }
+        }
+        "create_snapshot" => {
+            let vol = match atlas_inventory::get_volume(&s.pool, subject).await {
+                Ok(Some(v)) => v,
+                Ok(None) => {
+                    let _ = atlas_inventory::proposals::abort(&s.pool, &body.proposal_id).await;
+                    return Err(AppError::NotFound(format!("volume {subject}")));
+                }
+                Err(e) => {
+                    let _ = atlas_inventory::proposals::abort(&s.pool, &body.proposal_id).await;
+                    return Err(AppError::Internal(e.to_string()));
+                }
+            };
+            let Some(name) = snapshot_name_for(&vol.name) else {
+                let _ = atlas_inventory::proposals::abort(&s.pool, &body.proposal_id).await;
+                return Err(AppError::Validation(
+                    "create_snapshot requires a volume with a name".into(),
+                ));
+            };
+            match super::volumes::snapshot_volume(
+                &s,
+                &actor,
+                subject.to_string(),
+                super::volumes::SnapshotBody::named(name),
+            )
+            .await
+            {
+                Ok((_, Json(v))) => Ok(v),
+                Err(e) => Err(e),
+            }
+        }
+        _ => Err(AppError::Validation("action_id is not executable".into())),
+    };
+    match executed {
+        Ok(result) => {
+            atlas_inventory::proposals::finish(&s.pool, &body.proposal_id).await?;
+            let _ = atlas_inventory::audit::record(
+                &s.pool,
+                Some(&actor.tenant_id),
+                &actor.id,
+                "advisor.action",
+                "advisor_action",
+                subject,
+                "success",
+                Some(json!({
+                    "proposal_id": body.proposal_id,
+                    "action_id": body.action_id,
+                    "two_person": true,
+                })),
+                None,
+            )
+            .await;
+            Ok(Json(json!({
+                "proposal_id": body.proposal_id,
+                "action_id": body.action_id,
+                "subject_id": subject,
+                "result": result,
+            })))
+        }
+        Err(e) => {
+            let _ = atlas_inventory::proposals::abort(&s.pool, &body.proposal_id).await;
+            Err(e)
+        }
+    }
+}
+
+async fn proposal_reason(pool: &sqlx::AnyPool, id: &str) -> AppResult<String> {
+    let row = sqlx::query("SELECT reason FROM control_proposals WHERE id=$1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+    Ok(row
+        .map(|r| sqlx::Row::get::<String, _>(&r, "reason"))
+        .unwrap_or_default())
 }
 
 /// `POST /ai/advisor` — synthesize an explainable storage posture and a prioritized runbook.
@@ -953,6 +1253,10 @@ fn project_evidence(
         None
     };
     let mut projected = baseline.clone();
+    // What-if never offers an executable action: the projection is not a live subject.
+    projected.silence_alert_id = None;
+    projected.snapshot_volume_id = None;
+    projected.snapshot_volume_name = None;
     projected.capacity_used_percent = (used_pct * 10.0).round() / 10.0;
     projected.days_to_full = days_to_full;
     if req.assume_alerts_resolved {
@@ -1168,15 +1472,80 @@ fn build_evidence(
             .collect(),
         nvme_attention: Vec::new(),
         sizing_attention: Vec::new(),
+        silence_alert_id: None,
+        snapshot_volume_id: None,
+        snapshot_volume_name: None,
     }
 }
 
-fn action(priority: u8, title: &str, rationale: String, inspect: &str) -> AdvisorAction {
+/// True only for a whitelist action id that names the subject it would touch.
+pub(crate) fn can_execute_action(
+    id: &str,
+    subject_id: Option<&str>,
+    subject_name: Option<&str>,
+) -> bool {
+    if !EXECUTABLE_ACTION_IDS.contains(&id) {
+        return false;
+    }
+    let subject = subject_id.is_some_and(|s| !s.trim().is_empty());
+    match id {
+        "silence_alert" => subject,
+        "create_snapshot" => subject && subject_name.is_some_and(|n| !n.trim().is_empty()),
+        _ => false,
+    }
+}
+
+fn pick_silence_alert(alerts: &[AlertRecord]) -> Option<&AlertRecord> {
+    alerts
+        .iter()
+        .min_by_key(|a| match a.severity.to_ascii_lowercase().as_str() {
+            "critical" => 0u8,
+            "warning" => 1,
+            _ => 2,
+        })
+}
+
+fn pick_snapshot_volume(
+    volumes: &[atlas_api_types::StorageVolume],
+) -> Option<&atlas_api_types::StorageVolume> {
+    volumes
+        .iter()
+        .filter(|v| !v.name.trim().is_empty())
+        .max_by_key(|v| v.used_bytes.unwrap_or(0))
+}
+
+fn action(priority: u8, id: &str, title: &str, rationale: String, inspect: &str) -> AdvisorAction {
     AdvisorAction {
         priority,
+        id: id.into(),
         title: title.into(),
         rationale,
         inspect: inspect.into(),
+        can_execute: false,
+        subject_id: None,
+        subject_name: None,
+    }
+}
+
+fn guarded(
+    priority: u8,
+    id: &str,
+    title: &str,
+    rationale: String,
+    inspect: &str,
+    subject_id: Option<String>,
+    subject_name: Option<String>,
+) -> AdvisorAction {
+    let can_execute = can_execute_action(id, subject_id.as_deref(), subject_name.as_deref());
+    AdvisorAction {
+        priority,
+        id: id.into(),
+        title: title.into(),
+        rationale,
+        inspect: inspect.into(),
+        can_execute,
+        subject_id,
+        subject_name,
     }
 }
 
@@ -1188,6 +1557,7 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         score += 45;
         actions.push(action(
             1,
+            "inspect_unfound",
             "Protect data before remediation",
             format!("Ceph reports {} unfound objects", e.unfound_objects),
             "/api/atlas/v1/ceph/health-rollup",
@@ -1197,6 +1567,7 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         score += 20;
         actions.push(action(
             2,
+            "inspect_recovery",
             "Inspect recovery health",
             format!("Ceph reports {} degraded objects", e.degraded_objects),
             "/api/atlas/v1/ceph/status",
@@ -1206,6 +1577,7 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         score += 35 + (e.critical_alerts.saturating_sub(1).min(3) as u16 * 5);
         actions.push(action(
             1,
+            "inspect_critical_alerts",
             "Triage critical alerts",
             format!("{} critical alert(s) are open", e.critical_alerts),
             "/api/atlas/v1/alerts?state=open",
@@ -1214,15 +1586,35 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         score += 15 + (e.warning_alerts.saturating_sub(1).min(3) as u16 * 3);
         actions.push(action(
             3,
+            "inspect_warning_alerts",
             "Review warning alerts",
             format!("{} warning alert(s) are open", e.warning_alerts),
             "/api/atlas/v1/alerts?state=open",
+        ));
+    }
+    if e.silence_alert_id
+        .as_deref()
+        .is_some_and(|id| !id.is_empty())
+        && e.open_alerts > 0
+    {
+        let id = e.silence_alert_id.clone().unwrap_or_default();
+        actions.push(guarded(
+            2,
+            "silence_alert",
+            "Silence one open alert",
+            format!(
+                "Webhook notifications for alert {id} can be silenced for up to 24 hours after a second operator confirms"
+            ),
+            &format!("/api/atlas/v1/alerts/{id}"),
+            Some(id),
+            None,
         ));
     }
     if e.capacity_used_percent >= 90.0 {
         score += 30;
         actions.push(action(
             1,
+            "inspect_capacity",
             "Recover or add capacity",
             format!("Capacity is {:.1}% used", e.capacity_used_percent),
             "/api/atlas/v1/pools",
@@ -1231,6 +1623,7 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         score += 15;
         actions.push(action(
             3,
+            "inspect_capacity_plan",
             "Plan capacity expansion",
             format!("Capacity is {:.1}% used", e.capacity_used_percent),
             "/api/atlas/v1/metrics/forecast",
@@ -1247,9 +1640,33 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         if days <= 30.0 {
             actions.push(action(
                 if days <= 3.0 { 1 } else { 2 },
+                "inspect_forecast",
                 "Act on the capacity forecast",
                 format!("Current growth projects full capacity in {days:.1} days"),
                 "/api/atlas/v1/metrics/history?minutes=20160",
+            ));
+        }
+    }
+    let want_snapshot = e.capacity_used_percent >= 80.0
+        || e.critical_alerts > 0
+        || e.days_to_full.is_some_and(|d| d <= 30.0);
+    if want_snapshot {
+        if let (Some(id), Some(name)) = (
+            e.snapshot_volume_id.clone().filter(|s| !s.is_empty()),
+            e.snapshot_volume_name
+                .clone()
+                .filter(|s| !s.trim().is_empty()),
+        ) {
+            actions.push(guarded(
+                2,
+                "create_snapshot",
+                "Snapshot a named volume",
+                format!(
+                    "A crash-consistent snapshot of volume {name} can be taken after a second operator confirms"
+                ),
+                &format!("/api/atlas/v1/volumes/{id}/snapshots"),
+                Some(id),
+                Some(name),
             ));
         }
     }
@@ -1257,6 +1674,7 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         score += 15;
         actions.push(action(
             2,
+            "inspect_jobs",
             "Investigate failed jobs",
             format!("{} job(s) failed in the last 15 minutes", e.failed_jobs_15m),
             "/api/atlas/v1/jobs",
@@ -1266,6 +1684,7 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         score += 15 + (e.nvme_attention.len().saturating_sub(1).min(3) as u16 * 5);
         actions.push(action(
             2,
+            "inspect_nvme",
             "Replace or relieve worn NVMe drives",
             format!(
                 "{} NVMe drive(s) show wear or errors: {}",
@@ -1285,6 +1704,7 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
         score += 10;
         actions.push(action(
             3,
+            "inspect_sizing",
             "Check CPU and RAM on NVMe hosts",
             format!(
                 "{} host(s) fall short of the NVMe sizing rule of thumb: {}",
@@ -1302,6 +1722,7 @@ fn assess(e: &AdvisorEvidence) -> (u8, Vec<AdvisorAction>) {
     if actions.is_empty() {
         actions.push(action(
             5,
+            "inspect_steady",
             "Continue observation",
             "No urgent signals were found in the current Atlas snapshot".into(),
             "/api/atlas/v1/metrics/summary",
@@ -1512,13 +1933,7 @@ pub(crate) async fn fetch_io_heatmap(
     timeout: Duration,
     minutes: u64,
 ) -> IoHeatmapView {
-    match fetch_agent_body(
-        base_url,
-        &format!("/io/heatmap?minutes={minutes}"),
-        timeout,
-    )
-    .await
-    {
+    match fetch_agent_body(base_url, &format!("/io/heatmap?minutes={minutes}"), timeout).await {
         Ok(body) => parse_io_heatmap(&body),
         Err(why) => io_heatmap_unavailable(why),
     }
@@ -1888,7 +2303,71 @@ mod tests {
             alert_titles: vec![],
             nvme_attention: vec![],
             sizing_attention: vec![],
+            silence_alert_id: None,
+            snapshot_volume_id: None,
+            snapshot_volume_name: None,
         }
+    }
+
+    #[test]
+    fn only_whitelist_actions_with_a_subject_can_execute() {
+        assert!(!can_execute_action(
+            "inspect_capacity",
+            Some("x"),
+            Some("n")
+        ));
+        assert!(!can_execute_action("silence_alert", None, None));
+        assert!(!can_execute_action("silence_alert", Some("  "), None));
+        assert!(can_execute_action("silence_alert", Some("alert_1"), None));
+        assert!(!can_execute_action("create_snapshot", Some("vol_1"), None));
+        assert!(!can_execute_action(
+            "create_snapshot",
+            Some("vol_1"),
+            Some(" ")
+        ));
+        assert!(can_execute_action(
+            "create_snapshot",
+            Some("vol_1"),
+            Some("pgdata")
+        ));
+        assert!(!can_execute_action(
+            "delete_volume",
+            Some("vol_1"),
+            Some("pgdata")
+        ));
+    }
+
+    #[test]
+    fn assess_marks_only_the_bound_whitelist_actions_executable() {
+        let mut calm = evidence();
+        calm.capacity_used_percent = 95.0;
+        let (_, bare) = assess(&calm);
+        assert!(bare.iter().all(|a| !a.can_execute));
+
+        let flagged = AdvisorEvidence {
+            critical_alerts: 1,
+            open_alerts: 1,
+            silence_alert_id: Some("alert_disk".into()),
+            capacity_used_percent: 91.0,
+            snapshot_volume_id: Some("vol_1".into()),
+            snapshot_volume_name: Some("pgdata".into()),
+            ..evidence()
+        };
+        let (_, actions) = assess(&flagged);
+        let executable: Vec<_> = actions
+            .iter()
+            .filter(|a| a.can_execute)
+            .map(|a| a.id.as_str())
+            .collect();
+        assert_eq!(executable, ["silence_alert", "create_snapshot"]);
+        assert!(actions
+            .iter()
+            .any(|a| a.id == "inspect_critical_alerts" && !a.can_execute));
+        assert!(actions
+            .iter()
+            .any(|a| a.id == "inspect_capacity" && !a.can_execute));
+        let snap = actions.iter().find(|a| a.id == "create_snapshot").unwrap();
+        assert_eq!(snap.subject_name.as_deref(), Some("pgdata"));
     }
 
     #[test]

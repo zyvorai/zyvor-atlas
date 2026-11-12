@@ -18,14 +18,29 @@ The response contains:
 
 - a bounded `risk_score` and `risk_level`;
 - evidence from capacity, the 14-day forecast, recovery counters, open alerts, recent failures, and NVMe wear (drives at 80% or more of rated endurance, media errors, spare at its threshold or a critical-warning flag, from Ceph's device-health scrapes, see `GET /ceph/nvme`; skipped when Ceph has no scrapes), and hosts with NVMe drives that fall short of the CPU/RAM rule of thumb (`GET /ceph/sizing`, a heuristic that adds a smaller score than a failing drive);
-- prioritized actions pointing only to read-only Atlas endpoints;
-- `can_execute: false`, an explicit automation safety boundary;
+- prioritized actions. The response-level `can_execute` stays `false`: calling the advisor
+  does not run anything;
+- on an action, `can_execute` is `true` only for `silence_alert` (an open alert id is bound) and
+  `create_snapshot` (a volume id and a non-empty name are bound). Every other action id stays
+  `false`, including inspection, delete, failover and restore;
 - `finding_id`, the row `GET /api/atlas/v1/ai/advisor/findings` returns later (newest first, operator).
 
 Each run is stored. Reading the findings does not execute anything. Acknowledging an alert the
 advisor points at is optional and two-person: `POST /alerts/{id}/ack/propose` then
 `POST /alerts/{id}/ack/confirm` by a different operator. The single-step `POST /alerts/{id}/ack`
 is unchanged.
+
+The two whitelist actions run the same way, on `control_proposals` (15-minute TTL, a second
+operator must confirm):
+
+| Route | Body |
+| --- | --- |
+| `POST /api/atlas/v1/ai/advisor/actions/propose` | `{action_id, subject_id, reason?, secs?}` |
+| `POST /api/atlas/v1/ai/advisor/actions/confirm` | `{proposal_id, action_id, subject_id}` by a different operator |
+
+`silence_alert` silences that alert. `secs` defaults to 3600 and must be 60–86400. `create_snapshot`
+takes a snapshot of that volume; the name is `advisor-` plus a short slug of the volume name.
+Any other `action_id` is rejected. What-if and incidents stay non-executable.
 
 ## Modes
 

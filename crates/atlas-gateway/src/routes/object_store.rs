@@ -668,7 +668,9 @@ pub(crate) async fn create_bucket(
         "bucket",
         &bucket_id,
         "accepted",
-        Some(json!({ "name": body.name, "backend_id": backend_id, "object_lock": body.object_lock })),
+        Some(
+            json!({ "name": body.name, "backend_id": backend_id, "object_lock": body.object_lock }),
+        ),
         None,
     )
     .await;
