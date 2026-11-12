@@ -20,8 +20,14 @@ async fn agent(token: Option<&str>) -> String {
 }
 
 fn remote(url: &str, token: Option<&str>) -> RemoteMacosDriver {
-    RemoteMacosDriver::new("bkd_macos_lab", url, token.map(String::from), None, Duration::from_secs(5))
-        .unwrap()
+    RemoteMacosDriver::new(
+        "bkd_macos_lab",
+        url,
+        token.map(String::from),
+        None,
+        Duration::from_secs(5),
+    )
+    .unwrap()
 }
 
 #[tokio::test]
@@ -35,7 +41,22 @@ async fn remote_driver_reads_the_agents_inventory_under_its_own_backend_id() {
     assert!(!d.list_pools().await.unwrap().is_empty());
     let pool = &d.list_pools().await.unwrap()[0];
     assert!(d.list_volumes(&pool.id).await.is_ok());
-    assert!(d.metrics().await.unwrap().iter().any(|m| m.name == "macos_volumes_total"));
+    assert!(d
+        .metrics()
+        .await
+        .unwrap()
+        .iter()
+        .any(|m| m.name == "macos_volumes_total"));
+    let alerts = reqwest::Client::new()
+        .get(format!("{url}/v1/alerts"))
+        .bearer_auth("s3cret")
+        .send()
+        .await
+        .unwrap()
+        .json::<Vec<serde_json::Value>>()
+        .await
+        .unwrap();
+    assert!(alerts.is_empty() || alerts.iter().all(|a| a.get("id").is_some()));
 }
 
 #[tokio::test]
@@ -46,8 +67,20 @@ async fn the_agent_requires_its_token_but_health_stays_open() {
         Err(DriverError::Backend(m)) if m.contains("401")
     ));
     assert!(remote(&url, None).discover().await.is_err());
-    assert_eq!(reqwest::get(format!("{url}/health")).await.unwrap().status(), 200);
-    assert_eq!(reqwest::get(format!("{url}/v1/discover")).await.unwrap().status(), 401);
+    assert_eq!(
+        reqwest::get(format!("{url}/health"))
+            .await
+            .unwrap()
+            .status(),
+        200
+    );
+    assert_eq!(
+        reqwest::get(format!("{url}/v1/discover"))
+            .await
+            .unwrap()
+            .status(),
+        401
+    );
 }
 
 #[tokio::test]
@@ -57,13 +90,23 @@ async fn an_unreachable_agent_is_an_error_not_an_empty_inventory() {
     let socket = tokio::net::TcpSocket::new_v4().unwrap();
     socket.bind("127.0.0.1:0".parse().unwrap()).unwrap();
     let url = format!("http://{}", socket.local_addr().unwrap());
-    assert!(matches!(remote(&url, None).discover().await, Err(DriverError::Unreachable(_))));
+    assert!(matches!(
+        remote(&url, None).discover().await,
+        Err(DriverError::Unreachable(_))
+    ));
     drop(socket);
 }
 
 #[test]
 fn only_http_urls_are_accepted() {
-    assert!(RemoteMacosDriver::new("b", "file:///etc/passwd", None, None, Duration::from_secs(1)).is_err());
+    assert!(RemoteMacosDriver::new(
+        "b",
+        "file:///etc/passwd",
+        None,
+        None,
+        Duration::from_secs(1)
+    )
+    .is_err());
     assert!(RemoteMacosDriver::new("b", "not a url", None, None, Duration::from_secs(1)).is_err());
 }
 
@@ -113,7 +156,11 @@ async fn write_routes_need_the_token() {
     let url = writable_agent("s3cret").await;
     let c = reqwest::Client::new();
     for (m, path) in [("GET", "/v1/devices"), ("POST", "/v1/ops/eject")] {
-        let req = if m == "GET" { c.get(format!("{url}{path}")) } else { c.post(format!("{url}{path}")) };
+        let req = if m == "GET" {
+            c.get(format!("{url}{path}"))
+        } else {
+            c.post(format!("{url}{path}"))
+        };
         assert_eq!(req.send().await.unwrap().status(), 401, "{path}");
     }
 }
@@ -124,7 +171,10 @@ async fn refusals_come_back_from_the_agent_and_cannot_be_dry_run_around() {
     let ops = remote(&url, Some("s3cret")).ops();
 
     let rows = ops.devices().await.unwrap();
-    let internal = rows.iter().find(|r| r.internal).expect("fixture has an internal disk");
+    let internal = rows
+        .iter()
+        .find(|r| r.internal)
+        .expect("fixture has an internal disk");
     assert!(internal.erase_refusal.is_some());
     // Erasing the internal disk is refused on the Mac, in a dry run and for real.
     for dry in [true, false] {
@@ -160,9 +210,14 @@ async fn resize_is_refused_on_the_boot_container_and_runs_on_an_external_one() {
         ops.resize_container("disk3", 1 << 40).await,
         Err(DriverError::Backend(m)) if m.starts_with("refused: ")
     ));
-    ops.check_resize_container("disk7", 1 << 40).await.unwrap_or_else(|e| panic!("{e}"));
+    ops.check_resize_container("disk7", 1 << 40)
+        .await
+        .unwrap_or_else(|e| panic!("{e}"));
     let out = ops.resize_container("disk7", 1 << 40).await.unwrap();
-    assert!(out.starts_with("fake: diskutil apfs resizeContainer disk7 1099511627776B"), "{out}");
+    assert!(
+        out.starts_with("fake: diskutil apfs resizeContainer disk7 1099511627776B"),
+        "{out}"
+    );
 }
 
 #[tokio::test]
@@ -170,9 +225,19 @@ async fn snapshots_list_create_and_validate_the_date_on_the_agent() {
     let url = writable_agent("s3cret").await;
     let ops = remote(&url, Some("s3cret")).ops();
     assert!(ops.list_local_snapshots().await.unwrap().is_empty());
-    assert!(ops.create_local_snapshot().await.unwrap().starts_with("fake: tmutil localsnapshot"));
-    ops.check_delete_local_snapshot("2026-10-19-151606").await.unwrap();
-    assert!(ops.delete_local_snapshot("2026-10-19-151606").await.unwrap().contains("deletelocalsnapshots"));
+    assert!(ops
+        .create_local_snapshot()
+        .await
+        .unwrap()
+        .starts_with("fake: tmutil localsnapshot"));
+    ops.check_delete_local_snapshot("2026-10-19-151606")
+        .await
+        .unwrap();
+    assert!(ops
+        .delete_local_snapshot("2026-10-19-151606")
+        .await
+        .unwrap()
+        .contains("deletelocalsnapshots"));
     assert!(matches!(
         ops.delete_local_snapshot("not-a-date").await,
         Err(DriverError::Backend(m)) if m.starts_with("invalid: ")

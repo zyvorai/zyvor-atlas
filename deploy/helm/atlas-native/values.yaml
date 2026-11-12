@@ -37,6 +37,10 @@ node:
   # Store identical extents once (docs/NATIVE_DATA_REDUCTION.md). Turn on only after every pod runs
   # a build that understands shared installs; costs a SHA-256 per extent written.
   dedup: false
+  # Report content-defined fingerprints for a future cross-group index
+  # (docs/NATIVE_DATA_REDUCTION.md). Off: writes stay whole-extent and inside one metadata group.
+  # On: GET /v1/reduction sets cross_group_dedup. It does not share bytes across groups.
+  crossGroupDedup: false
   # Time between the starts of two scrub passes; 0 disables scrub and rebuild.
   repairIntervalSecs: 300
   # How long a pod must fail every request before its extents are rebuilt on other pods.

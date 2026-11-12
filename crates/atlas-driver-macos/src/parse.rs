@@ -10,7 +10,8 @@
 use std::collections::HashMap;
 
 use atlas_api_types::{
-    DiscoveryResult, Health, StorageCluster, StorageHealth, StoragePool, StorageVolume, VolumeKind,
+    DiscoveryResult, Health, MetricSample, StorageCluster, StorageHealth, StoragePool,
+    StorageVolume, VolumeKind,
 };
 use atlas_driver_core::DriverError;
 use serde::Deserialize;
@@ -261,7 +262,10 @@ pub fn parse_layout(list: &[u8], apfs: &[u8]) -> Result<Layout, DriverError> {
                 .into_iter()
                 .map(|v| ApfsVolume {
                     mount_point: mounts.get(v.device.as_str()).map(|m| (*m).to_string()),
-                    name: v.name.filter(|n| !n.is_empty()).unwrap_or_else(|| v.device.clone()),
+                    name: v
+                        .name
+                        .filter(|n| !n.is_empty())
+                        .unwrap_or_else(|| v.device.clone()),
                     uuid: v.uuid,
                     device: v.device,
                     roles: v.roles,
@@ -353,10 +357,114 @@ fn included(whole: &str, infos: &HashMap<String, DiskInfo>, allow_disk_images: b
     allow_disk_images || !infos.get(whole).is_some_and(DiskInfo::is_disk_image)
 }
 
+/// A SMART or capacity condition the driver can turn into a metric and an alert.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MacAlert {
+    pub id: String,
+    pub severity: &'static str,
+    pub title: String,
+    pub detail: String,
+    pub resource_id: String,
+}
+
+/// Container or quota usage the capacity rule looks at.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CapacityPoint {
+    pub id: String,
+    pub name: String,
+    pub used: i64,
+    pub max: i64,
+}
+
 pub struct Mapped {
     pub discovery: DiscoveryResult,
     /// Whole disks (included) whose SMART status is failing.
     pub smart_failing: usize,
+    /// Whole disks that reported `Verified` (false) or `Failing` (true). `Not Supported` is absent.
+    pub assessed_smart: std::collections::BTreeMap<String, bool>,
+    /// APFS containers, and volumes that have a quota.
+    pub capacity: Vec<CapacityPoint>,
+}
+
+const CAPACITY_WARN: f64 = 0.85;
+const CAPACITY_CRITICAL: f64 = 0.95;
+
+impl Mapped {
+    /// Metric samples (including one `macos_alert` per condition) and the same conditions as alerts.
+    pub fn signals(&self) -> (Vec<MetricSample>, Vec<MacAlert>) {
+        let mut metrics = Vec::new();
+        let mut alerts = Vec::new();
+        for (disk, failing) in &self.assessed_smart {
+            let mut labels = std::collections::BTreeMap::new();
+            labels.insert("disk".into(), disk.clone());
+            labels.insert(
+                "status".into(),
+                if *failing { "failing" } else { "verified" }.into(),
+            );
+            metrics.push(MetricSample {
+                name: "macos_smart_status".into(),
+                value: if *failing { 1.0 } else { 0.0 },
+                labels,
+            });
+            if *failing {
+                alerts.push(MacAlert {
+                    id: format!("macos_smart_{disk}"),
+                    severity: "critical",
+                    title: format!("SMART failing on {disk}"),
+                    detail: format!("diskutil reports SMART status Failing for {disk}"),
+                    resource_id: disk.clone(),
+                });
+            }
+        }
+        for point in &self.capacity {
+            if point.max <= 0 {
+                continue;
+            }
+            let ratio = point.used as f64 / point.max as f64;
+            let mut labels = std::collections::BTreeMap::new();
+            labels.insert("id".into(), point.id.clone());
+            labels.insert("name".into(), point.name.clone());
+            metrics.push(MetricSample {
+                name: "macos_capacity_used_ratio".into(),
+                value: ratio,
+                labels,
+            });
+            if ratio >= CAPACITY_WARN {
+                let severity = if ratio >= CAPACITY_CRITICAL {
+                    "critical"
+                } else {
+                    "warning"
+                };
+                alerts.push(MacAlert {
+                    id: format!("macos_capacity_{}", point.id),
+                    severity,
+                    title: format!("{} is {:.0}% full", point.name, ratio * 100.0),
+                    detail: format!(
+                        "{} is using {} of {} bytes",
+                        point.name, point.used, point.max
+                    ),
+                    resource_id: point.id.clone(),
+                });
+            }
+        }
+        for alert in &alerts {
+            let mut labels = std::collections::BTreeMap::new();
+            labels.insert("id".into(), alert.id.clone());
+            labels.insert("severity".into(), alert.severity.into());
+            labels.insert("title".into(), alert.title.clone());
+            labels.insert("resource".into(), alert.resource_id.clone());
+            metrics.push(MetricSample {
+                name: "macos_alert".into(),
+                value: if alert.severity == "critical" {
+                    2.0
+                } else {
+                    1.0
+                },
+                labels,
+            });
+        }
+        (metrics, alerts)
+    }
 }
 
 /// APFS container -> pool (`apfs_container`), APFS volume -> filesystem volume, other filesystem
@@ -373,6 +481,8 @@ pub fn map_layout(
     let mut pools = Vec::new();
     let mut volumes = Vec::new();
     let mut failing_disks = std::collections::BTreeSet::new();
+    let mut assessed_smart = std::collections::BTreeMap::new();
+    let mut capacity = Vec::new();
 
     for c in &layout.containers {
         let whole = c.physical_store.as_deref().map(whole_disk_of);
@@ -386,6 +496,9 @@ pub fn map_layout(
         if health == Health::Critical {
             failing_disks.extend(whole.map(str::to_string));
         }
+        if let Some(w) = whole {
+            note_smart(&mut assessed_smart, w, info);
+        }
         let pool_id = format!("pool_macos_{}", frag(c.uuid.as_deref(), &c.reference));
         pools.push(StoragePool {
             id: pool_id.clone(),
@@ -398,6 +511,14 @@ pub fn map_layout(
             max_bytes: Some(c.ceiling),
             health,
         });
+        if c.ceiling > 0 {
+            capacity.push(CapacityPoint {
+                id: pool_id.clone(),
+                name: c.reference.clone(),
+                used: (c.ceiling - c.free).max(0),
+                max: c.ceiling,
+            });
+        }
         for v in &c.volumes {
             volumes.push(StorageVolume {
                 id: format!("vol_macos_{}", frag(v.uuid.as_deref(), &v.device)),
@@ -421,6 +542,14 @@ pub fn map_layout(
                 pvc_name: None,
                 storage_class_name: v.mount_point.clone(),
             });
+            if v.quota > 0 {
+                capacity.push(CapacityPoint {
+                    id: format!("vol_macos_{}", frag(v.uuid.as_deref(), &v.device)),
+                    name: v.name.clone(),
+                    used: v.in_use.max(0),
+                    max: v.quota,
+                });
+            }
         }
     }
 
@@ -434,6 +563,7 @@ pub fn map_layout(
         if health == Health::Critical {
             failing_disks.insert(whole.to_string());
         }
+        note_smart(&mut assessed_smart, whole, info);
         let id = frag(p.uuid.as_deref(), &p.device);
         let pool_id = format!("pool_macos_{id}");
         pools.push(StoragePool {
@@ -514,6 +644,23 @@ pub fn map_layout(
             health,
         },
         smart_failing,
+        assessed_smart,
+        capacity,
+    }
+}
+
+fn note_smart(
+    out: &mut std::collections::BTreeMap<String, bool>,
+    whole: &str,
+    info: Option<&DiskInfo>,
+) {
+    let Some(status) = info.and_then(|i| i.smart.as_deref()) else {
+        return;
+    };
+    if status.eq_ignore_ascii_case("failing") {
+        out.insert(whole.to_string(), true);
+    } else if status.eq_ignore_ascii_case("verified") {
+        out.entry(whole.to_string()).or_insert(false);
     }
 }
 
@@ -527,10 +674,22 @@ mod tests {
     pub(crate) fn infos() -> HashMap<String, DiskInfo> {
         let mut m = HashMap::new();
         for (id, b) in [
-            ("disk0", &include_bytes!("../tests/fixtures/info_disk0.plist")[..]),
-            ("disk6", &include_bytes!("../tests/fixtures/info_disk6.plist")[..]),
-            ("disk8", &include_bytes!("../tests/fixtures/info_disk8.plist")[..]),
-            ("disk9", &include_bytes!("../tests/fixtures/info_disk9.plist")[..]),
+            (
+                "disk0",
+                &include_bytes!("../tests/fixtures/info_disk0.plist")[..],
+            ),
+            (
+                "disk6",
+                &include_bytes!("../tests/fixtures/info_disk6.plist")[..],
+            ),
+            (
+                "disk8",
+                &include_bytes!("../tests/fixtures/info_disk8.plist")[..],
+            ),
+            (
+                "disk9",
+                &include_bytes!("../tests/fixtures/info_disk9.plist")[..],
+            ),
         ] {
             m.insert(id.to_string(), parse_info(b).unwrap());
         }
@@ -550,17 +709,37 @@ mod tests {
         let l = parse_layout(LIST, APFS).unwrap();
         let refs: Vec<_> = l.containers.iter().map(|c| c.reference.as_str()).collect();
         assert_eq!(refs, ["disk1", "disk2", "disk3", "disk7"]);
-        let ext = l.containers.iter().find(|c| c.reference == "disk7").unwrap();
+        let ext = l
+            .containers
+            .iter()
+            .find(|c| c.reference == "disk7")
+            .unwrap();
         assert_eq!(ext.physical_store.as_deref(), Some("disk6s2"));
         assert_eq!(ext.volumes.len(), 2);
         let scratch = ext.volumes.iter().find(|v| v.name == "Scratch").unwrap();
-        assert_eq!((scratch.quota, scratch.reserve), (200_000_000_000, 50_000_000_000));
+        assert_eq!(
+            (scratch.quota, scratch.reserve),
+            (200_000_000_000, 50_000_000_000)
+        );
         assert_eq!(scratch.mount_point.as_deref(), Some("/Volumes/Scratch"));
-        assert!(ext.volumes.iter().find(|v| v.name == "Backup").unwrap().encrypted);
+        assert!(
+            ext.volumes
+                .iter()
+                .find(|v| v.name == "Backup")
+                .unwrap()
+                .encrypted
+        );
         // the internal container carries the system roles and its physical store
-        let internal = l.containers.iter().find(|c| c.reference == "disk3").unwrap();
+        let internal = l
+            .containers
+            .iter()
+            .find(|c| c.reference == "disk3")
+            .unwrap();
         assert_eq!(internal.physical_store.as_deref(), Some("disk0s2"));
-        assert!(internal.volumes.iter().any(|v| v.roles.iter().any(|r| r == "System")));
+        assert!(internal
+            .volumes
+            .iter()
+            .any(|v| v.roles.iter().any(|r| r == "System")));
     }
 
     #[test]
@@ -587,7 +766,10 @@ mod tests {
         assert_eq!(backup.size_bytes, 999_995_129_856); // no quota: whole container
         assert_eq!(backup.backend_native_id.as_deref(), Some("mac01:disk7s1"));
         let cam = d.pools.iter().find(|p| p.name == "disk8s2").unwrap();
-        assert_eq!((cam.kind.as_str(), cam.device_class.as_deref()), ("partition", Some("hdd")));
+        assert_eq!(
+            (cam.kind.as_str(), cam.device_class.as_deref()),
+            ("partition", Some("hdd"))
+        );
         assert!(d.volumes.iter().any(|v| v.name == "CAMERA"));
         // the mounted disk image is not a device Atlas manages
         assert!(d.volumes.iter().all(|v| v.name != "Installer"));
@@ -595,7 +777,11 @@ mod tests {
         assert_eq!(m.smart_failing, 0);
         // every volume points at a pool in this result
         for v in &d.volumes {
-            assert!(d.pools.iter().any(|p| Some(&p.id) == v.pool_id.as_ref()), "{}", v.name);
+            assert!(
+                d.pools.iter().any(|p| Some(&p.id) == v.pool_id.as_ref()),
+                "{}",
+                v.name
+            );
         }
     }
 
@@ -612,9 +798,19 @@ mod tests {
         let mut i = infos();
         i.get_mut("disk6").unwrap().smart = Some("Failing".into());
         let m = map_layout("bkd_macos", "mac01", &l, &i, false);
-        let ext = m.discovery.pools.iter().find(|p| p.name == "disk7").unwrap();
+        let ext = m
+            .discovery
+            .pools
+            .iter()
+            .find(|p| p.name == "disk7")
+            .unwrap();
         assert_eq!(ext.health, Health::Critical);
-        let internal = m.discovery.pools.iter().find(|p| p.name == "disk3").unwrap();
+        let internal = m
+            .discovery
+            .pools
+            .iter()
+            .find(|p| p.name == "disk3")
+            .unwrap();
         assert_eq!(internal.health, Health::Ok);
         assert_eq!(m.discovery.health.status, Health::Critical);
         assert_eq!(m.smart_failing, 1);
@@ -628,6 +824,81 @@ mod tests {
         assert_eq!(i["disk0"].smart.as_deref(), Some("Verified"));
         assert!(i["disk0"].internal && !i["disk6"].internal);
         assert!(i["disk9"].is_disk_image());
+    }
+
+    #[test]
+    fn smart_and_capacity_signals_become_metrics_and_alerts() {
+        let layout = Layout {
+            containers: vec![ApfsContainer {
+                uuid: Some("u1".into()),
+                reference: "disk3".into(),
+                ceiling: 1000,
+                free: 800,
+                physical_store: Some("disk0s2".into()),
+                volumes: vec![ApfsVolume {
+                    uuid: None,
+                    device: "disk3s1".into(),
+                    name: "Data".into(),
+                    roles: vec![],
+                    in_use: 90,
+                    quota: 100,
+                    reserve: 0,
+                    encrypted: false,
+                    locked: false,
+                    mount_point: Some("/Volumes/Data".into()),
+                }],
+            }],
+            partitions: vec![],
+        };
+        let mut infos = HashMap::new();
+        infos.insert(
+            "disk0".into(),
+            DiskInfo {
+                internal: true,
+                solid_state: Some(true),
+                smart: Some("Failing".into()),
+                bus: Some("Apple Fabric".into()),
+                media_name: None,
+            },
+        );
+        let m = map_layout("bkd", "mac", &layout, &infos, false);
+        let (metrics, alerts) = m.signals();
+        assert!(alerts
+            .iter()
+            .any(|a| a.id == "macos_smart_disk0" && a.severity == "critical"));
+        assert!(alerts
+            .iter()
+            .any(|a| a.severity == "warning" && a.resource_id.contains("disk3s1")));
+        assert!(metrics
+            .iter()
+            .any(|s| s.name == "macos_smart_status" && s.value == 1.0));
+        assert!(metrics
+            .iter()
+            .any(|s| s.name == "macos_capacity_used_ratio" && s.value >= 0.85));
+        assert!(metrics
+            .iter()
+            .any(|s| s.name == "macos_alert" && s.value == 2.0));
+        // A verified disk with room to spare does not alert.
+        infos.get_mut("disk0").unwrap().smart = Some("Verified".into());
+        let layout = Layout {
+            containers: vec![ApfsContainer {
+                uuid: Some("u1".into()),
+                reference: "disk3".into(),
+                ceiling: 1000,
+                free: 800,
+                physical_store: Some("disk0s2".into()),
+                volumes: vec![],
+            }],
+            partitions: vec![],
+        };
+        let calm = map_layout("bkd", "mac", &layout, &infos, false);
+        let (_, calm_alerts) = calm.signals();
+        assert!(calm_alerts.is_empty());
+        assert!(calm
+            .signals()
+            .0
+            .iter()
+            .any(|s| s.name == "macos_smart_status" && s.value == 0.0));
     }
 
     #[test]

@@ -1024,11 +1024,14 @@ async fn metadata_advertises_the_issuer_on_the_mcp_document_only() {
         "the resource is exactly the audience tokens must carry"
     );
     assert_eq!(doc["authorization_servers"], json!([idp.issuer.clone()]));
-    assert!(doc["scopes_supported"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .any(|s| s == "atlas:role:operator"), "{doc}");
+    assert!(
+        doc["scopes_supported"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|s| s == "atlas:role:operator"),
+        "{doc}"
+    );
     assert_eq!(doc["bearer_methods_supported"], json!(["header"]));
 
     // The root form's resource is the origin, which Atlas would refuse as an audience: not advertised.
@@ -1062,6 +1065,9 @@ async fn metadata_advertises_the_issuer_on_the_mcp_document_only() {
         )),
         "{ch}"
     );
-    assert!(ch.contains("atlas:role:viewer") && ch.contains("scope=\""), "{ch}");
+    assert!(
+        ch.contains("atlas:role:viewer") && ch.contains("scope=\""),
+        "{ch}"
+    );
     assert!(!ch.contains("error="), "{ch}");
 }

@@ -113,6 +113,7 @@ impl Cluster {
                     erasure_min_bytes: 64 << 10,
                     compression: false,
                     dedup: false,
+                    cross_group_dedup: false,
                     rebuild_delay_secs: 60,
                     rebuild_bytes_per_sec: 0,
                     scrub_bytes_per_sec: 0,
@@ -693,9 +694,15 @@ fn retention_locked_objects_refuse_delete_and_overwrite_and_only_extend() {
         assert!(xml.contains("COMPLIANCE"), "{xml}");
 
         // Locked: neither delete nor overwrite works, and the content is unchanged.
-        assert_eq!(http.delete(&url).send().await.unwrap().status().as_u16(), 403);
+        assert_eq!(
+            http.delete(&url).send().await.unwrap().status().as_u16(),
+            403
+        );
         assert_eq!(put("v2").send().await.unwrap().status().as_u16(), 403);
-        assert_eq!(http.get(&url).send().await.unwrap().text().await.unwrap(), "v1");
+        assert_eq!(
+            http.get(&url).send().await.unwrap().text().await.unwrap(),
+            "v1"
+        );
 
         // A lock can be extended but never shortened.
         let r = http
@@ -712,11 +719,27 @@ fn retention_locked_objects_refuse_delete_and_overwrite_and_only_extend() {
             .await
             .unwrap();
         assert!(r.status().is_success());
-        assert_eq!(http.delete(&url).send().await.unwrap().status().as_u16(), 403);
+        assert_eq!(
+            http.delete(&url).send().await.unwrap().status().as_u16(),
+            403
+        );
 
         // Other keys are unaffected.
         let other = format!("http://{addr}/vault/free.txt");
-        assert!(http.put(&other).body("x").send().await.unwrap().status().is_success());
-        assert!(http.delete(&other).send().await.unwrap().status().is_success());
+        assert!(http
+            .put(&other)
+            .body("x")
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
+        assert!(http
+            .delete(&other)
+            .send()
+            .await
+            .unwrap()
+            .status()
+            .is_success());
     });
 }

@@ -34,6 +34,7 @@ const DOCS = [
   ['SECRETS.md', 'control-plane', 'secrets', 7, 'Secrets'],
   ['TRACING.md', 'control-plane', 'tracing', 8, 'Tracing'],
   ['LONGHORN.md', 'control-plane', 'longhorn', 9, 'Longhorn driver'],
+  ['CEPH_EXTERNAL.md', 'control-plane', 'ceph-external', 23, 'External Ceph'],
   ['RUSTFS.md', 'control-plane', 'rustfs', 10, 'RustFS (history)'],
   ['IO_EBPF.md', 'control-plane', 'io-ebpf', 11, 'eBPF I/O sensor'],
   ['IO_RISK.md', 'control-plane', 'io-risk', 12, 'I/O risk scoring'],

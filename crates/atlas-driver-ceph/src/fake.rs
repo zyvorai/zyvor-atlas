@@ -174,14 +174,23 @@ impl StorageDriver for FakeCephDriver {
         pool: &str,
         opts: atlas_api_types::DedupEstimateOptions,
     ) -> Result<atlas_api_types::DedupEstimate, DriverError> {
-        if !self.list_pools().await?.iter().any(|p| p.name == pool && p.kind == "rbd") {
-            return Err(DriverError::Backend(format!("invalid: '{pool}' is not an RBD pool on this cluster")));
+        if !self
+            .list_pools()
+            .await?
+            .iter()
+            .any(|p| p.name == pool && p.kind == "rbd")
+        {
+            return Err(DriverError::Backend(format!(
+                "invalid: '{pool}' is not an RBD pool on this cluster"
+            )));
         }
         // Fixture data run through the real scanner: eight VM-like images that share a base layer
         // (identical blocks) plus a unique tail each, and some holes.
         let bs = opts.block_size.clamp(4 << 10, 16 << 20) as usize;
         let layer = |seed: u8| -> Vec<u8> {
-            (0..bs).map(|i| (i as u8).wrapping_mul(seed | 1).wrapping_add(seed)).collect()
+            (0..bs)
+                .map(|i| (i as u8).wrapping_mul(seed | 1).wrapping_add(seed))
+                .collect()
         };
         let mut scanner = atlas_driver_core::dedup::DedupScanner::new(
             opts.block_size,
@@ -198,7 +207,12 @@ impl StorageDriver for FakeCephDriver {
         }
         let total = scanner.examined_bytes();
         let scan = scanner.finish();
-        Ok(atlas_driver_core::dedup::estimate_from_scan(&self.backend_id, pool, &scan, Some(total)))
+        Ok(atlas_driver_core::dedup::estimate_from_scan(
+            &self.backend_id,
+            pool,
+            &scan,
+            Some(total),
+        ))
     }
 
     fn is_fixture(&self) -> bool {
@@ -385,9 +399,21 @@ impl StorageDriver for FakeCephDriver {
         };
         Ok(serde_json::json!([
             dev("INTEL_SSDPE2KX040T8_PHLJ0001", "node01", 0, "", ""),
-            dev("INTEL_SSDPE2KX040T8_PHLJ0002", "node01", 1, "2099-01-01T00:00:00.000000+0000", "2100-01-01T00:00:00.000000+0000"),
+            dev(
+                "INTEL_SSDPE2KX040T8_PHLJ0002",
+                "node01",
+                1,
+                "2099-01-01T00:00:00.000000+0000",
+                "2100-01-01T00:00:00.000000+0000"
+            ),
             dev("SAMSUNG_MZQL23T8HCLS_S64E0001", "node02", 2, "", ""),
-            dev("SAMSUNG_MZQL23T8HCLS_S64E0002", "node02", 3, "2020-01-01T00:00:00.000000+0000", "2020-06-01T00:00:00.000000+0000"),
+            dev(
+                "SAMSUNG_MZQL23T8HCLS_S64E0002",
+                "node02",
+                3,
+                "2020-01-01T00:00:00.000000+0000",
+                "2020-06-01T00:00:00.000000+0000"
+            ),
             dev("MICRON_7450_MTFDKCC3T8TFR_0001", "node03", 4, "", ""),
             dev("MICRON_7450_MTFDKCC3T8TFR_0002", "node03", 5, "", ""),
         ]))

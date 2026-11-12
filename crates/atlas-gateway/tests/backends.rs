@@ -292,3 +292,64 @@ async fn post_backend_rejects_retired_rustfs_backend_type() {
         "retired rustfs backend_type must be rejected"
     );
 }
+
+/// A Ceph row with monitor and keyring *paths* becomes a live RealCephDriver. The key file is
+/// not copied into the backend row. Without those fields the row stays pending, as before.
+#[tokio::test]
+async fn post_backend_activates_external_ceph_without_storing_the_key() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(45))
+        .build()
+        .unwrap();
+
+    let pending: Value = c
+        .post(format!("{base}/backends"))
+        .json(&json!({ "name": "plain-ceph", "backend_type": "ceph" }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(pending["status"], "pending", "{pending}");
+
+    let bad = c
+        .post(format!("{base}/backends"))
+        .json(&json!({ "name": "bad-ceph", "backend_type": "ceph", "mon_host": "10.0.0.1;id" }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), 400);
+
+    let dir = std::env::temp_dir().join(format!("atlas-ceph-ext-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let conf = dir.join("ceph.conf");
+    let keyring = dir.join("keyring");
+    std::fs::write(&conf, "mon_host = 127.0.0.1:1\n").unwrap();
+    std::fs::write(&keyring, "[client.admin]\n\tkey = NOT-A-KEYRING-SECRET\n").unwrap();
+    let resp = c
+        .post(format!("{base}/backends"))
+        .json(&json!({
+            "name": "ext-ceph",
+            "backend_type": "ceph",
+            "mon_host": "127.0.0.1:1",
+            "conf_path": conf,
+            "keyring_path": keyring,
+            "ceph_user": "admin"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = resp.status();
+    let body = resp.text().await.unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(status, 200, "{body}");
+    assert!(!body.contains("NOT-A-KEYRING-SECRET"), "{body}");
+    let created: Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(created["status"], "active", "{created}");
+    let reference = created["connection_ref"].as_str().unwrap();
+    assert!(reference.contains("mon_host=127.0.0.1:1"), "{reference}");
+    assert!(reference.contains("keyring="), "{reference}");
+    assert!(reference.contains("name=client.admin"), "{reference}");
+}

@@ -5,6 +5,8 @@
 Two independent, opt-in switches in the `metadata` section of the node config (Helm:
 `node.compression`, `node.dedup`). Both apply to extents written after they are turned on;
 existing extents stay as written and always remain readable, whatever the setting is later.
+A third switch, `cross_group_dedup` (Helm: `node.crossGroupDedup`), only changes the reduction
+report. It does not change writes.
 
 ## Compression (`compression: true`)
 
@@ -26,8 +28,8 @@ field fails the checksum and falls back to reading through the leader.
 A write whose content is byte-identical to a live extent of the same metadata group references
 that extent instead of storing a second copy: volumes, files, snapshots and clones already share
 extents by reference count, so this reuses that machinery. Matching is by the SHA-256 of the whole
-extent (a grid cell, 4 MiB by default), so only identical, equally aligned extents match; there is
-no sub-extent or content-defined chunking.
+extent (a grid cell, 4 MiB by default), so only identical, equally aligned extents match. Writes
+do not use sub-extent or content-defined chunking.
 
 - **Copy-on-write isolation** is unchanged: overwriting a shared extent writes a new one, and the
   space is returned when the last reference goes.
@@ -46,6 +48,18 @@ no sub-extent or content-defined chunking.
   would apply it without the liveness check, so turn `dedup` on only after every metadata pod is on
   a build that has it.
 
+## Content-defined chunking (scaffolding)
+
+`atlas_native::cdc::Chunker` splits a byte string with a gear hash (minimum 64 bytes, average 256,
+maximum 1024). A cut resets the hash, so the bytes after a boundary chunk the same way on their
+own. `cross_group_fingerprints` returns the SHA-256 of each chunk only when called with the flag
+on; otherwise it returns nothing.
+
+`metadata.cross_group_dedup` (default false) is copied onto `GET /v1/reduction` and the gateway's
+`GET /native/reduction` (`cross_group_dedup`). The gateway treats a missing field as false, so an
+older node still answers. Turning the flag on does not share extents across metadata groups and
+does not change the write path. The chunker is not consulted by `NativeEngine` writes.
+
 ## Seeing the savings
 
 `GET /v1/reduction` on a node returns, for the whole node and per metadata group:
@@ -60,8 +74,9 @@ copy of the stored payload), and the counts of extents, compressed extents and s
 
 Through the gateway: `GET /api/atlas/v1/native/reduction` (operator role) or `atlasctl
 native-reduction` returns those counters plus `saved_by_compression_bytes`,
-`saved_by_sharing_bytes`, `compression_ratio` (`logical / stored`, above 1 is better) and
-`sharing_ratio` (`referenced / logical`). It is cluster-wide, not per volume.
+`saved_by_sharing_bytes`, `compression_ratio` (`logical / stored`, above 1 is better),
+`sharing_ratio` (`referenced / logical`) and `cross_group_dedup` (the flag; writes still share
+only inside one metadata group). It is cluster-wide, not per volume.
 
 Prometheus: `atlas_native_dedup_hits_total` and `atlas_native_dedup_saved_bytes_total`.
 

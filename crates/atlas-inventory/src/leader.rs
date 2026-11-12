@@ -13,12 +13,7 @@ use crate::now_rfc3339;
 /// Try to acquire or renew the `name` lease for `holder`, valid for `ttl_secs`. Returns whether this
 /// holder now owns it. The upsert only takes the lease when it is expired or already ours, so a live
 /// lease held by another instance is left alone.
-pub async fn try_acquire(
-    pool: &AnyPool,
-    name: &str,
-    holder: &str,
-    ttl_secs: i64,
-) -> Result<bool> {
+pub async fn try_acquire(pool: &AnyPool, name: &str, holder: &str, ttl_secs: i64) -> Result<bool> {
     let now = chrono::Utc::now();
     let expires_at = now_rfc3339(now + chrono::Duration::seconds(ttl_secs.max(1)));
     sqlx::query(

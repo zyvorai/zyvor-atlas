@@ -656,6 +656,7 @@ mod tests {
             pool: None,
             owner: None,
             kubernetes: None,
+            longhorn: None,
         }
     }
 

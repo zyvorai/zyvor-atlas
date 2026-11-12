@@ -242,6 +242,9 @@ pub struct CreateVolumeRequest {
     /// Kubernetes provisioning options (the MVP write path creates a PVC).
     #[serde(default)]
     pub kubernetes: Option<K8sVolumeOpts>,
+    /// Replica placement tags for a Longhorn Volume. Ignored by other drivers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub longhorn: Option<LonghornPlacement>,
 }
 
 fn default_block() -> VolumeKind {
@@ -276,6 +279,16 @@ pub struct K8sVolumeOpts {
     pub volume_mode: Option<String>,
     /// Explicit StorageClass; otherwise resolved from policy.
     pub storage_class: Option<String>,
+}
+
+/// Longhorn disk and node tags copied onto a Volume (`spec.diskSelector` / `spec.nodeSelector`).
+/// Empty means Longhorn's scheduler may use any disk or node. Other drivers ignore these.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct LonghornPlacement {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub disk_selector: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub node_selector: Vec<String>,
 }
 
 fn default_true() -> bool {

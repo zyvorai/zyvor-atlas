@@ -91,8 +91,9 @@ pub(crate) fn ceph_default_caps(t: BackendType) -> Capabilities {
             expansion: true,
             ..Capabilities::default()
         },
-        // The Longhorn driver can create, delete and expand Volume CRs and snapshots. The
-        // gateway volume routes still provision a PVC, so this catalog stays block-only.
+        // The Longhorn driver creates, deletes and expands Volume CRs, clones a snapshot into a
+        // Volume (`dataSource: snap://`), and creates Backup CRs. Gateway volume routes still
+        // provision a PVC, so this catalog stays block-only.
         BackendType::Longhorn => Capabilities {
             block: true,
             ..Capabilities::default()

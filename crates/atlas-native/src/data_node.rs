@@ -44,8 +44,8 @@ use crate::{
     grant::{Grant, GrantKey},
     metrics::PromText,
     rdma_link::{
-        is_enomem, ConnSlot, Duplex, RdmaConfig, RdmaSnapshot, RdmaTransport,
-        ENOMEM_HINT, NODE_REFUSED_RETRY_AFTER,
+        is_enomem, ConnSlot, Duplex, RdmaConfig, RdmaSnapshot, RdmaTransport, ENOMEM_HINT,
+        NODE_REFUSED_RETRY_AFTER,
     },
     tls::{self, Conn, TlsIdentity},
 };
@@ -820,8 +820,7 @@ impl<S: Read + ?Sized> Read for IdleRdma<'_, S> {
                             "data node is shutting down",
                         ));
                     }
-                    if !self.between_requests && self.last_progress.elapsed() > RDMA_MESSAGE_STALL
-                    {
+                    if !self.between_requests && self.last_progress.elapsed() > RDMA_MESSAGE_STALL {
                         return Err(e);
                     }
                 }
@@ -1350,8 +1349,10 @@ impl RemoteDevice {
     }
 
     fn connect_net(&self) -> io::Result<Conn> {
-        let mut conn =
-            Conn::connect(self.connect_tcp()?, self.tls.as_ref().map(|(c, n)| (c, n.clone())))?;
+        let mut conn = Conn::connect(
+            self.connect_tcp()?,
+            self.tls.as_ref().map(|(c, n)| (c, n.clone())),
+        )?;
         if let Some(token) = &self.bearer {
             authenticate(&mut conn, token)?;
         }
@@ -1373,10 +1374,15 @@ impl RemoteDevice {
                 return Err(io::Error::new(io::ErrorKind::Unsupported, message))
             }
             other => {
-                return Err(io::Error::other(format!("unexpected upgrade reply: {other:?}")))
+                return Err(io::Error::other(format!(
+                    "unexpected upgrade reply: {other:?}"
+                )))
             }
         }
-        r.cfg.transport.connect(tcp, gid_index).map(|d| Link::Rdma(d, slot))
+        r.cfg
+            .transport
+            .connect(tcp, gid_index)
+            .map(|d| Link::Rdma(d, slot))
     }
 
     fn exchange(s: &mut Link, req: &Request, payload: &[u8]) -> io::Result<(Response, Vec<u8>)> {
@@ -1444,11 +1450,21 @@ impl RemoteDevice {
 }
 
 fn authenticate(stream: &mut (impl Read + Write), token: &str) -> io::Result<()> {
-    write_message(stream, &Request::Auth { token: token.to_string() }, &[])?;
+    write_message(
+        stream,
+        &Request::Auth {
+            token: token.to_string(),
+        },
+        &[],
+    )?;
     match read_header::<Response>(stream)? {
         Response::Authed => Ok(()),
-        Response::Error { message } => Err(io::Error::new(io::ErrorKind::PermissionDenied, message)),
-        other => Err(io::Error::other(format!("unexpected auth reply: {other:?}"))),
+        Response::Error { message } => {
+            Err(io::Error::new(io::ErrorKind::PermissionDenied, message))
+        }
+        other => Err(io::Error::other(format!(
+            "unexpected auth reply: {other:?}"
+        ))),
     }
 }
 
@@ -1458,15 +1474,23 @@ fn unexpected(resp: Response) -> NativeError {
 
 impl BlockStore for RemoteDevice {
     fn append(&self, fence: u64, data: &[u8]) -> Result<u64, NativeError> {
-        let grant = self.grant_key.as_ref().map(|k| {
-            k.mint_own(fence, self.group, self.device, None, data.len() as u64)
-        });
-        self.append_granted(grant, fence, data).map(|(offset, _)| offset)
+        let grant = self
+            .grant_key
+            .as_ref()
+            .map(|k| k.mint_own(fence, self.group, self.device, None, data.len() as u64));
+        self.append_granted(grant, fence, data)
+            .map(|(offset, _)| offset)
     }
 
     fn write_at(&self, fence: u64, offset: u64, data: &[u8]) -> Result<(), NativeError> {
         let grant = self.grant_key.as_ref().map(|k| {
-            k.mint_own(fence, self.group, self.device, Some(offset), data.len() as u64)
+            k.mint_own(
+                fence,
+                self.group,
+                self.device,
+                Some(offset),
+                data.len() as u64,
+            )
         });
         self.write_at_granted(grant, fence, offset, data)
     }
@@ -1636,11 +1660,13 @@ mod tests {
     }
 
     /// The node serves the same protocol over RDMA after an upgrade: append and read back through
-    /// a queue pair on the host's RDMA device (SoftRoCE is enough). `cargo test -p atlas-native
-    /// --features rdma --lib -- --ignored rdma`.
+    /// a queue pair. SoftRoCE is enough and an RDMA NIC is not required
+    /// (`rdma link add rxe0 type rxe netdev lo`, GID 1 or `ATLAS_RDMA_GID_INDEX`). Not CI. A pass
+    /// on `rxe0` is plumbing only, not throughput.
+    /// `cargo test -p atlas-native --features rdma --lib -- --ignored rdma`.
     #[cfg(all(feature = "rdma", target_os = "linux"))]
     #[test]
-    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
+    #[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput"]
     fn node_serves_requests_over_rdma_after_an_upgrade() {
         std::env::set_var("ATLAS_NATIVE_RDMA", "1");
         let gid: u32 = std::env::var("ATLAS_RDMA_GID_INDEX")
@@ -1658,7 +1684,13 @@ mod tests {
         let back = crate::rdma::with_stream(&mut tcp, gid, |s| {
             write_message(
                 s,
-                &Request::Append { fence: 1, len: payload.len() as u64, device: 0, group: 0, grant: None },
+                &Request::Append {
+                    fence: 1,
+                    len: payload.len() as u64,
+                    device: 0,
+                    group: 0,
+                    grant: None,
+                },
                 &payload,
             )?;
             let Response::Appended { offset, .. } = read_header::<Response>(s)? else {
@@ -1666,7 +1698,11 @@ mod tests {
             };
             write_message(
                 s,
-                &Request::Read { offset, len: payload.len() as u64, device: 0 },
+                &Request::Read {
+                    offset,
+                    len: payload.len() as u64,
+                    device: 0,
+                },
                 &[],
             )?;
             let Response::Data { len } = read_header::<Response>(s)? else {
@@ -1683,7 +1719,7 @@ mod tests {
     /// SoftRoCE prerequisites as the test above.
     #[cfg(all(feature = "rdma", target_os = "linux"))]
     #[test]
-    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
+    #[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput"]
     fn pooled_remote_device_uses_rdma_and_reuses_the_connection() {
         std::env::set_var("ATLAS_NATIVE_RDMA", "1");
         let gid: u32 = std::env::var("ATLAS_RDMA_GID_INDEX")
@@ -1698,18 +1734,25 @@ mod tests {
         let payload: Vec<u8> = (0..300_000u32).map(|i| (i % 241) as u8).collect();
         for _ in 0..3 {
             let offset = client.append(1, &payload).unwrap();
-            assert_eq!(client.read_exact_at(offset, payload.len()).unwrap(), payload);
+            assert_eq!(
+                client.read_exact_at(offset, payload.len()).unwrap(),
+                payload
+            );
         }
         let s = client.rdma_stats().unwrap();
         assert_eq!((s.connects, s.requests), (1, 6), "{s:?}");
-        assert_eq!((s.connect_failures, s.tcp_fallback_connects), (0, 0), "{s:?}");
+        assert_eq!(
+            (s.connect_failures, s.tcp_fallback_connects),
+            (0, 0),
+            "{s:?}"
+        );
     }
 
     /// An idle pooled RDMA connection must survive longer than the stream's 30 s read timeout: the
     /// node must not end a healthy connection just because no request arrived. Takes ~40 s.
     #[cfg(all(feature = "rdma", target_os = "linux"))]
     #[test]
-    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0); takes ~40 s"]
+    #[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput; takes ~40 s"]
     fn an_idle_pooled_rdma_connection_survives_the_stream_timeout() {
         std::env::set_var("ATLAS_NATIVE_RDMA", "1");
         let (_dir, node) = start_node();
@@ -1732,7 +1775,7 @@ mod tests {
     /// handler thread must not sit in a 30 s RDMA read.
     #[cfg(all(feature = "rdma", target_os = "linux"))]
     #[test]
-    #[ignore = "needs an RDMA device (e.g. SoftRoCE rxe0)"]
+    #[ignore = "needs an RDMA device; SoftRoCE is enough and hardware is not required (`rdma link add rxe0 type rxe netdev lo`, GID 1 or ATLAS_RDMA_GID_INDEX). Not CI. A pass on rxe0 is plumbing only, not NIC throughput"]
     fn shutdown_does_not_wait_for_an_idle_pooled_rdma_connection() {
         std::env::set_var("ATLAS_NATIVE_RDMA", "1");
         let (_dir, mut node) = start_node();
@@ -1786,14 +1829,20 @@ mod tests {
     #[test]
     fn a_quiet_rdma_connection_is_waited_on_until_the_node_stops() {
         let stop = AtomicBool::new(false);
-        let mut quiet = Quiet { timeouts: 50, data: io::Cursor::new(vec![7]) };
+        let mut quiet = Quiet {
+            timeouts: 50,
+            data: io::Cursor::new(vec![7]),
+        };
         let mut idle = IdleRdma::new(&mut quiet, &stop);
         let mut b = [0u8; 1];
         // Fifty quiet wake-ups between requests are not an error.
         assert_eq!(idle.read(&mut b).unwrap(), 1);
         assert_eq!(b[0], 7);
 
-        let mut quiet = Quiet { timeouts: usize::MAX, data: io::Cursor::new(Vec::new()) };
+        let mut quiet = Quiet {
+            timeouts: usize::MAX,
+            data: io::Cursor::new(Vec::new()),
+        };
         let mut idle = IdleRdma::new(&mut quiet, &stop);
         stop.store(true, Ordering::SeqCst);
         let e = idle.read(&mut b).unwrap_err();
@@ -1870,7 +1919,8 @@ mod tests {
             input: io::Cursor::new(input),
             output: Vec::new(),
         };
-        let (outcome, _) = serve_requests(&mut stream, &empty_shared(dir.path()), allow_upgrade, true);
+        let (outcome, _) =
+            serve_requests(&mut stream, &empty_shared(dir.path()), allow_upgrade, true);
         let resp = read_header::<Response>(&mut stream.output.as_slice()).unwrap();
         (resp, outcome)
     }
@@ -1882,7 +1932,10 @@ mod tests {
         let (resp, outcome) = ask_for_upgrade(false);
         assert_eq!(outcome, None, "the connection must not switch transports");
         match resp {
-            Response::Error { message } => assert!(message.contains("not available on this connection"), "{message}"),
+            Response::Error { message } => assert!(
+                message.contains("not available on this connection"),
+                "{message}"
+            ),
             other => panic!("expected an error, got {other:?}"),
         }
     }

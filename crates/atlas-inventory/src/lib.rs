@@ -29,6 +29,7 @@ pub mod jobs;
 pub mod leader;
 pub mod mcp_confirm;
 pub mod metrics;
+pub mod owners;
 pub mod proposals;
 pub mod protection;
 pub mod rate_limit;

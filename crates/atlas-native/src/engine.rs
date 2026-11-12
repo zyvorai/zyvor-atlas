@@ -19,7 +19,9 @@ use crate::{
     ec::{EcLayout, EcScheme},
     gc,
     grant::GrantKey,
-    metadata::{Catalog, ExtentId, ExtentRef, MetaCommand, MetaError, ReplicaRef, SnapshotId, VolumeId},
+    metadata::{
+        Catalog, ExtentId, ExtentRef, MetaCommand, MetaError, ReplicaRef, SnapshotId, VolumeId,
+    },
     metrics::PromText,
     namespace::{FsOp, InodeKind},
     object::ObjectStore,
@@ -179,6 +181,10 @@ pub struct EngineConfig {
     /// engine references that extent instead of storing a second copy. See
     /// `docs/NATIVE_DATA_REDUCTION.md` for what that does and does not protect against.
     pub dedup: bool,
+    /// Record that content-defined fingerprints may be exported for a future cross-group index.
+    /// Off by default. Writes still deduplicate whole extents inside this engine only; see
+    /// [`crate::cdc`].
+    pub cross_group_dedup: bool,
     /// Where tiered extents live ([`NativeEngine::tier_once`]); reads of tiered extents fail
     /// without it.
     pub objects: Option<Arc<dyn ObjectStore>>,
@@ -202,6 +208,9 @@ pub struct ReductionStats {
     pub compressed_extents: u64,
     /// Extents referenced more than once.
     pub shared_extents: u64,
+    /// [`EngineConfig::cross_group_dedup`]. Sharing across groups is not performed.
+    #[serde(default)]
+    pub cross_group_dedup: bool,
     pub logical_bytes: u64,
     pub referenced_bytes: u64,
     pub stored_bytes: u64,
@@ -224,6 +233,7 @@ impl EngineConfig {
             erasure_min_bytes: DEFAULT_ERASURE_MIN_BYTES,
             compression: false,
             dedup: false,
+            cross_group_dedup: false,
             objects: None,
             object_prefix: "atlas-native/".into(),
             export_prefix: "atlas-native/".into(),
@@ -744,7 +754,9 @@ impl NativeEngine {
                     (**e).clone()
                 }
                 Plan::New => {
-                    let e = placed_new.next().ok_or(NativeError::Poisoned("dedup plan"))?;
+                    let e = placed_new
+                        .next()
+                        .ok_or(NativeError::Poisoned("dedup plan"))?;
                     if let Ok(mut idx) = self.dedup_index.lock() {
                         idx.by_content.insert(e.content_sha(), e.id.clone());
                     }
@@ -1201,6 +1213,7 @@ impl NativeEngine {
                     s.shared_extents += 1;
                 }
             }
+            s.cross_group_dedup = self.cfg.cross_group_dedup;
             s
         })
     }
@@ -1426,7 +1439,8 @@ impl NativeEngine {
 
     /// Waits until this replica's catalog reflects every metadata write committed before the
     /// call, so reads served from it are linearizable on a follower too (see
-    /// [`RaftServer::read_barrier`]). A local engine is always current.
+    /// [`RaftServer::read_barrier`]). A local engine is always current. The Raft leader may
+    /// skip the quorum round while its read lease is still valid.
     pub fn read_barrier(&self) -> Result<(), NativeError> {
         if let Meta::Raft { server, timeout } = &self.meta {
             server.read_barrier(*timeout)?;
@@ -1493,7 +1507,9 @@ impl NativeEngine {
             c.extents
                 .values()
                 .filter(|e| e.extent.object.is_some())
-                .fold((0u64, 0u64), |(n, b), e| (n + 1, b + e.extent.payload_len as u64))
+                .fold((0u64, 0u64), |(n, b), e| {
+                    (n + 1, b + e.extent.payload_len as u64)
+                })
         })?;
         let (applied, volumes, snapshots, extents, free_bytes, free_ranges, sessions, locks) = self
             .with_catalog(|c| {

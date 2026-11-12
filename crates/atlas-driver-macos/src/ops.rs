@@ -35,7 +35,8 @@ fn valid_slice_id(id: &str) -> bool {
     valid_disk_id(w)
         && id[w.len()..].strip_prefix('s').is_some_and(|r| {
             let r = r.split('s').collect::<Vec<_>>();
-            r.iter().all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+            r.iter()
+                .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
         })
 }
 
@@ -43,7 +44,10 @@ fn valid_slice_id(id: &str) -> bool {
 pub fn validate_volume_name(name: &str) -> Result<(), String> {
     let ok = !name.is_empty()
         && name.len() <= 32
-        && name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
         && name
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || matches!(c, ' ' | '_' | '.' | '-'));
@@ -97,7 +101,10 @@ fn refuse_disk(
 
 /// Mount points on `whole` that are not an ordinary `/Volumes/...` mount.
 fn busy_mount(whole: &str, layout: &Layout) -> Option<String> {
-    let parts = layout.partitions.iter().filter(|p| whole_disk_of(&p.device) == whole);
+    let parts = layout
+        .partitions
+        .iter()
+        .filter(|p| whole_disk_of(&p.device) == whole);
     let vols = layout
         .containers
         .iter()
@@ -117,7 +124,9 @@ pub fn refuse_erase(
     allow_disk_images: bool,
 ) -> Result<(), String> {
     if !valid_disk_id(whole) {
-        return Err(format!("{whole:?} is not a whole-disk identifier like disk4"));
+        return Err(format!(
+            "{whole:?} is not a whole-disk identifier like disk4"
+        ));
     }
     refuse_disk(whole, info, layout, allow_disk_images)?;
     if let Some(m) = busy_mount(whole, layout) {
@@ -134,7 +143,9 @@ pub fn refuse_eject(
     allow_disk_images: bool,
 ) -> Result<(), String> {
     if !valid_disk_id(whole) {
-        return Err(format!("{whole:?} is not a whole-disk identifier like disk4"));
+        return Err(format!(
+            "{whole:?} is not a whole-disk identifier like disk4"
+        ));
     }
     refuse_disk(whole, info, layout, allow_disk_images)
 }
@@ -158,12 +169,16 @@ pub fn refuse_add_volume(
     allow_disk_images: bool,
 ) -> Result<(), String> {
     if !valid_disk_id(container) {
-        return Err(format!("{container:?} is not a container identifier like disk5"));
+        return Err(format!(
+            "{container:?} is not a container identifier like disk5"
+        ));
     }
     let c = container_of(layout, container)
         .ok_or_else(|| format!("{container} is not an APFS container"))?;
     let whole = container_whole(c)?;
-    let info = infos.get(whole).ok_or_else(|| format!("no information for {whole}"))?;
+    let info = infos
+        .get(whole)
+        .ok_or_else(|| format!("no information for {whole}"))?;
     refuse_disk(whole, info, layout, allow_disk_images)
 }
 
@@ -224,20 +239,33 @@ pub fn refuse_delete_volume<'a>(
     allow_disk_images: bool,
 ) -> Result<&'a ApfsVolume, String> {
     if !valid_slice_id(volume) {
-        return Err(format!("{volume:?} is not a volume identifier like disk5s2"));
+        return Err(format!(
+            "{volume:?} is not a volume identifier like disk5s2"
+        ));
     }
     let (c, v) = layout
         .containers
         .iter()
-        .find_map(|c| c.volumes.iter().find(|v| v.device == volume).map(|v| (c, v)))
+        .find_map(|c| {
+            c.volumes
+                .iter()
+                .find(|v| v.device == volume)
+                .map(|v| (c, v))
+        })
         .ok_or_else(|| format!("{volume} is not an APFS volume"))?;
     let whole = container_whole(c)?;
-    let info = infos.get(whole).ok_or_else(|| format!("no information for {whole}"))?;
+    let info = infos
+        .get(whole)
+        .ok_or_else(|| format!("no information for {whole}"))?;
     refuse_disk(whole, info, layout, allow_disk_images)?;
     if let Some(r) = v.roles.iter().find(|r| SYSTEM_ROLES.contains(&r.as_str())) {
         return Err(format!("{volume} is a {r} system volume"));
     }
-    if let Some(m) = v.mount_point.as_deref().filter(|m| !m.starts_with("/Volumes/")) {
+    if let Some(m) = v
+        .mount_point
+        .as_deref()
+        .filter(|m| !m.starts_with("/Volumes/"))
+    {
         return Err(format!("{volume} is mounted at {m}"));
     }
     Ok(v)
@@ -248,7 +276,9 @@ pub fn refuse_delete_volume<'a>(
 // ---------------------------------------------------------------------------
 
 pub fn erase_args(whole: &str, name: &str) -> Vec<String> {
-    ["eraseDisk", "APFS", name, "GPT", whole].map(String::from).to_vec()
+    ["eraseDisk", "APFS", name, "GPT", whole]
+        .map(String::from)
+        .to_vec()
 }
 
 pub fn add_volume_args(
@@ -274,7 +304,14 @@ pub fn delete_volume_args(volume: &str) -> Vec<String> {
 }
 
 pub fn resize_container_args(container: &str, size_bytes: u64) -> Vec<String> {
-    ["apfs", "resizeContainer", container, &format!("{size_bytes}B")].map(String::from).to_vec()
+    [
+        "apfs",
+        "resizeContainer",
+        container,
+        &format!("{size_bytes}B"),
+    ]
+    .map(String::from)
+    .to_vec()
 }
 
 pub fn eject_args(whole: &str) -> Vec<String> {
@@ -294,11 +331,17 @@ pub struct MacosOps {
 
 impl MacosOps {
     pub fn fake(allow_disk_images: bool) -> Self {
-        Self { fake: true, allow_disk_images }
+        Self {
+            fake: true,
+            allow_disk_images,
+        }
     }
 
     pub fn real(allow_disk_images: bool) -> Self {
-        Self { fake: false, allow_disk_images }
+        Self {
+            fake: false,
+            allow_disk_images,
+        }
     }
 
     async fn snapshot(&self) -> Result<(Layout, HashMap<String, DiskInfo>), DriverError> {
@@ -353,8 +396,7 @@ impl MacosOps {
     pub async fn check_add_volume(&self, container: &str, name: &str) -> Result<(), DriverError> {
         validate_volume_name(name).map_err(DriverError::Backend)?;
         let (layout, infos) = self.snapshot().await?;
-        refuse_add_volume(container, &infos, &layout, self.allow_disk_images)
-            .map_err(Self::refused)
+        refuse_add_volume(container, &infos, &layout, self.allow_disk_images).map_err(Self::refused)
     }
 
     pub async fn check_delete_volume(&self, volume: &str) -> Result<(), DriverError> {
@@ -370,8 +412,14 @@ impl MacosOps {
         size_bytes: u64,
     ) -> Result<(), DriverError> {
         let (layout, infos) = self.snapshot().await?;
-        refuse_resize_container(container, size_bytes, &infos, &layout, self.allow_disk_images)
-            .map_err(Self::refused)
+        refuse_resize_container(
+            container,
+            size_bytes,
+            &infos,
+            &layout,
+            self.allow_disk_images,
+        )
+        .map_err(Self::refused)
     }
 
     /// Local APFS snapshots of the Mac's boot data volume (`tmutil localsnapshot`). macOS has no
@@ -439,7 +487,8 @@ impl MacosOps {
         reserve: Option<u64>,
     ) -> Result<String, DriverError> {
         self.check_add_volume(container, name).await?;
-        self.run(add_volume_args(container, name, quota, reserve)).await
+        self.run(add_volume_args(container, name, quota, reserve))
+            .await
     }
 
     pub async fn delete_volume(&self, volume: &str) -> Result<String, DriverError> {
@@ -497,8 +546,16 @@ pub trait Lifecycle: Send + Sync {
     async fn check_add_volume(&self, container: &str, name: &str) -> Result<(), DriverError>;
     async fn check_delete_volume(&self, volume: &str) -> Result<(), DriverError>;
     async fn check_eject(&self, whole: &str) -> Result<(), DriverError>;
-    async fn check_resize_container(&self, container: &str, size_bytes: u64) -> Result<(), DriverError>;
-    async fn resize_container(&self, container: &str, size_bytes: u64) -> Result<String, DriverError>;
+    async fn check_resize_container(
+        &self,
+        container: &str,
+        size_bytes: u64,
+    ) -> Result<(), DriverError>;
+    async fn resize_container(
+        &self,
+        container: &str,
+        size_bytes: u64,
+    ) -> Result<String, DriverError>;
     /// Local snapshots of the Mac itself (not per volume: macOS cannot make those).
     async fn list_local_snapshots(&self) -> Result<Vec<String>, DriverError>;
     async fn create_local_snapshot(&self) -> Result<String, DriverError>;
@@ -533,10 +590,18 @@ impl Lifecycle for MacosOps {
     async fn check_eject(&self, whole: &str) -> Result<(), DriverError> {
         MacosOps::check_eject(self, whole).await
     }
-    async fn check_resize_container(&self, container: &str, size_bytes: u64) -> Result<(), DriverError> {
+    async fn check_resize_container(
+        &self,
+        container: &str,
+        size_bytes: u64,
+    ) -> Result<(), DriverError> {
         MacosOps::check_resize_container(self, container, size_bytes).await
     }
-    async fn resize_container(&self, container: &str, size_bytes: u64) -> Result<String, DriverError> {
+    async fn resize_container(
+        &self,
+        container: &str,
+        size_bytes: u64,
+    ) -> Result<String, DriverError> {
         MacosOps::resize_container(self, container, size_bytes).await
     }
     async fn list_local_snapshots(&self) -> Result<Vec<String>, DriverError> {
@@ -595,7 +660,9 @@ mod tests {
     #[test]
     fn internal_disk_and_boot_container_are_always_refused() {
         let (l, i) = state();
-        assert!(refuse_erase("disk0", &i["disk0"], &l, true).unwrap_err().contains("internal"));
+        assert!(refuse_erase("disk0", &i["disk0"], &l, true)
+            .unwrap_err()
+            .contains("internal"));
         assert!(refuse_eject("disk0", &i["disk0"], &l, true).is_err());
         assert!(refuse_add_volume("disk3", &i, &l, true).is_err());
         for v in ["disk3s1", "disk3s5", "disk3s4"] {
@@ -610,7 +677,10 @@ mod tests {
         assert!(refuse_erase("disk8", &i["disk8"], &l, false).is_ok());
         assert!(refuse_eject("disk6", &i["disk6"], &l, false).is_ok());
         assert!(refuse_add_volume("disk7", &i, &l, false).is_ok());
-        assert_eq!(refuse_delete_volume("disk7s2", &i, &l, false).unwrap().name, "Scratch");
+        assert_eq!(
+            refuse_delete_volume("disk7s2", &i, &l, false).unwrap().name,
+            "Scratch"
+        );
     }
 
     #[test]
@@ -619,28 +689,50 @@ mod tests {
         // The boot container and anything internal are refused whatever the size.
         assert!(refuse_resize_container("disk3", 1 << 40, &i, &l, true).is_err());
         // The external container: a sane size passes, below the floor or below what it holds does not.
-        let c = l.containers.iter().find(|c| c.reference == "disk7").unwrap();
+        let c = l
+            .containers
+            .iter()
+            .find(|c| c.reference == "disk7")
+            .unwrap();
         let used = (c.ceiling - c.free) as u64;
         assert!(refuse_resize_container("disk7", c.ceiling as u64, &i, &l, false).is_ok());
-        assert!(refuse_resize_container("disk7", 1 << 20, &i, &l, false).unwrap_err().contains("at least"));
+        assert!(refuse_resize_container("disk7", 1 << 20, &i, &l, false)
+            .unwrap_err()
+            .contains("at least"));
         if used > MIN_CONTAINER_BYTES {
-            assert!(refuse_resize_container("disk7", used - 1, &i, &l, false).unwrap_err().contains("already holds"));
+            assert!(refuse_resize_container("disk7", used - 1, &i, &l, false)
+                .unwrap_err()
+                .contains("already holds"));
         }
         assert!(refuse_resize_container("disk99", 1 << 30, &i, &l, false).is_err());
         assert_eq!(
             resize_container_args("disk7", 1 << 30),
-            ["apfs", "resizeContainer", "disk7", "1073741824B"].map(String::from).to_vec()
+            ["apfs", "resizeContainer", "disk7", "1073741824B"]
+                .map(String::from)
+                .to_vec()
         );
     }
 
     #[test]
     fn snapshot_dates_are_strict_and_parsed_from_tmutil_output() {
         assert!(valid_snapshot_date("2026-10-19-151606"));
-        for bad in ["", "2026-10-19", "2026-10-19-15160", "2026-10-19-1516060", "2026/10/19-151606", "../../etc", "2026-10-19-15160a", "all"] {
+        for bad in [
+            "",
+            "2026-10-19",
+            "2026-10-19-15160",
+            "2026-10-19-1516060",
+            "2026/10/19-151606",
+            "../../etc",
+            "2026-10-19-15160a",
+            "all",
+        ] {
             assert!(!valid_snapshot_date(bad), "{bad}");
         }
         let out = "Snapshot dates for disk /:\n2026-10-19-151606\n2026-10-18-090000\nnot-a-date\n";
-        assert_eq!(parse_snapshot_dates(out), ["2026-10-19-151606", "2026-10-18-090000"]);
+        assert_eq!(
+            parse_snapshot_dates(out),
+            ["2026-10-19-151606", "2026-10-18-090000"]
+        );
         assert!(parse_snapshot_dates("Snapshot dates for disk /:\n").is_empty());
     }
 
@@ -648,7 +740,11 @@ mod tests {
     async fn fake_snapshots_execute_nothing_and_still_validate() {
         let ops = MacosOps::fake(false);
         assert!(ops.list_local_snapshots().await.unwrap().is_empty());
-        assert!(ops.create_local_snapshot().await.unwrap().starts_with("fake: tmutil"));
+        assert!(ops
+            .create_local_snapshot()
+            .await
+            .unwrap()
+            .starts_with("fake: tmutil"));
         assert!(ops.delete_local_snapshot("2026-10-19-151606").await.is_ok());
         assert!(matches!(
             ops.delete_local_snapshot("; rm -rf /").await,
@@ -659,32 +755,58 @@ mod tests {
     #[test]
     fn disk_images_need_the_test_flag() {
         let (l, i) = state();
-        assert!(refuse_erase("disk9", &i["disk9"], &l, false).unwrap_err().contains("disk image"));
+        assert!(refuse_erase("disk9", &i["disk9"], &l, false)
+            .unwrap_err()
+            .contains("disk image"));
         assert!(refuse_erase("disk9", &i["disk9"], &l, true).is_ok());
     }
 
     #[test]
     fn system_roles_and_odd_mounts_refuse_volume_delete() {
         let (mut l, i) = state();
-        let c = l.containers.iter_mut().find(|c| c.reference == "disk7").unwrap();
+        let c = l
+            .containers
+            .iter_mut()
+            .find(|c| c.reference == "disk7")
+            .unwrap();
         c.volumes[0].roles = vec!["Preboot".into()];
-        assert!(refuse_delete_volume("disk7s1", &i, &l, false).unwrap_err().contains("system volume"));
-        let c = l.containers.iter_mut().find(|c| c.reference == "disk7").unwrap();
+        assert!(refuse_delete_volume("disk7s1", &i, &l, false)
+            .unwrap_err()
+            .contains("system volume"));
+        let c = l
+            .containers
+            .iter_mut()
+            .find(|c| c.reference == "disk7")
+            .unwrap();
         c.volumes[0].roles.clear();
         c.volumes[0].mount_point = Some("/Applications/X".into());
-        assert!(refuse_delete_volume("disk7s1", &i, &l, false).unwrap_err().contains("mounted at"));
+        assert!(refuse_delete_volume("disk7s1", &i, &l, false)
+            .unwrap_err()
+            .contains("mounted at"));
     }
 
     #[test]
     fn a_disk_with_a_system_mount_is_not_erasable() {
         let (mut l, i) = state();
-        let c = l.containers.iter_mut().find(|c| c.reference == "disk7").unwrap();
+        let c = l
+            .containers
+            .iter_mut()
+            .find(|c| c.reference == "disk7")
+            .unwrap();
         c.volumes[0].mount_point = Some("/".into());
-        assert!(refuse_erase("disk6", &i["disk6"], &l, false).unwrap_err().contains("running system"));
+        assert!(refuse_erase("disk6", &i["disk6"], &l, false)
+            .unwrap_err()
+            .contains("running system"));
         let (mut l, i) = state();
-        let c = l.containers.iter_mut().find(|c| c.reference == "disk7").unwrap();
+        let c = l
+            .containers
+            .iter_mut()
+            .find(|c| c.reference == "disk7")
+            .unwrap();
         c.volumes[0].mount_point = Some("/Applications/X".into());
-        assert!(refuse_erase("disk6", &i["disk6"], &l, false).unwrap_err().contains("mounted at"));
+        assert!(refuse_erase("disk6", &i["disk6"], &l, false)
+            .unwrap_err()
+            .contains("mounted at"));
     }
 
     #[test]
@@ -703,23 +825,46 @@ mod tests {
 
     #[test]
     fn commands_are_argument_arrays() {
-        assert_eq!(erase_args("disk4", "Data"), ["eraseDisk", "APFS", "Data", "GPT", "disk4"]);
+        assert_eq!(
+            erase_args("disk4", "Data"),
+            ["eraseDisk", "APFS", "Data", "GPT", "disk4"]
+        );
         assert_eq!(
             add_volume_args("disk5", "V", Some(10), Some(5)),
-            ["apfs", "addVolume", "disk5", "APFS", "V", "-quota", "10B", "-reserve", "5B"]
+            [
+                "apfs",
+                "addVolume",
+                "disk5",
+                "APFS",
+                "V",
+                "-quota",
+                "10B",
+                "-reserve",
+                "5B"
+            ]
         );
-        assert_eq!(delete_volume_args("disk5s2"), ["apfs", "deleteVolume", "disk5s2"]);
+        assert_eq!(
+            delete_volume_args("disk5s2"),
+            ["apfs", "deleteVolume", "disk5s2"]
+        );
         assert_eq!(eject_args("disk4"), ["eject", "disk4"]);
     }
 
     #[tokio::test]
     async fn fake_ops_check_fixtures_and_execute_nothing() {
         let ops = MacosOps::fake(false);
-        assert!(ops.erase_disk("disk6", "Fresh").await.unwrap().starts_with("fake:"));
+        assert!(ops
+            .erase_disk("disk6", "Fresh")
+            .await
+            .unwrap()
+            .starts_with("fake:"));
         assert!(ops.erase_disk("disk0", "Nope").await.is_err());
         assert!(ops.delete_volume("disk3s5").await.is_err());
         assert!(ops.delete_volume("disk7s2").await.is_ok());
-        assert!(ops.add_volume("disk7", "New", Some(1 << 30), None).await.is_ok());
+        assert!(ops
+            .add_volume("disk7", "New", Some(1 << 30), None)
+            .await
+            .is_ok());
         assert!(ops.erase_disk("disk42", "X").await.is_err());
     }
 }

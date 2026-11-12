@@ -77,6 +77,11 @@ Register a backend row (no cluster lifecycle; starts `pending`).
 `backend_type` ∈ `ceph|nfs|zfs|san|cloud_block|kubernetes` (default `ceph`).
 `mode` ∈ `managed_rook|external|read_only` (default `external`).
 
+A `ceph` body that includes `mon_host` and/or `conf_path` (optional `keyring_path`, `ceph_user`)
+registers a live `RealCephDriver` and returns `status: active`. Those fields are paths and monitor
+addresses on the gateway host; the keyring file is not stored. Without them, Ceph stays `pending`.
+See [CEPH_EXTERNAL.md](CEPH_EXTERNAL.md).
+
 ### `POST /api/atlas/v1/backends/{id}/discover`
 Run a discovery pass for the backend and persist inventory (PDF §8.1). Writes an audit row. Also
 reconciles any snapshot still stuck `creating` (re-checks the underlying VolumeSnapshot's
@@ -477,9 +482,12 @@ heterogeneous per [DATABRIDGE.md](DATABRIDGE.md)). Stage triggers return `202 + 
   Real mode leaves the cutover `draining`; the reconciler completes once lag is **zero** (tears down
   connectors + KafkaConnect) or fails past the 5-minute drain deadline and returns the plan to
   `validated`. Fake mode drains instantly.
-- `POST .../rollback` — **admin**, within the rollback window (job).
-- `GET .../rollback-drill` — the steps that rollback runs (cutover and plan state become
-  `rolled_back`; no row copy) and whether the window is still open. Does not change the plan.
+- `POST .../rollback` — **admin**, within the rollback window (job). Always marks the cutover and
+  the plan `rolled_back`. With `ATLAS_DATABRIDGE_ROLLBACK_COPY=1`, a homogeneous Postgres source
+  that still has an endpoint also gets a reverse `pg_dump | psql` Job (edge into the source) when
+  Kubernetes is available. Other engines stay a state flip. See [DATABRIDGE.md](DATABRIDGE.md).
+- `GET .../rollback-drill` — the steps that rollback runs (state flip, and the reverse-copy step
+  when the flag is set) and whether the window is still open. Does not change the plan.
   `atlasctl databridge-stage PLAN_ID rollback-drill`.
 
 ### Object leg (cloud object store → Ceph RGW)

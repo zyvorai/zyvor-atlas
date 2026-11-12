@@ -21,20 +21,18 @@ use std::collections::HashMap;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use atlas_api_types::{
-    DiscoveryResult, MetricSample, StorageHealth, StoragePool, StorageVolume,
-};
+use atlas_api_types::{DiscoveryResult, MetricSample, StorageHealth, StoragePool, StorageVolume};
 use atlas_driver_core::{DriverError, StorageDriver};
 
 pub mod ops;
 pub mod parse;
 pub mod remote;
 pub use ops::{DeviceRow, Lifecycle, MacosOps};
-pub use remote::{agents_from_env, remote_ops_from_env, RemoteMacosDriver, RemoteMacosOps};
 pub use parse::{
     cluster_id, map_layout, parse_info, parse_layout, whole_disk_of, ApfsContainer, ApfsVolume,
-    DiskInfo, Layout, Mapped, Partition,
+    CapacityPoint, DiskInfo, Layout, MacAlert, Mapped, Partition,
 };
+pub use remote::{agents_from_env, remote_ops_from_env, RemoteMacosDriver, RemoteMacosOps};
 
 /// The `ATLAS_MACOS_*` environment, read the same way by the gateway and by job dispatch.
 #[derive(Debug, Clone)]
@@ -97,7 +95,10 @@ fn metrics_for(m: &Mapped) -> Vec<MetricSample> {
     let mut out = vec![
         sample(
             "macos_containers_total",
-            d.pools.iter().filter(|p| p.kind == "apfs_container").count() as f64,
+            d.pools
+                .iter()
+                .filter(|p| p.kind == "apfs_container")
+                .count() as f64,
         ),
         sample("macos_volumes_total", d.volumes.len() as f64),
         sample("macos_smart_failing", m.smart_failing as f64),
@@ -106,6 +107,8 @@ fn metrics_for(m: &Mapped) -> Vec<MetricSample> {
         out.push(sample("macos_capacity_bytes", raw as f64));
         out.push(sample("macos_used_bytes", used as f64));
     }
+    let (signals, _) = m.signals();
+    out.extend(signals);
     out
 }
 
@@ -169,10 +172,22 @@ pub(crate) fn fixture_state() -> Result<(Layout, HashMap<String, DiskInfo>), Dri
     )?;
     let mut infos = HashMap::new();
     for (disk, bytes) in [
-        ("disk0", &include_bytes!("../tests/fixtures/info_disk0.plist")[..]),
-        ("disk6", &include_bytes!("../tests/fixtures/info_disk6.plist")[..]),
-        ("disk8", &include_bytes!("../tests/fixtures/info_disk8.plist")[..]),
-        ("disk9", &include_bytes!("../tests/fixtures/info_disk9.plist")[..]),
+        (
+            "disk0",
+            &include_bytes!("../tests/fixtures/info_disk0.plist")[..],
+        ),
+        (
+            "disk6",
+            &include_bytes!("../tests/fixtures/info_disk6.plist")[..],
+        ),
+        (
+            "disk8",
+            &include_bytes!("../tests/fixtures/info_disk8.plist")[..],
+        ),
+        (
+            "disk9",
+            &include_bytes!("../tests/fixtures/info_disk9.plist")[..],
+        ),
     ] {
         infos.insert(disk.to_string(), parse_info(bytes)?);
     }
@@ -344,7 +359,10 @@ mod tests {
         for want in ["disk1", "disk2", "disk3", "disk7", "disk8s2"] {
             assert!(names.contains(&want), "{want} missing from {names:?}");
         }
-        assert!(r.volumes.iter().all(|v| matches!(v.kind, VolumeKind::Filesystem)));
+        assert!(r
+            .volumes
+            .iter()
+            .all(|v| matches!(v.kind, VolumeKind::Filesystem)));
         assert!(r.cluster.raw_capacity_bytes.unwrap() > r.cluster.used_capacity_bytes.unwrap());
     }
 
@@ -367,7 +385,10 @@ mod tests {
 
     #[tokio::test]
     async fn fake_metrics_cover_counts_and_capacity() {
-        let m = FakeMacosDriver::with_defaults("bkd_macos").metrics().await.unwrap();
+        let m = FakeMacosDriver::with_defaults("bkd_macos")
+            .metrics()
+            .await
+            .unwrap();
         let get = |n: &str| m.iter().find(|s| s.name == n).map(|s| s.value);
         assert_eq!(get("macos_containers_total"), Some(4.0));
         assert_eq!(get("macos_smart_failing"), Some(0.0));

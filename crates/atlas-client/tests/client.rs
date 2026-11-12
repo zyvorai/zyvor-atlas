@@ -80,6 +80,7 @@ fn request() -> CreateVolumeRequest {
             role: "data_disk".into(),
         }),
         kubernetes: None,
+        longhorn: None,
     }
 }
 
@@ -97,7 +98,10 @@ async fn create_then_follow_the_job_to_success() {
         .await
         .unwrap();
     assert_eq!(done.state, "succeeded");
-    assert!(fake.polls.load(Ordering::SeqCst) >= 3, "it polled until done");
+    assert!(
+        fake.polls.load(Ordering::SeqCst) >= 3,
+        "it polled until done"
+    );
     assert_eq!(c.list_volumes(Some("t1")).await.unwrap()[0]["id"], "vol_1");
 }
 

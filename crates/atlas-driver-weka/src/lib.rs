@@ -54,7 +54,9 @@ impl WekaDriver {
     pub fn fake(backend_id: impl Into<String>) -> Self {
         Self {
             backend_id: backend_id.into(),
-            mode: Mode::Fake(Fake { filesystems: Mutex::new(fixture_filesystems()) }),
+            mode: Mode::Fake(Fake {
+                filesystems: Mutex::new(fixture_filesystems()),
+            }),
         }
     }
 
@@ -64,17 +66,26 @@ impl WekaDriver {
             let certs = reqwest::Certificate::from_pem_bundle(pem)
                 .map_err(|e| DriverError::Backend(format!("WEKA CA bundle: {e}")))?;
             if certs.is_empty() {
-                return Err(DriverError::Backend("WEKA CA bundle has no certificate".into()));
+                return Err(DriverError::Backend(
+                    "WEKA CA bundle has no certificate".into(),
+                ));
             }
             builder = builder.tls_certs_merge(certs);
         }
         let client = builder
             .build()
             .map_err(|e| DriverError::Backend(format!("WEKA HTTP client: {e}")))?;
-        let cfg = WekaConfig { endpoint: cfg.endpoint.trim_end_matches('/').to_string(), ..cfg };
+        let cfg = WekaConfig {
+            endpoint: cfg.endpoint.trim_end_matches('/').to_string(),
+            ..cfg
+        };
         Ok(Self {
             backend_id: backend_id.into(),
-            mode: Mode::Real(Box::new(Conn { cfg, client, token: Mutex::new(None) })),
+            mode: Mode::Real(Box::new(Conn {
+                cfg,
+                client,
+                token: Mutex::new(None),
+            })),
         })
     }
 
@@ -82,7 +93,11 @@ impl WekaDriver {
         match &self.mode {
             Mode::Fake(fake) => {
                 let filesystems = fake.filesystems.lock().await.clone();
-                Ok(build_discovery(&self.backend_id, &fixture_cluster(), &filesystems))
+                Ok(build_discovery(
+                    &self.backend_id,
+                    &fixture_cluster(),
+                    &filesystems,
+                ))
             }
             Mode::Real(c) => {
                 let cluster = get(&c.cfg, &c.client, &c.token, "/cluster").await?;
@@ -146,9 +161,10 @@ async fn request(
         if let Some(body) = body {
             req = req.json(body);
         }
-        let resp = req.send().await.map_err(|e| {
-            DriverError::Unreachable(format!("WEKA {method} {path}: {e}"))
-        })?;
+        let resp = req
+            .send()
+            .await
+            .map_err(|e| DriverError::Unreachable(format!("WEKA {method} {path}: {e}")))?;
         let status = resp.status();
         if status == reqwest::StatusCode::UNAUTHORIZED && attempt == 0 {
             *guard = None;
@@ -160,7 +176,9 @@ async fn request(
         if !status.is_success() {
             let detail = resp.text().await.unwrap_or_default();
             let detail: String = detail.chars().take(200).collect();
-            return Err(DriverError::Backend(format!("WEKA {method} {path}: HTTP {status} {detail}")));
+            return Err(DriverError::Backend(format!(
+                "WEKA {method} {path}: HTTP {status} {detail}"
+            )));
         }
         if status == reqwest::StatusCode::NO_CONTENT {
             return Ok(Value::Null);
@@ -171,7 +189,9 @@ async fn request(
             .map_err(|e| DriverError::Parse(format!("WEKA {method} {path}: {e}")))?;
         return Ok(data(&v).clone());
     }
-    Err(DriverError::Backend(format!("WEKA {method} {path}: token rejected after login")))
+    Err(DriverError::Backend(format!(
+        "WEKA {method} {path}: token rejected after login"
+    )))
 }
 
 async fn get(
@@ -190,11 +210,16 @@ fn data(v: &Value) -> &Value {
 
 fn number(v: Option<&Value>) -> Option<i64> {
     let v = v?;
-    v.as_i64().or_else(|| v.as_f64().map(|f| f as i64)).or_else(|| v.as_str()?.parse().ok())
+    v.as_i64()
+        .or_else(|| v.as_f64().map(|f| f as i64))
+        .or_else(|| v.as_str()?.parse().ok())
 }
 
 fn fs_health(fs: &Value) -> Health {
-    match (fs.get("status").and_then(Value::as_str), fs.get("is_ready").and_then(Value::as_bool)) {
+    match (
+        fs.get("status").and_then(Value::as_str),
+        fs.get("is_ready").and_then(Value::as_bool),
+    ) {
         (Some("READY"), _) | (None, Some(true)) => Health::Ok,
         (Some("CREATING" | "REMOVING" | "DOWNLOADING"), _) => Health::Warn,
         (Some(_), _) | (None, Some(false)) => Health::Critical,
@@ -221,7 +246,10 @@ fn build_discovery(backend_id: &str, cluster: &Value, filesystems: &[Value]) -> 
         .iter()
         .filter_map(|fs| {
             let name = fs.get("name").and_then(Value::as_str)?;
-            let uid = fs.get("uid").or_else(|| fs.get("id")).and_then(Value::as_str);
+            let uid = fs
+                .get("uid")
+                .or_else(|| fs.get("id"))
+                .and_then(Value::as_str);
             let health = fs_health(fs);
             Some(StorageVolume {
                 id: format!("vol_{backend_id}_{name}"),
@@ -244,7 +272,10 @@ fn build_discovery(backend_id: &str, cluster: &Value, filesystems: &[Value]) -> 
             })
         })
         .collect();
-    let degraded = volumes.iter().filter(|v| matches!(v.health, Health::Warn | Health::Critical)).count();
+    let degraded = volumes
+        .iter()
+        .filter(|v| matches!(v.health, Health::Warn | Health::Critical))
+        .count();
     let status = if volumes.iter().any(|v| v.health == Health::Critical) {
         Health::Critical
     } else if degraded > 0 && cluster_status == Health::Ok {
@@ -252,13 +283,19 @@ fn build_discovery(backend_id: &str, cluster: &Value, filesystems: &[Value]) -> 
     } else {
         cluster_status
     };
-    let name = cluster.get("name").and_then(Value::as_str).unwrap_or("weka");
+    let name = cluster
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or("weka");
     DiscoveryResult {
         cluster: StorageCluster {
             id: cluster_id.clone(),
             backend_id: backend_id.into(),
             name: format!("weka/{name}"),
-            native_fsid: cluster.get("guid").and_then(Value::as_str).map(str::to_owned),
+            native_fsid: cluster
+                .get("guid")
+                .and_then(Value::as_str)
+                .map(str::to_owned),
             health: status,
             raw_capacity_bytes: total,
             used_capacity_bytes: used,
@@ -282,7 +319,10 @@ fn build_discovery(backend_id: &str, cluster: &Value, filesystems: &[Value]) -> 
             raw_capacity_bytes: total,
             used_capacity_bytes: used,
             available_capacity_bytes: unprovisioned,
-            recovering: cluster.get("rebuild").and_then(|r| r.get("progressPercent")).is_some_and(|p| p.as_f64().unwrap_or(100.0) < 100.0),
+            recovering: cluster
+                .get("rebuild")
+                .and_then(|r| r.get("progressPercent"))
+                .is_some_and(|p| p.as_f64().unwrap_or(100.0) < 100.0),
             degraded_objects: degraded as i64,
         },
         volumes,
@@ -299,22 +339,34 @@ fn fixture_cluster() -> Value {
 fn valid_fs_key(name: &str) -> bool {
     !name.is_empty()
         && name.len() <= 128
-        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        && name.chars().next().is_some_and(|c| c.is_ascii_alphanumeric())
+        && name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+        && name
+            .chars()
+            .next()
+            .is_some_and(|c| c.is_ascii_alphanumeric())
 }
 
 /// Atlas pool `weka` is the synthetic discovery pool, not a WEKA filesystem group.
 fn filesystem_group(pool: Option<&str>) -> Result<String, DriverError> {
-    match pool.map(str::trim).filter(|s| !s.is_empty() && *s != "weka") {
+    match pool
+        .map(str::trim)
+        .filter(|s| !s.is_empty() && *s != "weka")
+    {
         Some(group) if valid_fs_key(group) => Ok(group.to_string()),
-        Some(group) => Err(DriverError::Backend(format!("invalid: WEKA group {group:?}"))),
+        Some(group) => Err(DriverError::Backend(format!(
+            "invalid: WEKA group {group:?}"
+        ))),
         None => Ok("default".into()),
     }
 }
 
 fn prepare_filesystem(req: &CreateVolumeRequest) -> Result<(String, String, i64), DriverError> {
     if req.kind != VolumeKind::Filesystem {
-        return Err(DriverError::Backend("invalid: WEKA volumes are filesystems".into()));
+        return Err(DriverError::Backend(
+            "invalid: WEKA volumes are filesystems".into(),
+        ));
     }
     let name = req.name.trim();
     if !valid_fs_key(name) {
@@ -323,9 +375,15 @@ fn prepare_filesystem(req: &CreateVolumeRequest) -> Result<(String, String, i64)
         )));
     }
     if req.size_bytes <= 0 {
-        return Err(DriverError::Backend("invalid: size_bytes must be > 0".into()));
+        return Err(DriverError::Backend(
+            "invalid: size_bytes must be > 0".into(),
+        ));
     }
-    Ok((name.to_string(), filesystem_group(req.pool.as_deref())?, req.size_bytes))
+    Ok((
+        name.to_string(),
+        filesystem_group(req.pool.as_deref())?,
+        req.size_bytes,
+    ))
 }
 
 fn filesystem_target<'a>(backend_id: &str, id: &'a str) -> Result<&'a str, DriverError> {
@@ -339,7 +397,9 @@ fn filesystem_target<'a>(backend_id: &str, id: &'a str) -> Result<&'a str, Drive
     if valid_fs_key(key) {
         Ok(key)
     } else {
-        Err(DriverError::Backend(format!("invalid: WEKA filesystem id {id:?}")))
+        Err(DriverError::Backend(format!(
+            "invalid: WEKA filesystem id {id:?}"
+        )))
     }
 }
 
@@ -351,8 +411,15 @@ fn filesystem_create_body(name: &str, group: &str, size_bytes: i64) -> Value {
     })
 }
 
-fn created_filesystem(backend_id: &str, requested_name: &str, created: &Value) -> CreateVolumeResult {
-    let name = created.get("name").and_then(Value::as_str).unwrap_or(requested_name);
+fn created_filesystem(
+    backend_id: &str,
+    requested_name: &str,
+    created: &Value,
+) -> CreateVolumeResult {
+    let name = created
+        .get("name")
+        .and_then(Value::as_str)
+        .unwrap_or(requested_name);
     let uid = created
         .get("uid")
         .or_else(|| created.get("id"))
@@ -371,8 +438,13 @@ async fn fake_create(
     size_bytes: i64,
 ) -> Result<CreateVolumeResult, DriverError> {
     let mut list = fake.filesystems.lock().await;
-    if list.iter().any(|fs| fs.get("name").and_then(Value::as_str) == Some(name)) {
-        return Err(DriverError::Backend(format!("filesystem {name} already exists")));
+    if list
+        .iter()
+        .any(|fs| fs.get("name").and_then(Value::as_str) == Some(name))
+    {
+        return Err(DriverError::Backend(format!(
+            "filesystem {name} already exists"
+        )));
     }
     let uid = format!("fs-uid-{name}");
     let fs = json!({
@@ -433,7 +505,10 @@ impl StorageDriver for WekaDriver {
             value,
             labels: Default::default(),
         };
-        let mut result = vec![sample("weka_filesystems_total", snapshot.volumes.len() as f64)];
+        let mut result = vec![sample(
+            "weka_filesystems_total",
+            snapshot.volumes.len() as f64,
+        )];
         if let Some(capacity) = snapshot.cluster.raw_capacity_bytes {
             result.push(sample("weka_capacity_bytes", capacity as f64));
         }
@@ -443,7 +518,10 @@ impl StorageDriver for WekaDriver {
         Ok(result)
     }
 
-    async fn create_volume(&self, req: CreateVolumeRequest) -> Result<CreateVolumeResult, DriverError> {
+    async fn create_volume(
+        &self,
+        req: CreateVolumeRequest,
+    ) -> Result<CreateVolumeResult, DriverError> {
         let (name, group, size) = prepare_filesystem(&req)?;
         match &self.mode {
             Mode::Fake(fake) => fake_create(fake, &self.backend_id, &name, size).await,
@@ -499,11 +577,17 @@ mod tests {
     fn maps_capacity_and_filesystems_without_inventing_missing_values() {
         let r = build_discovery("bkd_weka", &fixture_cluster(), &fixture_filesystems());
         assert_eq!(r.cluster.raw_capacity_bytes, Some(109_951_162_777_600));
-        assert_eq!(r.cluster.used_capacity_bytes, Some(109_951_162_777_600 - 43_980_465_111_040));
+        assert_eq!(
+            r.cluster.used_capacity_bytes,
+            Some(109_951_162_777_600 - 43_980_465_111_040)
+        );
         assert_eq!(r.health.status, Health::Ok);
         assert_eq!(r.volumes.len(), 2);
         assert_eq!(r.volumes[0].kind, VolumeKind::Filesystem);
-        assert_eq!(r.volumes[0].backend_native_id.as_deref(), Some("weka-fs:fs-uid-train"));
+        assert_eq!(
+            r.volumes[0].backend_native_id.as_deref(),
+            Some("weka-fs:fs-uid-train")
+        );
         assert_eq!(r.volumes[0].state, "ready");
 
         let bare = build_discovery("bkd_weka", &json!({}), &[json!({"name": "x"})]);
@@ -513,7 +597,11 @@ mod tests {
         assert_eq!(bare.volumes[0].health, Health::Unknown);
         assert_eq!(bare.health.status, Health::Unknown);
 
-        let bad = build_discovery("bkd_weka", &fixture_cluster(), &[json!({"name": "y", "status": "ERROR"})]);
+        let bad = build_discovery(
+            "bkd_weka",
+            &fixture_cluster(),
+            &[json!({"name": "y", "status": "ERROR"})],
+        );
         assert_eq!(bad.health.status, Health::Critical);
     }
 
@@ -523,56 +611,77 @@ mod tests {
         let gets = Arc::new(AtomicUsize::new(0));
         let (l, g) = (logins.clone(), gets.clone());
         let auth = move |req: &Request| {
-            req.headers().get("authorization").and_then(|h| h.to_str().ok()).map(str::to_owned)
+            req.headers()
+                .get("authorization")
+                .and_then(|h| h.to_str().ok())
+                .map(str::to_owned)
         };
         let app = Router::new()
-            .route("/api/v2/login", post(move |Json(body): Json<Value>| {
-                let n = l.fetch_add(1, Ordering::SeqCst) + 1;
-                async move {
-                    assert_eq!(body["username"], "atlas");
-                    Json(json!({"data": {"access_token": format!("tok{n}")}}))
-                }
-            }))
-            .route("/api/v2/cluster", get(move |req: Request| {
-                let n = g.fetch_add(1, Ordering::SeqCst);
-                let a = auth(&req);
-                async move {
-                    // The first token is rejected once to exercise the re-login path.
-                    if n == 0 || a.as_deref() != Some("Bearer tok2") {
-                        return Err(StatusCode::UNAUTHORIZED);
+            .route(
+                "/api/v2/login",
+                post(move |Json(body): Json<Value>| {
+                    let n = l.fetch_add(1, Ordering::SeqCst) + 1;
+                    async move {
+                        assert_eq!(body["username"], "atlas");
+                        Json(json!({"data": {"access_token": format!("tok{n}")}}))
                     }
-                    Ok(Json(json!({"data": fixture_cluster()})))
-                }
-            }))
-            .route("/api/v2/fileSystems", get(|| async { Json(json!({"data": fixture_filesystems()})) }));
+                }),
+            )
+            .route(
+                "/api/v2/cluster",
+                get(move |req: Request| {
+                    let n = g.fetch_add(1, Ordering::SeqCst);
+                    let a = auth(&req);
+                    async move {
+                        // The first token is rejected once to exercise the re-login path.
+                        if n == 0 || a.as_deref() != Some("Bearer tok2") {
+                            return Err(StatusCode::UNAUTHORIZED);
+                        }
+                        Ok(Json(json!({"data": fixture_cluster()})))
+                    }
+                }),
+            )
+            .route(
+                "/api/v2/fileSystems",
+                get(|| async { Json(json!({"data": fixture_filesystems()})) }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-        let d = WekaDriver::real("bkd_weka", WekaConfig {
-            endpoint: format!("http://{addr}/api/v2/"),
-            username: "atlas".into(),
-            password: "pw".into(),
-            org: None,
-            ca_pem: None,
-            timeout: Duration::from_secs(5),
-        })
+        let d = WekaDriver::real(
+            "bkd_weka",
+            WekaConfig {
+                endpoint: format!("http://{addr}/api/v2/"),
+                username: "atlas".into(),
+                password: "pw".into(),
+                org: None,
+                ca_pem: None,
+                timeout: Duration::from_secs(5),
+            },
+        )
         .unwrap();
         assert!(!d.is_fixture());
         let r = d.discover().await.unwrap();
         assert_eq!(r.volumes.len(), 2);
         assert_eq!(logins.load(Ordering::SeqCst), 2);
 
-        let down = WekaDriver::real("bkd_weka", WekaConfig {
-            endpoint: "http://127.0.0.1:1/api/v2".into(),
-            username: "atlas".into(),
-            password: "pw".into(),
-            org: None,
-            ca_pem: None,
-            timeout: Duration::from_secs(2),
-        })
+        let down = WekaDriver::real(
+            "bkd_weka",
+            WekaConfig {
+                endpoint: "http://127.0.0.1:1/api/v2".into(),
+                username: "atlas".into(),
+                password: "pw".into(),
+                org: None,
+                ca_pem: None,
+                timeout: Duration::from_secs(2),
+            },
+        )
         .unwrap();
-        assert!(matches!(down.discover().await, Err(DriverError::Unreachable(_))));
+        assert!(matches!(
+            down.discover().await,
+            Err(DriverError::Unreachable(_))
+        ));
     }
 
     fn fs_req(name: &str, size: i64, pool: Option<&str>) -> CreateVolumeRequest {
@@ -585,6 +694,7 @@ mod tests {
             pool: pool.map(str::to_owned),
             owner: None,
             kubernetes: None,
+            longhorn: None,
         }
     }
 
@@ -593,7 +703,10 @@ mod tests {
         let d = WekaDriver::fake("bkd_weka");
         assert!(d.is_fixture());
         let before = d.list_volumes("weka").await.unwrap().len();
-        let created = d.create_volume(fs_req("scratch", 1_073_741_824, Some("weka"))).await.unwrap();
+        let created = d
+            .create_volume(fs_req("scratch", 1_073_741_824, Some("weka")))
+            .await
+            .unwrap();
         assert_eq!(created.volume_id, "vol_bkd_weka_scratch");
         assert_eq!(created.backend_native_id, "weka-fs:fs-uid-scratch");
         let vols = d.list_volumes("weka").await.unwrap();
@@ -602,20 +715,32 @@ mod tests {
         assert_eq!(scratch.size_bytes, 1_073_741_824);
         assert_eq!(scratch.kind, VolumeKind::Filesystem);
         assert!(scratch.used_bytes.is_none());
-        assert!(d.create_volume(fs_req("scratch", 1_073_741_824, None)).await.is_err());
+        assert!(d
+            .create_volume(fs_req("scratch", 1_073_741_824, None))
+            .await
+            .is_err());
         let mut block = fs_req("other", 10, None);
         block.kind = VolumeKind::Block;
         assert!(d.create_volume(block).await.is_err());
         assert!(d.create_volume(fs_req("empty", 0, None)).await.is_err());
 
-        d.delete_volume(DeleteVolumeRequest { volume_id: created.backend_native_id.clone() })
-            .await
-            .unwrap();
+        d.delete_volume(DeleteVolumeRequest {
+            volume_id: created.backend_native_id.clone(),
+        })
+        .await
+        .unwrap();
         assert_eq!(d.list_volumes("weka").await.unwrap().len(), before);
-        d.delete_volume(DeleteVolumeRequest { volume_id: "weka-fs:missing".into() })
+        d.delete_volume(DeleteVolumeRequest {
+            volume_id: "weka-fs:missing".into(),
+        })
+        .await
+        .unwrap();
+        assert!(d
+            .delete_volume(DeleteVolumeRequest {
+                volume_id: "weka-fs:../x".into()
+            })
             .await
-            .unwrap();
-        assert!(d.delete_volume(DeleteVolumeRequest { volume_id: "weka-fs:../x".into() }).await.is_err());
+            .is_err());
     }
 
     #[tokio::test]
@@ -623,67 +748,95 @@ mod tests {
         let filesystems = Arc::new(std::sync::Mutex::new(Vec::<Value>::new()));
         let store = filesystems.clone();
         let app = Router::new()
-            .route("/api/v2/login", post(|| async { Json(json!({"data": {"access_token": "tok1"}})) }))
+            .route(
+                "/api/v2/login",
+                post(|| async { Json(json!({"data": {"access_token": "tok1"}})) }),
+            )
             .route(
                 "/api/v2/cluster",
                 get(|| async { Json(json!({"data": {"name": "weka-demo", "status": "OK"}})) }),
             )
-            .route("/api/v2/fileSystems", post(move |Json(body): Json<Value>| {
-                let store = store.clone();
-                async move {
-                    assert_eq!(body["group_name"], "gold");
-                    assert_eq!(body["name"], "scratch");
-                    assert_eq!(body["total_capacity"], 4096);
-                    let fs = json!({
-                        "name": "scratch", "uid": "uid-scratch", "status": "CREATING",
-                        "total_budget": body["total_capacity"],
-                    });
-                    store.lock().unwrap().push(fs.clone());
-                    Json(json!({"data": fs}))
-                }
-            }).get({
-                let filesystems = filesystems.clone();
-                move || {
-                    let filesystems = filesystems.clone();
-                    async move { Json(json!({"data": filesystems.lock().unwrap().clone()})) }
-                }
-            }))
-            .route("/api/v2/fileSystems/{id}", delete({
-                let filesystems = filesystems.clone();
-                move |Path(id): Path<String>| {
-                    let filesystems = filesystems.clone();
+            .route(
+                "/api/v2/fileSystems",
+                post(move |Json(body): Json<Value>| {
+                    let store = store.clone();
                     async move {
-                        let mut list = filesystems.lock().unwrap();
-                        let before = list.len();
-                        list.retain(|fs| {
-                            fs.get("uid").and_then(Value::as_str) != Some(id.as_str())
-                                && fs.get("name").and_then(Value::as_str) != Some(id.as_str())
+                        assert_eq!(body["group_name"], "gold");
+                        assert_eq!(body["name"], "scratch");
+                        assert_eq!(body["total_capacity"], 4096);
+                        let fs = json!({
+                            "name": "scratch", "uid": "uid-scratch", "status": "CREATING",
+                            "total_budget": body["total_capacity"],
                         });
-                        if list.len() == before { StatusCode::NOT_FOUND } else { StatusCode::NO_CONTENT }
+                        store.lock().unwrap().push(fs.clone());
+                        Json(json!({"data": fs}))
                     }
-                }
-            }));
+                })
+                .get({
+                    let filesystems = filesystems.clone();
+                    move || {
+                        let filesystems = filesystems.clone();
+                        async move { Json(json!({"data": filesystems.lock().unwrap().clone()})) }
+                    }
+                }),
+            )
+            .route(
+                "/api/v2/fileSystems/{id}",
+                delete({
+                    let filesystems = filesystems.clone();
+                    move |Path(id): Path<String>| {
+                        let filesystems = filesystems.clone();
+                        async move {
+                            let mut list = filesystems.lock().unwrap();
+                            let before = list.len();
+                            list.retain(|fs| {
+                                fs.get("uid").and_then(Value::as_str) != Some(id.as_str())
+                                    && fs.get("name").and_then(Value::as_str) != Some(id.as_str())
+                            });
+                            if list.len() == before {
+                                StatusCode::NOT_FOUND
+                            } else {
+                                StatusCode::NO_CONTENT
+                            }
+                        }
+                    }
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let addr = listener.local_addr().unwrap();
         tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
 
-        let d = WekaDriver::real("bkd_weka", WekaConfig {
-            endpoint: format!("http://{addr}/api/v2"),
-            username: "atlas".into(),
-            password: "pw".into(),
-            org: None,
-            ca_pem: None,
-            timeout: Duration::from_secs(5),
-        })
+        let d = WekaDriver::real(
+            "bkd_weka",
+            WekaConfig {
+                endpoint: format!("http://{addr}/api/v2"),
+                username: "atlas".into(),
+                password: "pw".into(),
+                org: None,
+                ca_pem: None,
+                timeout: Duration::from_secs(5),
+            },
+        )
         .unwrap();
-        let created = d.create_volume(fs_req("scratch", 4096, Some("gold"))).await.unwrap();
+        let created = d
+            .create_volume(fs_req("scratch", 4096, Some("gold")))
+            .await
+            .unwrap();
         assert_eq!(created.backend_native_id, "weka-fs:uid-scratch");
         assert_eq!(created.volume_id, "vol_bkd_weka_scratch");
         let listed = d.list_volumes("weka").await.unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].size_bytes, 4096);
-        d.delete_volume(DeleteVolumeRequest { volume_id: created.backend_native_id }).await.unwrap();
+        d.delete_volume(DeleteVolumeRequest {
+            volume_id: created.backend_native_id,
+        })
+        .await
+        .unwrap();
         assert!(d.list_volumes("weka").await.unwrap().is_empty());
-        d.delete_volume(DeleteVolumeRequest { volume_id: "weka-fs:uid-scratch".into() }).await.unwrap();
+        d.delete_volume(DeleteVolumeRequest {
+            volume_id: "weka-fs:uid-scratch".into(),
+        })
+        .await
+        .unwrap();
     }
 }

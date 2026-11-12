@@ -297,7 +297,8 @@ runbook; summary:
 
 ## ✅ AI Ops Advisor — explainable analysis, incident correlation, MCP tools
 
-Deterministic, read-only (`can_execute: false`) analysis layered on existing inventory/telemetry —
+Deterministic analysis layered on existing inventory/telemetry (the advisor response stays
+`can_execute: false`; `silence_alert` and `create_snapshot` are a separate two-person execute) —
 no model required for the default path. See [AI_ADVISOR.md](AI_ADVISOR.md).
 
 - **Ops Advisor** (`POST /ai/advisor`): bounded risk score + level, evidence (capacity, 14-day
@@ -429,7 +430,7 @@ upstream, so Atlas only observes it.
   - `atlas` is already a Zeus OS module codename ("Machine Finder") in `v9s`.
   - A `ZeusStorageCenter.tsx` + `web/src/routes/storage.rs` already ship — decide whether Atlas's
     Storage Center *absorbs*, *replaces*, or *sits beside* them.
-- Additional drivers behind the same trait: NFS, ZFS, SAN, cloud block, external Ceph import.
+- Additional drivers behind the same trait: NFS, ZFS, SAN, cloud block. External Ceph import is in (`docs/CEPH_EXTERNAL.md`).
 - ✅ **Scheduled snapshots (protection schedules)**: `POST /volumes/{id}/schedule {interval_secs, keep}`
   registers a schedule (`snapshot_schedules`); a background worker (`ATLAS_SNAPSHOT_TICK_SECS`) snapshots
   the volume on cadence and prunes its scheduler-created snapshots to `keep`. `GET /schedules`,
@@ -642,8 +643,10 @@ upstream, so Atlas only observes it.
   internal disks, the running system and system volumes are refused twice (route and job).
 - ✅ Fleet: `atlas-mac-agent` per Mac plus `RemoteMacosDriver` (`ATLAS_MACOS_AGENTS`); launchd installer; release archives.
 - ✅ Mac as client: NFS/SMB/`atlasctl` documented (`docs/MACOS_CLIENT.md`); native FUSE mount on macOS is a documented no-go.
-- ⏭ Disks page UI, container resize, local snapshots, remote writes, SMART/capacity alerts. Real-hardware write commands are
-  unverified; see [STATUS.md](STATUS.md).
+- ⏭ Disks page UI, container resize, local snapshots, remote writes. SMART and capacity alerts are
+  parser metrics (`macos_smart_status`, `macos_capacity_used_ratio`, `macos_alert`) plus the agent's
+  `GET /v1/alerts`; they are fixture-tested and best-effort on a real `diskutil`. Real-hardware write
+  commands are unverified; see [STATUS.md](STATUS.md). macFUSE remains a no-go.
 
 ## Known limitations (current)
 

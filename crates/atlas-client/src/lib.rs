@@ -8,8 +8,11 @@
 //! return a job, and [`AtlasClient::wait_for_job`] follows it to a terminal state.
 //!
 //! Owner convention: see `docs/PRODUCTS.md`; the JWT subject for a product is
-//! `product.service.<name>`. [`owners`] records Transiva (`hyper2kvm`) and Machina. It does not
-//! call those products. [`AtlasClient::ping`] checks Atlas itself (`GET /readyz`).
+//! `product.service.<name>`. [`owners`] records Transiva (`hyper2kvm`), Machina, Veyron, GuestKit,
+//! and PacketWolf. [`owners::health_ping`] is a local stub and does not call them.
+//! [`AtlasClient::ping`] checks Atlas itself (`GET /readyz`).
+//! [`AtlasClient::record_owner_workflow`] posts intent to Atlas, which stores it and does not
+//! call the product.
 
 use std::time::Duration;
 
@@ -83,9 +86,14 @@ impl AtlasClient {
     }
 
     /// `GET /readyz` on this Atlas gateway. This is Atlas's own health, not a ping of Transiva,
-    /// Machina, or any other product.
+    /// Machina, Veyron, GuestKit, PacketWolf, or any other product. For a product, use
+    /// [`owners::health_ping`], which does not make a request.
     pub async fn ping(&self) -> Result<(), ClientError> {
-        let resp = self.http.get(format!("{}/readyz", self.base)).send().await?;
+        let resp = self
+            .http
+            .get(format!("{}/readyz", self.base))
+            .send()
+            .await?;
         let status = resp.status();
         if !status.is_success() {
             return Err(ClientError::Status {
@@ -116,6 +124,21 @@ impl AtlasClient {
             });
         }
         Ok(resp.json().await?)
+    }
+
+    /// `POST /owners/{wire_id}/workflow`. Records intent on Atlas. Does not call the product.
+    pub async fn record_owner_workflow(
+        &self,
+        product: owners::KnownProduct,
+        intent: &str,
+        note: &str,
+    ) -> Result<Value, ClientError> {
+        let path = format!("/owners/{}/workflow", product.wire_id());
+        Self::send(
+            self.request(reqwest::Method::POST, &path)
+                .json(&serde_json::json!({ "intent": intent, "note": note })),
+        )
+        .await
     }
 
     /// `POST /volumes`. Returns the accepted job; follow it with [`Self::wait_for_job`].

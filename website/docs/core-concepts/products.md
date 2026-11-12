@@ -31,10 +31,23 @@ The product named **Transiva** is recorded as owner id `hyper2kvm`. That wire id
 enterprise/future products that aren't public yet (see `docs/ROADMAP.md`'s Slice 3+ section).
 Atlas does not call those products.
 
-`crates/atlas-client` records two of them locally (`owners::KnownProduct`): Transiva's wire id
-`hyper2kvm` (the display name `transiva` is not accepted as an id) and `machina`. `owners::owner`
-builds an `Owner` for `CreateVolume`. `AtlasClient::ping` is `GET /readyz` on Atlas itself.
-There is no RPC to Transiva or Machina.
+`crates/atlas-client` records five of them locally (`owners::KnownProduct`): Transiva's wire id
+`hyper2kvm` (the display name `transiva` is not accepted as an id), `machina`, `veyron`,
+`guestkit` and `packetwolf`. `owners::owner` builds an `Owner` for `CreateVolume`.
+`owners::health_ping` is a local stub (`called_remote: false`, `status: not_called`). It does not
+dial the product. `AtlasClient::ping` is `GET /readyz` on Atlas itself.
+`AtlasClient::record_owner_workflow` POSTs `/api/atlas/v1/owners/{wire}/workflow`.
+
+The gateway exposes the same five wire ids (it does not depend on `atlas-client`; the lists are
+kept aligned by tests):
+
+| Route | Role | Does |
+| --- | --- | --- |
+| `GET /api/atlas/v1/owners` | viewer | The five owners, each `called_remote: false` |
+| `GET /api/atlas/v1/owners/{id}/health` | viewer | The same stub for one wire id. `transiva` and any other unknown id are 404 |
+| `POST /api/atlas/v1/owners/{id}/workflow` | operator | `{intent, note?}`. `intent` is 1–64 characters of `[A-Za-z0-9_-]`. `note` is at most 512 characters. Writes a row in `owner_workflows` (migration `0042`) and audits `owner.workflow`. No product RPC |
+
+There is no RPC to Transiva, Machina, Veyron, GuestKit or PacketWolf.
 
 Enumerate owned volumes with `ListVolumesByOwner(product, resource_id?)`.
 
@@ -139,5 +152,6 @@ stand-in for the gateway, not a live one. There is no Go client yet.
 
 ## Follow-ups (product repos)
 
-Generate/vendor stubs from `crates/atlas-gateway/proto/atlas.proto` into each product. Atlas does not
-ship per-product workflow code — only the shared edge.
+Generate/vendor stubs from `crates/atlas-gateway/proto/atlas.proto` into each product. Atlas records
+workflow intent for the five owners above and does not call those products. Per-product workflow
+code still lives in each product repo.

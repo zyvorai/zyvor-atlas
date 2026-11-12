@@ -103,8 +103,10 @@ loaded automatically (`dotenvy`).
 ## Switching to the real Ceph driver locally
 
 `ATLAS_CEPH_DRIVER_MODE=real` makes the driver shell out to `ceph`/`rbd`. You need those CLIs
-installed and a reachable cluster with `/etc/ceph/ceph.conf` + keyring. For a full real setup
-(Rook Squid + CSI drivers + remote gateway script) see [DEPLOYMENT.md](DEPLOYMENT.md).
+installed and a reachable cluster with `/etc/ceph/ceph.conf` + keyring. To register a second,
+already-running cluster (monitor addresses and a keyring path, not a Rook install Atlas creates),
+see [CEPH_EXTERNAL.md](CEPH_EXTERNAL.md). For a full real setup (Rook Squid + CSI drivers + remote
+gateway script) see [DEPLOYMENT.md](DEPLOYMENT.md).
 
 Quick remote path once k3s is up:
 

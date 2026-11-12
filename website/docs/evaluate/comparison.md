@@ -100,9 +100,14 @@ The atlas-native roadmap, in order, each phase gated on a published benchmark:
    (`atlas-native-mount --rdma`, `--features rdma`) is built: the verbs transport passed on
    SoftRoCE, but the pooled client has not run over SoftRoCE or on any RDMA NIC, nothing is
    measured, and it is plaintext (never with TLS) (`docs/NATIVE_FS.md`, `docs/STATUS.md`).
-   GPUDirect Storage and MLPerf Storage results are not done. (A files-only GPU/GDS capability probe exists in the node's
-   `/v1/status`; it is unverified on real GPU hardware and there is no GPU I/O path,
-   `docs/NATIVE_GPU.md`.)
+   Ignored verbs tests need SoftRoCE (`rdma link add rxe0 type rxe netdev lo`) or a NIC; they
+   are not CI, hardware is not required, and a SoftRoCE pass is plumbing only. Pipelined sends
+   and registered-memory zero-copy are scaffolded and not on the verbs path.
+   GPUDirect Storage byte transfers and MLPerf Storage results are not done. (The node's
+   `/v1/status` `gpu_io` probe is unverified on real GPU hardware. With `--features cufile`,
+   thin `cuFileRead` / `cuFileWrite` wrappers call the library when it is present and error
+   when it is absent; `io_performed` is set only if `cuFileDriverOpen` succeeds. No device-buffer
+   transfer has been run. `docs/NATIVE_GPU.md`.)
 5. **Protocols:** NFS, SMB and S3 front ends over the same namespace; ACLs, quotas, `O_DIRECT`;
    an IO500 submission. Per-filesystem byte and inode quotas, POSIX ACLs, `O_DIRECT`, an NFS gateway
    (`docs/NATIVE_NFS.md`), an S3 gateway (`docs/NATIVE_S3.md`) and an SMB gateway

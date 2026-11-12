@@ -20,7 +20,8 @@ pub fn valid_run_id(id: &str) -> bool {
     let b = id.as_bytes();
     (1..=64).contains(&b.len())
         && b[0].is_ascii_alphanumeric()
-        && b.iter().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b':' | b'-'))
+        && b.iter()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b':' | b'-'))
 }
 
 /// The run id in scope on this task, if any.
@@ -270,7 +271,17 @@ mod tests {
         for ok in ["run-1", "a", "R2.D2:3_x", &"x".repeat(64)] {
             assert!(valid_run_id(ok), "{ok}");
         }
-        for bad in ["", "-x", ".x", "a b", "a/b", "x\u{e9}", &"x".repeat(65), "a\nb", "a'b"] {
+        for bad in [
+            "",
+            "-x",
+            ".x",
+            "a b",
+            "a/b",
+            "x\u{e9}",
+            &"x".repeat(65),
+            "a\nb",
+            "a'b",
+        ] {
             assert!(!valid_run_id(bad), "{bad:?}");
         }
     }
@@ -280,23 +291,49 @@ mod tests {
         let p = pool().await;
         RUN_ID
             .scope("run-7".to_string(), async {
-                record(&p, None, "agent", "a.one", "t", "r", "ok", None, None).await.unwrap();
+                record(&p, None, "agent", "a.one", "t", "r", "ok", None, None)
+                    .await
+                    .unwrap();
             })
             .await;
-        record(&p, None, "agent", "a.two", "t", "r", "ok", None, None).await.unwrap();
-        record_with_run(&p, Some("run-8"), None, "agent", "a.three", "t", "r", "ok", None, None)
+        record(&p, None, "agent", "a.two", "t", "r", "ok", None, None)
             .await
             .unwrap();
+        record_with_run(
+            &p,
+            Some("run-8"),
+            None,
+            "agent",
+            "a.three",
+            "t",
+            "r",
+            "ok",
+            None,
+            None,
+        )
+        .await
+        .unwrap();
 
         let all = list(&p, None, None, None, None, 10).await.unwrap();
         assert_eq!(all.len(), 3);
-        assert_eq!(all[1]["run_id"], serde_json::Value::Null, "outside a run the column is null");
-        let mine = list_by_run(&p, None, None, None, None, Some("run-7"), 10).await.unwrap();
+        assert_eq!(
+            all[1]["run_id"],
+            serde_json::Value::Null,
+            "outside a run the column is null"
+        );
+        let mine = list_by_run(&p, None, None, None, None, Some("run-7"), 10)
+            .await
+            .unwrap();
         assert_eq!(mine.len(), 1);
         assert_eq!(mine[0]["action"], "a.one");
         assert_eq!(mine[0]["run_id"], "run-7");
-        let other = list_by_run(&p, None, None, None, None, Some("run-8"), 10).await.unwrap();
+        let other = list_by_run(&p, None, None, None, None, Some("run-8"), 10)
+            .await
+            .unwrap();
         assert_eq!(other[0]["action"], "a.three");
-        assert!(list_by_run(&p, None, None, None, None, Some("run-9"), 10).await.unwrap().is_empty());
+        assert!(list_by_run(&p, None, None, None, None, Some("run-9"), 10)
+            .await
+            .unwrap()
+            .is_empty());
     }
 }

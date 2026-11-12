@@ -51,6 +51,9 @@ pub fn proposal_id() -> String {
 pub fn binding_id() -> String {
     prefixed("bind")
 }
+pub fn workflow_id() -> String {
+    prefixed("owf")
+}
 pub fn schedule_id() -> String {
     prefixed("sched")
 }

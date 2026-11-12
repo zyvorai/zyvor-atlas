@@ -5,10 +5,10 @@
 pub mod auth;
 pub mod grpc;
 pub mod idp_token;
-pub mod mcp_as;
-pub mod mcp_introspect;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+pub mod mcp_as;
+pub mod mcp_introspect;
 pub mod oauth_resource;
 pub mod routes;
 pub mod startup;

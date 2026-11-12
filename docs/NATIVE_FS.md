@@ -626,10 +626,25 @@ exactly as over TCP.
 - Verified only on SoftRoCE over loopback on one dev host (`crates/atlas-native-fuse/tests/ops.rs`,
   `real_rdma_*`, `--ignored`, `--features rdma`): direct reads and direct writes with the memlock
   limit raised for the test process, and graceful degradation to TCP under the default 8 MiB limit.
-  No RDMA hardware, and no throughput or latency numbers.
-- Not built: pipelined sends, messages larger than the existing 64 KiB, registered-memory
-  zero-copy and one-sided RDMA READ/WRITE. The stream is the same synchronous send/receive as
-  before; nothing here is a performance claim.
+  No RDMA hardware, and no throughput or latency numbers. Those tests are not CI. SoftRoCE is
+  enough and an RDMA NIC is not required:
+
+  ```
+  rdma link add rxe0 type rxe netdev lo
+  # GID index is usually 1 on loopback; override with ATLAS_RDMA_GID_INDEX
+  cargo test -p atlas-native --features rdma -- --ignored
+  cargo test -p atlas-native-fuse --features rdma --test ops -- --ignored real_rdma
+  ```
+
+  A pass on `rxe0` shows the queue pairs connect and bytes match. It is not an RDMA NIC result
+  and not a throughput or latency number. The same note is on each `#[ignore]`.
+- Pipelined sends and registered-memory zero-copy are scaffolded in
+  `crates/atlas-native/src/rdma_pipeline.rs` and unit-tested with no device: a credit window
+  (`SendPipeline`, default depth 8) and a `RecordingZeroCopy` hook that checks a region and
+  returns pending-runtime. `ATLAS_NATIVE_RDMA_PIPELINE=1` is recorded and ignored.
+  `runtime_enabled()` is false, so `RdmaStream::write` still posts one send and copies into its
+  staging slot. Not built on that path: messages larger than the existing 64 KiB, and one-sided
+  RDMA READ/WRITE. Nothing here is a performance claim.
 
 ## Verification
 

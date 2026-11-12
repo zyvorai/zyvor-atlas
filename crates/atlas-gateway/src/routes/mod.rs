@@ -24,6 +24,7 @@ mod meta;
 mod object_store;
 pub(crate) mod observability;
 mod oidc;
+mod owners;
 pub(crate) mod protection;
 pub mod ransomware;
 mod rbd;
@@ -57,6 +58,7 @@ use meta::*;
 use object_store::*;
 use observability::*;
 use oidc::*;
+use owners::*;
 use protection::*;
 use rbd::*;
 use rook::*;
@@ -78,6 +80,11 @@ pub fn router(state: AppState) -> Router {
     let api = Router::new()
         .route("/ai/advisor", post(ai_advisor))
         .route("/ai/advisor/findings", get(list_advisor_findings))
+        .route("/ai/advisor/actions/propose", post(propose_advisor_action))
+        .route("/ai/advisor/actions/confirm", post(confirm_advisor_action))
+        .route("/owners", get(list_owners))
+        .route("/owners/{id}/health", get(owner_health))
+        .route("/owners/{id}/workflow", post(owner_workflow))
         .route("/ai/anomalies", get(ai_anomalies))
         .route(
             "/ai/ransomware/assess",
@@ -306,8 +313,14 @@ pub fn router(state: AppState) -> Router {
         .route("/snapshots", get(list_snapshots))
         .route("/snapshots/{id}", axum::routing::delete(delete_snapshot))
         .route("/snapshots/{id}/lock", post(lock_snapshot))
-        .route("/snapshots/{id}/unlock/propose", post(propose_unlock_snapshot))
-        .route("/snapshots/{id}/unlock/confirm", post(confirm_unlock_snapshot))
+        .route(
+            "/snapshots/{id}/unlock/propose",
+            post(propose_unlock_snapshot),
+        )
+        .route(
+            "/snapshots/{id}/unlock/confirm",
+            post(confirm_unlock_snapshot),
+        )
         .route("/snapshots/{id}/clone", post(clone_snapshot))
         .route("/snapshots/{id}/restore", post(restore_snapshot))
         .route("/volumes/{id}/schedule", post(create_schedule))
@@ -457,10 +470,9 @@ pub fn router(state: AppState) -> Router {
             get(crate::oauth_resource::mcp_metadata),
         )
         .route(crate::mcp_as::TOKEN_PATH, post(crate::mcp_as::token))
-        .route(
-            crate::mcp_as::METADATA_PATH,
-            get(crate::mcp_as::metadata),
-        );
+        .route(crate::mcp_as::REGISTER_PATH, post(crate::mcp_as::register))
+        .route(crate::mcp_as::AUTHORIZE_PATH, get(crate::mcp_as::authorize))
+        .route(crate::mcp_as::METADATA_PATH, get(crate::mcp_as::metadata));
     root
         // Any other path serves the embedded Storage Center SPA (client-side routing).
         .fallback(get(spa_handler))

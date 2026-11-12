@@ -56,7 +56,8 @@ pub(crate) fn report(raw: &Value) -> AppResult<Value> {
         "saved_by_sharing_bytes": referenced.saturating_sub(logical),
         "compression_ratio": ratio(logical, stored),
         "sharing_ratio": ratio(referenced, logical),
-        "note": "stored_bytes is one copy; replicas or erasure coding multiply it. Sharing includes snapshots and clones.",
+        "cross_group_dedup": raw.get("cross_group_dedup").and_then(Value::as_bool).unwrap_or(false),
+        "note": "stored_bytes is one copy; replicas or erasure coding multiply it. Sharing includes snapshots and clones. cross_group_dedup reports the flag; writes still share only inside one metadata group.",
     }))
 }
 
@@ -93,6 +94,7 @@ mod tests {
         assert_eq!(r["saved_by_sharing_bytes"], 2000);
         assert_eq!(r["compression_ratio"], 4.0);
         assert_eq!(r["sharing_ratio"], 3.0);
+        assert_eq!(r["cross_group_dedup"], false);
     }
 
     #[test]
@@ -122,5 +124,12 @@ mod tests {
     #[test]
     fn missing_counter_is_an_error_not_a_guess() {
         assert!(report(&json!({ "extents": 1 })).is_err());
+    }
+
+    #[test]
+    fn cross_group_dedup_is_reported_when_the_node_sets_it() {
+        let mut body = raw(1000, 1000, 1000);
+        body["cross_group_dedup"] = json!(true);
+        assert_eq!(report(&body).unwrap()["cross_group_dedup"], true);
     }
 }

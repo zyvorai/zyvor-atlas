@@ -99,14 +99,16 @@ The IdP access-token feature requires `ATLAS_PUBLIC_URL` (see below).
 
 **What this still does not do.** Do not read it as full OAuth login support.
 
-- There is **no full OAuth authorization server** in Atlas: no Dynamic Client Registration, no Client ID Metadata
-  Documents, no PKCE and no authorization-code grant. A client authorizes against *your* identity provider (which must
+- There is **no production OAuth authorization server** in Atlas. Dex
+  ([`deploy/dex-lab`](https://github.com/zyvorai/zyvor-atlas/blob/main/deploy/dex-lab/README.md)) remains that server: login, consent, and a
+  durable client registry. A client authorizes against *your* identity provider (which must
   support what the spec asks of an authorization server, including audience binding), then calls Atlas with the
-  access token it got. The Dex lab ([`deploy/dex-lab`](https://github.com/zyvorai/zyvor-atlas/blob/main/deploy/dex-lab/README.md)) is that authorization server
-  for a lab login. Atlas's own tokens are still HS256 JWTs minted by Atlas (`POST /auth/login`,
+  access token it got. Atlas's own tokens are still HS256 JWTs minted by Atlas (`POST /auth/login`,
   `POST /auth/tokens`, the SSO console login).
-- A **lab-only** token endpoint exists behind `ATLAS_MCP_AS_ENABLE` (below). It answers `client_credentials` and
-  mints an Atlas JWT. It is not a substitute for Dex, and it is off by default.
+- A **lab-only** authorization-server scaffold exists behind `ATLAS_MCP_AS_ENABLE` (below). It
+  answers `client_credentials`, a small in-memory Dynamic Client Registration subset, and an
+  auto-approved authorization-code grant with PKCE S256. It mints Atlas JWTs. It is not a
+  substitute for Dex, and it is off by default.
 - The configured console OIDC issuer (`ATLAS_OIDC_ISSUER_URL`) is not advertised unless you also set
   `ATLAS_MCP_IDP_ISSUER` to it. The two settings are independent: console login mints an Atlas token and still
   works the same way.
@@ -142,7 +144,7 @@ Off unless `ATLAS_MCP_INTROSPECTION_URL` is set. Then `/api/atlas/v1/mcp` accept
 
 ### Lab token endpoint (`ATLAS_MCP_AS_ENABLE`)
 
-Off by default. This is a single `client_credentials` endpoint for a lab that has no IdP yet. It does **not** implement DCR, PKCE or the authorization-code grant; use Dex for those.
+Off by default. This is a lab authorization server for a host that has no IdP yet. **Dex remains the production authorization server.** The lab routes are in memory (lost on restart), auto-approve every authorization request, accept loopback redirect URIs only, and cap the registry at 32 clients and 128 codes. There is no login page, no consent screen, and no Client ID Metadata Document.
 
 | Variable | Meaning |
 |---|---|
@@ -154,7 +156,16 @@ Off by default. This is a single `client_credentials` endpoint for a lab that ha
 | `ATLAS_MCP_AS_TENANT` | JWT tenant. Default `global`. |
 | `ATLAS_MCP_AS_TOOLS` | Optional comma-separated tool allowlist. When set, the JWT is MCP-only, like any other scoped agent token. |
 
-`POST /oauth/token` accepts `application/x-www-form-urlencoded` with `grant_type=client_credentials`. The client id and secret come from HTTP Basic or from the form body. The response is an Atlas HS256 JWT (`token_type: Bearer`) plus `scope`. `GET /.well-known/oauth-authorization-server` lists the issuer (the public origin), the token endpoint, `client_credentials` and `scopes_supported`. There is no `registration_endpoint`. Both routes are 404 when the flag is off. When it is on, the MCP protected-resource document adds this origin to `authorization_servers`.
+`POST /oauth/token` accepts `application/x-www-form-urlencoded`.
+
+| `grant_type` | What it does |
+| --- | --- |
+| `client_credentials` | The configured client. Id and secret come from HTTP Basic or the form body. |
+| `authorization_code` | Redeems a code from `GET /oauth/authorize` with `code_verifier` (PKCE S256). Public clients registered with `token_endpoint_auth_method=none` send an empty secret. The configured client still sends its secret. A wrong verifier of valid length consumes the code. |
+
+`POST /oauth/register` (RFC 7591 subset) stores a public client in memory: `redirect_uris` (1–4, each `http://127.0.0.1` or `http://localhost` or `https` of those hosts, no userinfo, no fragment), `grant_types: ["authorization_code"]`, optional `response_types: ["code"]`, `token_endpoint_auth_method: "none"`. `GET /oauth/authorize` auto-approves `response_type=code` and `code_challenge_method=S256`, redirects the code to that URI, and keeps the code for 300 seconds. The configured client may use any loopback redirect without registering. A dynamic client's redirect must match a registered URI exactly.
+
+The token response is an Atlas HS256 JWT (`token_type: Bearer`) plus `scope`. Dynamic clients take `ATLAS_MCP_AS_ROLE`, `ATLAS_MCP_AS_TTL_SECS`, `ATLAS_MCP_AS_TENANT` and `ATLAS_MCP_AS_TOOLS`; `sub` is the dynamic `client_id`. `GET /.well-known/oauth-authorization-server` lists the issuer (the public origin), the authorization, token and registration endpoints, `client_credentials` and `authorization_code`, `code_challenge_methods_supported: ["S256"]`, and `scopes_supported`. Those routes are 404 when the flag is off. When it is on, the MCP protected-resource document adds this origin to `authorization_servers`.
 
 Tests: `crates/atlas-gateway/tests/mcp.rs` (`oauth_*`, `mcp_401_*`, `rest_401_has_no_challenge`,
 `authenticated_mcp_initialize_has_no_challenge`), `crates/atlas-gateway/tests/mcp_idp.rs` and the unit tests in

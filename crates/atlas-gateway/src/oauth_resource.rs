@@ -201,7 +201,9 @@ fn fold_scopes(parts: &[&str]) -> ScopeGrant {
             continue;
         }
         if let Some(name) = part.strip_prefix("atlas:tool:") {
-            if tools.len() < 64 && tool_scope_name(name).is_some() && !tools.iter().any(|t| t == name)
+            if tools.len() < 64
+                && tool_scope_name(name).is_some()
+                && !tools.iter().any(|t| t == name)
             {
                 tools.push(name.to_string());
             }
@@ -484,25 +486,37 @@ mod tests {
         );
         // A token that contains a quote is dropped whole, so it cannot break out of the parameter.
         assert_eq!(
-            challenge(None, &HeaderMap::new(), ChallengeKind::None, "atlas:role:viewer\"evil")
-                .to_str()
-                .unwrap(),
+            challenge(
+                None,
+                &HeaderMap::new(),
+                ChallengeKind::None,
+                "atlas:role:viewer\"evil"
+            )
+            .to_str()
+            .unwrap(),
             "Bearer"
         );
         // No usable URL and no safe scope: bare scheme, never a malformed parameter.
         assert_eq!(
-            challenge(None, &HeaderMap::new(), ChallengeKind::None, "").to_str().unwrap(),
+            challenge(None, &HeaderMap::new(), ChallengeKind::None, "")
+                .to_str()
+                .unwrap(),
             "Bearer"
         );
         assert_eq!(
-            challenge(None, &HeaderMap::new(), ChallengeKind::InvalidToken, "").to_str().unwrap(),
+            challenge(None, &HeaderMap::new(), ChallengeKind::InvalidToken, "")
+                .to_str()
+                .unwrap(),
             "Bearer error=\"invalid_token\""
         );
     }
 
     #[test]
     fn document_lists_scopes_and_only_real_authorization_servers() {
-        let scopes = vec!["atlas:role:viewer".to_string(), "atlas:tool:list_clusters".to_string()];
+        let scopes = vec![
+            "atlas:role:viewer".to_string(),
+            "atlas:tool:list_clusters".to_string(),
+        ];
         let d = metadata_document("https://a.example/api/atlas/v1/mcp", &[], &scopes);
         assert_eq!(d["resource"], "https://a.example/api/atlas/v1/mcp");
         assert_eq!(d["bearer_methods_supported"], json!(["header"]));
@@ -524,7 +538,10 @@ mod tests {
         assert_eq!(map_scope_str(None), ScopeGrant::Absent);
         assert_eq!(map_scope_value(None), ScopeGrant::Absent);
         assert_eq!(map_scope_str(Some("   ")), ScopeGrant::Insufficient);
-        assert_eq!(map_scope_str(Some("openid profile email")), ScopeGrant::Insufficient);
+        assert_eq!(
+            map_scope_str(Some("openid profile email")),
+            ScopeGrant::Insufficient
+        );
         assert_eq!(
             map_scope_str(Some("openid atlas:role:operator")),
             ScopeGrant::Mapped {

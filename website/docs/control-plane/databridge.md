@@ -230,8 +230,22 @@ other value build a `PROTOCOL=TCPS` connect descriptor (`connectors/oracle_dsn.r
 wallet and DN match stay in the client's `sqlnet.ora`. No TCPS listener has been dialed.
 
 `GET /databridge/plans/{id}/rollback-drill` (and `atlasctl databridge-stage PLAN rollback-drill`) lists
-the steps `pipeline::rollback` already runs: mark the cutover and the plan `rolled_back`. It does not
-copy rows back and does not change the plan. The mutating rollback is still `POST .../rollback`.
+the steps `pipeline::rollback` runs and does not change the plan. The mutating rollback is still
+`POST .../rollback`. That call always marks the cutover and the plan `rolled_back`.
+
+Row restore is optional and only for homogeneous Postgres. Set `ATLAS_DATABRIDGE_ROLLBACK_COPY=1`
+(`true` or `yes` also). When the source still has an endpoint and a credentials secret, and the plan
+has an edge cluster with a secret, rollback builds a reverse Job: `pg_dump` of the edge piped into
+`psql` of the source (`loader::pg_reverse_job_spec`). With a Kubernetes client and a source that is
+not `driver_mode=fake`, that Job is applied in the edge namespace (`reverse_copy.state=running`).
+Without a client, or in fake mode, the spec is returned as `prepared` and `applied: false`. The
+state flip still succeeds if the Job cannot be applied. MySQL, MariaDB, SQL Server, Oracle and
+MongoDB stay a state flip (`reverse_copy.state=skipped`). The flag defaults off
+(`reverse_copy.state=off`), which does not restore source rows.
+
+Mongo change-stream op `i` (invalidate) is classified `skip_invalidate` and is not applied as a
+document write. That classification is a unit test (`mongo_change_stream_disposition`); it has not
+been run against a live `mongod`.
 
 ## Testing
 - **Fake pipeline (no infra)**: `cargo test --workspace` covers the unit tests plus the gateway

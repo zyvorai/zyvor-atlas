@@ -79,9 +79,22 @@ pub(crate) struct CreateBackendBody {
     /// NFS exports, ZFS zpools, SAN target IQNs, or cloud volume ids.
     #[serde(default)]
     targets: Option<Vec<String>>,
+    /// External Ceph monitor list (`10.0.0.1:6789` or `v2:10.0.0.1:3300`, comma-separated).
+    #[serde(default)]
+    mon_host: Option<String>,
+    /// Absolute path to a ceph.conf on the gateway host.
+    #[serde(default)]
+    conf_path: Option<String>,
+    /// Absolute path to a client keyring on the gateway host. The file is not read into Atlas.
+    #[serde(default)]
+    keyring_path: Option<String>,
+    /// Ceph client name (`admin` or `client.admin`). Defaults to the name in the config.
+    #[serde(default)]
+    ceph_user: Option<String>,
 }
 
-/// Register a backend row. No cluster lifecycle happens here (PDF §8.1 keeps it 'pending').
+/// Register a backend row. NFS, ZFS, SAN, cloud-block and an external Ceph connection come up
+/// `active` with a live driver. A Ceph row without `mon_host` or `conf_path` stays `pending`.
 pub(crate) async fn create_backend(
     State(s): State<AppState>,
     Extension(actor): Extension<Actor>,
@@ -116,8 +129,9 @@ pub(crate) async fn create_backend(
     };
     let id = atlas_common::ids::backend_id();
     // NFS/ZFS/SAN/cloud-block drivers can be instantiated live and registered into the running
-    // driver registry, so the backend actually discovers + serves — not just a catalog row. Others
-    // stay a `pending` row.
+    // driver registry, so the backend actually discovers + serves — not just a catalog row. A Ceph
+    // row with monitor or config fields does the same via RealCephDriver. Others stay `pending`.
+    let mut connection_ref: Option<String> = None;
     let (status, live): (
         &str,
         Option<std::sync::Arc<dyn atlas_driver_core::StorageDriver>>,
@@ -234,6 +248,30 @@ pub(crate) async fn create_backend(
         BackendType::Weka => return Err(AppError::Validation(
             "enable WEKA discovery with ATLAS_WEKA_ENABLE=1 and ATLAS_WEKA_ENDPOINT, then restart the gateway".into(),
         )),
+        BackendType::Ceph => {
+            let has_connection = [&body.mon_host, &body.conf_path, &body.keyring_path]
+                .iter()
+                .any(|value| value.as_deref().is_some_and(|s| !s.trim().is_empty()));
+            if !has_connection {
+                ("pending", None)
+            } else {
+                let endpoint = atlas_driver_ceph::CephEndpoint::new(
+                    body.mon_host.clone(),
+                    body.conf_path.clone(),
+                    body.keyring_path.clone(),
+                    body.ceph_user.clone(),
+                )
+                .map_err(AppError::Validation)?;
+                endpoint.validate_readable().map_err(AppError::Validation)?;
+                connection_ref = Some(endpoint.connection_ref());
+                let driver: std::sync::Arc<dyn atlas_driver_core::StorageDriver> =
+                    std::sync::Arc::new(
+                        atlas_driver_ceph::RealCephDriver::external(&id, endpoint)
+                            .map_err(AppError::Validation)?,
+                    );
+                ("active", Some(driver))
+            }
+        }
         _ => ("pending", None),
     };
     let backend = StorageBackend {
@@ -243,7 +281,7 @@ pub(crate) async fn create_backend(
         mode,
         status: status.into(),
         capabilities: ceph_default_caps(backend_type),
-        connection_ref: None,
+        connection_ref,
         cordoned: false,
     };
     atlas_inventory::upsert_backend(&s.pool, &backend).await?;

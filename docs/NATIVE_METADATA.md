@@ -210,6 +210,34 @@ or answer is asked again after 500 ms. An isolated old leader never confirms one
 quorum, and check-quorum deposes it. Older metadata nodes do not know these messages and drop the
 connection that carries one, so upgrade every replica before relying on barriers.
 
+### Leader-lease reads
+
+ReadIndex stays the linearizable barrier. The leader may skip the next quorum round while a
+[`ReadLease`](../crates/atlas-native/src/read_lease.rs) from the last successful one is still
+valid (`RaftServer::read_barrier` / `RaftNode::leased_read`). Two events grant it, and only on
+the leader:
+
+- a `read_barrier` that finished (the leader's own ReadIndex, confirmed by a quorum);
+- the leader's check-quorum round, once a majority has answered within an election timeout and
+  this term has a committed entry.
+
+The lease lasts one quarter of the minimum election timeout on the caller's monotonic clock
+(default tick 50 ms and election minimum 10 ticks is 125 ms). A local read uses it only when
+all of these hold: the deadline is still ahead, the node is still leader, the term is the term
+recorded at grant, the commit index is still that index, and the index has been applied. A
+commit that moves the index, or a term change (step-down, a campaign, becoming leader), drops
+the lease. The next read takes ReadIndex again, and that success can grant a new one.
+
+Followers do not use the lease. They cannot tell that the leader committed something after the
+lease was taken, so a follower read always asks. The quarter-timeout bound is so a partitioned
+leader stops serving leased reads before another leader can be elected, if this process's
+monotonic clock is not wildly slow. It is not a measurement of clock skew between hosts.
+
+`read_lease` unit-tests grant, expiry at the deadline, and invalidation when the term or index
+advances, including that a follower miss is unconditional. `tests/raft.rs`
+(`read_lease_grants_after_quorum_and_drops_on_expiry_or_commit`) drives a one-node leader:
+check-quorum grants, the injected clock expires the lease, and a committed write drops it.
+
 `tests/raft_tcp.rs` runs a real 3-server cluster over localhost: election and replication, follower
 redirect, and leader shutdown, failover and rejoin from disk. `tests/raft_groups.rs` runs three
 groups on each node's one listener: they replicate independently, and one group failing over (its
@@ -432,12 +460,11 @@ Raft-backed engines writing to TLS data nodes.
 Not implemented yet:
 
 - per-client authorization beyond "any CA-signed certificate or the one shared bearer", and
-  revocation (CRL/OCSP);
-- lease-based reads. [`RaftNode::read_index`] remains the linearizable barrier: the leader
-  confirms a quorum before answering. A leader-lease shortcut (serve the read locally while a
-  lease from the last successful quorum is still inside a bounded clock skew) is not in the
-  sans-IO core. Adding one needs a monotonic lease deadline tied to check-quorum, which is
-  larger than a flag on the existing barrier, so it is left out rather than half-implemented.
+  revocation (CRL/OCSP).
+
+Leader-lease reads are in. See "Leader-lease reads" above. [`RaftNode::read_index`] remains the
+barrier when the lease misses: the leader is not leader, the deadline has passed, or a write
+advanced the term or commit index. Followers always take that barrier.
 
 Membership changes are in. `RaftNode::add_voter` / `remove_voter` (and `change_membership` for a
 full set) append a `Joint` configuration, then the leader appends the `Stable` one once the joint
@@ -470,6 +497,5 @@ unit-tested for the both-majorities rule. `POST /v1/members` still replaces the 
 
 - a container image, Helm chart and gateway integration for `atlas-native-node`
   (`docs/NATIVE_NODE.md`);
-- lease-based reads (see above; ReadIndex stays);
 - hole punching for freed ranges at the device tail;
 - io_uring/raw-NVMe data path.

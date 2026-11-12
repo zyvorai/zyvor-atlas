@@ -427,7 +427,11 @@ pub async fn auth_middleware(
                             Ok(true) => {
                                 return unauthorized(
                                     "token has been revoked",
-                                    mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                                    mcp_challenge(
+                                        &state,
+                                        mcp_headers.as_ref(),
+                                        crate::oauth_resource::ChallengeKind::InvalidToken,
+                                    ),
                                 )
                             }
                             Ok(false) => {}
@@ -455,7 +459,11 @@ pub async fn auth_middleware(
                     tracing::warn!(reason = %e, "MCP IdP access token refused");
                     return unauthorized(
                         &format!("invalid token: {e}"),
-                        mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                        mcp_challenge(
+                            &state,
+                            mcp_headers.as_ref(),
+                            crate::oauth_resource::ChallengeKind::InvalidToken,
+                        ),
                     );
                 }
             }
@@ -474,7 +482,11 @@ pub async fn auth_middleware(
                             Ok(true) => {
                                 return unauthorized(
                                     "token has been revoked",
-                                    mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                                    mcp_challenge(
+                                        &state,
+                                        mcp_headers.as_ref(),
+                                        crate::oauth_resource::ChallengeKind::InvalidToken,
+                                    ),
                                 )
                             }
                             Ok(false) => {}
@@ -502,7 +514,11 @@ pub async fn auth_middleware(
                     tracing::warn!(reason = %e, "MCP opaque access token refused");
                     return unauthorized(
                         &format!("invalid token: {e}"),
-                        mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                        mcp_challenge(
+                            &state,
+                            mcp_headers.as_ref(),
+                            crate::oauth_resource::ChallengeKind::InvalidToken,
+                        ),
                     );
                 }
             }
@@ -522,7 +538,11 @@ pub async fn auth_middleware(
                             Ok(true) => {
                                 return unauthorized(
                                     "token has been revoked",
-                                    mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                                    mcp_challenge(
+                                        &state,
+                                        mcp_headers.as_ref(),
+                                        crate::oauth_resource::ChallengeKind::InvalidToken,
+                                    ),
                                 )
                             }
                             Ok(false) => {}
@@ -542,7 +562,11 @@ pub async fn auth_middleware(
                 Err(e) => {
                     return unauthorized(
                         &format!("invalid token: {e}"),
-                        mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                        mcp_challenge(
+                            &state,
+                            mcp_headers.as_ref(),
+                            crate::oauth_resource::ChallengeKind::InvalidToken,
+                        ),
                     )
                 }
             }
@@ -696,8 +720,7 @@ fn insufficient_scope(www_authenticate: Option<http::HeaderValue>) -> Response {
     )
         .into_response();
     if let Some(v) = www_authenticate {
-        resp.headers_mut()
-            .insert(http::header::WWW_AUTHENTICATE, v);
+        resp.headers_mut().insert(http::header::WWW_AUTHENTICATE, v);
     }
     resp
 }
