@@ -17,10 +17,15 @@
 //!
 //! The root-form document (`resource` = the origin) never lists the issuer: the audience Atlas enforces
 //! is the MCP endpoint URL, so a client that took the origin as its RFC 8707 `resource` would get a
-//! token Atlas refuses. Neither document has `scopes_supported`: Atlas has roles and tool/resource
-//! scopes, not OAuth scope strings. Atlas's own HS256 tokens (`POST /auth/login`, `POST /auth/tokens`,
-//! the OIDC console login) carry no `aud`, are not audience-checked, and keep working unchanged; the
-//! audience check applies to IdP tokens only.
+//! token Atlas refuses. Both documents publish `scopes_supported`: `atlas:role:viewer|operator|admin`
+//! and one `atlas:tool:<name>` per MCP tool the process actually serves. The same list is the `scope`
+//! parameter on the MCP endpoint's `WWW-Authenticate` challenge. Atlas's own HS256 tokens
+//! (`POST /auth/login`, `POST /auth/tokens`, the OIDC console login, and the lab
+//! `ATLAS_MCP_AS_ENABLE` client-credentials endpoint) carry no `aud`, are not audience-checked, and
+//! keep working unchanged; the audience check applies to IdP tokens only. An IdP token's `scope`
+//! claim, when present, maps onto a role and/or a tool allowlist (`map_scope_value`); a claim that
+//! names none of these scopes is `403` with `error="insufficient_scope"`. A token with no `scope`
+//! claim is unchanged (role from groups, no tool allowlist).
 //!
 //! # Where the resource URL comes from
 //! Atlas had no public-URL setting and no `Forwarded` handling anywhere, so this adds one:
@@ -113,42 +118,205 @@ pub fn metadata_url(public_url: Option<&str>, headers: &HeaderMap) -> Option<Str
     origin(public_url, headers).map(|(o, _)| format!("{o}{MCP_METADATA_PATH}"))
 }
 
+/// Role scopes published in protected-resource metadata and accepted from an IdP `scope` claim.
+pub const ROLE_SCOPES: [&str; 3] = [
+    "atlas:role:viewer",
+    "atlas:role:operator",
+    "atlas:role:admin",
+];
+
+/// What an OAuth `scope` claim grants. Absent means the token did not carry the claim (role stays
+/// group-derived, tools stay empty). Insufficient means the claim was present and named no Atlas
+/// role or tool.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ScopeGrant {
+    Absent,
+    Mapped {
+        /// Highest `atlas:role:*` (or a bare `viewer`/`operator`/`admin`) in the claim.
+        /// `None` when the claim named tools only: keep the group-derived role.
+        role: Option<&'static str>,
+        /// `Some` when at least one `atlas:tool:<name>` was present (the allowlist, possibly after
+        /// dropping names that are not tool-shaped). `None` when the claim named no tool scopes.
+        tools: Option<Vec<String>>,
+    },
+    Insufficient,
+}
+
+/// `atlas:tool:<name>` when `name` is a plausible MCP tool name, else `None`.
+pub fn tool_scope_name(name: &str) -> Option<String> {
+    if (1..=64).contains(&name.len())
+        && name.as_bytes()[0].is_ascii_lowercase()
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_')
+    {
+        Some(format!("atlas:tool:{name}"))
+    } else {
+        None
+    }
+}
+
+/// Map a JSON `scope` claim (string or array of strings). `None` and JSON null are [`ScopeGrant::Absent`].
+pub fn map_scope_value(scope: Option<&Value>) -> ScopeGrant {
+    match scope {
+        None | Some(Value::Null) => ScopeGrant::Absent,
+        Some(Value::String(s)) => map_scope_str(Some(s)),
+        Some(Value::Array(items)) => {
+            let parts: Vec<&str> = items.iter().take(128).filter_map(Value::as_str).collect();
+            if parts.is_empty() {
+                ScopeGrant::Insufficient
+            } else {
+                fold_scopes(&parts)
+            }
+        }
+        Some(_) => ScopeGrant::Insufficient,
+    }
+}
+
+/// Map a space-delimited scope string (RFC 6749). `None` is absent; empty or whitespace is insufficient.
+pub fn map_scope_str(scope: Option<&str>) -> ScopeGrant {
+    match scope {
+        None => ScopeGrant::Absent,
+        Some(s) => {
+            let parts: Vec<&str> = s.split_whitespace().collect();
+            if parts.is_empty() {
+                ScopeGrant::Insufficient
+            } else {
+                fold_scopes(&parts)
+            }
+        }
+    }
+}
+
+fn fold_scopes(parts: &[&str]) -> ScopeGrant {
+    let mut role: Option<&'static str> = None;
+    let mut role_rank = 0u8;
+    let mut tools: Vec<String> = Vec::new();
+    for part in parts {
+        if let Some((name, rank)) = role_scope(part) {
+            if rank >= role_rank {
+                role = Some(name);
+                role_rank = rank;
+            }
+            continue;
+        }
+        if let Some(name) = part.strip_prefix("atlas:tool:") {
+            if tools.len() < 64 && tool_scope_name(name).is_some() && !tools.iter().any(|t| t == name)
+            {
+                tools.push(name.to_string());
+            }
+        }
+    }
+    if role.is_none() && tools.is_empty() {
+        ScopeGrant::Insufficient
+    } else {
+        ScopeGrant::Mapped {
+            role,
+            tools: if tools.is_empty() { None } else { Some(tools) },
+        }
+    }
+}
+
+fn role_scope(part: &str) -> Option<(&'static str, u8)> {
+    match part {
+        "atlas:role:admin" | "admin" => Some(("admin", 3)),
+        "atlas:role:operator" | "operator" => Some(("operator", 2)),
+        "atlas:role:viewer" | "viewer" => Some(("viewer", 1)),
+        _ => None,
+    }
+}
+
+/// Scopes the running process can stand behind: the three roles, then one `atlas:tool:*` per MCP
+/// tool this build is serving (write and data tools appear only when their gates are on).
+pub fn supported_scopes(state: &AppState) -> Vec<String> {
+    #[cfg(feature = "mcp")]
+    {
+        crate::mcp::scopes_supported(state)
+    }
+    #[cfg(not(feature = "mcp"))]
+    {
+        let _ = state;
+        ROLE_SCOPES.iter().map(|s| (*s).to_string()).collect()
+    }
+}
+
+/// Space-delimited `scope` parameter for `WWW-Authenticate`.
+pub fn bearer_scope(state: &AppState) -> String {
+    supported_scopes(state).join(" ")
+}
+
+/// Which RFC 6750 `error` a challenge carries.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChallengeKind {
+    /// No token was sent.
+    None,
+    /// A token was sent and refused (bad signature, expired, inactive, …).
+    InvalidToken,
+    /// The token is valid and its `scope` claim names no Atlas role or tool.
+    InsufficientScope,
+}
+
 /// The RFC 9728 document. `resource` is the origin for the root form and the MCP endpoint URL for
 /// the path-inserted form (RFC 9728 section 3.3: it must equal the resource the URL was built
-/// from). `authorization_server` is the IdP issuer Atlas validates tokens from, passed only for the
-/// MCP endpoint form and only when that is configured. No `scopes_supported`: Atlas has none
-/// (module docs).
-pub fn metadata_document(resource: &str, authorization_server: Option<&str>) -> Value {
+/// from). `authorization_servers` lists the IdP issuer and, when the lab token endpoint is on, this
+/// server's origin. `scopes` is [`supported_scopes`].
+pub fn metadata_document(
+    resource: &str,
+    authorization_servers: &[String],
+    scopes: &[String],
+) -> Value {
     let mut doc = json!({
         "resource": resource,
         "bearer_methods_supported": ["header"],
         "resource_name": "Zyvor Atlas MCP server",
         "resource_documentation": "https://github.com/zyvorai/zyvor-atlas/blob/main/docs/MCP.md"
     });
-    if let Some(issuer) = authorization_server {
-        doc["authorization_servers"] = json!([issuer]);
+    if !authorization_servers.is_empty() {
+        doc["authorization_servers"] = json!(authorization_servers);
+    }
+    if !scopes.is_empty() {
+        doc["scopes_supported"] = json!(scopes);
     }
     doc
 }
 
-/// The `WWW-Authenticate` value for a 401 on the MCP endpoint. `invalid_token` is set when a token
-/// was presented and refused (RFC 6750 section 3.1) and left out when none was sent.
+/// The `WWW-Authenticate` value for a 401 or an insufficient-scope 403 on the MCP endpoint.
+/// `scope` is the space-delimited list from [`bearer_scope`]; characters outside the scope alphabet
+/// are dropped so a header parameter cannot break out of its quotes.
 pub fn challenge(
     public_url: Option<&str>,
     headers: &HeaderMap,
-    invalid_token: bool,
+    kind: ChallengeKind,
+    scope: &str,
 ) -> HeaderValue {
-    let mut v = String::from("Bearer");
-    let mut sep = " ";
-    if invalid_token {
-        v.push_str(" error=\"invalid_token\"");
-        sep = ", ";
+    let mut parts: Vec<String> = Vec::new();
+    match kind {
+        ChallengeKind::None => {}
+        ChallengeKind::InvalidToken => parts.push("error=\"invalid_token\"".into()),
+        ChallengeKind::InsufficientScope => parts.push("error=\"insufficient_scope\"".into()),
+    }
+    let clean = scope
+        .split_whitespace()
+        .filter(|s| {
+            !s.is_empty()
+                && s.bytes()
+                    .all(|b| b.is_ascii_alphanumeric() || matches!(b, b':' | b'_' | b'-'))
+        })
+        .collect::<Vec<_>>()
+        .join(" ");
+    if !clean.is_empty() {
+        parts.push(format!("scope=\"{clean}\""));
     }
     if let Some(url) = metadata_url(public_url, headers) {
-        v.push_str(&format!("{sep}resource_metadata=\"{url}\""));
+        parts.push(format!("resource_metadata=\"{url}\""));
     }
-    // Every byte is from the validated authority plus constants, so this cannot fail; fall back to
-    // the bare scheme rather than panic if that ever stops being true.
+    let v = if parts.is_empty() {
+        "Bearer".to_string()
+    } else {
+        format!("Bearer {}", parts.join(", "))
+    };
+    // Every byte is from the validated authority plus the scope alphabet, so this cannot fail;
+    // fall back to the bare scheme rather than panic if that ever stops being true.
     HeaderValue::from_str(&v).unwrap_or_else(|_| HeaderValue::from_static("Bearer"))
 }
 
@@ -162,11 +330,19 @@ fn respond(state: &AppState, headers: &HeaderMap, path: &str) -> Response {
             .into_response();
     };
     let resource = format!("{origin}{path}");
-    // Only the document whose resource is the MCP endpoint names the IdP: that is the URL the
-    // validator's audience is built from (see the module docs).
-    let issuer = (path == MCP_ENDPOINT_PATH)
-        .then(|| state.mcp_idp.as_ref().map(|i| i.issuer()))
-        .flatten();
+    // Only the document whose resource is the MCP endpoint names an authorization server: that is
+    // the URL the IdP validator's audience is built from. The lab token endpoint's issuer is this
+    // origin (it mints ordinary Atlas JWTs; see mcp_as).
+    let mut servers = Vec::new();
+    if path == MCP_ENDPOINT_PATH {
+        if let Some(idp) = &state.mcp_idp {
+            servers.push(idp.issuer().to_string());
+        }
+        if state.mcp_as.is_some() {
+            servers.push(origin.clone());
+        }
+    }
+    let scopes = supported_scopes(state);
     let cache = if configured {
         "public, max-age=300"
     } else {
@@ -174,7 +350,7 @@ fn respond(state: &AppState, headers: &HeaderMap, path: &str) -> Response {
     };
     (
         [(header::CACHE_CONTROL, HeaderValue::from_static(cache))],
-        Json(metadata_document(&resource, issuer)),
+        Json(metadata_document(&resource, &servers, &scopes)),
     )
         .into_response()
 }
@@ -277,42 +453,120 @@ mod tests {
     #[test]
     fn challenge_shapes() {
         let hdrs = h(&[("host", "atlas.lab:30510")]);
+        let meta = "http://atlas.lab:30510/.well-known/oauth-protected-resource/api/atlas/v1/mcp";
         assert_eq!(
-            challenge(None, &hdrs, false).to_str().unwrap(),
-            "Bearer resource_metadata=\"http://atlas.lab:30510/.well-known/oauth-protected-resource/api/atlas/v1/mcp\""
+            challenge(None, &hdrs, ChallengeKind::None, "atlas:role:viewer atlas:role:operator")
+                .to_str()
+                .unwrap(),
+            format!("Bearer scope=\"atlas:role:viewer atlas:role:operator\", resource_metadata=\"{meta}\"")
         );
         assert_eq!(
-            challenge(Some("https://a.example"), &hdrs, true).to_str().unwrap(),
-            "Bearer error=\"invalid_token\", resource_metadata=\"https://a.example/.well-known/oauth-protected-resource/api/atlas/v1/mcp\""
+            challenge(
+                Some("https://a.example"),
+                &hdrs,
+                ChallengeKind::InvalidToken,
+                "atlas:role:viewer"
+            )
+            .to_str()
+            .unwrap(),
+            "Bearer error=\"invalid_token\", scope=\"atlas:role:viewer\", resource_metadata=\"https://a.example/.well-known/oauth-protected-resource/api/atlas/v1/mcp\""
         );
-        // No usable URL: bare scheme, never a malformed parameter.
         assert_eq!(
-            challenge(None, &HeaderMap::new(), false).to_str().unwrap(),
+            challenge(
+                None,
+                &hdrs,
+                ChallengeKind::InsufficientScope,
+                "atlas:role:operator"
+            )
+            .to_str()
+            .unwrap(),
+            format!("Bearer error=\"insufficient_scope\", scope=\"atlas:role:operator\", resource_metadata=\"{meta}\"")
+        );
+        // A token that contains a quote is dropped whole, so it cannot break out of the parameter.
+        assert_eq!(
+            challenge(None, &HeaderMap::new(), ChallengeKind::None, "atlas:role:viewer\"evil")
+                .to_str()
+                .unwrap(),
+            "Bearer"
+        );
+        // No usable URL and no safe scope: bare scheme, never a malformed parameter.
+        assert_eq!(
+            challenge(None, &HeaderMap::new(), ChallengeKind::None, "").to_str().unwrap(),
             "Bearer"
         );
         assert_eq!(
-            challenge(None, &HeaderMap::new(), true).to_str().unwrap(),
+            challenge(None, &HeaderMap::new(), ChallengeKind::InvalidToken, "").to_str().unwrap(),
             "Bearer error=\"invalid_token\""
         );
     }
 
     #[test]
-    fn document_has_only_what_atlas_can_stand_behind() {
-        // No IdP configured: no authorization server is claimed.
-        let d = metadata_document("https://a.example/api/atlas/v1/mcp", None);
+    fn document_lists_scopes_and_only_real_authorization_servers() {
+        let scopes = vec!["atlas:role:viewer".to_string(), "atlas:tool:list_clusters".to_string()];
+        let d = metadata_document("https://a.example/api/atlas/v1/mcp", &[], &scopes);
         assert_eq!(d["resource"], "https://a.example/api/atlas/v1/mcp");
         assert_eq!(d["bearer_methods_supported"], json!(["header"]));
         assert!(d.get("authorization_servers").is_none());
-        assert!(d.get("scopes_supported").is_none());
-        // With one, it is listed, and scopes still are not.
-        let d = metadata_document(
-            "https://a.example/api/atlas/v1/mcp",
-            Some("https://idp.example.com"),
+        assert_eq!(
+            d["scopes_supported"],
+            json!(["atlas:role:viewer", "atlas:tool:list_clusters"])
         );
+        let servers = vec!["https://idp.example.com".to_string()];
+        let d = metadata_document("https://a.example/api/atlas/v1/mcp", &servers, &scopes);
         assert_eq!(
             d["authorization_servers"],
             json!(["https://idp.example.com"])
         );
-        assert!(d.get("scopes_supported").is_none());
+    }
+
+    #[test]
+    fn scope_claim_maps_to_a_role_or_a_tool_allowlist() {
+        assert_eq!(map_scope_str(None), ScopeGrant::Absent);
+        assert_eq!(map_scope_value(None), ScopeGrant::Absent);
+        assert_eq!(map_scope_str(Some("   ")), ScopeGrant::Insufficient);
+        assert_eq!(map_scope_str(Some("openid profile email")), ScopeGrant::Insufficient);
+        assert_eq!(
+            map_scope_str(Some("openid atlas:role:operator")),
+            ScopeGrant::Mapped {
+                role: Some("operator"),
+                tools: None
+            }
+        );
+        // Several role scopes: the highest wins. A bare role name is accepted too.
+        assert_eq!(
+            map_scope_str(Some("atlas:role:viewer admin")),
+            ScopeGrant::Mapped {
+                role: Some("admin"),
+                tools: None
+            }
+        );
+        // A repeated name is kept once. A well-formed name that is not a current tool is still an
+        // allowlist entry (it simply never matches). A name that is not tool-shaped is dropped.
+        assert_eq!(
+            map_scope_str(Some(
+                "atlas:tool:list_alerts atlas:tool:list_alerts atlas:tool:nope atlas:tool:Bad"
+            )),
+            ScopeGrant::Mapped {
+                role: None,
+                tools: Some(vec!["list_alerts".into(), "nope".into()])
+            }
+        );
+        let both = map_scope_value(Some(&json!([
+            "openid",
+            "atlas:role:viewer",
+            "atlas:tool:cluster_health"
+        ])));
+        assert_eq!(
+            both,
+            ScopeGrant::Mapped {
+                role: Some("viewer"),
+                tools: Some(vec!["cluster_health".into()])
+            }
+        );
+        assert_eq!(map_scope_value(Some(&json!(1))), ScopeGrant::Insufficient);
+        assert_eq!(map_scope_value(Some(&Value::Null)), ScopeGrant::Absent);
+        assert!(tool_scope_name("list_clusters").is_some());
+        assert!(tool_scope_name("List").is_none());
+        assert!(tool_scope_name("").is_none());
     }
 }

@@ -16,6 +16,7 @@ use atlas_api_types::{
 use sqlx::any::{install_default_drivers, AnyPoolOptions};
 use sqlx::{AnyPool, Row};
 
+pub mod advisor;
 pub mod alert_notifications;
 pub mod alerts;
 pub mod audit;
@@ -28,6 +29,7 @@ pub mod jobs;
 pub mod leader;
 pub mod mcp_confirm;
 pub mod metrics;
+pub mod proposals;
 pub mod protection;
 pub mod rate_limit;
 pub mod rbd_snapshots;

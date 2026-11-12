@@ -520,3 +520,19 @@ export interface IoAiReport {
   devices: IoAiDevice[];
   detail: string | null;
 }
+export interface IoHeatColumn {
+  start_unix: number;
+  count: number;
+  peak_us: number;
+}
+export interface IoHeatSeries {
+  device: string;
+  op: string;
+  volume_id?: string | null;
+  columns: IoHeatColumn[];
+}
+export interface IoHeatmapReport {
+  status: "ok" | "unavailable";
+  series: IoHeatSeries[];
+  detail?: string | null;
+}

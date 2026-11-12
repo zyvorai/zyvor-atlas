@@ -17,6 +17,11 @@ pub trait IoSource: Send + Sync {
     fn native(&self) -> Option<IoNative> {
         None
     }
+
+    /// Mirror a cgroup→volume binding into a kernel map, when this source has one.
+    /// `volume_id` of `None` removes the entry. The default does nothing (fake and
+    /// the unattached stand-in). The collector's userspace map is the attribution source.
+    fn set_cgroup_volume(&mut self, _cgroup_id: u64, _volume_id: Option<&str>) {}
 }
 
 /// Deterministic in-process source used by tests and `ATLAS_IO_MODE=fake`.
@@ -35,6 +40,7 @@ impl FakeSource {
                 "atlas_cgroup".into(),
                 "atlas_nfs".into(),
                 "atlas_zfs".into(),
+                "atlas_uring".into(),
             ],
         }
     }

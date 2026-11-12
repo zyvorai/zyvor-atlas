@@ -17,6 +17,7 @@ import { depth, depthWidth } from "../lib/depth";
 import { fmtBytes, fmtBytesOpt, fmtForecastFill, fmtPct, fmtSi } from "../lib/format";
 import { Echogram } from "../ui/Echogram";
 import { DashboardHero, DashboardModule } from "../ui/templates/DashboardHero";
+import IoHeatmap from "./IoHeatmap";
 import { navCrumbs } from "../nav/routes";
 import { Spinner } from "../ui/kit";
 
@@ -413,6 +414,10 @@ export default function Observatory() {
           </div>
           <Echogram wide readOps={io?.read_ops_total || 0} writeOps={io?.write_ops_total || 0} hist={hist} />
         </div>
+      </DashboardModule>
+
+      <DashboardModule>
+        <IoHeatmap />
       </DashboardModule>
 
       <div className="at-breakgrid">

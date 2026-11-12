@@ -60,6 +60,15 @@ pub async fn set_locked_until(pool: &AnyPool, id: &str, until_unix: i64) -> Resu
     Ok(res.rows_affected() > 0)
 }
 
+/// Clear the gateway's record of a retention lock after a confirmed two-person unlock.
+pub async fn clear_locked_until(pool: &AnyPool, id: &str) -> Result<()> {
+    sqlx::query("UPDATE storage_snapshots SET retention_until=NULL WHERE id=$1")
+        .bind(id)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 /// Mark a snapshot protected (has dependent clones) or not.
 pub async fn set_protected(pool: &AnyPool, id: &str, protected: bool) -> Result<()> {
     sqlx::query("UPDATE storage_snapshots SET protected=$1 WHERE id=$2")

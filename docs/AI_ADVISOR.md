@@ -19,7 +19,13 @@ The response contains:
 - a bounded `risk_score` and `risk_level`;
 - evidence from capacity, the 14-day forecast, recovery counters, open alerts, recent failures, and NVMe wear (drives at 80% or more of rated endurance, media errors, spare at its threshold or a critical-warning flag, from Ceph's device-health scrapes, see `GET /ceph/nvme`; skipped when Ceph has no scrapes), and hosts with NVMe drives that fall short of the CPU/RAM rule of thumb (`GET /ceph/sizing`, a heuristic that adds a smaller score than a failing drive);
 - prioritized actions pointing only to read-only Atlas endpoints;
-- `can_execute: false`, an explicit automation safety boundary.
+- `can_execute: false`, an explicit automation safety boundary;
+- `finding_id`, the row `GET /api/atlas/v1/ai/advisor/findings` returns later (newest first, operator).
+
+Each run is stored. Reading the findings does not execute anything. Acknowledging an alert the
+advisor points at is optional and two-person: `POST /alerts/{id}/ack/propose` then
+`POST /alerts/{id}/ack/confirm` by a different operator. The single-step `POST /alerts/{id}/ack`
+is unchanged.
 
 ## Modes
 

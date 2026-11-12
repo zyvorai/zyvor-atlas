@@ -15,8 +15,9 @@ columns state only what has been measured or verified in this repository.
 - **Choose Atlas** when you need one open control plane across mixed storage (including edge
   sites), database migration to the edge, cross-site DR on Ceph, and operations tooling, without a
   licence key.
-- **They combine.** Atlas can register a WEKA cluster as one more backend (`atlas-driver-weka`,
-  read-only discovery), so a WEKA estate shows up next to Ceph and ZFS in the same API and console.
+- **They combine.** Atlas can register a WEKA cluster as one more backend (`atlas-driver-weka`),
+  so a WEKA estate shows up next to Ceph and ZFS in the same API and console. The driver can
+  create and delete filesystems as well as discover them.
 
 ## Matrix
 
@@ -40,9 +41,14 @@ columns state only what has been measured or verified in this repository.
 
 ## WEKA as an Atlas backend
 
-`atlas-driver-weka` registers a WEKA cluster as backend `bkd_weka`. It is read-only: WEKA
-filesystems appear as `filesystem` volumes (native id `weka-fs:<uid>`) in one `weka` pool, with
-cluster capacity, health and `weka_*` metrics. Atlas never creates or changes anything on WEKA.
+`atlas-driver-weka` registers a WEKA cluster as backend `bkd_weka`. WEKA filesystems appear as
+`filesystem` volumes (native id `weka-fs:<uid>`) in one `weka` pool, with cluster capacity,
+health and `weka_*` metrics. `create_volume` posts `/fileSystems` (`name`, `group_name`,
+`total_capacity` in bytes). The Atlas pool name `weka` is not a WEKA group; any other pool is
+sent as `group_name`, and an omitted pool uses `default`. `delete_volume` deletes
+`/fileSystems/{uid-or-name}`; a missing filesystem is success. Fake mode applies the same
+changes to its in-memory list, which the next discover reports. The gateway's `POST /volumes`
+path does not call this driver.
 
 | Variable | Meaning |
 |---|---|
@@ -53,9 +59,10 @@ cluster capacity, health and `weka_*` metrics. Atlas never creates or changes an
 | `ATLAS_WEKA_CA_CERT`, `ATLAS_WEKA_TIMEOUT_SECS` | TLS trust and request timeout (10 s) |
 
 Real mode reads `GET /cluster` (`capacity.total_bytes`, `capacity.unprovisioned_bytes`, `status`)
-and `GET /fileSystems` (`name`, `uid`, `status`, `total_budget`, `used_total`). It is tested
-against a mock of those endpoints, not yet against a live WEKA cluster; any field the cluster
-doesn't return is reported as unknown.
+and `GET /fileSystems` (`name`, `uid`, `status`, `total_budget`, `used_total`), and writes with
+`POST /fileSystems` and `DELETE /fileSystems/{id}`. It is tested against a mock of those
+endpoints, not yet against a live WEKA cluster; any field the cluster doesn't return is
+reported as unknown.
 
 ## Closing the data-plane gap
 
@@ -129,7 +136,7 @@ checked against a current VMware page; verify it before quoting it.
 
 | | **Atlas** | **VMware vSAN** |
 |---|---|---|
-| Where it runs | Beside any hypervisor or Kubernetes: Ceph, NFS, ZFS, Longhorn, macOS, WEKA (read-only), atlas-native, any S3 | Inside the vSphere hypervisor, on vSAN-ready hosts |
+| Where it runs | Beside any hypervisor or Kubernetes: Ceph, NFS, ZFS, Longhorn, macOS, WEKA, atlas-native, any S3 | Inside the vSphere hypervisor, on vSAN-ready hosts |
 | Compute coupling | None; storage is separate from the VM platform | Tied to vSphere |
 | Pooled local disks | atlas-native across your nodes; or Ceph through Rook | Yes, its core job |
 | Data protection | 3 replicas or Reed-Solomon (4+2, 8+3), SHA-256 checksums per extent and shard | Mirroring and erasure coding by storage policy |
@@ -160,11 +167,11 @@ holds the result.
 
 Limits to state plainly:
 
-- **Direct import is raw-only and atlas-native-only.** `POST /volumes/{id}/import` streams a raw image
-  into an atlas-native volume, resumes from recorded progress and verifies the volume by reading it back
-  (`IMAGE_IMPORT.md`). h2kvm writes qcow2, which that job cannot read, so convert to raw first. Ceph RBD
-  targets still go through CDI, with no Atlas-side resume offset or recorded checksum. The import has not
-  been run on a real cluster or a large image.
+- **Direct import is raw or qcow2, into atlas-native or Ceph RBD.** `POST /volumes/{id}/import` streams
+  the image, resumes from recorded progress and verifies the volume by reading it back (`IMAGE_IMPORT.md`).
+  qcow2 is converted with `qemu-img` on the job host; `sha256` is the file at the URL. A Ceph volume must
+  be addressed as `rbd:pool/image`. NFS and ZFS are not imported this way. The qcow2 and RBD paths have
+  not been run on a real cluster or a large image.
 - **Licence differs.** h2kvm is source-available under the Zyvor Production License: free for
   evaluation and labs, a paid subscription for production. Atlas stays Apache-2.0.
 - **Source coverage is partial.** AWS and Proxmox Backup Server are library modules only, and GCP,

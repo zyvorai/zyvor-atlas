@@ -28,7 +28,8 @@ owns sockets; this agent owns **bio / NFS / ZFS / io_uring**.
 | Live block-layer attach (`aya`, CO-RE) | implemented behind the `bpf` feature; verified live (below) |
 | Scheduler queue time (`block_rq_insert`) | implemented; verified live (below) |
 | Atlas Native maps (`/io/native`, pinned under `/sys/fs/bpf/atlas/native`) | implemented; verified live against a real native cluster (below) |
-| NFS / ZFS / io_uring programs, cgroup→volume map (`atlas_cgroup`) | not yet — reported in `programs_missing` |
+| NFS / ZFS / io_uring probes | scaffolding in `bpf/atlas_{nfs,zfs,uring}.bpf.c`, compiled into the same object as the block programs. Attach is best-effort behind the `bpf` feature: a missing tracepoint is logged and that family stays in `programs_missing`. Not yet verified on a host that has those tracepoints |
+| cgroup→volume map (`atlas_cgroup`) | `GET`/`PUT /io/cgroup`, `DELETE /io/cgroup/{id}`. The collector uses the userspace map when the device map has no volume. With `bpf`, the same binding is mirrored into the kernel hash (64-byte volume id) while the agent is attached |
 
 ## Run
 
@@ -110,6 +111,39 @@ PID set emptied on the next rescan, and `podman stop` removed the three pins. Un
 `/sys/fs/bpf` itself the pin failed with `Permission denied` (AppArmor), which is why the pin dir
 is configurable.
 
+## NFS, ZFS and io_uring probes
+
+`bpf/atlas_nfs.bpf.c`, `bpf/atlas_zfs.bpf.c` and `bpf/atlas_uring.bpf.c` are included by
+`bpf/atlas_bio.bpf.c` and compiled with it (`bpf` feature, Linux, clang). Each program is an
+observe-only counter on a tracepoint. They do not read the tracepoint record, so a layout change in
+the kernel does not fail the verifier; attach still needs the tracepoint to exist.
+
+| Family | Tracepoints | When it stays missing |
+|---|---|---|
+| `atlas_nfs` | `nfs/nfs_initiate_read`, `nfs/nfs_initiate_write` | the host has no NFS client tracepoints |
+| `atlas_zfs` | `zfs/zfs_read`, `zfs/zfs_write` | OpenZFS probes are not registered (common) |
+| `atlas_uring` | `io_uring/io_uring_submit_req`, `io_uring/io_uring_complete` | kernel without those tracepoints |
+
+A family is `programs_loaded` when at least one of its programs attaches. Failure of these probes
+does not detach the block-layer programs. The catalogue of names lives in `crates/atlas-io/src/probes.rs`
+and is what the loader tries. This has not been verified against a live NFS client, a ZFS pool or an
+io_uring workload; the block-layer attach described above is unchanged.
+
+## cgroup → volume
+
+`PUT /io/cgroup` with `{"cgroup_id": <u64>, "volume_id": "<id>"}` records a binding.
+`GET /io/cgroup` lists them. `DELETE /io/cgroup/{id}` removes one. `volume_id` is 1 to 63 characters
+of letters, digits, `_`, `-`, `.` and `:`. `cgroup_id` must be non-zero.
+
+When an event is recorded, the device map's volume wins. If that device has no volume, the cgroup
+binding supplies `volume_id` on the workload row (including a row that was created before the
+binding, on the next event). The binding is in-process and is gone when the agent restarts.
+
+With the `bpf` feature the same pairs are written into the `atlas_cgroup` hash in the loaded object
+(key `cgroup_id`, value a 64-byte buffer). That mirror is for `bpftool` while the agent is attached.
+Attribution does not read it back; the userspace map is the one the collector uses. The map is not
+pinned.
+
 ## Heatmap
 
 `GET /io/heatmap?minutes=15` (1–60) returns, per (device, op), one log2-µs bucket column per
@@ -117,7 +151,12 @@ minute: when latency moved, not only the distribution since start. Columns are s
 time at collection (device timestamps are monotonic), so a poll that lands late attributes its
 events to the minute it ran. Minutes with no I/O are absent. An in-memory hour ring per
 series, reset when the agent restarts, under the same cardinality cap as the histograms. Verified
-with the fake source only; the console does not draw it yet.
+with the fake source.
+
+The gateway proxies it at `GET /api/atlas/v1/io/heatmap` (any signed-in role; `unavailable` when
+`ATLAS_IO_AGENT_URL` is unset or the agent cannot be reached, same idea as `GET /io/ai`). The
+console Observatory draws one row of cells per series from that response. Device names and
+operation names are whitelisted on the way through; the colour is the busiest bucket's latency.
 
 ## Authentication and MCP
 

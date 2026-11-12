@@ -19,8 +19,13 @@ Atlas is the shared storage control plane. Products call **REST** and/or **gRPC*
 The product named **Transiva** is recorded as owner id `hyper2kvm`. That wire id is unchanged.
 
 `veyron`, `packetwolf`, `ragnarok`, `machina`, `hypersdk`, and `zeus` are reserved owner ids for
-enterprise/future products that aren't public yet (see `docs/ROADMAP.md`'s Slice 3+ section) — no
-integration exists to document below until one of those repos ships.
+enterprise/future products that aren't public yet (see `docs/ROADMAP.md`'s Slice 3+ section).
+Atlas does not call those products.
+
+`crates/atlas-client` records two of them locally (`owners::KnownProduct`): Transiva's wire id
+`hyper2kvm` (the display name `transiva` is not accepted as an id) and `machina`. `owners::owner`
+builds an `Owner` for `CreateVolume`. `AtlasClient::ping` is `GET /readyz` on Atlas itself.
+There is no RPC to Transiva or Machina.
 
 Enumerate owned volumes with `ListVolumesByOwner(product, resource_id?)`.
 
@@ -46,8 +51,9 @@ Same JWT hierarchy as REST: `viewer < operator < admin`. Product service account
 | `ListAlerts` | Optional `state` filter |
 | `GetMetricsSummary` | Capacity + client I/O + recovery rollup |
 | `ListBuckets` | RGW object-bucket inventory |
+| `ListSchedules` | Protection schedules (`GET /schedules`; optional `volume_id`) |
 
-Not yet on gRPC (REST-only): DR/mirroring, DataBridge, schedules, quotas admin, OSD ops, CephFS/NFS/ZFS
+Not yet on gRPC (REST-only): DR/mirroring, DataBridge, quotas admin, OSD ops, CephFS/NFS/ZFS
 specifics.
 
 ## Relay (reliability control plane)

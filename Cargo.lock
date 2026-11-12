@@ -383,6 +383,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-driver-cloudblock"
+version = "0.13.0"
+dependencies = [
+ "async-trait",
+ "atlas-api-types",
+ "atlas-driver-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "atlas-driver-core"
 version = "0.13.0"
 dependencies = [
@@ -419,6 +432,7 @@ dependencies = [
  "async-trait",
  "atlas-api-types",
  "atlas-driver-core",
+ "k8s-openapi",
  "kube",
  "serde_json",
 ]
@@ -487,6 +501,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "atlas-driver-san"
+version = "0.13.0"
+dependencies = [
+ "async-trait",
+ "atlas-api-types",
+ "atlas-driver-core",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
 name = "atlas-driver-weka"
 version = "0.13.0"
 dependencies = [
@@ -524,6 +551,7 @@ dependencies = [
  "atlas-databridge",
  "atlas-discovery",
  "atlas-driver-ceph",
+ "atlas-driver-cloudblock",
  "atlas-driver-core",
  "atlas-driver-k8s",
  "atlas-driver-longhorn",
@@ -531,6 +559,7 @@ dependencies = [
  "atlas-driver-native",
  "atlas-driver-nfs",
  "atlas-driver-rgw",
+ "atlas-driver-san",
  "atlas-driver-weka",
  "atlas-driver-zfs",
  "atlas-inventory",

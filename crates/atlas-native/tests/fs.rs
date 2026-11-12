@@ -323,6 +323,19 @@ fn locked_fs_snapshot_refuses_delete_and_only_extends() {
 }
 
 #[test]
+fn unlock_fs_snapshot_allows_delete() {
+    let (e, root) = engine("fs-worm-unlock");
+    e.create_fs_as("f".into(), "fs").unwrap();
+    e.snapshot_fs_as("s1".into(), "f", "s1").unwrap();
+    e.lock_fs_snapshot("s1", 3600).unwrap();
+    assert!(e.delete_fs_snapshot("s1").is_err());
+    e.unlock_fs_snapshot("s1").unwrap();
+    assert!(e.unlock_fs_snapshot("s1").is_err());
+    e.delete_fs_snapshot("s1").unwrap();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn filesystem_activity_counts_writes_renames_deletes_and_entropy() {
     let (e, root) = engine("activity");
     e.create_fs_as("f".into(), "fs").unwrap();

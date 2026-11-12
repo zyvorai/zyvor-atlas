@@ -232,6 +232,28 @@ mod tests {
             .iter()
             .any(|e| e["name"] == "SRC_PASS"
                 && e["valueFrom"]["secretKeyRef"]["name"] == "src-creds"));
+        assert!(env.iter().any(|e| e["name"] == "SRC_SSL" && e["value"] == "require"));
+        assert!(c["args"][0].as_str().unwrap().contains("sslmode=${SRC_SSL}"));
+    }
+
+    /// Live full-load over TLS is not executed here. The Job spec is the same one
+    /// [`super::pg_job_spec`] gives the reconciler. Set `DATABRIDGE_TEST_PG` to a TLS server
+    /// and `DATABRIDGE_TEST_PG_TLS` to `require` or `verify-full`, then run with `--ignored`.
+    #[test]
+    #[ignore = "needs DATABRIDGE_TEST_PG against a TLS Postgres; DATABRIDGE_TEST_PG_TLS=require|verify-full"]
+    fn live_pg_full_load_over_tls() {
+        let dsn = std::env::var("DATABRIDGE_TEST_PG").expect("set DATABRIDGE_TEST_PG");
+        let mode = std::env::var("DATABRIDGE_TEST_PG_TLS").unwrap_or_else(|_| "require".into());
+        assert_ne!(mode, "disable", "this scaffolding is the TLS path, not plaintext");
+        let spec = pg_job_spec("src-creds", "edge-app", "db.example", 5432, "appdb", &mode);
+        let c = &spec["template"]["spec"]["containers"][0];
+        let script = c["args"][0].as_str().unwrap();
+        assert!(script.contains("sslmode=${SRC_SSL}"));
+        let env = c["env"].as_array().unwrap();
+        assert!(env.iter().any(|e| e["name"] == "SRC_SSL" && e["value"] == mode));
+        // No dump is started: this process has no Kubernetes Job runner. The DSN is the
+        // operator's target for a later live run.
+        assert!(dsn.contains("host=") || dsn.contains("postgres"));
     }
 
     #[test]

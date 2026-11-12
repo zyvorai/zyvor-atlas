@@ -479,6 +479,24 @@ pub(crate) async fn db_cutover(
     Ok(accepted(&job, json!({ "plan_id": id })))
 }
 
+/// `GET /databridge/plans/{id}/rollback-drill` — the reverse-cutover steps [`atlas_databridge::pipeline::rollback`]
+/// already runs, plus whether the recorded window is open. Does not change the plan.
+pub(crate) async fn db_rollback_drill(
+    State(s): State<AppState>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    let drill = atlas_databridge::pipeline::rollback_drill(&s.pool, &id)
+        .await
+        .map_err(|e| {
+            if e.to_string().contains("not found") {
+                AppError::NotFound(format!("plan {id}"))
+            } else {
+                AppError::from(e)
+            }
+        })?;
+    Ok(Json(drill))
+}
+
 /// `POST /databridge/plans/{id}/rollback` — guarded (admin): only within the rollback window.
 pub(crate) async fn db_rollback(
     State(s): State<AppState>,

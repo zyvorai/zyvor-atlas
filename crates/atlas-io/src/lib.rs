@@ -13,6 +13,7 @@
 pub mod aishape;
 #[cfg(all(feature = "bpf", target_os = "linux"))]
 pub mod bpf;
+pub mod cgroup;
 pub mod collector;
 pub mod devmap;
 pub mod heat;
@@ -21,6 +22,7 @@ pub mod http;
 pub mod lease;
 #[cfg(feature = "mcp")]
 pub mod mcp;
+pub mod probes;
 pub mod procscan;
 pub mod rca;
 pub mod risk;

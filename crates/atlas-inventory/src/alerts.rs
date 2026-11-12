@@ -137,6 +137,14 @@ pub async fn mark_notified(pool: &AnyPool, id: &str) -> Result<()> {
     Ok(())
 }
 
+pub async fn exists(pool: &AnyPool, id: &str) -> Result<bool> {
+    let n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM storage_alerts WHERE id=$1")
+        .bind(id)
+        .fetch_one(pool)
+        .await?;
+    Ok(n > 0)
+}
+
 pub async fn count_open(pool: &AnyPool) -> Result<i64> {
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) FROM storage_alerts WHERE state='open'")

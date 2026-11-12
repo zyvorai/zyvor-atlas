@@ -1005,6 +1005,61 @@ pub async fn cutover(
     }))
 }
 
+/// What [`rollback`] already does, in order. It flips cutover and plan state. It does not
+/// copy rows back to the source.
+pub fn rollback_steps() -> Vec<(&'static str, &'static str)> {
+    vec![
+        (
+            "window",
+            "the latest cutover's rollback_deadline must still be open (the HTTP route enforces this; rollback itself marks state)",
+        ),
+        (
+            "mark_cutover",
+            "pipeline::rollback sets that cutover's state to rolled_back",
+        ),
+        (
+            "mark_plan",
+            "the plan state becomes rolled_back; callers point applications at the source endpoint again",
+        ),
+        (
+            "cdc",
+            "a CDC stream rollback stopped stays stopped; starting it again is a separate cdc-start",
+        ),
+    ]
+}
+
+/// Read-only view of a reverse cutover: the steps [`rollback`] will run, and whether the
+/// recorded window is still open. Does not change the plan.
+pub async fn rollback_drill(pool: &AnyPool, plan_id: &str) -> Result<serde_json::Value> {
+    let plan = atlas_inventory::databridge::plans::get_plan(pool, plan_id)
+        .await?
+        .ok_or_else(|| anyhow!("plan {plan_id} not found"))?;
+    let cut = atlas_inventory::databridge::cutovers::latest_for_plan(pool, plan_id).await?;
+    let (window_open, deadline) = match cut.as_ref().and_then(|c| c.rollback_deadline.as_deref()) {
+        Some(deadline) => match chrono::DateTime::parse_from_rfc3339(deadline) {
+            Ok(dl) => (chrono::Utc::now() <= dl, Some(deadline.to_string())),
+            Err(_) => (false, Some(deadline.to_string())),
+        },
+        None => (cut.is_some(), None),
+    };
+    Ok(serde_json::json!({
+        "plan_id": plan.id,
+        "plan_state": plan.state,
+        "cutover_id": cut.as_ref().map(|c| c.id.clone()),
+        "cutover_state": cut.as_ref().map(|c| c.state.clone()),
+        "from_endpoint": cut.as_ref().and_then(|c| c.from_endpoint.clone()),
+        "to_endpoint": cut.as_ref().and_then(|c| c.to_endpoint.clone()),
+        "rollback_deadline": deadline,
+        "window_open": window_open,
+        "mutates": false,
+        "run": "atlasctl databridge-stage PLAN rollback",
+        "steps": rollback_steps()
+            .into_iter()
+            .map(|(id, action)| serde_json::json!({ "id": id, "action": action }))
+            .collect::<Vec<_>>(),
+    }))
+}
+
 /// Roll back a cutover within its window: revert the active endpoint to the source.
 pub async fn rollback(pool: &AnyPool, plan_id: &str) -> Result<serde_json::Value> {
     let plan = atlas_inventory::databridge::plans::get_plan(pool, plan_id)
@@ -1056,5 +1111,24 @@ fn sink_spec_for(
             "MONGODB_DATABASE_ADMIN_USER",
             "MONGODB_DATABASE_ADMIN_PASSWORD",
         ),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn rollback_drill_names_the_state_flip_and_does_not_claim_a_data_copy() {
+        let steps = rollback_steps();
+        assert!(steps.iter().any(|(id, _)| *id == "mark_cutover"));
+        assert!(steps.iter().any(|(id, _)| *id == "mark_plan"));
+        let text = steps
+            .iter()
+            .map(|(_, action)| *action)
+            .collect::<Vec<_>>()
+            .join(" ");
+        assert!(!text.to_ascii_lowercase().contains("copy rows"));
+        assert!(text.contains("rolled_back"));
     }
 }

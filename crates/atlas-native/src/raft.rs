@@ -18,10 +18,11 @@
 //!
 //! Membership changes use joint consensus ([`RaftNode::change_membership`]): a `Joint` config
 //! entry needs majorities of both the old and new voter sets; once it commits the leader appends
-//! the `Stable` new config, and steps down if it is not part of it. A config entry takes effect
-//! on every node as soon as it is in its log (and reverts if that entry is truncated). A node
-//! outside the current voter set never campaigns, so a new node can start with an empty log and
-//! wait to be added.
+//! the `Stable` new config, and steps down if it is not part of it. Until that stable entry
+//! commits, replication still includes the voters it replaces, so a removed voter receives the
+//! config that drops it. A config entry takes effect on every node as soon as it is in its log
+//! (and reverts if that entry is truncated). A node outside the current voter set never
+//! campaigns, so a new node can start with an empty log and wait to be added.
 
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -520,12 +521,35 @@ impl RaftNode {
     }
 
     /// Every voter but this node: who to replicate to and ask for votes.
+    ///
+    /// While the newest config entry is still uncommitted, also includes voters of the config
+    /// it replaces. A removed voter is not part of the new quorum, but it must receive the
+    /// stable entry so it stops campaigning.
     fn peers(&self) -> Vec<NodeId> {
-        self.membership
+        let mut ids = self.membership.voters();
+        if self.config_index().is_some_and(|i| i > self.commit_index) {
+            ids.extend(self.previous_config_voters());
+        }
+        ids.into_iter().filter(|p| p != &self.cfg.id).collect()
+    }
+
+    /// Voters of the membership entry before the newest one in the log, else the applied catalog.
+    fn previous_config_voters(&self) -> BTreeSet<NodeId> {
+        let mut skipped_newest = false;
+        for e in self.log.iter().rev() {
+            if let MetaCommand::ChangeMembership { membership, .. } = &e.command {
+                if !skipped_newest {
+                    skipped_newest = true;
+                    continue;
+                }
+                return membership.voters();
+            }
+        }
+        self.catalog
+            .membership
+            .clone()
+            .unwrap_or_else(|| self.initial.clone())
             .voters()
-            .into_iter()
-            .filter(|p| *p != self.cfg.id)
-            .collect()
     }
 
     fn refresh_membership(&mut self) {
@@ -594,6 +618,40 @@ impl RaftNode {
         self.broadcast_append();
         self.advance_commit()?;
         Ok(index)
+    }
+
+    /// Adds `id` through joint consensus ([`Membership::add_voter_steps`]). `addr` is the Raft
+    /// `host:port` of a voter that is not this node. No-op when `id` is already a voter.
+    pub fn add_voter(&mut self, id: NodeId, addr: impl Into<String>) -> Result<u64, RaftError> {
+        let Membership::Stable { voters } = self.membership.clone() else {
+            return Err(RaftError::MembershipBusy);
+        };
+        let Some([joint, _]) = Membership::add_voter_steps(&voters, &id) else {
+            return Ok(self.commit_index);
+        };
+        let addr = addr.into();
+        if id != self.cfg.id && addr.is_empty() {
+            return Err(RaftError::Config(format!("no address for new voter {id}")));
+        }
+        let mut addrs = BTreeMap::new();
+        if id != self.cfg.id {
+            addrs.insert(id, addr);
+        }
+        self.change_membership(joint.target().clone(), addrs)
+    }
+
+    /// Removes `id` through joint consensus ([`Membership::remove_voter_steps`]). No-op when
+    /// `id` is not a voter. Refuses to remove the last voter.
+    pub fn remove_voter(&mut self, id: &NodeId) -> Result<u64, RaftError> {
+        let Membership::Stable { voters } = self.membership.clone() else {
+            return Err(RaftError::MembershipBusy);
+        };
+        let steps = Membership::remove_voter_steps(&voters, id)
+            .map_err(|m| RaftError::Config(m.into()))?;
+        let Some([joint, _]) = steps else {
+            return Ok(self.commit_index);
+        };
+        self.change_membership(joint.target().clone(), BTreeMap::new())
     }
 
     /// Leader only: once a `Joint` config commits, append the `Stable` one; once a `Stable`

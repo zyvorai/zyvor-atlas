@@ -9,6 +9,20 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added
+
+- SAN and cloud_block backends: `atlas-driver-san` / `atlas-driver-cloudblock` (fake + real), live `POST /backends`, `ATLAS_SAN_*` / `ATLAS_CLOUDBLOCK_*` startup registration (`docs/STATUS.md`).
+- Longhorn native Volume/Snapshot CRD write path; WEKA filesystem create/delete (fake + REST).
+- RGW bucket object-lock create plumbing; WORM two-person unlock propose/confirm; Ops Advisor persisted findings + optional two-operator alert ack.
+- Image import `format=qcow2` and Ceph RBD `rbd:pool/image` byte I/O targets.
+- MCP OAuth scopes / IdP `scope` mapping / RFC 7662 introspection / lab `ATLAS_MCP_AS_ENABLE` client_credentials endpoint (no DCR).
+- atlas-io NFS/ZFS/io_uring probe scaffolding, cgroup→volume map API, Observatory heatmap UI.
+- Native joint add/remove voter path hardening, `ATLAS_NATIVE_DATA_AUTH`, TLS cert reload; `cufile` dlopen probe; gRPC `ListSchedules`; DataBridge Oracle TCPS DSN + rollback-drill read-only API/`atlasctl`.
+
+### Not verified
+
+- Live SAN iSCSI, AWS/GCP/Azure cloud disks, Longhorn/WEKA/RGW object-lock/RBD import/qcow2 on real clusters, SoftRoCE pooled RDMA, GDS I/O, NFS/ZFS/uring eBPF attach, MCP introspection against a real AS.
+
 ## [0.13.0] — 2026-11-09
 
 ### Added

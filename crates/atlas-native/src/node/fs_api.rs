@@ -147,6 +147,10 @@ fn snapshot_route(
             let until = e.lock_fs_snapshot(id, secs)?;
             Ok(Response::json(200, &json!({ "retain_until_unix": until })))
         }
+        ("POST", ["v1", "fs-snapshots", id, "unlock"]) => {
+            e.unlock_fs_snapshot(id)?;
+            Ok(Response::json(200, &json!({ "unlocked": true })))
+        }
         ("GET", ["v1", "fs-snapshots", id, "diff"]) => {
             let after = match req.query.get("after") {
                 Some(a) => a.parse().map_err(|_| {

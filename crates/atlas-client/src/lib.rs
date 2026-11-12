@@ -8,13 +8,16 @@
 //! return a job, and [`AtlasClient::wait_for_job`] follows it to a terminal state.
 //!
 //! Owner convention: see `docs/PRODUCTS.md`; the JWT subject for a product is
-//! `product.service.<name>`.
+//! `product.service.<name>`. [`owners`] records Transiva (`hyper2kvm`) and Machina. It does not
+//! call those products. [`AtlasClient::ping`] checks Atlas itself (`GET /readyz`).
 
 use std::time::Duration;
 
 use atlas_api_types::{job_state, CreateVolumeRequest, JobRecord};
 use serde::Deserialize;
 use serde_json::Value;
+
+pub mod owners;
 
 const API: &str = "/api/atlas/v1";
 
@@ -77,6 +80,20 @@ impl AtlasClient {
 
     fn url(&self, path: &str) -> String {
         format!("{}{API}{path}", self.base)
+    }
+
+    /// `GET /readyz` on this Atlas gateway. This is Atlas's own health, not a ping of Transiva,
+    /// Machina, or any other product.
+    pub async fn ping(&self) -> Result<(), ClientError> {
+        let resp = self.http.get(format!("{}/readyz", self.base)).send().await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(ClientError::Status {
+                status: status.as_u16(),
+                body: resp.text().await.unwrap_or_default(),
+            });
+        }
+        Ok(())
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {

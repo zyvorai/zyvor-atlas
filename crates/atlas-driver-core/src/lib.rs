@@ -119,6 +119,10 @@ pub trait StorageDriver: Send + Sync {
     ) -> Result<u64, DriverError> {
         Err(DriverError::NotImplemented("lock_snapshot"))
     }
+    /// Clears a retention lock. The gateway calls this only after two distinct admins confirm.
+    async fn unlock_snapshot(&self, _native_snapshot_id: &str) -> Result<(), DriverError> {
+        Err(DriverError::NotImplemented("unlock_snapshot"))
+    }
 
     // ---- block data path (backends whose volumes the gateway can read/write directly) ----
     /// `len` bytes at `offset` of a block volume; never-written bytes read as zeros.

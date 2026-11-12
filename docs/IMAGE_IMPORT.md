@@ -2,12 +2,14 @@
 <!-- SPDX-License-Identifier: Apache-2.0 -->
 # Importing a raw disk image into an atlas-native volume
 
-`POST /api/atlas/v1/volumes/{id}/import` queues a job that streams a **raw** disk image from an HTTP(S)
-server into an existing atlas-native volume, then proves the volume holds it. It is the Atlas end of a
+`POST /api/atlas/v1/volumes/{id}/import` queues a job that streams a disk image from an HTTP(S)
+server into an existing block volume, then proves the volume holds it. Raw bytes are written as they
+arrive. A qcow2 image is converted with `qemu-img convert -O raw` first; `sha256` is the hash of the
+file at `url` (the qcow2, or the raw image). It is the Atlas end of a
 VMware exit: Scout scores the estate, h2kvm repairs and converts the guest, and this job lands the disk.
 
-What it does not do is read qcow2, VMDK or any other container format, or write to Ceph RBD, NFS or ZFS
-volumes. See [Limits](#limits).
+Ceph RBD volumes are written with librbd (`rbd:pool/image`). NFS, ZFS and other backends are not.
+VMDK is not read. See [Limits](#limits).
 
 ## Turn it on
 
@@ -36,13 +38,15 @@ curl -X POST "$ATLAS/api/atlas/v1/volumes/$VOLUME/import" \
 
 | Field | Meaning |
 |---|---|
-| `url` | `http` or `https` URL of the raw image. |
-| `sha256` | SHA-256 of the whole image. Required: the import succeeds only if the data matches. |
+| `url` | `http` or `https` URL of the image. |
+| `sha256` | SHA-256 of the file at `url`. Required. For qcow2 this is the qcow2 file, not the raw disk. |
+| `format` | `raw` (default) or `qcow2`. |
 | `size_bytes` | Optional image length, checked against what the server sends and against the volume size. |
 | `resume_from_job` | Optional id of an earlier, finished import job for the same volume whose progress this one continues. |
 
-The volume must already exist, be an atlas-native volume, and be large enough. The caller needs the operator
-role and access to the volume's tenant, the same as writing block data. The response is `202` with a job id;
+The volume must already exist, be a block volume on a backend the gateway has a driver for (atlas-native
+or Ceph RBD), and be large enough. A Ceph volume's id must be `rbd:pool/image`. The caller needs the operator
+role and access to the volume's tenant. The response is `202` with a job id;
 progress, the result and cancel are the ordinary job API (`GET /jobs/{id}`, `POST /jobs/{id}/cancel`).
 
 ## How it works
@@ -78,10 +82,11 @@ attempt starts from zero.
 
 ## Limits
 
-- **Raw images only.** There is no qcow2 reader in the gateway. Convert first (`qemu-img convert -O raw`), or
-  have the converter emit raw.
-- **atlas-native volumes only.** Ceph RBD, NFS and ZFS volumes are not supported; RBD would need a job pod with
-  the Ceph tools.
+- **Raw and qcow2.** qcow2 needs `qemu-img` on the gateway (`QEMU_IMG` overrides the binary). The job
+  checks the qcow2 checksum, converts to raw, then checks the volume against the raw bytes. VMDK and
+  other formats are refused.
+- **atlas-native and Ceph RBD.** RBD reads and writes go through the python `rbd` module (`ATLAS_RBD_PYTHON`,
+  `CEPH_CONF`). The volume id must be `rbd:pool/image`. NFS and ZFS are not supported.
 - **Imports run beside the job worker, two at a time.** An import never holds up other jobs, and a third
   waits as `queued` until a slot is free (`ATLAS_IMPORT_CONCURRENCY`, default 2). An import can be cancelled
   while it runs or waits. Its timeout is a day (`ATLAS_IMPORT_TIMEOUT_SECS`) instead of two hours. The slots

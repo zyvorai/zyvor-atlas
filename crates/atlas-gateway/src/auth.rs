@@ -3,7 +3,9 @@
 //! JWT auth middleware. When `config.auth_required` is false (dev default), requests pass through
 //! with an anonymous actor; when true, a valid HS256 Bearer token is required. On the MCP endpoint
 //! only, and only when `ATLAS_MCP_IDP_ISSUER` is set, an RS256/ES256 identity-provider access token
-//! is also accepted (`idp_token.rs`); REST, gRPC and `/metrics` stay Atlas-HS256-only.
+//! is also accepted (`idp_token.rs`). An opaque (non-JWT) token on that endpoint is sent to RFC 7662
+//! introspection when `ATLAS_MCP_INTROSPECTION_URL` is set (`mcp_introspect.rs`). REST, gRPC and
+//! `/metrics` stay Atlas-HS256-only.
 
 use axum::{
     body::Body,
@@ -371,25 +373,21 @@ pub async fn auth_middleware(
             .get(http::header::AUTHORIZATION)
             .and_then(|h| h.to_str().ok())
             .and_then(|s| s.strip_prefix("Bearer "));
-        // On the MCP endpoint a 401 also carries the RFC 9728 challenge (`WWW-Authenticate` with
-        // `resource_metadata`) so an MCP client can discover how to authenticate; REST 401s are
-        // unchanged. `invalid` marks a presented-but-refused token (RFC 6750 `invalid_token`).
-        // Built eagerly into owned values: a borrow of `req` (its body is not `Sync`) must not
-        // live across the `.await` below.
-        let challenges = is_mcp_path(req.uri().path()).then(|| {
-            let url = state.public_url.as_deref();
-            (
-                crate::oauth_resource::challenge(url, req.headers(), false),
-                crate::oauth_resource::challenge(url, req.headers(), true),
-            )
-        });
-        let challenge = |invalid: bool| {
-            challenges
-                .as_ref()
-                .map(|(missing, bad)| if invalid { bad } else { missing }.clone())
-        };
+        // On the MCP endpoint a 401/403 also carries the RFC 9728 challenge (`WWW-Authenticate`
+        // with `resource_metadata` and `scope`) so an MCP client can discover how to authenticate.
+        // REST 401s are unchanged. The header map is cloned before any `.await`: a borrow of `req`
+        // (its body is not `Sync`) must not live across one. The scope list is built only when a
+        // challenge is actually returned.
+        let mcp_headers = is_mcp_path(req.uri().path()).then(|| req.headers().clone());
         let Some(token) = token else {
-            return unauthorized("missing bearer token", challenge(false));
+            return unauthorized(
+                "missing bearer token",
+                mcp_challenge(
+                    &state,
+                    mcp_headers.as_ref(),
+                    crate::oauth_resource::ChallengeKind::None,
+                ),
+            );
         };
         // Bootstrap admin: raw bearer accepted until the operator mints real JWTs and unsets
         // ATLAS_BOOTSTRAP_ADMIN_TOKEN. Checked before JWT decode so it need not be a valid JWT.
@@ -427,7 +425,10 @@ pub async fn auth_middleware(
                     if !id.jti.is_empty() {
                         match atlas_inventory::tokens::is_revoked(&state.pool, &id.jti).await {
                             Ok(true) => {
-                                return unauthorized("token has been revoked", challenge(true))
+                                return unauthorized(
+                                    "token has been revoked",
+                                    mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                                )
                             }
                             Ok(false) => {}
                             Err(e) => tracing::warn!("token revocation check failed: {e}"),
@@ -437,15 +438,72 @@ pub async fn auth_middleware(
                         id: id.actor_id,
                         role: id.role.to_string(),
                         tenant_id: id.tenant_id,
-                        tools: Vec::new(),
+                        tools: id.tools,
                         scope: None,
                         workspace_bytes: None,
                         jti: id.jti,
                     }
                 }
+                Err(crate::idp_token::IdpError::InsufficientScope) => {
+                    return insufficient_scope(mcp_challenge(
+                        &state,
+                        mcp_headers.as_ref(),
+                        crate::oauth_resource::ChallengeKind::InsufficientScope,
+                    ));
+                }
                 Err(e) => {
                     tracing::warn!(reason = %e, "MCP IdP access token refused");
-                    return unauthorized(&format!("invalid token: {e}"), challenge(true));
+                    return unauthorized(
+                        &format!("invalid token: {e}"),
+                        mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                    );
+                }
+            }
+        } else if is_mcp_path(req.uri().path())
+            && !crate::idp_token::looks_like_jwt(token)
+            && state.mcp_introspection.is_some()
+        {
+            // Opaque access token. JWT-shaped tokens stay on the local validators above and below;
+            // this branch never sees them. REST never reaches here.
+            let token = token.to_owned();
+            let intro = state.mcp_introspection.clone().expect("checked above");
+            match intro.introspect(&token).await {
+                Ok(id) => {
+                    if !id.jti.is_empty() {
+                        match atlas_inventory::tokens::is_revoked(&state.pool, &id.jti).await {
+                            Ok(true) => {
+                                return unauthorized(
+                                    "token has been revoked",
+                                    mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                                )
+                            }
+                            Ok(false) => {}
+                            Err(e) => tracing::warn!("token revocation check failed: {e}"),
+                        }
+                    }
+                    Actor {
+                        id: id.actor_id,
+                        role: id.role.to_string(),
+                        tenant_id: id.tenant_id,
+                        tools: id.tools,
+                        scope: None,
+                        workspace_bytes: None,
+                        jti: id.jti,
+                    }
+                }
+                Err(crate::mcp_introspect::IntroError::InsufficientScope) => {
+                    return insufficient_scope(mcp_challenge(
+                        &state,
+                        mcp_headers.as_ref(),
+                        crate::oauth_resource::ChallengeKind::InsufficientScope,
+                    ));
+                }
+                Err(e) => {
+                    tracing::warn!(reason = %e, "MCP opaque access token refused");
+                    return unauthorized(
+                        &format!("invalid token: {e}"),
+                        mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                    );
                 }
             }
         } else {
@@ -462,7 +520,10 @@ pub async fn auth_middleware(
                             .await
                         {
                             Ok(true) => {
-                                return unauthorized("token has been revoked", challenge(true))
+                                return unauthorized(
+                                    "token has been revoked",
+                                    mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                                )
                             }
                             Ok(false) => {}
                             Err(e) => tracing::warn!("token revocation check failed: {e}"),
@@ -478,7 +539,12 @@ pub async fn auth_middleware(
                         jti: data.claims.jti,
                     }
                 }
-                Err(e) => return unauthorized(&format!("invalid token: {e}"), challenge(true)),
+                Err(e) => {
+                    return unauthorized(
+                        &format!("invalid token: {e}"),
+                        mcp_challenge(&state, mcp_headers.as_ref(), crate::oauth_resource::ChallengeKind::InvalidToken),
+                    )
+                }
             }
         }
     };
@@ -592,6 +658,23 @@ fn is_mcp_path(path: &str) -> bool {
         .any(|p| path == *p || path.strip_prefix(*p).is_some_and(|r| r.starts_with('/')))
 }
 
+/// Build the MCP `WWW-Authenticate` value. `headers` is `None` off the MCP endpoint (no header).
+/// Called at the point of the response so it does not borrow `state` across an `.await`.
+fn mcp_challenge(
+    state: &AppState,
+    headers: Option<&http::HeaderMap>,
+    kind: crate::oauth_resource::ChallengeKind,
+) -> Option<http::HeaderValue> {
+    let headers = headers?;
+    let scope = crate::oauth_resource::bearer_scope(state);
+    Some(crate::oauth_resource::challenge(
+        state.public_url.as_deref(),
+        headers,
+        kind,
+        &scope,
+    ))
+}
+
 /// A 401. `www_authenticate` is set only on the MCP endpoint (see `auth_middleware`).
 fn unauthorized(msg: &str, www_authenticate: Option<http::HeaderValue>) -> Response {
     let mut resp = (
@@ -601,6 +684,20 @@ fn unauthorized(msg: &str, www_authenticate: Option<http::HeaderValue>) -> Respo
         .into_response();
     if let Some(v) = www_authenticate {
         resp.headers_mut().insert(http::header::WWW_AUTHENTICATE, v);
+    }
+    resp
+}
+
+fn insufficient_scope(www_authenticate: Option<http::HeaderValue>) -> Response {
+    let mut resp = (
+        StatusCode::FORBIDDEN,
+        Json(json!({ "error": { "code": "INSUFFICIENT_SCOPE", "message":
+            "token scope does not include an Atlas role or tool" } })),
+    )
+        .into_response();
+    if let Some(v) = www_authenticate {
+        resp.headers_mut()
+            .insert(http::header::WWW_AUTHENTICATE, v);
     }
     resp
 }

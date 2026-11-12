@@ -571,7 +571,8 @@ enum Command {
     DatabridgeSources,
     /// GET /api/atlas/v1/databridge/plans
     DatabridgePlans,
-    /// POST /api/atlas/v1/databridge/plans/{id}/{stage} — stage ∈ assess|provision|full-load|cdc-start|cdc-stop|cdc-restart|validate|cutover|rollback
+    /// POST /api/atlas/v1/databridge/plans/{id}/{stage} — stage ∈ assess|provision|full-load|cdc-start|cdc-stop|cdc-restart|validate|cutover|rollback.
+    /// `rollback-drill` is a GET that prints the reverse-cutover steps and does not run them.
     DatabridgeStage { plan_id: String, stage: String },
     /// Training checkpoints on atlas-native filesystems (seal = snapshot + retention lock + prune)
     Checkpoint {
@@ -1300,6 +1301,13 @@ async fn main() -> Result<()> {
         Command::Io { .. } => unreachable!("io handled above"),
         Command::Checkpoint { .. } => unreachable!("checkpoint handled above"),
         Command::DatabridgeStage { plan_id, stage } => {
+            if stage == "rollback-drill" {
+                (
+                    "GET",
+                    format!("/api/atlas/v1/databridge/plans/{plan_id}/rollback-drill"),
+                    None,
+                )
+            } else {
             let path = match stage.as_str() {
                 "assess" => format!("/api/atlas/v1/databridge/plans/{plan_id}/assess"),
                 "provision" => format!("/api/atlas/v1/databridge/plans/{plan_id}/provision"),
@@ -1320,11 +1328,12 @@ async fn main() -> Result<()> {
                 "rollback" => format!("/api/atlas/v1/databridge/plans/{plan_id}/rollback"),
                 other => {
                     anyhow::bail!(
-                        "unknown databridge stage '{other}' (assess|provision|full-load|cdc-start|cdc-stop|cdc-restart|validate|cutover|rollback)"
+                        "unknown databridge stage '{other}' (assess|provision|full-load|cdc-start|cdc-stop|cdc-restart|validate|cutover|rollback|rollback-drill)"
                     );
                 }
             };
             ("POST", path, None)
+            }
         }
     };
 

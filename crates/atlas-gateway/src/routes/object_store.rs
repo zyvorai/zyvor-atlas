@@ -584,9 +584,8 @@ pub(crate) struct CreateBucketBody {
     max_objects: Option<i64>,
     /// Optional RGW quota: max size (e.g. "2G").
     max_size: Option<String>,
-    /// S3 Object Lock (WORM retention), set at creation. Ceph RGW support isn't
-    /// wired up yet — rejected explicitly below rather than silently creating an unlocked bucket
-    /// for a caller who asked for WORM semantics.
+    /// S3 Object Lock (WORM retention), set at creation. The job recreates the empty Rook bucket
+    /// with `x-amz-bucket-object-lock-enabled` because an ObjectBucketClaim cannot set the header.
     #[serde(default)]
     object_lock: bool,
 }
@@ -628,11 +627,6 @@ pub(crate) async fn create_bucket(
                 .into(),
         ));
     } else if backend_id == CEPH_BACKEND_ID {
-        if body.object_lock {
-            return Err(AppError::Validation(
-                "object_lock is not yet supported on the Ceph RGW backend".into(),
-            ));
-        }
         // The OBC (and its Secret/ConfigMap) live where this gateway can read them.
         let namespace = body.namespace.unwrap_or_else(|| "rook-ceph".into());
         let storage_class = body
@@ -653,6 +647,7 @@ pub(crate) async fn create_bucket(
             storage_class,
             max_objects: body.max_objects,
             max_size: body.max_size.clone(),
+            object_lock: body.object_lock,
         }
     } else {
         return Err(AppError::Validation(format!(
@@ -673,7 +668,7 @@ pub(crate) async fn create_bucket(
         "bucket",
         &bucket_id,
         "accepted",
-        Some(json!({ "name": body.name, "backend_id": backend_id })),
+        Some(json!({ "name": body.name, "backend_id": backend_id, "object_lock": body.object_lock })),
         None,
     )
     .await;

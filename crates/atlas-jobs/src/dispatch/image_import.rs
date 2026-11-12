@@ -1,6 +1,6 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: Apache-2.0
-//! `image.import`: stream a raw disk image over HTTP(S) into an atlas-native volume.
+//! `image.import`: stream a raw or qcow2 disk image over HTTP(S) into a block volume.
 //!
 //! The image is read in 4 MiB blocks. Each block is hashed, and written unless it is all zeros (a
 //! volume reads never-written bytes as zeros, so sparse images stay sparse). Progress is recorded
@@ -11,8 +11,11 @@
 //!
 //! See `docs/IMAGE_IMPORT.md` for the API and its limits.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
+
+use tokio::io::{AsyncReadExt, AsyncSeekExt, AsyncWriteExt};
 
 use anyhow::{anyhow, bail, Context, Result};
 use atlas_driver_core::{DriverRegistry, StorageDriver};
@@ -296,6 +299,140 @@ impl Source for HttpSource {
     }
 }
 
+/// A raw file on disk (the output of `qemu-img convert`, or any other local image).
+pub(crate) struct FileSource {
+    path: PathBuf,
+    len: u64,
+    file: Option<tokio::fs::File>,
+}
+
+impl Source for FileSource {
+    async fn open(&mut self, from: u64) -> Result<Option<u64>> {
+        let mut file = tokio::fs::File::open(&self.path)
+            .await
+            .with_context(|| format!("open {}", self.path.display()))?;
+        if from > 0 {
+            file.seek(std::io::SeekFrom::Start(from))
+                .await
+                .with_context(|| format!("seek to {from} in {}", self.path.display()))?;
+        }
+        self.file = Some(file);
+        Ok(Some(self.len))
+    }
+
+    async fn next(&mut self) -> Result<Option<Vec<u8>>> {
+        let file = self
+            .file
+            .as_mut()
+            .ok_or_else(|| anyhow!("stream not opened"))?;
+        let mut buf = vec![0u8; CHUNK];
+        let n = file.read(&mut buf).await.context("read the converted image")?;
+        if n == 0 {
+            return Ok(None);
+        }
+        buf.truncate(n);
+        Ok(Some(buf))
+    }
+}
+
+/// qcow2 downloaded for one job, plus the raw file `qemu-img convert` wrote. Dropped files are
+/// removed, including when convert or the import fails.
+struct ConvertedRaw {
+    qcow: PathBuf,
+    path: PathBuf,
+    sha256: String,
+    len: u64,
+}
+
+impl Drop for ConvertedRaw {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.qcow);
+        let _ = std::fs::remove_file(&self.path);
+    }
+}
+
+async fn download_hashed(url: &str, dest: &Path) -> Result<String> {
+    let mut src = HttpSource::new(url)?;
+    src.open(0).await?;
+    let mut file = tokio::fs::File::create(dest)
+        .await
+        .with_context(|| format!("create {}", dest.display()))?;
+    let mut hasher = Sha256::new();
+    while let Some(chunk) = src.next().await? {
+        hasher.update(&chunk);
+        file.write_all(&chunk).await.context("write the downloaded image")?;
+    }
+    file.flush().await.context("flush the downloaded image")?;
+    Ok(hex::encode(hasher.finalize()))
+}
+
+async fn hash_file(path: &Path) -> Result<(String, u64)> {
+    let mut file = tokio::fs::File::open(path)
+        .await
+        .with_context(|| format!("open {}", path.display()))?;
+    let mut hasher = Sha256::new();
+    let mut buf = vec![0u8; CHUNK];
+    let mut n = 0u64;
+    loop {
+        let k = file.read(&mut buf).await.context("hash the converted image")?;
+        if k == 0 {
+            break;
+        }
+        hasher.update(&buf[..k]);
+        n += k as u64;
+    }
+    Ok((hex::encode(hasher.finalize()), n))
+}
+
+async fn qemu_img_convert(src: &Path, dst: &Path) -> Result<()> {
+    let bin = std::env::var("QEMU_IMG").unwrap_or_else(|_| "qemu-img".to_string());
+    let output = tokio::process::Command::new(&bin)
+        .kill_on_drop(true)
+        .args(["convert", "-f", "qcow2", "-O", "raw"])
+        .arg(src)
+        .arg(dst)
+        .output()
+        .await
+        .with_context(|| format!("spawn {bin} (qcow2 import needs qemu-img)"))?;
+    if !output.status.success() {
+        let err = String::from_utf8_lossy(&output.stderr);
+        bail!("{bin} convert failed: {}", err.trim());
+    }
+    Ok(())
+}
+
+/// Download a qcow2, check it against `expected_sha`, and convert it to raw.
+async fn prepare_qcow2(url: &str, expected_sha: &str, job_id: &str) -> Result<ConvertedRaw> {
+    let dir = std::env::temp_dir();
+    let qcow = dir.join(format!("atlas-import-{job_id}.qcow2"));
+    let raw = dir.join(format!("atlas-import-{job_id}.raw"));
+    let prepared = async {
+        let got = download_hashed(url, &qcow).await?;
+        let expected = expected_sha.to_ascii_lowercase();
+        if got != expected {
+            bail!("checksum mismatch (source): expected {expected}, got {got}");
+        }
+        qemu_img_convert(&qcow, &raw).await?;
+        let (sha, len) = hash_file(&raw).await?;
+        Ok::<_, anyhow::Error>((sha, len))
+    }
+    .await;
+    let (sha, len) = match prepared {
+        Ok(v) => v,
+        Err(e) => {
+            let _ = std::fs::remove_file(&qcow);
+            let _ = std::fs::remove_file(&raw);
+            return Err(e);
+        }
+    };
+    Ok(ConvertedRaw {
+        qcow,
+        path: raw,
+        sha256: sha,
+        len,
+    })
+}
+
 /// Records progress on the job row.
 struct JobProgress<'a> {
     pool: &'a AnyPool,
@@ -337,9 +474,15 @@ pub(crate) async fn dispatch_image_import(
         sha256,
         size_bytes,
         resume_from,
+        format,
     } = spec
     else {
         bail!("not an image.import job");
+    };
+    let format = if format.is_empty() {
+        "raw".to_string()
+    } else {
+        format
     };
     let driver = drivers
         .as_ref()
@@ -358,13 +501,49 @@ pub(crate) async fn dispatch_image_import(
         tracing::info!(job = %job_id, start, "resuming image import");
     }
 
-    let mut src = HttpSource::new(&url)?;
     let progress = JobProgress {
         pool,
         job_id,
         volume_id: &volume_id,
     };
-    match run(&io, &mut src, &progress, &sha256, size_bytes, start).await {
+    // qcow2: the caller's sha256 is the qcow2 file. The volume holds the raw conversion, so the
+    // read-back check uses that raw hash. The converted file is removed when this block ends.
+    let qcow = if format == "qcow2" {
+        Some(prepare_qcow2(&url, &sha256, job_id).await?)
+    } else if format == "raw" {
+        None
+    } else {
+        bail!("unsupported image format {format:?}; use raw or qcow2");
+    };
+    let outcome = if let Some(raw) = &qcow {
+        if let Some(n) = size_bytes {
+            if n != raw.len {
+                bail!(
+                    "size_bytes {n} does not match the converted raw image ({} bytes)",
+                    raw.len
+                );
+            }
+        }
+        let mut src = FileSource {
+            path: raw.path.clone(),
+            len: raw.len,
+            file: None,
+        };
+        run(
+            &io,
+            &mut src,
+            &progress,
+            &raw.sha256,
+            Some(raw.len),
+            start,
+        )
+        .await
+    } else {
+        let mut src = HttpSource::new(&url)?;
+        run(&io, &mut src, &progress, &sha256, size_bytes, start).await
+    };
+    drop(qcow);
+    match outcome {
         Ok(o) => Ok(json!({
             "volume_id": volume_id,
             "bytes": o.bytes,
@@ -372,6 +551,8 @@ pub(crate) async fn dispatch_image_import(
             "verified": true,
             "zero_bytes_skipped": o.zero_bytes_skipped,
             "resumed_from": start,
+            "format": format,
+            "source_sha256": sha256,
         })),
         Err(ImportError::Mismatch {
             stage,

@@ -11,10 +11,12 @@ use atlas_api_types::{BackendMode, BackendType, Capabilities, StorageBackend};
 use atlas_common::config::CephDriverMode;
 use atlas_common::Config;
 use atlas_driver_ceph::{FakeCephDriver, RealCephDriver};
+use atlas_driver_cloudblock::{FakeCloudBlockDriver, RealCloudBlockDriver};
 use atlas_driver_core::{DriverRegistry, StorageDriver};
 use atlas_driver_k8s::K8sDriver;
 use atlas_driver_longhorn::LonghornDriver;
 use atlas_driver_nfs::{FakeNfsDriver, RealNfsDriver};
+use atlas_driver_san::{FakeSanDriver, RealSanDriver};
 use atlas_driver_zfs::{FakeZfsDriver, RealZfsDriver};
 
 use crate::oauth_resource::parse_public_url;
@@ -26,6 +28,10 @@ pub const CEPH_BACKEND_ID: &str = "bkd_ceph_lab";
 pub const NFS_BACKEND_ID: &str = "bkd_nfs_lab";
 /// Optional third ZFS backend id (enabled via `ATLAS_ZFS_ENABLE`).
 pub const ZFS_BACKEND_ID: &str = "bkd_zfs_lab";
+/// Optional SAN (iSCSI) backend id (enabled via `ATLAS_SAN_ENABLE`).
+pub const SAN_BACKEND_ID: &str = "bkd_san_lab";
+/// Optional cloud-block backend id (enabled via `ATLAS_CLOUDBLOCK_ENABLE`).
+pub const CLOUDBLOCK_BACKEND_ID: &str = "bkd_cloudblock_lab";
 pub const LONGHORN_BACKEND_ID: &str = "bkd_longhorn";
 /// atlas-native cluster backend id (enabled via `ATLAS_NATIVE_ENABLE`).
 pub const NATIVE_BACKEND_ID: &str = "bkd_native";
@@ -36,10 +42,11 @@ pub const MACOS_BACKEND_ID: &str = "bkd_macos";
 /// New buckets default to [`CEPH_BACKEND_ID`] (RGW).
 pub const RUSTFS_BACKEND_ID: &str = "bkd_rustfs_lab";
 
-/// Builds the read-only WEKA driver when `ATLAS_WEKA_ENABLE=1`: `ATLAS_WEKA_DRIVER_MODE` (`fake`
-/// default, `real`), `ATLAS_WEKA_ENDPOINT` (API base, e.g. `https://weka01:14000/api/v2`),
-/// `ATLAS_WEKA_USERNAME`, `ATLAS_WEKA_PASSWORD_FILE`, `ATLAS_WEKA_ORG`, `ATLAS_WEKA_CA_CERT`,
-/// `ATLAS_WEKA_TIMEOUT_SECS` (10).
+/// Builds the WEKA driver when `ATLAS_WEKA_ENABLE=1`. Discovery reads the cluster and filesystems;
+/// `create_volume` / `delete_volume` create and delete a filesystem (fake mode edits its in-memory
+/// list). Env: `ATLAS_WEKA_DRIVER_MODE` (`fake` default, `real`), `ATLAS_WEKA_ENDPOINT` (API base,
+/// e.g. `https://weka01:14000/api/v2`), `ATLAS_WEKA_USERNAME`, `ATLAS_WEKA_PASSWORD_FILE`,
+/// `ATLAS_WEKA_ORG`, `ATLAS_WEKA_CA_CERT`, `ATLAS_WEKA_TIMEOUT_SECS` (10).
 pub fn weka_driver_from_env() -> Result<Option<Arc<dyn StorageDriver>>> {
     let var = |k: &str| std::env::var(k).ok().filter(|v| !v.trim().is_empty());
     if !var("ATLAS_WEKA_ENABLE").is_some_and(|v| matches!(v.as_str(), "1" | "true" | "yes")) {
@@ -456,6 +463,99 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         None
     };
 
+    // Optionally register a SAN (iSCSI) backend — same pluggable-driver contract as NFS.
+    let san_driver: Option<Arc<dyn StorageDriver>> = if config.san_enable {
+        let portal = config
+            .san_server
+            .clone()
+            .unwrap_or_else(|| "san01.zyvor.lab".into());
+        let targets = if config.san_targets.is_empty() {
+            vec![
+                "iqn.2026-01.com.zyvor:lun0".to_string(),
+                "iqn.2026-01.com.zyvor:lun1".to_string(),
+            ]
+        } else {
+            config.san_targets.clone()
+        };
+        let san: Arc<dyn StorageDriver> = match config.san_driver_mode {
+            atlas_common::config::DriverMode::Real => {
+                Arc::new(RealSanDriver::new(SAN_BACKEND_ID, portal, targets))
+            }
+            atlas_common::config::DriverMode::Fake => {
+                Arc::new(FakeSanDriver::new(SAN_BACKEND_ID, portal, targets))
+            }
+        };
+        let san_backend = StorageBackend {
+            id: SAN_BACKEND_ID.into(),
+            name: "zyvor-san".into(),
+            backend_type: BackendType::San,
+            mode: BackendMode::External,
+            status: "active".into(),
+            capabilities: Capabilities {
+                block: true,
+                expansion: true,
+                ..Capabilities::default()
+            },
+            connection_ref: None,
+            cordoned: false,
+        };
+        atlas_inventory::upsert_backend(&pool, &san_backend).await?;
+        registry.register(san.clone());
+        tracing::info!("san backend registered ({SAN_BACKEND_ID})");
+        Some(san)
+    } else {
+        None
+    };
+
+    // Optionally register a cloud-block backend (AWS EBS in real mode; GCP/Azure are
+    // NotImplemented there). Fake mode invents the configured volume ids.
+    let cloudblock_driver: Option<Arc<dyn StorageDriver>> = if config.cloudblock_enable {
+        let provider = config
+            .cloudblock_server
+            .clone()
+            .unwrap_or_else(|| "aws".into());
+        let volumes = if config.cloudblock_targets.is_empty() {
+            vec![
+                "vol-atlas00000000001".to_string(),
+                "vol-atlas00000000002".to_string(),
+            ]
+        } else {
+            config.cloudblock_targets.clone()
+        };
+        let cloudblock: Arc<dyn StorageDriver> = match config.cloudblock_driver_mode {
+            atlas_common::config::DriverMode::Real => Arc::new(RealCloudBlockDriver::new(
+                CLOUDBLOCK_BACKEND_ID,
+                provider,
+                volumes,
+            )),
+            atlas_common::config::DriverMode::Fake => Arc::new(FakeCloudBlockDriver::new(
+                CLOUDBLOCK_BACKEND_ID,
+                provider,
+                volumes,
+            )),
+        };
+        let cloudblock_backend = StorageBackend {
+            id: CLOUDBLOCK_BACKEND_ID.into(),
+            name: "zyvor-cloudblock".into(),
+            backend_type: BackendType::CloudBlock,
+            mode: BackendMode::External,
+            status: "active".into(),
+            capabilities: Capabilities {
+                block: true,
+                expansion: true,
+                ..Capabilities::default()
+            },
+            connection_ref: None,
+            cordoned: false,
+        };
+        atlas_inventory::upsert_backend(&pool, &cloudblock_backend).await?;
+        registry.register(cloudblock.clone());
+        tracing::info!("cloudblock backend registered ({CLOUDBLOCK_BACKEND_ID})");
+        Some(cloudblock)
+    } else {
+        None
+    };
+
     // Attach a live Kubernetes driver if reachable.
     let k8s = if opts.enable_k8s {
         match K8sDriver::try_default().await {
@@ -590,6 +690,8 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
     // Optional: accept IdP-issued JWT access tokens on `/mcp` (needs ATLAS_PUBLIC_URL for the audience;
     // a bad setting fails startup, an IdP that is down does not: keys are fetched on first use).
     let mcp_idp = crate::idp_token::from_env(public_url.as_deref(), config.auth_required)?;
+    let mcp_introspection = crate::mcp_introspect::from_env(public_url.as_deref())?;
+    let mcp_as = crate::mcp_as::from_env()?;
     let state = AppState {
         pool,
         config: Arc::new(config),
@@ -601,6 +703,8 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
         oidc,
         public_url,
         mcp_idp,
+        mcp_introspection,
+        mcp_as,
     };
 
     if opts.initial_discovery {
@@ -627,6 +731,19 @@ pub async fn build_state(config: Config, opts: BuildOptions) -> Result<AppState>
             match atlas_discovery::run_discovery(&state.pool, zfs.clone(), None, None).await {
                 Ok(sum) => tracing::info!(?sum, "initial zfs discovery complete"),
                 Err(e) => tracing::warn!("initial zfs discovery failed: {e:#}"),
+            }
+        }
+        if let Some(san) = &san_driver {
+            match atlas_discovery::run_discovery(&state.pool, san.clone(), None, None).await {
+                Ok(sum) => tracing::info!(?sum, "initial san discovery complete"),
+                Err(e) => tracing::warn!("initial san discovery failed: {e:#}"),
+            }
+        }
+        if let Some(cloudblock) = &cloudblock_driver {
+            match atlas_discovery::run_discovery(&state.pool, cloudblock.clone(), None, None).await
+            {
+                Ok(sum) => tracing::info!(?sum, "initial cloudblock discovery complete"),
+                Err(e) => tracing::warn!("initial cloudblock discovery failed: {e:#}"),
             }
         }
         if let Some(longhorn) = &longhorn_driver {

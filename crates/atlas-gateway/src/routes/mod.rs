@@ -77,6 +77,7 @@ pub fn router(state: AppState) -> Router {
 
     let api = Router::new()
         .route("/ai/advisor", post(ai_advisor))
+        .route("/ai/advisor/findings", get(list_advisor_findings))
         .route("/ai/anomalies", get(ai_anomalies))
         .route(
             "/ai/ransomware/assess",
@@ -85,6 +86,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ai/incidents", get(ai_incidents))
         .route("/ai/what-if", post(ai_what_if))
         .route("/io/ai", get(get_io_ai))
+        .route("/io/heatmap", get(get_io_heatmap))
         .route("/backends", get(list_backends).post(create_backend))
         .route("/backends/summary", get(backends_summary))
         .route("/backends/{id}", delete(delete_backend))
@@ -304,6 +306,8 @@ pub fn router(state: AppState) -> Router {
         .route("/snapshots", get(list_snapshots))
         .route("/snapshots/{id}", axum::routing::delete(delete_snapshot))
         .route("/snapshots/{id}/lock", post(lock_snapshot))
+        .route("/snapshots/{id}/unlock/propose", post(propose_unlock_snapshot))
+        .route("/snapshots/{id}/unlock/confirm", post(confirm_unlock_snapshot))
         .route("/snapshots/{id}/clone", post(clone_snapshot))
         .route("/snapshots/{id}/restore", post(restore_snapshot))
         .route("/volumes/{id}/schedule", post(create_schedule))
@@ -343,6 +347,10 @@ pub fn router(state: AppState) -> Router {
         .route("/databridge/plans/{id}/validate", post(db_validate))
         .route("/databridge/plans/{id}/cutover", post(db_cutover))
         .route("/databridge/plans/{id}/rollback", post(db_rollback))
+        .route(
+            "/databridge/plans/{id}/rollback-drill",
+            get(db_rollback_drill),
+        )
         // ---- DataBridge (object leg): cloud object store -> Ceph RGW ----
         .route(
             "/databridge/object",
@@ -387,6 +395,8 @@ pub fn router(state: AppState) -> Router {
         .route("/alerts", get(list_alerts))
         .route("/alerts/evaluate", post(evaluate_alerts))
         .route("/alerts/{id}/ack", post(ack_alert))
+        .route("/alerts/{id}/ack/propose", post(propose_ack_alert))
+        .route("/alerts/{id}/ack/confirm", post(confirm_ack_alert))
         .route("/alerts/{id}/silence", post(silence_alert))
         .route("/alerts/{id}/resolve", post(resolve_alert))
         .route("/jobs", get(list_jobs))
@@ -445,6 +455,11 @@ pub fn router(state: AppState) -> Router {
         .route(
             crate::oauth_resource::MCP_METADATA_PATH,
             get(crate::oauth_resource::mcp_metadata),
+        )
+        .route(crate::mcp_as::TOKEN_PATH, post(crate::mcp_as::token))
+        .route(
+            crate::mcp_as::METADATA_PATH,
+            get(crate::mcp_as::metadata),
         );
     root
         // Any other path serves the embedded Storage Center SPA (client-side routing).

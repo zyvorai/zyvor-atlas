@@ -208,10 +208,15 @@ pub enum MetaCommand {
         now_unix: u64,
     },
     /// Retention-locks a snapshot until `retain_until_unix`. A lock can only be extended, never
-    /// shortened or removed.
+    /// shortened. Clearing it is [`MetaCommand::UnlockSnapshot`], which the gateway calls only
+    /// after two distinct admins confirm.
     LockSnapshot {
         snapshot_id: SnapshotId,
         retain_until_unix: u64,
+    },
+    /// Clears a retention lock (`retain_until_unix = 0`). Refused when the snapshot is not locked.
+    UnlockSnapshot {
+        snapshot_id: SnapshotId,
     },
     DeleteVolume {
         volume_id: VolumeId,
@@ -449,6 +454,18 @@ impl Catalog {
                     )));
                 }
                 s.retain_until_unix = *retain_until_unix;
+            }
+            MetaCommand::UnlockSnapshot { snapshot_id } => {
+                let s = self
+                    .snapshots
+                    .get_mut(snapshot_id)
+                    .ok_or_else(|| MetaError::NotFound(snapshot_id.clone()))?;
+                if s.retain_until_unix == 0 {
+                    return Err(MetaError::Invalid(format!(
+                        "snapshot {snapshot_id} is not retention-locked"
+                    )));
+                }
+                s.retain_until_unix = 0;
             }
             MetaCommand::DeleteSnapshot {
                 snapshot_id,

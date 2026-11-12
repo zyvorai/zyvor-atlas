@@ -357,13 +357,15 @@ backend, cluster issue) leaves **no** row behind, rather than a permanent orphan
 `bucket_name: null`.
 ```json
 { "name": "atlas-backups", "namespace": "rook-ceph", "storage_class": "zyvor-rgw-bucket",
-  "max_objects": 1000, "max_size": "2G" }
+  "max_objects": 1000, "max_size": "2G", "object_lock": false }
 // 202 → resource: { bucket_id, namespace }
 ```
 `max_objects` / `max_size` (optional) set an RGW per-bucket quota (enforced via `radosgw-admin`,
 best-effort — the job result's `quota_set` field is `false` if the quota call failed or timed out,
 even though the job itself still reports `succeeded`; every `radosgw-admin` call is bounded to 12s
-so it can no longer wedge the single-threaded job queue).
+so it can no longer wedge the single-threaded job queue). `object_lock: true` asks for S3 Object
+Lock. Rook's ObjectBucketClaim cannot set that header, so the job deletes the empty bucket the claim
+just created and recreates it with `x-amz-bucket-object-lock-enabled` using the claim's credentials.
 
 ### `GET /api/atlas/v1/buckets/{id}/stats`
 RGW usage + quota for the bucket (`radosgw-admin bucket stats`, 12s bound). Soft-fails instead of
@@ -476,6 +478,9 @@ heterogeneous per [DATABRIDGE.md](DATABRIDGE.md)). Stage triggers return `202 + 
   connectors + KafkaConnect) or fails past the 5-minute drain deadline and returns the plan to
   `validated`. Fake mode drains instantly.
 - `POST .../rollback` — **admin**, within the rollback window (job).
+- `GET .../rollback-drill` — the steps that rollback runs (cutover and plan state become
+  `rolled_back`; no row copy) and whether the window is still open. Does not change the plan.
+  `atlasctl databridge-stage PLAN_ID rollback-drill`.
 
 ### Object leg (cloud object store → Ceph RGW)
 - `GET`/`POST /api/atlas/v1/databridge/object` · `GET`/`DELETE .../{id}` · `POST .../{id}/start`
@@ -524,7 +529,8 @@ which have no equivalent bound.
 `locked_until` (unix seconds) appears only on a snapshot the gateway retention-locked
 (`POST /snapshots/{id}/lock`, ransomware protect); it is the end of the lock, so a value in the past
 means the lock has expired. It is absent for a snapshot the gateway never locked, including one
-locked directly on a native node (see [WORM.md](WORM.md)).
+locked directly on a native node (see [WORM.md](WORM.md)). Two different admins can clear a lock
+early: `POST /snapshots/{id}/unlock/propose` then `POST /snapshots/{id}/unlock/confirm`.
 
 ### `GET /api/atlas/v1/policies`
 The built-in intent → placement catalog (PDF §12.3).

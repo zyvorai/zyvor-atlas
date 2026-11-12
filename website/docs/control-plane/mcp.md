@@ -79,9 +79,10 @@ says an MCP server MUST implement RFC 9728 and answer an unauthenticated request
 
 | Piece | Behaviour |
 |---|---|
-| `GET /.well-known/oauth-protected-resource/api/atlas/v1/mcp` | Public JSON for the MCP endpoint: `resource` (the MCP endpoint URL), `bearer_methods_supported: ["header"]`, `resource_name`, `resource_documentation`, and, **only when `ATLAS_MCP_IDP_ISSUER` is set**, `authorization_servers: ["<issuer>"]`. |
-| `GET /.well-known/oauth-protected-resource` | The root form; `resource` is the origin (RFC 9728 section 3.3 requires it to match the resource the URL was built from). It never lists `authorization_servers`: Atlas enforces the MCP endpoint URL as the token audience, so a client that took the origin as its RFC 8707 `resource` would be issued a token Atlas refuses. |
-| 401 on `/api/atlas/v1/mcp` | Adds `WWW-Authenticate: Bearer resource_metadata="<url of the first document>"`; when a token was sent and refused (bad signature, expired, revoked, wrong audience) it is `Bearer error="invalid_token", resource_metadata="..."`. The JSON body is unchanged. REST, gRPC and `/metrics` 401s get no header. |
+| `GET /.well-known/oauth-protected-resource/api/atlas/v1/mcp` | Public JSON for the MCP endpoint: `resource` (the MCP endpoint URL), `bearer_methods_supported: ["header"]`, `resource_name`, `resource_documentation`, `scopes_supported` (the three `atlas:role:*` scopes and one `atlas:tool:<name>` per tool this process serves), and `authorization_servers` when an IdP issuer is set and/or the lab token endpoint is on. |
+| `GET /.well-known/oauth-protected-resource` | The root form; `resource` is the origin (RFC 9728 section 3.3 requires it to match the resource the URL was built from). It lists the same `scopes_supported`. It never lists `authorization_servers`: Atlas enforces the MCP endpoint URL as the token audience, so a client that took the origin as its RFC 8707 `resource` would be issued a token Atlas refuses. |
+| 401 on `/api/atlas/v1/mcp` | Adds `WWW-Authenticate: Bearer scope="<those scopes>", resource_metadata="<url of the first document>"`; when a token was sent and refused (bad signature, expired, revoked, wrong audience, inactive introspection) it is `Bearer error="invalid_token", scope="...", resource_metadata="..."`. The JSON body is unchanged. REST, gRPC and `/metrics` 401s get no header. |
+| 403 `insufficient_scope` | Only when a verified IdP JWT or an active opaque token carries a `scope` claim that names no Atlas role and no Atlas tool. `WWW-Authenticate: Bearer error="insufficient_scope", scope="...", resource_metadata="..."`. A token with no `scope` claim is not this case. Other 403s (`FORBIDDEN`, tool denied) are unchanged and carry no challenge. |
 | `/.well-known/mcp` | The card has `authentication.resource_metadata` (a path, relative like `endpoint`) and, with an IdP configured, `authentication.authorization_servers`. |
 
 Only compiled with `--features mcp`, like the endpoint itself.
@@ -98,30 +99,66 @@ The IdP access-token feature requires `ATLAS_PUBLIC_URL` (see below).
 
 **What this still does not do.** Do not read it as full OAuth login support.
 
-- There is **no OAuth authorization server** in Atlas: no Dynamic Client Registration, no Client ID Metadata
-  Documents, no PKCE or token endpoint. A client authorizes against *your* identity provider (which must
+- There is **no full OAuth authorization server** in Atlas: no Dynamic Client Registration, no Client ID Metadata
+  Documents, no PKCE and no authorization-code grant. A client authorizes against *your* identity provider (which must
   support what the spec asks of an authorization server, including audience binding), then calls Atlas with the
-  access token it got. Atlas's own tokens are still HS256 JWTs minted by Atlas (`POST /auth/login`,
-  `POST /auth/tokens`, the SSO console login); a client that cannot be given one out of band and has no IdP
-  token cannot complete an OAuth flow against Atlas.
-- No `scopes_supported` and no `scope` in the 401: Atlas has roles and tool/resource scopes, not OAuth scope
-  strings, and an IdP token's `scope` claim is ignored. There is no `403 insufficient_scope` challenge; Atlas's
-  403s (`FORBIDDEN`, tool denied) are unchanged and carry no `WWW-Authenticate`.
-- **Opaque access tokens are not supported.** Only JWT access tokens (RS256 or ES256) are validated; Atlas does
-  no token introspection (RFC 7662).
+  access token it got. The Dex lab ([`deploy/dex-lab`](https://github.com/zyvorai/zyvor-atlas/blob/main/deploy/dex-lab/README.md)) is that authorization server
+  for a lab login. Atlas's own tokens are still HS256 JWTs minted by Atlas (`POST /auth/login`,
+  `POST /auth/tokens`, the SSO console login).
+- A **lab-only** token endpoint exists behind `ATLAS_MCP_AS_ENABLE` (below). It answers `client_credentials` and
+  mints an Atlas JWT. It is not a substitute for Dex, and it is off by default.
 - The configured console OIDC issuer (`ATLAS_OIDC_ISSUER_URL`) is not advertised unless you also set
   `ATLAS_MCP_IDP_ISSUER` to it. The two settings are independent: console login mints an Atlas token and still
   works the same way.
-- **Audience is enforced for IdP tokens only.** Atlas's own tokens carry no `aud` and keep working on every Atlas
+- **Audience is enforced for IdP JWTs only.** Atlas's own tokens carry no `aud` and keep working on every Atlas
   route unchanged (unless they are tool-scoped agent tokens, which are MCP only), so the spec's "validate that a
   token was issued for this server" is met for the tokens that come from an external authorization server, not for
-  Atlas-minted ones.
-- Not run against a real MCP client or a real identity provider: the tests exercise the HTTP behaviour and an
-  in-process fake JWKS server.
+  Atlas-minted ones. Introspection checks `aud` only when the response includes it.
+- Not run against a real MCP client or a real identity provider: the tests exercise the HTTP behaviour, an
+  in-process fake JWKS server and an in-process introspection response.
+
+### Scopes
+
+`scopes_supported` and the 401 `scope` parameter are the same list:
+
+| Scope | Meaning |
+|---|---|
+| `atlas:role:viewer`, `atlas:role:operator`, `atlas:role:admin` | The Atlas role. A bare `viewer` / `operator` / `admin` in a token's `scope` claim is accepted as the same thing. When several are present, the highest wins. |
+| `atlas:tool:<name>` | One per MCP tool this process is serving (write tools and `data_*` tools appear only when their gates are on). In a token, these become the tool allowlist. |
+
+An IdP JWT or an introspection response **with no `scope` claim** is unchanged: the role comes from `groups`, and the actor is unscoped (every tool its role allows). When the claim **is** present, `atlas:role:*` replaces the group role and `atlas:tool:*` is the allowlist. A claim that names neither (for example `openid profile email` alone) is `403` with `error="insufficient_scope"`. The token is otherwise valid; this is not `invalid_token`.
+
+### Opaque tokens (RFC 7662)
+
+Off unless `ATLAS_MCP_INTROSPECTION_URL` is set. Then `/api/atlas/v1/mcp` accepts a bearer token that is **not** a JWT (not three dot-separated segments): the gateway POSTs it to that URL as `application/x-www-form-urlencoded` (`token`, `token_type_hint=access_token`) with HTTP Basic authentication. JWT access tokens are never sent there.
+
+| Variable | Meaning |
+|---|---|
+| `ATLAS_MCP_INTROSPECTION_URL` | Introspection endpoint. Unset: feature off. `https` required, except a loopback host. |
+| `ATLAS_MCP_INTROSPECTION_CLIENT_ID`, `ATLAS_MCP_INTROSPECTION_CLIENT_SECRET` | Required when the URL is set. Sent as the Basic client, never logged. |
+| `ATLAS_MCP_INTROSPECTION_ALLOW_HTTP` | `1` allows plain `http://` to a non-loopback host. Default off. |
+
+`active: true` is required. `sub` (else `client_id`, else `username`) becomes the actor. `groups` and `ATLAS_OIDC_TENANT_CLAIM` use the same mapping as an IdP JWT, then `scope` is applied as above. `aud`, when present, must contain `<ATLAS_PUBLIC_URL>/api/atlas/v1/mcp`; a response with no `aud` is accepted. `iss`, when present and `ATLAS_MCP_IDP_ISSUER` is set, must equal that issuer. `exp` in the past is inactive. A `jti` is recorded as `intro-<8 hex>:<jti>` and can be revoked with that value. Redirects are not followed. An unreachable endpoint is `401 invalid_token`.
+
+### Lab token endpoint (`ATLAS_MCP_AS_ENABLE`)
+
+Off by default. This is a single `client_credentials` endpoint for a lab that has no IdP yet. It does **not** implement DCR, PKCE or the authorization-code grant; use Dex for those.
+
+| Variable | Meaning |
+|---|---|
+| `ATLAS_MCP_AS_ENABLE` | `1` turns the endpoint on. |
+| `ATLAS_MCP_AS_CLIENT_ID`, `ATLAS_MCP_AS_CLIENT_SECRET` | Required. The secret is 8 to 256 characters. Compared in constant time, never logged. |
+| `ATLAS_MCP_AS_ROLE` | `viewer`, `operator` (default) or `admin`. |
+| `ATLAS_MCP_AS_TTL_SECS` | Lifetime, default 3600, from 60 to 86400. |
+| `ATLAS_MCP_AS_SUBJECT` | JWT `sub`. Default: the client id. |
+| `ATLAS_MCP_AS_TENANT` | JWT tenant. Default `global`. |
+| `ATLAS_MCP_AS_TOOLS` | Optional comma-separated tool allowlist. When set, the JWT is MCP-only, like any other scoped agent token. |
+
+`POST /oauth/token` accepts `application/x-www-form-urlencoded` with `grant_type=client_credentials`. The client id and secret come from HTTP Basic or from the form body. The response is an Atlas HS256 JWT (`token_type: Bearer`) plus `scope`. `GET /.well-known/oauth-authorization-server` lists the issuer (the public origin), the token endpoint, `client_credentials` and `scopes_supported`. There is no `registration_endpoint`. Both routes are 404 when the flag is off. When it is on, the MCP protected-resource document adds this origin to `authorization_servers`.
 
 Tests: `crates/atlas-gateway/tests/mcp.rs` (`oauth_*`, `mcp_401_*`, `rest_401_has_no_challenge`,
 `authenticated_mcp_initialize_has_no_challenge`), `crates/atlas-gateway/tests/mcp_idp.rs` and the unit tests in
-`src/oauth_resource.rs` and `src/idp_token.rs`.
+`src/oauth_resource.rs`, `src/idp_token.rs`, `src/mcp_as.rs` and `src/mcp_introspect.rs`.
 
 ### IdP access tokens (resource server)
 
@@ -155,8 +192,9 @@ whole key set, so a retired key stops being trusted at the next refresh. If a re
 used for up to one more hour, then requests get a 401. Responses over 256 KiB are refused, redirects are not
 followed, RSA keys under 2048 bits and keys with a mismatching `alg`/`use` are skipped.
 
-The resulting actor is **unscoped** (no tool allowlist, no resource scope, like an Atlas operator token) and limited
-only by its role. Its id is `idp-<8 hex of sha256(issuer)>:<sub>`, so an IdP subject cannot take over an Atlas
+The resulting actor is **unscoped** when the token has no `scope` claim (no tool allowlist, no resource scope, like an
+Atlas operator token) and limited only by its role. A `scope` claim is mapped as [above](#scopes). Its id is
+`idp-<8 hex of sha256(issuer)>:<sub>`, so an IdP subject cannot take over an Atlas
 subject's audit trail, rate-limit bucket or workspaces. A `jti` is recorded as `<same prefix>:<jti>` and checked
 against the `POST /auth/tokens/{jti}/revoke` deny-list (revoke the prefixed value, which appears in the audit
 `jti` field). **A token without a `jti` cannot be revoked in Atlas**; revoke it at the IdP and rely on the lifetime cap.

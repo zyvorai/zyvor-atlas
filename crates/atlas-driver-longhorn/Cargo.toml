@@ -13,3 +13,8 @@ atlas-driver-core = { workspace = true }
 async-trait = { workspace = true }
 kube = { workspace = true }
 serde_json = { workspace = true }
+
+[dev-dependencies]
+# Enables a Kubernetes version feature so `cargo test -p atlas-driver-longhorn` can build
+# k8s-openapi. The feature is not enabled on the library dependency itself.
+k8s-openapi = { workspace = true }

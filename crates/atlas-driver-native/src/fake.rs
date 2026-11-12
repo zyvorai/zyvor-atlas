@@ -354,6 +354,24 @@ impl NativeApi for FakeApi {
         }
         extend_lock(&mut s, id, retain_secs)
     }
+
+    async fn unlock_snapshot(&self, id: &str) -> Result<(), DriverError> {
+        let mut s = lock(&self.state)?;
+        if !s.snapshots.contains_key(id) {
+            return Err(DriverError::Backend(format!("not found: snapshot {id}")));
+        }
+        clear_lock(&mut s, id)
+    }
+
+    async fn unlock_fs_snapshot(&self, id: &str) -> Result<(), DriverError> {
+        let mut s = lock(&self.state)?;
+        if !s.fs_snapshots.contains_key(id) {
+            return Err(DriverError::Backend(format!(
+                "not found: filesystem snapshot {id}"
+            )));
+        }
+        clear_lock(&mut s, id)
+    }
 }
 
 fn unix_now() -> u64 {
@@ -380,4 +398,14 @@ fn extend_lock(s: &mut State, id: &str, retain_secs: u64) -> Result<u64, DriverE
     }
     s.locks.insert(id.to_string(), until);
     Ok(until)
+}
+
+fn clear_lock(s: &mut State, id: &str) -> Result<(), DriverError> {
+    if s.locks.remove(id).is_some() {
+        Ok(())
+    } else {
+        Err(DriverError::Backend(format!(
+            "invalid: snapshot {id} is not retention-locked"
+        )))
+    }
 }

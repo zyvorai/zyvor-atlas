@@ -72,18 +72,27 @@ pub(crate) fn ceph_default_caps(t: BackendType) -> Capabilities {
             expansion: true,
             replication: true,
         },
-        // atlas-driver-nfs / atlas-driver-zfs only implement discover/health/list_pools/
-        // list_volumes/metrics (read-only) — every write-path StorageDriver method falls back to
-        // the trait default (NotImplemented), and both classify their volumes as
-        // VolumeKind::Filesystem. `Capabilities::default()` (all false, including `file`) was
-        // reporting a live, functioning NFS/ZFS backend as supporting nothing at all.
+        // NFS, ZFS and macOS only implement the read methods (write methods stay NotImplemented)
+        // and classify volumes as filesystems. WEKA's driver also creates and deletes filesystems,
+        // but the gateway volume routes do not call them, so the catalog still only advertises
+        // `file`. `Capabilities::default()` (all false, including `file`) was reporting a live
+        // backend as supporting nothing at all.
         BackendType::Nfs | BackendType::Zfs | BackendType::Weka | BackendType::Macos => {
             Capabilities {
                 file: true,
                 ..Capabilities::default()
             }
         }
-        // Native driver is read-only; PVC provisioning is served by the Kubernetes path.
+        // atlas-driver-san / atlas-driver-cloudblock classify volumes as VolumeKind::Block.
+        // Both are discover-only today (write methods stay the trait default), but expansion is
+        // advertised so a later resize path has a capability bit to gate on.
+        BackendType::San | BackendType::CloudBlock => Capabilities {
+            block: true,
+            expansion: true,
+            ..Capabilities::default()
+        },
+        // The Longhorn driver can create, delete and expand Volume CRs and snapshots. The
+        // gateway volume routes still provision a PVC, so this catalog stays block-only.
         BackendType::Longhorn => Capabilities {
             block: true,
             ..Capabilities::default()

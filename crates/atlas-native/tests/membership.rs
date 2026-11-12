@@ -145,6 +145,39 @@ impl Sim {
     }
 
     /// Proposes on the current leader once it has committed an entry in its term.
+    fn add_voter(&mut self, id: &str) -> u64 {
+        for _ in 0..1000 {
+            let l = self.elect();
+            match self
+                .node_mut(&l)
+                .add_voter(id.to_string(), format!("{id}:7482"))
+            {
+                Ok(i) => {
+                    self.deliver();
+                    return i;
+                }
+                Err(RaftError::MembershipBusy) => self.tick(),
+                Err(e) => panic!("add_voter: {e}"),
+            }
+        }
+        panic!("add_voter never accepted");
+    }
+
+    fn remove_voter(&mut self, id: &str) -> u64 {
+        for _ in 0..1000 {
+            let l = self.elect();
+            match self.node_mut(&l).remove_voter(&id.to_string()) {
+                Ok(i) => {
+                    self.deliver();
+                    return i;
+                }
+                Err(RaftError::MembershipBusy) => self.tick(),
+                Err(e) => panic!("remove_voter: {e}"),
+            }
+        }
+        panic!("remove_voter never accepted");
+    }
+
     fn change(&mut self, voters: BTreeSet<String>, a: BTreeMap<String, String>) -> u64 {
         for _ in 0..1000 {
             let l = self.elect();
@@ -359,4 +392,35 @@ fn membership_survives_restart_and_compaction() {
     assert!(s.run_until(200, |s| s.stable_everywhere(&all, &four)));
     s.propose(create("post-restart"));
     assert!(s.run_until(200, |s| all.iter().all(|i| s.has_volume(i, "post-restart"))));
+}
+
+#[test]
+fn add_and_remove_voter_go_through_joint_consensus() {
+    let mut s = Sim::new(3, 0);
+    s.elect();
+    s.propose(create("before"));
+    s.add_joiner("m4", &ids(1..=3));
+    s.add_voter("m4");
+    let four = set(&["m1", "m2", "m3", "m4"]);
+    let all = ["m1", "m2", "m3", "m4"];
+    assert!(
+        s.run_until(500, |s| s.stable_everywhere(&all, &four)),
+        "add_voter did not settle on the joint-then-stable configuration"
+    );
+    assert!(s.node("m4").is_voter());
+    assert!(s.has_volume("m4", "before"));
+
+    s.remove_voter("m4");
+    let three = set(&["m1", "m2", "m3"]);
+    assert!(
+        s.run_until(500, |s| s.stable_everywhere(&["m1", "m2", "m3"], &three)),
+        "remove_voter did not settle"
+    );
+    assert!(!s.node("m4").is_voter());
+    s.propose(create("after"));
+    assert!(s.run_until(200, |s| s.has_volume("m1", "after")));
+    assert!(
+        !s.has_volume("m4", "after"),
+        "a removed voter is not in the replication quorum"
+    );
 }

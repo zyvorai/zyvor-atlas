@@ -349,6 +349,10 @@ pub enum FsOp {
         id: SnapshotId,
         retain_until_unix: u64,
     },
+    /// Clears a filesystem snapshot's retention lock. Refused when it is not locked.
+    UnlockFsSnapshot {
+        id: SnapshotId,
+    },
     /// A new writable filesystem from a snapshot (copy-on-write).
     CloneFs {
         id: FsId,
@@ -1293,6 +1297,18 @@ impl Catalog {
                     )));
                 }
                 s.retain_until_unix = *retain_until_unix;
+            }
+            FsOp::UnlockFsSnapshot { id } => {
+                let s = self
+                    .fs_snapshots
+                    .get_mut(id)
+                    .ok_or_else(|| MetaError::NotFound(format!("filesystem snapshot {id}")))?;
+                if s.retain_until_unix == 0 {
+                    return Err(MetaError::Invalid(format!(
+                        "filesystem snapshot {id} is not retention-locked"
+                    )));
+                }
+                s.retain_until_unix = 0;
             }
             FsOp::DeleteFsSnapshot { id, now_unix } => {
                 if let Some(s) = self.fs_snapshots.get(id) {

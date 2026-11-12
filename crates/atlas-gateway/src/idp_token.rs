@@ -49,8 +49,11 @@
 //! `id` is `idp-<8 hex of sha256(issuer)>:<sub>` so an IdP subject can never collide with an Atlas
 //! subject (audit rows, rate limits, workspaces owned by the actor). The role comes from the token's
 //! `groups` claim (never from a `role` claim), the tenant from `ATLAS_OIDC_TENANT_CLAIM` (else
-//! `global`). The actor is **unscoped**: no tool allowlist and no resource scope, only its role limits
-//! it, exactly like an Atlas operator token. A `jti` is recorded as `<tag>:<jti>` and checked against
+//! `global`). A `scope` claim, when present, replaces that: `atlas:role:*` (or a bare
+//! `viewer`/`operator`/`admin`) sets the role, and `atlas:tool:<name>` is the MCP tool allowlist.
+//! A `scope` claim that names neither is insufficient scope (`403`), not a bad signature. With no
+//! `scope` claim the actor stays unscoped, limited only by its role, exactly like an Atlas operator
+//! token. A `jti` is recorded as `<tag>:<jti>` and checked against
 //! the same deny-list `POST /auth/tokens/{jti}/revoke` writes to (revoke the namespaced value); a token
 //! with no `jti` cannot be revoked here, only by the IdP and the lifetime cap.
 
@@ -237,6 +240,24 @@ pub fn is_idp_token(token: &str) -> bool {
     decode_header(token).is_ok_and(|h| matches!(h.alg, Algorithm::RS256 | Algorithm::ES256))
 }
 
+/// True when `token` has the three-segment shape of a JWT. Opaque tokens (no such shape) can be
+/// sent to RFC 7662 introspection when that is configured; a JWT is never introspected.
+pub fn looks_like_jwt(token: &str) -> bool {
+    let mut n = 0usize;
+    for part in token.split('.') {
+        if part.is_empty()
+            || part.len() > 12 * 1024
+            || !part
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'='))
+        {
+            return false;
+        }
+        n += 1;
+    }
+    n == 3
+}
+
 /// Why a token was refused. The text goes to the client in the 401 body and to the log, so it never
 /// contains a token, a key or a URL.
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
@@ -271,6 +292,9 @@ pub enum IdpError {
     LifetimeTooLong,
     #[error("token subject is not acceptable")]
     BadSubject,
+    /// The token verified, and its `scope` claim named no Atlas role or tool.
+    #[error("token scope does not include an Atlas role or tool")]
+    InsufficientScope,
     #[error("token is not acceptable")]
     Invalid,
 }
@@ -300,6 +324,9 @@ pub struct IdpIdentity {
     pub tenant_id: String,
     /// `<tag>:<jti>`, or empty when the token has no `jti` (not revocable here).
     pub jti: String,
+    /// MCP tool allowlist from `atlas:tool:*` scopes. Empty when the token had no tool scopes
+    /// (unscoped: the role is the only limit).
+    pub tools: Vec<String>,
 }
 
 #[derive(Clone)]
@@ -450,11 +477,26 @@ impl IdpValidator {
             Some(Value::String(s)) => vec![s.clone()],
             _ => Vec::new(),
         };
-        let role = crate::auth::role_for_groups(
+        let mut role = crate::auth::role_for_groups(
             &groups,
             &self.settings.mapping.admin_groups,
             &self.settings.mapping.operator_groups,
         );
+        let tools = match crate::oauth_resource::map_scope_value(claims.get("scope")) {
+            crate::oauth_resource::ScopeGrant::Absent => Vec::new(),
+            crate::oauth_resource::ScopeGrant::Insufficient => {
+                return Err(IdpError::InsufficientScope);
+            }
+            crate::oauth_resource::ScopeGrant::Mapped {
+                role: scoped,
+                tools,
+            } => {
+                if let Some(scoped) = scoped {
+                    role = scoped;
+                }
+                tools.unwrap_or_default()
+            }
+        };
         let tenant_id = self
             .settings
             .mapping
@@ -484,6 +526,7 @@ impl IdpValidator {
             role,
             tenant_id,
             jti,
+            tools,
         })
     }
 
@@ -880,6 +923,21 @@ mod tests {
                 .role,
             "admin"
         );
+        // No `scope` claim: still unscoped.
+        assert!(none.tools.is_empty());
+        // A scope claim replaces the group role and, when it names tools, becomes the allowlist.
+        let scoped = v
+            .identity(
+                &c(json!({"groups": ["admins"], "scope": "atlas:role:viewer atlas:tool:list_alerts"})),
+                now,
+            )
+            .unwrap();
+        assert_eq!(scoped.role, "viewer");
+        assert_eq!(scoped.tools, vec!["list_alerts".to_string()]);
+        assert_eq!(
+            v.identity(&c(json!({"scope": "openid email"})), now),
+            Err(IdpError::InsufficientScope)
+        );
         // A long jti is hashed, not truncated.
         let long = "j".repeat(500);
         assert!(v
@@ -977,6 +1035,10 @@ mod tests {
         };
         assert!(is_idp_token(&tok("RS256")));
         assert!(is_idp_token(&tok("ES256")));
+        assert!(looks_like_jwt(&tok("HS256")));
+        assert!(!looks_like_jwt("not-a-jwt"));
+        assert!(!looks_like_jwt("a.b"));
+        assert!(!looks_like_jwt("a.b.c.d"));
         for alg in [
             "HS256", "HS384", "HS512", "none", "PS256", "ES384", "EdDSA", "RS512", "",
         ] {

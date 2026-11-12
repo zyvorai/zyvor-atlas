@@ -6,7 +6,7 @@
 use atlas_common::config::CephDriverMode;
 use atlas_common::Config;
 use atlas_gateway::proto::atlas_storage_client::AtlasStorageClient;
-use atlas_gateway::proto::{CreateVolumeRequest, Empty, HealthRequest};
+use atlas_gateway::proto::{CreateVolumeRequest, Empty, HealthRequest, ListSchedulesRequest};
 use atlas_gateway::startup::{build_state, BuildOptions};
 
 mod common;
@@ -49,6 +49,14 @@ async fn grpc_edge_health_create_and_list() {
         zfs_host: None,
         zfs_pools: Vec::new(),
         zfs_driver_mode: atlas_common::config::DriverMode::Fake,
+        san_enable: false,
+        san_server: None,
+        san_targets: Vec::new(),
+        san_driver_mode: atlas_common::config::DriverMode::Fake,
+        cloudblock_enable: false,
+        cloudblock_server: None,
+        cloudblock_targets: Vec::new(),
+        cloudblock_driver_mode: atlas_common::config::DriverMode::Fake,
         oidc: None,
         rook_namespace: "rook-ceph".into(),
         rook_cluster_name: "rook-ceph".into(),
@@ -86,6 +94,15 @@ async fn grpc_edge_health_create_and_list() {
     // ListPools — the fake driver's initial discovery produced 3 pools.
     let pools = client.list_pools(Empty {}).await.unwrap().into_inner();
     assert_eq!(pools.pools.len(), 3);
+
+    let schedules = client
+        .list_schedules(ListSchedulesRequest {
+            volume_id: String::new(),
+        })
+        .await
+        .unwrap()
+        .into_inner();
+    assert!(schedules.schedules.is_empty());
 
     // CreateVolume → returns a job id (job fails later without a cluster, but the RPC contract holds).
     let created = client
@@ -165,6 +182,14 @@ async fn grpc_enforces_jwt_when_auth_required() {
         zfs_host: None,
         zfs_pools: Vec::new(),
         zfs_driver_mode: atlas_common::config::DriverMode::Fake,
+        san_enable: false,
+        san_server: None,
+        san_targets: Vec::new(),
+        san_driver_mode: atlas_common::config::DriverMode::Fake,
+        cloudblock_enable: false,
+        cloudblock_server: None,
+        cloudblock_targets: Vec::new(),
+        cloudblock_driver_mode: atlas_common::config::DriverMode::Fake,
         oidc: None,
         rook_namespace: "rook-ceph".into(),
         rook_cluster_name: "rook-ceph".into(),

@@ -816,6 +816,155 @@ pub(crate) async fn lock_snapshot(
     ))
 }
 
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+pub(super) fn proposal_error(e: atlas_inventory::proposals::ConfirmError) -> AppError {
+    use atlas_inventory::proposals::ConfirmError;
+    match e {
+        ConfirmError::NotFound => AppError::NotFound("proposal not found".into()),
+        ConfirmError::Expired => AppError::Conflict("proposal has expired".into()),
+        ConfirmError::SameActor => {
+            AppError::Forbidden("a different person must confirm this proposal".into())
+        }
+        ConfirmError::NotPending => AppError::Conflict("proposal is not pending".into()),
+        ConfirmError::Db(err) => AppError::Internal(err.to_string()),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UnlockProposeBody {
+    reason: String,
+}
+
+/// `POST /snapshots/{id}/unlock/propose` — first admin asks to clear a retention lock. Nothing is
+/// unlocked until a different admin confirms.
+pub(crate) async fn propose_unlock_snapshot(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    Json(body): Json<UnlockProposeBody>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_ADMIN)?;
+    let reason = body.reason.trim();
+    if reason.is_empty() || reason.chars().count() > 512 {
+        return Err(AppError::Validation(
+            "reason is required and must be at most 512 characters".into(),
+        ));
+    }
+    let snap = atlas_inventory::snapshots::get_snapshot(&s.pool, &id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("snapshot {id}")))?;
+    crate::auth::require_tenant(
+        s.config.auth_required,
+        &actor,
+        &snap.tenant_id,
+        format!("snapshot {id}"),
+    )?;
+    if native_driver_for_volume(&s, &snap.volume_id)
+        .await?
+        .is_none()
+    {
+        return Err(AppError::Validation(
+            "snapshot unlocking is only supported on atlas-native".into(),
+        ));
+    }
+    let proposal_id = ids::proposal_id();
+    let expires_unix = unix_now().saturating_add(atlas_inventory::proposals::TTL_SECS);
+    atlas_inventory::proposals::insert(
+        &s.pool,
+        &proposal_id,
+        atlas_inventory::proposals::KIND_UNLOCK,
+        &id,
+        &snap.tenant_id,
+        &actor.id,
+        reason,
+        expires_unix,
+    )
+    .await?;
+    audit(
+        &s,
+        Some(&snap.tenant_id),
+        &actor,
+        "snapshot.unlock.proposed",
+        "snapshot",
+        &id,
+        Some(json!({ "proposal_id": proposal_id, "reason": reason, "expires_unix": expires_unix })),
+    )
+    .await;
+    Ok(Json(json!({
+        "proposal_id": proposal_id,
+        "snapshot_id": id,
+        "expires_unix": expires_unix,
+        "state": "pending",
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct UnlockConfirmBody {
+    proposal_id: String,
+}
+
+/// `POST /snapshots/{id}/unlock/confirm` — a second admin clears the retention lock.
+pub(crate) async fn confirm_unlock_snapshot(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    Json(body): Json<UnlockConfirmBody>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_ADMIN)?;
+    let snap = atlas_inventory::snapshots::get_snapshot(&s.pool, &id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("snapshot {id}")))?;
+    crate::auth::require_tenant(
+        s.config.auth_required,
+        &actor,
+        &snap.tenant_id,
+        format!("snapshot {id}"),
+    )?;
+    let driver = native_driver_for_volume(&s, &snap.volume_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Validation("snapshot unlocking is only supported on atlas-native".into())
+        })?;
+    atlas_inventory::proposals::begin_confirm(
+        &s.pool,
+        &body.proposal_id,
+        atlas_inventory::proposals::KIND_UNLOCK,
+        &id,
+        &actor.id,
+        unix_now(),
+    )
+    .await
+    .map_err(proposal_error)?;
+    let native = snap.backend_native_id.clone().unwrap_or_else(|| id.clone());
+    if let Err(e) = driver.unlock_snapshot(&native).await {
+        let _ = atlas_inventory::proposals::abort(&s.pool, &body.proposal_id).await;
+        return Err(driver_error(e));
+    }
+    atlas_inventory::proposals::finish(&s.pool, &body.proposal_id).await?;
+    let _ = atlas_inventory::snapshots::clear_locked_until(&s.pool, &id).await;
+    audit(
+        &s,
+        Some(&snap.tenant_id),
+        &actor,
+        "snapshot.unlock",
+        "snapshot",
+        &id,
+        Some(json!({ "proposal_id": body.proposal_id })),
+    )
+    .await;
+    Ok(Json(json!({
+        "snapshot_id": id,
+        "unlocked": true,
+        "proposal_id": body.proposal_id,
+    })))
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct CloneBody {
     /// New volume/PVC name (required for clone; optional for restore).

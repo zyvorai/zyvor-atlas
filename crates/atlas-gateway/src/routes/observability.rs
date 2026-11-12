@@ -7,7 +7,7 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 
-use atlas_common::{AppError, AppResult};
+use atlas_common::{ids, AppError, AppResult};
 
 use super::util::csv_field;
 use crate::auth::Actor;
@@ -104,6 +104,117 @@ pub(crate) async fn ack_alert(
     )
     .await;
     Ok(Json(json!({ "id": id, "acknowledged_by": actor.id })))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AckProposeBody {
+    #[serde(default)]
+    reason: String,
+}
+
+fn unix_now() -> i64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs() as i64)
+        .unwrap_or(0)
+}
+
+/// `POST /alerts/{id}/ack/propose` — first operator asks to acknowledge an alert. The alert stays
+/// unacknowledged until a different operator confirms. `POST /alerts/{id}/ack` is unchanged.
+pub(crate) async fn propose_ack_alert(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    Json(body): Json<AckProposeBody>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
+    let reason = body.reason.trim();
+    if reason.chars().count() > 512 {
+        return Err(AppError::Validation(
+            "reason must be at most 512 characters".into(),
+        ));
+    }
+    if !atlas_inventory::alerts::exists(&s.pool, &id).await? {
+        return Err(AppError::NotFound(format!("alert {id}")));
+    }
+    let proposal_id = ids::proposal_id();
+    let expires_unix = unix_now().saturating_add(atlas_inventory::proposals::TTL_SECS);
+    atlas_inventory::proposals::insert(
+        &s.pool,
+        &proposal_id,
+        atlas_inventory::proposals::KIND_ACK,
+        &id,
+        &actor.tenant_id,
+        &actor.id,
+        reason,
+        expires_unix,
+    )
+    .await?;
+    let _ = atlas_inventory::audit::record(
+        &s.pool,
+        None,
+        &actor.id,
+        "alert.ack.proposed",
+        "alert",
+        &id,
+        "proposed",
+        Some(json!({ "proposal_id": proposal_id })),
+        None,
+    )
+    .await;
+    Ok(Json(json!({
+        "proposal_id": proposal_id,
+        "alert_id": id,
+        "expires_unix": expires_unix,
+        "state": "pending",
+    })))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct AckConfirmBody {
+    proposal_id: String,
+}
+
+/// `POST /alerts/{id}/ack/confirm` — a second operator acknowledges the alert.
+pub(crate) async fn confirm_ack_alert(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    Json(body): Json<AckConfirmBody>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
+    atlas_inventory::proposals::begin_confirm(
+        &s.pool,
+        &body.proposal_id,
+        atlas_inventory::proposals::KIND_ACK,
+        &id,
+        &actor.id,
+        unix_now(),
+    )
+    .await
+    .map_err(super::volumes::proposal_error)?;
+    if !atlas_inventory::alerts::acknowledge(&s.pool, &id, &actor.id).await? {
+        let _ = atlas_inventory::proposals::abort(&s.pool, &body.proposal_id).await;
+        return Err(AppError::NotFound(format!("alert {id}")));
+    }
+    atlas_inventory::proposals::finish(&s.pool, &body.proposal_id).await?;
+    let _ = atlas_inventory::audit::record(
+        &s.pool,
+        None,
+        &actor.id,
+        "alert.ack",
+        "alert",
+        &id,
+        "success",
+        Some(json!({ "proposal_id": body.proposal_id, "two_person": true })),
+        None,
+    )
+    .await;
+    Ok(Json(json!({
+        "id": id,
+        "acknowledged_by": actor.id,
+        "proposal_id": body.proposal_id,
+    })))
 }
 
 #[derive(Debug, Deserialize)]

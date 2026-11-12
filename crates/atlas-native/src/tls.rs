@@ -10,8 +10,12 @@
 use std::{
     io::{self, Read, Write},
     net::{SocketAddr, TcpStream, ToSocketAddrs},
-    sync::Arc,
-    time::Duration,
+    path::PathBuf,
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Arc,
+    },
+    time::{Duration, SystemTime},
 };
 
 use rustls::{
@@ -126,9 +130,19 @@ impl TlsIdentity {
 
     /// Server side: requires a client certificate signed by the cluster CA.
     pub(crate) fn server_config(&self) -> io::Result<Arc<ServerConfig>> {
-        let verifier = WebPkiClientVerifier::builder_with_provider(self.roots.clone(), provider())
-            .build()
-            .map_err(invalid)?;
+        self.server_config_for(true)
+    }
+
+    /// Server side. `require_client_cert` is the historical mutual-TLS rule. When it is false a
+    /// missing client certificate still completes the handshake (so a bearer can authenticate
+    /// the session) and a presented certificate is verified against the cluster CA.
+    pub(crate) fn server_config_for(&self, require_client_cert: bool) -> io::Result<Arc<ServerConfig>> {
+        let mut builder =
+            WebPkiClientVerifier::builder_with_provider(self.roots.clone(), provider());
+        if !require_client_cert {
+            builder = builder.allow_unauthenticated();
+        }
+        let verifier = builder.build().map_err(invalid)?;
         let cfg = ServerConfig::builder_with_provider(provider())
             .with_safe_default_protocol_versions()
             .map_err(invalid)?
@@ -281,5 +295,140 @@ impl Write for Conn {
             Self::Server(s) => s.flush(),
             Self::Client(s) => s.flush(),
         }
+    }
+}
+
+/// PEM paths a data node re-reads when they change or when [`request_cert_reload`] is set.
+#[derive(Clone, Debug)]
+pub struct TlsPaths {
+    pub ca: PathBuf,
+    pub cert: PathBuf,
+    pub key: PathBuf,
+}
+
+static CERT_RELOAD: AtomicBool = AtomicBool::new(false);
+
+/// Asks every data node in this process to reload TLS from its configured paths. The SIGHUP
+/// handler and tests both call this; the accept loop applies it.
+pub fn request_cert_reload() {
+    CERT_RELOAD.store(true, Ordering::Relaxed);
+}
+
+pub(crate) fn take_cert_reload() -> bool {
+    CERT_RELOAD.swap(false, Ordering::Relaxed)
+}
+
+/// Installs a SIGHUP handler that sets the reload flag. The data-node accept loop (and a periodic
+/// mtime check) performs the reload. Unix only.
+pub fn install_cert_reload_sighup() {
+    #[cfg(unix)]
+    unsafe {
+        libc::signal(
+            libc::SIGHUP,
+            on_sighup as *const () as libc::sighandler_t,
+        );
+    }
+}
+
+#[cfg(unix)]
+extern "C" fn on_sighup(_: libc::c_int) {
+    CERT_RELOAD.store(true, Ordering::Relaxed);
+}
+
+/// Watches [`TlsPaths`] and rebuilds the data-node server config when the files change.
+pub(crate) struct TlsWatch {
+    paths: TlsPaths,
+    /// When false, a missing client certificate is allowed at the handshake (bearer auth).
+    require_client_cert: bool,
+    mtimes: [Option<SystemTime>; 3],
+    generation: u64,
+}
+
+impl TlsWatch {
+    pub(crate) fn new(paths: TlsPaths, require_client_cert: bool) -> io::Result<Self> {
+        let mtimes = stat_paths(&paths)?;
+        Ok(Self {
+            paths,
+            require_client_cert,
+            mtimes,
+            generation: 0,
+        })
+    }
+
+    pub(crate) fn stale(&self) -> bool {
+        match stat_paths(&self.paths) {
+            Ok(now) => now != self.mtimes,
+            Err(_) => true,
+        }
+    }
+
+    pub(crate) fn reload(&mut self) -> io::Result<Arc<ServerConfig>> {
+        let id = TlsIdentity::from_pem_files(&self.paths.ca, &self.paths.cert, &self.paths.key)?;
+        let cfg = id.server_config_for(self.require_client_cert)?;
+        self.mtimes = stat_paths(&self.paths)?;
+        self.generation = self.generation.saturating_add(1);
+        Ok(cfg)
+    }
+}
+
+fn stat_paths(paths: &TlsPaths) -> io::Result<[Option<SystemTime>; 3]> {
+    let mut out = [None, None, None];
+    for (i, p) in [&paths.ca, &paths.cert, &paths.key].into_iter().enumerate() {
+        out[i] = Some(std::fs::metadata(p)?.modified()?);
+    }
+    Ok(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reload_flag_is_taken_once() {
+        request_cert_reload();
+        assert!(take_cert_reload());
+        assert!(!take_cert_reload());
+    }
+
+    #[test]
+    fn replaced_certificate_is_a_new_generation() {
+        use rcgen::{BasicConstraints, CertificateParams, IsCa, Issuer, KeyPair};
+
+        let dir = tempfile::tempdir().unwrap();
+        let write = |name: &str, body: &str| {
+            std::fs::write(dir.path().join(name), body).unwrap();
+        };
+        let issue = || {
+            let key = KeyPair::generate().unwrap();
+            let mut params = CertificateParams::new(Vec::<String>::new()).unwrap();
+            params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+            let ca = params.self_signed(&key).unwrap();
+            let issuer = Issuer::new(params, key);
+            let leaf_key = KeyPair::generate().unwrap();
+            let leaf_params = CertificateParams::new(vec!["n1".to_string()]).unwrap();
+            let leaf = leaf_params.signed_by(&leaf_key, &issuer).unwrap();
+            (ca.pem(), leaf.pem(), leaf_key.serialize_pem())
+        };
+        let (ca, cert, key) = issue();
+        write("ca.pem", &ca);
+        write("cert.pem", &cert);
+        write("key.pem", &key);
+        let paths = TlsPaths {
+            ca: dir.path().join("ca.pem"),
+            cert: dir.path().join("cert.pem"),
+            key: dir.path().join("key.pem"),
+        };
+        let mut watch = TlsWatch::new(paths, true).unwrap();
+        assert!(!watch.stale());
+        assert_eq!(watch.generation, 0);
+        let (ca, cert, key) = issue();
+        write("ca.pem", &ca);
+        write("cert.pem", &cert);
+        write("key.pem", &key);
+        // `reload` is what SIGHUP calls even when the filesystem timestamp did not move.
+        watch.reload().unwrap();
+        assert_eq!(watch.generation, 1);
+        watch.reload().unwrap();
+        assert_eq!(watch.generation, 2);
     }
 }

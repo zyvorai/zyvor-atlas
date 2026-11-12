@@ -21,6 +21,9 @@
 //!   missing, unreadable or malformed counts as "not corroborated", never as a pass.
 //!
 //! `Gds` means "the machine looks capable", not "GDS works": that would need a real cuFile run.
+//!
+//! The `cufile` cargo feature compiles `cufile`, a dlopen probe. Its report is attached as
+//! `cufile` on [`GpuReport`] only in that build. It does not change `status`.
 
 use std::{
     fs,
@@ -84,6 +87,9 @@ pub struct GpuReport {
     pub verified_on_hardware: bool,
     pub note: &'static str,
     pub evidence: GpuEvidence,
+    /// Present only when this crate is built with `--features cufile`.
+    #[cfg(feature = "cufile")]
+    pub cufile: crate::cufile::Probe,
 }
 
 fn backend_name(b: DeviceBackend) -> &'static str {
@@ -360,6 +366,8 @@ fn report(status: GpuIoStatus, reasons: Vec<String>, evidence: GpuEvidence) -> G
         verified_on_hardware: false,
         note: PROBE_NOTE,
         evidence,
+        #[cfg(feature = "cufile")]
+        cufile: crate::cufile::probe(),
     }
 }
 

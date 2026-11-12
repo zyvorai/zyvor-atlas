@@ -334,6 +334,26 @@ impl StorageDriver for RealCephDriver {
     async fn ceph_device_health(&self, devid: &str) -> Result<serde_json::Value, DriverError> {
         ceph_cmd(&["device", "get-health-metrics", devid]).await
     }
+
+    async fn read_volume(
+        &self,
+        volume_id: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Vec<u8>, DriverError> {
+        let (pool, image) = crate::cmd::parse_rbd_native_id(volume_id)?;
+        crate::cmd::rbd_read(&pool, &image, offset, len).await
+    }
+
+    async fn write_volume(
+        &self,
+        volume_id: &str,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<(), DriverError> {
+        let (pool, image) = crate::cmd::parse_rbd_native_id(volume_id)?;
+        crate::cmd::rbd_write(&pool, &image, offset, &data).await
+    }
 }
 
 fn metric(name: &str, value: f64) -> MetricSample {

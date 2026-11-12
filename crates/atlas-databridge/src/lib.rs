@@ -129,14 +129,17 @@ fn build_oracle(
     password: &str,
 ) -> anyhow::Result<Box<dyn SourceConnector>> {
     let (cdb, pdb) = connector::oracle_containers(database);
-    Ok(Box::new(connectors::oracle::OracleSourceConnector::new(
-        source.id.clone(),
-        host,
-        port,
-        pdb.unwrap_or(cdb),
-        user,
-        password,
-    )))
+    Ok(Box::new(
+        connectors::oracle::OracleSourceConnector::new(
+            source.id.clone(),
+            host,
+            port,
+            pdb.unwrap_or(cdb),
+            user,
+            password,
+        )
+        .with_tls_mode(&source.tls_mode),
+    ))
 }
 
 #[cfg(not(feature = "oracle"))]

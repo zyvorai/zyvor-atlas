@@ -21,7 +21,7 @@ use serde::Deserialize;
 use serde_json::json;
 
 use crate::{
-    data_node::{DataNodeServer, RemoteDevice},
+    data_node::{DataAuth, DataNodeServer, DataServe, RemoteDevice},
     device::BlockStore,
     ec::EcScheme,
     engine::{
@@ -39,7 +39,7 @@ use crate::{
     raft_server::{RaftMux, RaftServer},
     raw::{open_store, DeviceBackend},
     rebuild::{Pacer, RebuildConfig, RebuildStatus, Rebuilder},
-    tls::TlsIdentity,
+    tls::{TlsIdentity, TlsPaths},
 };
 
 mod cache_leases;
@@ -600,6 +600,12 @@ impl NativeNode {
             })
             .transpose()?;
 
+        let data_auth = data_client_auth();
+        let tls_paths = cfg.tls.as_ref().map(|t| TlsPaths {
+            ca: t.ca.clone(),
+            cert: t.cert.clone(),
+            key: t.key.clone(),
+        });
         let mut data_addr = None;
         let data = match &cfg.data_node {
             Some(role) => {
@@ -608,33 +614,29 @@ impl NativeNode {
                     None => TcpListener::bind(role.listen)?,
                 };
                 let root = cfg.data_dir.join("data");
-                let srv = if role.devices.is_empty() {
+                let devices = if role.devices.is_empty() {
                     let device: Arc<dyn BlockStore> =
                         Arc::new(crate::device::FileDevice::open(root.join("nvme0.data"))?);
-                    DataNodeServer::start_devices_with(
-                        cfg.node_id.clone(),
-                        root,
-                        vec![device],
-                        l,
-                        tls.clone(),
-                        grant_key.clone(),
-                    )?
+                    vec![device]
                 } else {
-                    let devices = role
-                        .devices
+                    role.devices
                         .iter()
                         .enumerate()
                         .map(|(i, d)| open_store(&d.path, d.backend, &root.join(format!("dev{i}"))))
-                        .collect::<Result<Vec<_>, _>>()?;
-                    DataNodeServer::start_devices_with(
-                        cfg.node_id.clone(),
-                        root,
-                        devices,
-                        l,
-                        tls.clone(),
-                        grant_key.clone(),
-                    )?
+                        .collect::<Result<Vec<_>, _>>()?
                 };
+                let srv = DataNodeServer::start_guarded(
+                    cfg.node_id.clone(),
+                    root,
+                    devices,
+                    l,
+                    DataServe {
+                        tls: tls.clone(),
+                        grant_key: grant_key.clone(),
+                        auth: data_auth.clone(),
+                        tls_paths: tls_paths.clone(),
+                    },
+                )?;
                 data_addr = Some(srv.local_addr());
                 Some(srv)
             }
@@ -682,6 +684,13 @@ impl NativeNode {
                             };
                             if let Some(k) = &grant_key {
                                 dev = dev.with_grant_key(k.clone());
+                            }
+                            // A client certificate already satisfies data-node auth. The bearer
+                            // is the proof when this metadata node is not using TLS.
+                            if tls.is_none() {
+                                if let Some(token) = &data_auth.token {
+                                    dev = dev.with_bearer(token.clone());
+                                }
                             }
                             devs.push(Arc::new(dev.on_device(index).in_group(g)));
                         }
@@ -1042,6 +1051,15 @@ fn expand_env(raw: &str, lookup: impl Fn(&str) -> Option<String>) -> Result<Stri
     Ok(out)
 }
 
+fn data_client_auth() -> DataAuth {
+    DataAuth {
+        required: std::env::var("ATLAS_NATIVE_DATA_AUTH").is_ok_and(|v| v == "1"),
+        token: std::env::var("ATLAS_NATIVE_DATA_TOKEN")
+            .ok()
+            .filter(|t| !t.is_empty()),
+    }
+}
+
 fn token_ok(expected: &str, header: Option<&String>) -> bool {
     let Some(got) = header.and_then(|h| h.strip_prefix("Bearer ")) else {
         return false;
@@ -1381,6 +1399,9 @@ fn volume_route(sh: &NodeShared, req: &Request, segs: &[&str]) -> Response {
                 .and_then(|e| e.lock_snapshot(id, secs))
                 .map(|until| Response::json(200, &json!({ "retain_until_unix": until })))
         }
+        ("POST", ["v1", "snapshots", id, "unlock"]) => snapshot_engine(sh, id)
+            .and_then(|e| e.unlock_snapshot(id))
+            .map(|()| Response::json(200, &json!({ "unlocked": true }))),
         ("POST", ["v1", "snapshots", id, "clone"]) => {
             let body = match body_json(req) {
                 Ok(b) => b,
