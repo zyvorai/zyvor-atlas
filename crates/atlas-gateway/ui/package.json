@@ -17,7 +17,7 @@
   "dependencies": {
     "@tanstack/react-query": "^5.107.1",
     "@tanstack/react-table": "^9.3.1",
-    "axios": "^1.21.0",
+    "axios": "^1.21.1",
     "clsx": "^2.1.1",
     "lucide-react": "^1.70.0",
     "react": "^19.3.1",
@@ -36,7 +36,7 @@
     "@testing-library/react": "^16.3.3",
     "@types/react": "^19.3.0",
     "@types/react-dom": "^19.3.0",
-    "@vitejs/plugin-react": "^6.2.1",
+    "@vitejs/plugin-react": "^6.3.0",
     "@vitest/coverage-v8": "^5.1.0",
     "autoprefixer": "^10.5.6",
     "eslint": "^10.14.0",
@@ -47,7 +47,7 @@
     "tailwindcss": "^4.3.5",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.71.2",
-    "vite": "^8.3.6",
+    "vite": "^8.3.7",
     "vitest": "^5.0.0"
   },
   "overrides": {
