@@ -1,8 +1,10 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: Apache-2.0
-//! `POST /volumes/{id}/import`: queue a job that streams a raw disk image from an HTTP(S) server
-//! into an atlas-native volume and verifies it by reading the volume back. The progress, result
-//! and cancel surfaces are the ordinary job API. See `docs/IMAGE_IMPORT.md`.
+//! `POST /volumes/{id}/import`: queue a job that streams a disk image from an HTTP(S) server
+//! into a block volume and verifies it by reading the volume back. Raw images are written as
+//! they arrive. qcow2 is converted with `qemu-img convert -O raw` first. The volume's own
+//! backend is used (atlas-native or Ceph RBD). The progress, result and cancel surfaces are the
+//! ordinary job API. See `docs/IMAGE_IMPORT.md`.
 
 use axum::{
     extract::{Path, State},
@@ -16,9 +18,7 @@ use atlas_common::{ids, AppError, AppResult};
 use atlas_jobs::JobSpec;
 
 use super::util::accepted;
-use super::volumes::volume_for_io;
 use crate::auth::Actor;
-use crate::startup::NATIVE_BACKEND_ID;
 use crate::state::AppState;
 
 /// Comma-separated hosts (names or IP literals) an import may fetch from. Empty or unset turns
@@ -49,6 +49,19 @@ pub(crate) struct ImportBody {
     /// A failed or cancelled earlier import job for this volume whose progress this one continues.
     #[serde(default)]
     resume_from_job: Option<String>,
+    /// `raw` (default) or `qcow2`.
+    #[serde(default)]
+    format: String,
+}
+
+fn normalize_format(raw: &str) -> AppResult<String> {
+    match raw.trim().to_ascii_lowercase().as_str() {
+        "" | "raw" => Ok("raw".into()),
+        "qcow2" => Ok("qcow2".into()),
+        other => Err(AppError::Validation(format!(
+            "format must be raw or qcow2, not {other}"
+        ))),
+    }
 }
 
 fn allowed_hosts() -> Vec<String> {
@@ -100,21 +113,46 @@ fn check_sha256(raw: &str) -> AppResult<String> {
     Ok(h)
 }
 
-/// `POST /volumes/{id}/import` (operator): import a raw image into an atlas-native volume.
+/// `POST /volumes/{id}/import` (operator): import a raw or qcow2 image into a block volume.
 pub(crate) async fn import_volume_image(
     State(s): State<AppState>,
     Extension(actor): Extension<Actor>,
     Path(id): Path<String>,
     Json(body): Json<ImportBody>,
 ) -> AppResult<(StatusCode, Json<Value>)> {
-    // Role, tenant and "is this an atlas-native volume" checks are the same as for block I/O.
-    let (_driver, native_id) = volume_for_io(&s, &actor, &id).await?;
-    let url = check_url(&body.url, &allowed_hosts())?;
-    let sha256 = check_sha256(&body.sha256)?;
-
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
     let vol = atlas_inventory::get_volume(&s.pool, &id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("volume {id}")))?;
+    let tenant_id = atlas_inventory::volume_tenant(&s.pool, &id).await?;
+    crate::auth::require_tenant(
+        s.config.auth_required,
+        &actor,
+        &tenant_id,
+        format!("volume {id}"),
+    )?;
+    if vol.kind != atlas_api_types::VolumeKind::Block {
+        return Err(AppError::Validation(
+            "image import writes a block volume".into(),
+        ));
+    }
+    let backend_id = atlas_inventory::volume_backend_id(&s.pool, &id)
+        .await?
+        .filter(|b| !b.is_empty())
+        .ok_or_else(|| AppError::Validation(format!("volume {id} has no storage backend")))?;
+    if s.drivers.get(&backend_id).is_none() {
+        return Err(AppError::Unavailable(format!(
+            "storage backend {backend_id} is not available"
+        )));
+    }
+    let native_id = vol
+        .backend_native_id
+        .clone()
+        .filter(|n| !n.is_empty())
+        .unwrap_or_else(|| id.clone());
+    let url = check_url(&body.url, &allowed_hosts())?;
+    let sha256 = check_sha256(&body.sha256)?;
+    let format = normalize_format(&body.format)?;
     if let Some(n) = body.size_bytes {
         if n == 0 || i64::try_from(n).map_or(true, |n| n > vol.size_bytes) {
             return Err(AppError::Validation(format!(
@@ -153,16 +191,16 @@ pub(crate) async fn import_volume_image(
         }
     };
 
-    let tenant_id = atlas_inventory::volume_tenant(&s.pool, &id).await?;
     let job_id = ids::job_id();
     let spec = JobSpec::ImageImport {
         volume_id: id.clone(),
-        backend_id: NATIVE_BACKEND_ID.into(),
+        backend_id: backend_id.clone(),
         native_id,
         url: url.to_string(),
         sha256: sha256.clone(),
         size_bytes: body.size_bytes,
         resume_from,
+        format: format.clone(),
     };
     let job = s
         .jobs
@@ -183,6 +221,7 @@ pub(crate) async fn import_volume_image(
             "sha256": sha256,
             "size_bytes": body.size_bytes,
             "resume_from": resume_from,
+            "format": format,
         })),
         None,
     )
@@ -199,6 +238,16 @@ mod tests {
 
     fn allow(hosts: &[&str]) -> Vec<String> {
         hosts.iter().map(|h| h.to_string()).collect()
+    }
+
+    #[test]
+    fn format_is_raw_or_qcow2() {
+        assert_eq!(normalize_format("").unwrap(), "raw");
+        assert_eq!(normalize_format("QCOW2").unwrap(), "qcow2");
+        assert!(matches!(
+            normalize_format("vmdk"),
+            Err(AppError::Validation(_))
+        ));
     }
 
     #[test]

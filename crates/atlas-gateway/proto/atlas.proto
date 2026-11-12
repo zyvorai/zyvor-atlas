@@ -29,6 +29,8 @@ service AtlasStorage {
   rpc ListBuckets(Empty) returns (ListBucketsReply);
   // Tenants with volumes or quotas (mirrors REST GET /tenants overview).
   rpc ListTenants(Empty) returns (ListTenantsReply);
+  // Protection schedules (mirrors REST GET /schedules). Optional volume_id filter.
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesReply);
 }
 
 message Empty {}
@@ -151,6 +153,22 @@ message Tenant {
   string name = 2;
 }
 message ListTenantsReply { repeated Tenant tenants = 1; }
+
+message ListSchedulesRequest {
+  string volume_id = 1;  // optional; empty = all
+}
+message Schedule {
+  string id = 1;
+  string tenant_id = 2;
+  string volume_id = 3;
+  string kind = 4;
+  string mode = 5;
+  int64 interval_secs = 6;
+  int64 keep = 7;
+  bool enabled = 8;
+  string next_run_at = 9;
+}
+message ListSchedulesReply { repeated Schedule schedules = 1; }
 
 message Alert {
   string id = 1;

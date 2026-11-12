@@ -42,6 +42,12 @@ pub fn policy_id() -> String {
 pub fn job_id() -> String {
     prefixed("job")
 }
+pub fn finding_id() -> String {
+    prefixed("adv")
+}
+pub fn proposal_id() -> String {
+    prefixed("prp")
+}
 pub fn binding_id() -> String {
     prefixed("bind")
 }

@@ -353,6 +353,11 @@ pub struct AppState {
     /// Validator for identity-provider JWT access tokens on `/mcp`, when `ATLAS_MCP_IDP_ISSUER` is
     /// set (see `idp_token`). `None`: the MCP endpoint accepts Atlas tokens only, as before.
     pub mcp_idp: Option<Arc<crate::idp_token::IdpValidator>>,
+    /// RFC 7662 introspection for opaque tokens on `/mcp`, when `ATLAS_MCP_INTROSPECTION_URL` is set.
+    pub mcp_introspection: Option<Arc<crate::mcp_introspect::Introspection>>,
+    /// Lab client-credentials token endpoint, when `ATLAS_MCP_AS_ENABLE` is set. Not a full
+    /// authorization server (see `mcp_as`).
+    pub mcp_as: Option<Arc<crate::mcp_as::LabAs>>,
 }
 
 impl AppState {

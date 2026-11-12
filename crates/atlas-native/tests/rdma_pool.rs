@@ -3,8 +3,13 @@
 
 //! The RDMA client path (pooled connections, fallback to TCP, counters, write grants) over
 //! [`FakeTransport`], which needs no RDMA hardware and runs on any OS. These prove the pooling,
-//! fallback and grant logic; they say nothing about verbs or RDMA performance (those paths have
-//! `--ignored` tests that need a device, see `src/rdma.rs` and `docs/NATIVE_STORAGE.md`).
+//! fallback and grant logic; they say nothing about verbs or RDMA performance.
+//!
+//! `pooled_client_over_verbs` (below, `rdma` feature, Linux, `#[ignore]`) is the same pooled
+//! client over libibverbs. SoftRoCE is enough (`rdma link add rxe0 type rxe netdev lo`, GID index
+//! 1 unless `ATLAS_RDMA_GID_INDEX` is set). It is not a throughput test. Run it with:
+//! `cargo test -p atlas-native --features rdma -- --ignored pooled_client_over_verbs`.
+//! See also the ignored device tests in `src/rdma.rs`.
 
 use std::{
     net::TcpListener,
@@ -242,4 +247,32 @@ fn enomem_is_counted_explained_once_and_frees_the_slot() {
     let seen = seen.lock().unwrap();
     assert_eq!(seen.len(), 1, "{seen:?}");
     assert!(seen[0].contains("RLIMIT_MEMLOCK") && seen[0].contains("LimitMEMLOCK"), "{seen:?}");
+}
+
+/// Pooled client over real verbs. SoftRoCE (`rxe0` on loopback) is enough; this is not a
+/// throughput or latency measurement. Ignored so a host without an RDMA device stays green.
+#[cfg(all(feature = "rdma", target_os = "linux"))]
+#[test]
+#[ignore = "needs an RDMA device (SoftRoCE rxe0 is enough); cargo test -p atlas-native --features rdma -- --ignored pooled_client_over_verbs"]
+fn pooled_client_over_verbs() {
+    let names = atlas_native::rdma::device_names().expect("list RDMA devices");
+    assert!(
+        !names.is_empty(),
+        "no RDMA device visible to libibverbs (SoftRoCE: rdma link add rxe0 type rxe netdev lo)"
+    );
+    let gid: u32 = std::env::var("ATLAS_RDMA_GID_INDEX")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(1);
+    let dir = tempfile::tempdir().unwrap();
+    let n = node(dir.path(), None, None);
+    n.set_rdma_transport(atlas_native::rdma_link::verbs_transport().expect("verbs transport"));
+    let mut cfg = RdmaConfig::new(atlas_native::rdma_link::verbs_transport().unwrap(), gid);
+    cfg.retry_after = Duration::from_secs(60);
+    let c = RemoteDevice::new(n.local_addr(), TIMEOUT).use_rdma(cfg).unwrap();
+    let data = bytes(70_000, 4);
+    let off = c.append(1, &data).unwrap();
+    assert_eq!(c.read_exact_at(off, data.len()).unwrap(), data);
+    let s = c.rdma_stats().unwrap();
+    assert!(s.connects >= 1 && s.requests >= 2, "pooled verbs path did not run: {s:?}");
 }

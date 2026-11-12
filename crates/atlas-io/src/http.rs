@@ -4,10 +4,10 @@
 
 use std::sync::Arc;
 
-use axum::extract::{Query, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
-use axum::routing::{get, post};
+use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
@@ -39,6 +39,8 @@ pub fn router_with_token(collector: Arc<Collector>, token: Option<String>) -> Ro
         .route("/io/leases", get(leases).post(grant_lease))
         .route("/io/coverage", get(coverage))
         .route("/io/native", get(native))
+        .route("/io/cgroup", get(cgroup_list).put(cgroup_put))
+        .route("/io/cgroup/{id}", delete(cgroup_delete))
         .route("/metrics", get(prom))
         .route("/io/poll", post(poll))
         .with_state(AppState {
@@ -230,6 +232,43 @@ async fn native(State(st): State<AppState>) -> impl IntoResponse {
             Json(serde_json::json!({ "error": "atlas_native maps not loaded" })),
         )
             .into_response(),
+    }
+}
+
+async fn cgroup_list(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.collector.cgroup_bindings())
+}
+
+#[derive(Deserialize)]
+struct CgroupBody {
+    cgroup_id: u64,
+    volume_id: String,
+}
+
+async fn cgroup_put(State(st): State<AppState>, Json(body): Json<CgroupBody>) -> impl IntoResponse {
+    match st.collector.bind_cgroup(body.cgroup_id, body.volume_id) {
+        Ok(binding) => (
+            StatusCode::OK,
+            Json(serde_json::to_value(binding).expect("CgroupBinding is serializable")),
+        )
+            .into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
+async fn cgroup_delete(State(st): State<AppState>, Path(id): Path<u64>) -> impl IntoResponse {
+    if st.collector.unbind_cgroup(id) {
+        StatusCode::NO_CONTENT.into_response()
+    } else {
+        (
+            StatusCode::NOT_FOUND,
+            Json(serde_json::json!({ "error": "cgroup binding not found" })),
+        )
+            .into_response()
     }
 }
 

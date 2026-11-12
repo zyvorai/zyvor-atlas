@@ -65,7 +65,15 @@ unknown.
 
 ## The `cufile` cargo feature
 
-`cufile` is declared in `crates/atlas-native/Cargo.toml`, default-off, as a placeholder for a future
-lazily loaded (`dlopen`) cuFile binding. It adds **no dependency and no code** today; the probe
-module is always compiled. Because it adds no compile surface, it is deliberately not in
-`make native-features`; add it there when the binding exists.
+`cufile` is declared in `crates/atlas-native/Cargo.toml`, default-off. It compiles
+`crates/atlas-native/src/cufile.rs`, which `dlopen`s `libcufile.so.0` (then `libcufile.so`) and
+reports whether `cuFileDriverOpen`, `cuFileRead` and `cuFileWrite` resolve. Nothing is linked at
+build time, and none of those symbols are called: `io_performed` is always false. On a host
+without the library the probe reports `library_present: false` and still succeeds.
+
+When the feature is on, `gpu_io` in `/v1/status` gains a `cufile` object. The files-only `status`
+(`gds` / `compat` / `none`) does not change. `dlopen` may run the library's constructors; that is
+not a cuFile read or write.
+
+The feature stays out of `make native-features` because it performs no I/O and the files-only
+probe does not need it. A real cuFile binding would go there.

@@ -263,6 +263,14 @@ async fn spawn_gw(issuer: &str, extra: &[(&str, &str)], t: Timing) -> Gw {
         zfs_host: None,
         zfs_pools: Vec::new(),
         zfs_driver_mode: atlas_common::config::DriverMode::Fake,
+        san_enable: false,
+        san_server: None,
+        san_targets: Vec::new(),
+        san_driver_mode: atlas_common::config::DriverMode::Fake,
+        cloudblock_enable: false,
+        cloudblock_server: None,
+        cloudblock_targets: Vec::new(),
+        cloudblock_driver_mode: atlas_common::config::DriverMode::Fake,
         oidc: None,
         rook_namespace: "rook-ceph".into(),
         rook_cluster_name: "rook-ceph".into(),
@@ -1016,7 +1024,11 @@ async fn metadata_advertises_the_issuer_on_the_mcp_document_only() {
         "the resource is exactly the audience tokens must carry"
     );
     assert_eq!(doc["authorization_servers"], json!([idp.issuer.clone()]));
-    assert!(doc.get("scopes_supported").is_none(), "{doc}");
+    assert!(doc["scopes_supported"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s == "atlas:role:operator"), "{doc}");
     assert_eq!(doc["bearer_methods_supported"], json!(["header"]));
 
     // The root form's resource is the origin, which Atlas would refuse as an audience: not advertised.
@@ -1043,8 +1055,13 @@ async fn metadata_advertises_the_issuer_on_the_mcp_document_only() {
 
     // The challenge still points at the metadata document.
     let resp = post_mcp(gw.addr, None).await;
-    assert_eq!(
-        resp.headers()["www-authenticate"],
-        format!("Bearer resource_metadata=\"{PUBLIC_URL}/.well-known/oauth-protected-resource/api/atlas/v1/mcp\"").as_str()
+    let ch = resp.headers()["www-authenticate"].to_str().unwrap();
+    assert!(
+        ch.contains(&format!(
+            "resource_metadata=\"{PUBLIC_URL}/.well-known/oauth-protected-resource/api/atlas/v1/mcp\""
+        )),
+        "{ch}"
     );
+    assert!(ch.contains("atlas:role:viewer") && ch.contains("scope=\""), "{ch}");
+    assert!(!ch.contains("error="), "{ch}");
 }

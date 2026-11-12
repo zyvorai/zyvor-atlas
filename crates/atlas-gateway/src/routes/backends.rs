@@ -72,10 +72,11 @@ pub(crate) struct CreateBackendBody {
     backend_type: Option<String>,
     #[serde(default)]
     mode: Option<String>,
-    /// Connection host: NFS server or ZFS host (used when instantiating an nfs/zfs backend live).
+    /// Connection host: NFS server, ZFS host, SAN iSCSI portal, or cloud-block provider
+    /// (`aws`, `gcp`, or `azure`).
     #[serde(default)]
     server: Option<String>,
-    /// NFS exports or ZFS zpools to surface.
+    /// NFS exports, ZFS zpools, SAN target IQNs, or cloud volume ids.
     #[serde(default)]
     targets: Option<Vec<String>>,
 }
@@ -114,8 +115,9 @@ pub(crate) async fn create_backend(
         _ => BackendMode::External,
     };
     let id = atlas_common::ids::backend_id();
-    // NFS/ZFS drivers can be instantiated live and registered into the running driver registry, so
-    // the backend actually discovers + serves — not just a catalog row. Others stay a `pending` row.
+    // NFS/ZFS/SAN/cloud-block drivers can be instantiated live and registered into the running
+    // driver registry, so the backend actually discovers + serves — not just a catalog row. Others
+    // stay a `pending` row.
     let (status, live): (
         &str,
         Option<std::sync::Arc<dyn atlas_driver_core::StorageDriver>>,
@@ -158,6 +160,55 @@ pub(crate) async fn create_backend(
                     ),
                     atlas_common::config::DriverMode::Fake => std::sync::Arc::new(
                         atlas_driver_zfs::FakeZfsDriver::new(&id, host, pools),
+                    ),
+                };
+            ("active", Some(driver))
+        }
+        BackendType::San => {
+            let portal = body
+                .server
+                .clone()
+                .unwrap_or_else(|| "san01.zyvor.lab".into());
+            let targets = body
+                .targets
+                .clone()
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| {
+                    vec![
+                        "iqn.2026-01.com.zyvor:lun0".into(),
+                        "iqn.2026-01.com.zyvor:lun1".into(),
+                    ]
+                });
+            let driver: std::sync::Arc<dyn atlas_driver_core::StorageDriver> =
+                match s.config.san_driver_mode {
+                    atlas_common::config::DriverMode::Real => std::sync::Arc::new(
+                        atlas_driver_san::RealSanDriver::new(&id, portal, targets),
+                    ),
+                    atlas_common::config::DriverMode::Fake => std::sync::Arc::new(
+                        atlas_driver_san::FakeSanDriver::new(&id, portal, targets),
+                    ),
+                };
+            ("active", Some(driver))
+        }
+        BackendType::CloudBlock => {
+            let provider = body.server.clone().unwrap_or_else(|| "aws".into());
+            let volumes = body
+                .targets
+                .clone()
+                .filter(|t| !t.is_empty())
+                .unwrap_or_else(|| {
+                    vec![
+                        "vol-atlas00000000001".into(),
+                        "vol-atlas00000000002".into(),
+                    ]
+                });
+            let driver: std::sync::Arc<dyn atlas_driver_core::StorageDriver> =
+                match s.config.cloudblock_driver_mode {
+                    atlas_common::config::DriverMode::Real => std::sync::Arc::new(
+                        atlas_driver_cloudblock::RealCloudBlockDriver::new(&id, provider, volumes),
+                    ),
+                    atlas_common::config::DriverMode::Fake => std::sync::Arc::new(
+                        atlas_driver_cloudblock::FakeCloudBlockDriver::new(&id, provider, volumes),
                     ),
                 };
             ("active", Some(driver))

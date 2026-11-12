@@ -166,6 +166,8 @@ pub trait NativeApi: Send + Sync {
     async fn reduction(&self) -> Result<serde_json::Value, DriverError>;
     async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError>;
     async fn lock_fs_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError>;
+    async fn unlock_snapshot(&self, id: &str) -> Result<(), DriverError>;
+    async fn unlock_fs_snapshot(&self, id: &str) -> Result<(), DriverError>;
 }
 
 pub struct NativeDriver<A> {
@@ -602,6 +604,13 @@ impl<A: NativeApi> StorageDriver for NativeDriver<A> {
         match native_snapshot_ref(native_snapshot_id) {
             NativeRef::Volume(id) => self.api.lock_snapshot(id, retain_secs).await,
             NativeRef::Filesystem(id) => self.api.lock_fs_snapshot(id, retain_secs).await,
+        }
+    }
+
+    async fn unlock_snapshot(&self, native_snapshot_id: &str) -> Result<(), DriverError> {
+        match native_snapshot_ref(native_snapshot_id) {
+            NativeRef::Volume(id) => self.api.unlock_snapshot(id).await,
+            NativeRef::Filesystem(id) => self.api.unlock_fs_snapshot(id).await,
         }
     }
 

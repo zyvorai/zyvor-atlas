@@ -11,6 +11,10 @@
 //! [`TlsIdentity`] connections are mutual TLS against the cluster CA: clients must present a
 //! CA-signed certificate, and verify the node's certificate against its node id.
 //!
+//! `ATLAS_NATIVE_DATA_AUTH=1` (see [`DataAuth`]) rejects a connection that has neither a verified
+//! client certificate nor a matching `Auth` bearer (`ATLAS_NATIVE_DATA_TOKEN`). Certificate files
+//! passed as [`crate::tls::TlsPaths`] are re-read when their mtimes change or on SIGHUP.
+//!
 //! Every write carries a fence (the writer's Raft term) and the metadata group it writes for.
 //! The node durably records the highest fence it has accepted from each group and rejects lower
 //! ones, so a deposed leader that has not noticed yet cannot overwrite a range the new leader of
@@ -99,6 +103,10 @@ enum Request {
     /// Needs the `rdma` feature and `ATLAS_NATIVE_RDMA=1` on the node; otherwise the node answers
     /// with an error and the connection stays as it was.
     RdmaUpgrade { gid_index: u32 },
+    /// Bearer for [`DataAuth`]. Compared in constant time with the node's token. A node that is
+    /// not requiring auth still answers `Authed`, so a client configured with a token can talk
+    /// to either kind of node.
+    Auth { token: String },
 }
 
 fn is_zero(v: &usize) -> bool {
@@ -137,9 +145,37 @@ enum Response {
         current: u64,
     },
     RdmaReady,
+    Authed,
     Error {
         message: String,
     },
+}
+
+/// When `required`, a data-node connection must present a verified client certificate or an
+/// `Auth` bearer equal to `token`. The node binary sets this from `ATLAS_NATIVE_DATA_AUTH=1`
+/// and `ATLAS_NATIVE_DATA_TOKEN`.
+#[derive(Clone, Default)]
+pub struct DataAuth {
+    pub required: bool,
+    pub token: Option<String>,
+}
+
+impl std::fmt::Debug for DataAuth {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DataAuth")
+            .field("required", &self.required)
+            .field("token", &self.token.as_ref().map(|_| "redacted"))
+            .finish()
+    }
+}
+
+/// Options for [`DataNodeServer::start_guarded`].
+pub struct DataServe {
+    pub tls: Option<TlsIdentity>,
+    pub grant_key: Option<GrantKey>,
+    pub auth: DataAuth,
+    /// When set, the accept loop reloads the server certificate from these files.
+    pub tls_paths: Option<crate::tls::TlsPaths>,
 }
 
 #[derive(Debug, Default)]
@@ -168,7 +204,10 @@ struct Shared {
     devices: Vec<Arc<dyn BlockStore>>,
     root: PathBuf,
     fences: Mutex<BTreeMap<u32, Arc<Fence>>>,
-    tls: Option<Arc<ServerConfig>>,
+    tls: RwLock<Option<Arc<ServerConfig>>>,
+    tls_watch: Mutex<Option<crate::tls::TlsWatch>>,
+    last_tls_check: Mutex<Instant>,
+    auth: DataAuth,
     /// This node's id, which grants are bound to.
     id: String,
     /// When set, every write must carry a [`Grant`] made with this key.
@@ -383,13 +422,49 @@ impl DataNodeServer {
         tls: Option<TlsIdentity>,
         grant_key: Option<GrantKey>,
     ) -> Result<Self, NativeError> {
+        Self::start_guarded(
+            id,
+            root,
+            devices,
+            listener,
+            DataServe {
+                tls,
+                grant_key,
+                auth: DataAuth::default(),
+                tls_paths: None,
+            },
+        )
+    }
+
+    /// [`Self::start_devices_with`] plus client auth and optional certificate-file watching.
+    /// When `auth.required` is set together with TLS, a missing client certificate is allowed
+    /// at the handshake so a bearer can authenticate instead; a presented certificate is still
+    /// verified. Without TLS, only the bearer can authenticate.
+    pub fn start_guarded(
+        id: impl Into<String>,
+        root: impl AsRef<Path>,
+        devices: Vec<Arc<dyn BlockStore>>,
+        listener: TcpListener,
+        serve: DataServe,
+    ) -> Result<Self, NativeError> {
         let id = id.into();
         if devices.is_empty() {
             return Err(NativeError::Invalid(
                 "a data node needs at least one device".into(),
             ));
         }
-        let tls = tls.map(|t| t.server_config()).transpose()?;
+        // Historical mutual TLS requires a client certificate. The auth flag makes that
+        // certificate one of two proofs, so the handshake may complete without one.
+        let require_cert = serve.tls.is_some() && !serve.auth.required;
+        let tls_cfg = serve
+            .tls
+            .as_ref()
+            .map(|t| t.server_config_for(require_cert))
+            .transpose()?;
+        let tls_watch = serve
+            .tls_paths
+            .map(|p| crate::tls::TlsWatch::new(p, require_cert))
+            .transpose()?;
         let root = root.as_ref();
         fs::create_dir_all(root)?;
         let fence = read_fence(&fence_path(root, 0))?;
@@ -405,9 +480,12 @@ impl DataNodeServer {
                     path: fence_path(root, 0),
                 }),
             )])),
-            tls,
+            tls: RwLock::new(tls_cfg),
+            tls_watch: Mutex::new(tls_watch),
+            last_tls_check: Mutex::new(Instant::now()),
+            auth: serve.auth,
             id: id.clone(),
-            grant_key,
+            grant_key: serve.grant_key,
             rdma: RwLock::new(None),
             stop: AtomicBool::new(false),
             stats: Stats::default(),
@@ -425,6 +503,13 @@ impl DataNodeServer {
             addr,
             acceptor: Some(acceptor),
         })
+    }
+
+    /// Re-reads the TLS files this server was given, even if their timestamps did not move
+    /// (the SIGHUP path). No-op when the server was not given paths. Keeps the previous
+    /// config if the new files do not parse.
+    pub fn reload_tls(&self) -> Result<bool, NativeError> {
+        Ok(reload_tls_config(&self.shared, true)?)
     }
 
     pub fn local_addr(&self) -> SocketAddr {
@@ -593,7 +678,8 @@ fn accept_loop(listener: TcpListener, shared: &Arc<Shared>) {
                 }
                 let conn_shared = shared.clone();
                 let handle = thread::spawn(move || {
-                    match Conn::accept(stream, conn_shared.tls.as_ref(), HANDSHAKE_TIMEOUT) {
+                    let tls_cfg = tls_for_accept(&conn_shared);
+                    match Conn::accept(stream, tls_cfg.as_ref(), HANDSHAKE_TIMEOUT) {
                         Ok(conn) => serve(conn, &conn_shared),
                         Err(_) => {
                             conn_shared
@@ -627,19 +713,65 @@ fn rdma_enabled() -> bool {
         && std::env::var("ATLAS_NATIVE_RDMA").is_ok_and(|v| v == "1")
 }
 
+fn tls_for_accept(shared: &Shared) -> Option<Arc<ServerConfig>> {
+    let force = crate::tls::take_cert_reload();
+    let due = shared
+        .last_tls_check
+        .lock()
+        .map(|t| t.elapsed() >= Duration::from_secs(1))
+        .unwrap_or(true);
+    if force || due {
+        if let Ok(mut t) = shared.last_tls_check.lock() {
+            *t = Instant::now();
+        }
+        let _ = reload_tls_config(shared, force);
+    }
+    shared.tls.read().ok().and_then(|g| g.clone())
+}
+
+fn reload_tls_config(shared: &Shared, force: bool) -> io::Result<bool> {
+    let mut watch = shared
+        .tls_watch
+        .lock()
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    let Some(watch) = watch.as_mut() else {
+        return Ok(false);
+    };
+    if !force && !watch.stale() {
+        return Ok(false);
+    }
+    let cfg = watch.reload()?;
+    let mut slot = shared
+        .tls
+        .write()
+        .map_err(|e| io::Error::other(e.to_string()))?;
+    *slot = Some(cfg);
+    Ok(true)
+}
+
+fn token_eq(expected: Option<&str>, got: &str) -> bool {
+    let Some(expected) = expected else {
+        return false;
+    };
+    let (a, b) = (expected.as_bytes(), got.as_bytes());
+    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
+}
+
 fn serve(mut stream: Conn, sh: &Shared) {
     // After a successful `RdmaUpgrade` the same request loop continues over an RDMA stream whose
     // setup was exchanged over this connection. A nested upgrade is refused, and so is an
     // upgrade of a TLS connection: RDMA traffic is not encrypted, so it would silently drop the
     // protection the operator configured.
     let upgradable = matches!(stream, Conn::Plain(_));
-    if let Some(gid_index) = serve_requests(&mut stream, sh, upgradable) {
+    let authed = stream.client_verified();
+    let (gid_index, authed) = serve_requests(&mut stream, sh, upgradable, authed);
+    if let Some(gid_index) = gid_index {
         if let (Conn::Plain(tcp), Some(transport)) = (&mut stream, sh.rdma_offer()) {
             // Only a setup failure returns an error (the request loop's own end is not one); it
             // is counted so an operator can see a node that cannot pin memory (`ENOMEM`), and
             // the client sees the connection reset and falls back to TCP.
             if let Err(e) = transport.serve(tcp, gid_index, &mut |rdma| {
-                serve_requests(&mut IdleRdma::new(rdma, &sh.stop), sh, false);
+                serve_requests(&mut IdleRdma::new(rdma, &sh.stop), sh, false, authed);
             }) {
                 sh.stats.rdma_setup_failures.fetch_add(1, Ordering::Relaxed);
                 if is_enomem(&e) {
@@ -718,8 +850,45 @@ impl<S: Write + ?Sized> Write for IdleRdma<'_, S> {
 
 /// The request loop, generic over the byte stream. Returns the GID index when the client asked
 /// to switch to RDMA (and the node agreed); `None` when the connection ended.
-fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bool) -> Option<u32> {
+fn serve_requests<S: Read + Write>(
+    mut stream: S,
+    sh: &Shared,
+    allow_upgrade: bool,
+    mut authed: bool,
+) -> (Option<u32>, bool) {
     while let Ok(req) = read_header::<Request>(&mut stream) {
+        if let Request::Auth { token } = &req {
+            let ok = if sh.auth.required {
+                token_eq(sh.auth.token.as_deref(), token)
+            } else {
+                true
+            };
+            if !ok {
+                let _ = write_message(
+                    &mut stream,
+                    &Response::Error {
+                        message: "unauthenticated".into(),
+                    },
+                    &[],
+                );
+                return (None, authed);
+            }
+            authed = true;
+            if write_message(&mut stream, &Response::Authed, &[]).is_err() {
+                return (None, authed);
+            }
+            continue;
+        }
+        if sh.auth.required && !authed {
+            let _ = write_message(
+                &mut stream,
+                &Response::Error {
+                    message: "unauthenticated".into(),
+                },
+                &[],
+            );
+            return (None, authed);
+        }
         let result = match req {
             Request::Append {
                 fence,
@@ -816,12 +985,13 @@ fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bo
                 },
                 &[],
             ),
+            Request::Auth { .. } => Ok(()),
             Request::RdmaUpgrade { gid_index } => {
                 if allow_upgrade && sh.rdma_offer().is_some() {
                     if write_message(&mut stream, &Response::RdmaReady, &[]).is_err() {
-                        return None;
+                        return (None, authed);
                     }
-                    return Some(gid_index);
+                    return (Some(gid_index), authed);
                 }
                 let message = if allow_upgrade {
                     "RDMA is not enabled on this node"
@@ -838,10 +1008,10 @@ fn serve_requests<S: Read + Write>(mut stream: S, sh: &Shared, allow_upgrade: bo
             }
         };
         if result.is_err() {
-            return None;
+            return (None, authed);
         }
     }
-    None
+    (None, authed)
 }
 
 /// A pooled connection: ordinary TCP/TLS, or an RDMA stream whose verbs resources are owned by a
@@ -927,6 +1097,8 @@ pub struct RemoteDevice {
     /// Signs this client's own writes for nodes that require write grants (a metadata leader
     /// holds it; a direct-write client never does and passes the grants it was leased).
     grant_key: Option<GrantKey>,
+    /// Sent as `Auth` on every new connection when set.
+    bearer: Option<String>,
 }
 
 impl std::fmt::Debug for RemoteDevice {
@@ -955,6 +1127,7 @@ impl RemoteDevice {
             group: 0,
             group_checked: AtomicBool::new(false),
             grant_key: None,
+            bearer: None,
         }
     }
 
@@ -976,7 +1149,14 @@ impl RemoteDevice {
             group: 0,
             group_checked: AtomicBool::new(false),
             grant_key: None,
+            bearer: None,
         })
+    }
+
+    /// Presents `token` as an `Auth` bearer on each new connection.
+    pub fn with_bearer(mut self, token: impl Into<String>) -> Self {
+        self.bearer = Some(token.into());
+        self
     }
 
     /// Makes this client authorize its own writes with `key`, for data nodes that require write
@@ -1170,13 +1350,21 @@ impl RemoteDevice {
     }
 
     fn connect_net(&self) -> io::Result<Conn> {
-        Conn::connect(self.connect_tcp()?, self.tls.as_ref().map(|(c, n)| (c, n.clone())))
+        let mut conn =
+            Conn::connect(self.connect_tcp()?, self.tls.as_ref().map(|(c, n)| (c, n.clone())))?;
+        if let Some(token) = &self.bearer {
+            authenticate(&mut conn, token)?;
+        }
+        Ok(conn)
     }
 
     /// Opens a connection, asks the node to switch it to RDMA and hands it to the transport. A
     /// node that does not offer RDMA yields `ErrorKind::Unsupported`.
     fn connect_rdma(&self, r: &RdmaClient, slot: ConnSlot) -> io::Result<Link> {
         let mut tcp = self.connect_tcp()?;
+        if let Some(token) = &self.bearer {
+            authenticate(&mut tcp, token)?;
+        }
         let gid_index = r.cfg.gid_index;
         write_message(&mut tcp, &Request::RdmaUpgrade { gid_index }, &[])?;
         match read_header::<Response>(&mut tcp)? {
@@ -1252,6 +1440,15 @@ impl RemoteDevice {
             }
         }
         Ok(out)
+    }
+}
+
+fn authenticate(stream: &mut (impl Read + Write), token: &str) -> io::Result<()> {
+    write_message(stream, &Request::Auth { token: token.to_string() }, &[])?;
+    match read_header::<Response>(stream)? {
+        Response::Authed => Ok(()),
+        Response::Error { message } => Err(io::Error::new(io::ErrorKind::PermissionDenied, message)),
+        other => Err(io::Error::other(format!("unexpected auth reply: {other:?}"))),
     }
 }
 
@@ -1648,7 +1845,10 @@ mod tests {
             devices: Vec::new(),
             root: root.to_path_buf(),
             fences: Mutex::new(BTreeMap::new()),
-            tls: None,
+            tls: RwLock::new(None),
+            tls_watch: Mutex::new(None),
+            last_tls_check: Mutex::new(Instant::now()),
+            auth: DataAuth::default(),
             id: String::new(),
             grant_key: None,
             rdma: RwLock::new(None),
@@ -1670,7 +1870,7 @@ mod tests {
             input: io::Cursor::new(input),
             output: Vec::new(),
         };
-        let outcome = serve_requests(&mut stream, &empty_shared(dir.path()), allow_upgrade);
+        let (outcome, _) = serve_requests(&mut stream, &empty_shared(dir.path()), allow_upgrade, true);
         let resp = read_header::<Response>(&mut stream.output.as_slice()).unwrap();
         (resp, outcome)
     }

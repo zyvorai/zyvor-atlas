@@ -7,6 +7,7 @@ use std::sync::{Arc, Mutex};
 use atlas_api_types::{BioEvent, IoHistogram, IoNative, IoRca, IoSensorHealth, IoWorkload};
 
 use crate::aishape;
+use crate::cgroup::{CgroupBinding, CgroupMap};
 use crate::devmap::DeviceMap;
 use crate::heat::{HeatSet, IoHeatmap};
 use crate::hist::HistSet;
@@ -29,6 +30,7 @@ struct WorkAcc {
 struct Inner {
     source: Box<dyn IoSource>,
     map: DeviceMap,
+    cgroups: CgroupMap,
     hist: HistSet,
     heat: HeatSet,
     work: HashMap<(u64, u32, u64), WorkAcc>,
@@ -46,6 +48,7 @@ impl Collector {
             inner: Mutex::new(Inner {
                 source,
                 map,
+                cgroups: CgroupMap::default(),
                 hist: HistSet::default(),
                 heat: HeatSet::default(),
                 work: HashMap::new(),
@@ -74,6 +77,12 @@ impl Collector {
             return;
         }
         let bind = g.map.resolve(ev.major, ev.minor);
+        // Device binding wins. A cgroup binding fills the volume only when the device
+        // map has none, including for a workload row created before the binding existed.
+        let volume_id = bind
+            .volume_id
+            .clone()
+            .or_else(|| g.cgroups.volume(ev.cgroup_id));
         let acc = g
             .work
             .entry((ev.cgroup_id, ev.pid, ev.dev_key()))
@@ -83,10 +92,13 @@ impl Collector {
                 sum_us: 0,
                 comm: ev.comm.clone(),
                 device: bind.name.clone(),
-                volume_id: bind.volume_id.clone(),
+                volume_id: volume_id.clone(),
                 pid: ev.pid,
                 cgroup_id: ev.cgroup_id,
             });
+        if acc.volume_id.is_none() {
+            acc.volume_id = volume_id;
+        }
         acc.ops += 1;
         acc.bytes += ev.bytes as u64;
         acc.sum_us += ev.latency_us();
@@ -185,6 +197,36 @@ impl Collector {
     pub fn seen(&self) -> u64 {
         self.inner.lock().expect("collector lock").seen
     }
+
+    /// Bind `cgroup_id` to an Atlas volume. Later events (and a workload row that still has
+    /// no volume) attribute through this map when the device map does not name a volume.
+    pub fn bind_cgroup(&self, cgroup_id: u64, volume_id: String) -> Result<CgroupBinding, String> {
+        let mut g = self.inner.lock().expect("collector lock");
+        g.cgroups.bind(cgroup_id, volume_id.clone())?;
+        g.source
+            .set_cgroup_volume(cgroup_id, Some(volume_id.as_str()));
+        Ok(CgroupBinding {
+            cgroup_id,
+            volume_id,
+        })
+    }
+
+    pub fn unbind_cgroup(&self, cgroup_id: u64) -> bool {
+        let mut g = self.inner.lock().expect("collector lock");
+        let removed = g.cgroups.unbind(cgroup_id);
+        if removed {
+            g.source.set_cgroup_volume(cgroup_id, None);
+        }
+        removed
+    }
+
+    pub fn cgroup_bindings(&self) -> Vec<CgroupBinding> {
+        self.inner
+            .lock()
+            .expect("collector lock")
+            .cgroups
+            .list()
+    }
 }
 
 fn unix_now() -> u64 {
@@ -211,5 +253,49 @@ mod tests {
         );
         let rca = c.rca(Some("vol_vm_web01"));
         assert!(rca.iter().any(|r| r.verdict == "critical_latency"));
+    }
+
+    #[test]
+    fn cgroup_binding_fills_a_volume_the_device_map_does_not_know() {
+        use atlas_api_types::{BioEvent, IoOp};
+        let ev = BioEvent {
+            issued_ns: 1,
+            completed_ns: 2_000,
+            queued_ns: 0,
+            bytes: 4096,
+            op: IoOp::Read,
+            major: 9,
+            minor: 1,
+            pid: 7,
+            cgroup_id: 42,
+            comm: "qemu-system-x86".into(),
+        };
+        let c = Collector::new(Box::new(FakeSource::new(vec![ev])), DeviceMap::new());
+        c.bind_cgroup(42, "vol_from_cg".into()).unwrap();
+        c.poll();
+        let ws = c.workloads();
+        assert_eq!(ws.len(), 1);
+        assert_eq!(ws[0].volume_id.as_deref(), Some("vol_from_cg"));
+        assert_eq!(ws[0].device, "9:1");
+        // A device binding still wins over the cgroup map.
+        let ev = BioEvent {
+            issued_ns: 1,
+            completed_ns: 2_000,
+            queued_ns: 0,
+            bytes: 4096,
+            op: IoOp::Read,
+            major: 8,
+            minor: 16,
+            pid: 7,
+            cgroup_id: 42,
+            comm: "qemu-system-x86".into(),
+        };
+        let c = Collector::new(Box::new(FakeSource::new(vec![ev])), DeviceMap::lab());
+        c.bind_cgroup(42, "vol_from_cg".into()).unwrap();
+        c.poll();
+        assert_eq!(
+            c.workloads()[0].volume_id.as_deref(),
+            Some("vol_vm_web01")
+        );
     }
 }

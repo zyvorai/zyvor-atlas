@@ -3,6 +3,9 @@
 //! Fake Ceph driver returning deterministic fixtures. Used for local dev, integration tests, and
 //! demos where no Ceph cluster is reachable (`ATLAS_CEPH_DRIVER_MODE=fake`).
 
+use std::collections::HashMap;
+use std::sync::Mutex;
+
 use async_trait::async_trait;
 use atlas_api_types::{
     DiscoveryResult, Health, MetricSample, Osd, StorageCluster, StorageHealth, StoragePool,
@@ -13,7 +16,12 @@ use atlas_driver_core::{DriverError, StorageDriver};
 pub struct FakeCephDriver {
     backend_id: String,
     cluster_id: String,
+    /// Sparse stand-in for RBD images, keyed by the native id. Capped so a test cannot allocate
+    /// a fixture-sized disk.
+    blocks: Mutex<HashMap<String, Vec<u8>>>,
 }
+
+const FAKE_RBD_CAP: usize = 64 * 1024 * 1024;
 
 impl FakeCephDriver {
     pub fn new(backend_id: impl Into<String>) -> Self {
@@ -21,6 +29,7 @@ impl FakeCephDriver {
         Self {
             cluster_id: "cls_fake0001".into(),
             backend_id,
+            blocks: Mutex::new(HashMap::new()),
         }
     }
 
@@ -105,6 +114,59 @@ impl FakeCephDriver {
 impl StorageDriver for FakeCephDriver {
     fn backend_id(&self) -> &str {
         &self.backend_id
+    }
+
+    async fn read_volume(
+        &self,
+        volume_id: &str,
+        offset: u64,
+        len: u64,
+    ) -> Result<Vec<u8>, DriverError> {
+        crate::cmd::parse_rbd_native_id(volume_id)?;
+        if len > FAKE_RBD_CAP as u64 {
+            return Err(DriverError::Backend(format!(
+                "invalid: fake rbd read of {len} bytes exceeds {FAKE_RBD_CAP}"
+            )));
+        }
+        let blocks = self
+            .blocks
+            .lock()
+            .map_err(|_| DriverError::Backend("fake rbd lock poisoned".into()))?;
+        let mut out = vec![0u8; len as usize];
+        if let Some(image) = blocks.get(volume_id) {
+            let start = offset as usize;
+            if start < image.len() {
+                let n = (image.len() - start).min(out.len());
+                out[..n].copy_from_slice(&image[start..start + n]);
+            }
+        }
+        Ok(out)
+    }
+
+    async fn write_volume(
+        &self,
+        volume_id: &str,
+        offset: u64,
+        data: Vec<u8>,
+    ) -> Result<(), DriverError> {
+        crate::cmd::parse_rbd_native_id(volume_id)?;
+        let end = offset as usize + data.len();
+        if end > FAKE_RBD_CAP {
+            return Err(DriverError::Backend(format!(
+                "invalid: fake rbd write ends at {end}, past {FAKE_RBD_CAP}"
+            )));
+        }
+        let mut blocks = self
+            .blocks
+            .lock()
+            .map_err(|_| DriverError::Backend("fake rbd lock poisoned".into()))?;
+        let image = blocks.entry(volume_id.to_string()).or_default();
+        if image.len() < end {
+            image.resize(end, 0);
+        }
+        let start = offset as usize;
+        image[start..end].copy_from_slice(&data);
+        Ok(())
     }
 
     async fn estimate_dedup(

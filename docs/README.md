@@ -15,7 +15,7 @@ duplicated.
 
 ## Storage & drivers
 - **[DISKS.md](DISKS.md)** — raw disk provisioning: device pickers, `POST /zfs/pools/from-device`, `POST /ceph/devices`.
-- **[LONGHORN.md](LONGHORN.md)** — read-only Longhorn driver.
+- **[LONGHORN.md](LONGHORN.md)** — Longhorn driver: CRD discovery and native volume/snapshot writes.
 - **[RUSTFS.md](RUSTFS.md)** — history of the now-removed first-party RustFS integration; Ceph RGW is the default object backend today.
 - **[DEDUP_ESTIMATE.md](DEDUP_ESTIMATE.md)** — what dedup would save on a Ceph or ZFS pool, before you enable anything: methods, reading the result, limits.
 - **[NATIVE_DATA_REDUCTION.md](NATIVE_DATA_REDUCTION.md)** — atlas-native LZ4 compression and extent deduplication: what they do, the savings report, limits.
@@ -86,7 +86,8 @@ Each crate with its own `README.md` is linked; the rest are plain workspace memb
 | `atlas-driver-nfs` | `NfsDriver` — second backend, fixture-only MVP |
 | `atlas-driver-zfs` | `ZfsDriver` — third backend, fixture-only MVP + raw-disk provisioning |
 | `atlas-driver-rgw` | S3 client for RGW buckets/backups; the default object backend |
-| `atlas-driver-longhorn` | read-only Longhorn driver |
+| `atlas-driver-longhorn` | Longhorn driver (CRD discovery and volume/snapshot writes) |
+| `atlas-driver-weka` | WEKA driver (filesystem discovery, create and delete) |
 | [`atlas-driver-k8s`](../crates/atlas-driver-k8s/README.md) | live Kubernetes driver |
 | `atlas-jobs` | async job engine (durable DB queue, single worker) |
 | `atlas-policy` | intent → StorageClass + access/volume mode |

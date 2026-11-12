@@ -60,6 +60,14 @@ async fn spawn_with(
         zfs_host: None,
         zfs_pools: Vec::new(),
         zfs_driver_mode: atlas_common::config::DriverMode::Fake,
+        san_enable: false,
+        san_server: None,
+        san_targets: Vec::new(),
+        san_driver_mode: atlas_common::config::DriverMode::Fake,
+        cloudblock_enable: false,
+        cloudblock_server: None,
+        cloudblock_targets: Vec::new(),
+        cloudblock_driver_mode: atlas_common::config::DriverMode::Fake,
         oidc: None,
         rook_namespace: "rook-ceph".into(),
         rook_cluster_name: "rook-ceph".into(),
@@ -1082,9 +1090,9 @@ async fn mcp_chargeback_is_tenant_filtered() {
 
 const MCP_META: &str = "/.well-known/oauth-protected-resource/api/atlas/v1/mcp";
 
-/// RFC 9728 metadata is public (no token even with auth on), has the documented shape, and claims
-/// nothing Atlas lacks: with no IdP configured (`ATLAS_MCP_IDP_ISSUER`, covered in `mcp_idp.rs`, where
-/// `authorization_servers` is present) there is no authorization server, and never any scopes.
+/// RFC 9728 metadata is public (no token even with auth on) and has the documented shape. With no
+/// IdP and no lab token endpoint there is no authorization server. `scopes_supported` lists the
+/// Atlas roles and one `atlas:tool:*` per tool this process serves.
 #[tokio::test]
 async fn oauth_protected_resource_metadata_shape() {
     let (addr, _pool) = spawn(true, "mcp-test-secret-at-least-32-bytes!!").await;
@@ -1107,7 +1115,17 @@ async fn oauth_protected_resource_metadata_shape() {
         doc.get("authorization_servers").is_none(),
         "no IdP configured: {doc}"
     );
-    assert!(doc.get("scopes_supported").is_none(), "{doc}");
+    let scopes = doc["scopes_supported"]
+        .as_array()
+        .expect("scopes_supported");
+    let scopes: Vec<&str> = scopes.iter().filter_map(|s| s.as_str()).collect();
+    for role in ["atlas:role:viewer", "atlas:role:operator", "atlas:role:admin"] {
+        assert!(scopes.contains(&role), "{scopes:?}");
+    }
+    assert!(
+        scopes.contains(&"atlas:tool:list_clusters"),
+        "{scopes:?}"
+    );
 
     // Root form: the resource is the origin (RFC 9728 section 3.3).
     let root: serde_json::Value =
@@ -1123,6 +1141,11 @@ async fn oauth_protected_resource_metadata_shape() {
         serde_json::json!(["header"])
     );
     assert!(root.get("authorization_servers").is_none(), "{root}");
+    assert!(root["scopes_supported"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|s| s == "atlas:role:viewer"));
 
     // Another suffix is not served as metadata.
     let other = reqwest::get(format!(
@@ -1199,10 +1222,12 @@ async fn mcp_401_carries_resource_metadata_challenge() {
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        resp.headers()["www-authenticate"],
-        format!("Bearer {want}").as_str()
-    );
+    let ch = resp.headers()["www-authenticate"].to_str().unwrap();
+    assert!(ch.starts_with("Bearer "), "{ch}");
+    assert!(!ch.contains("error="), "{ch}");
+    assert!(ch.contains(&want), "{ch}");
+    assert!(ch.contains("scope=\"") && ch.contains("atlas:role:operator"), "{ch}");
+    assert!(ch.contains("atlas:tool:list_clusters"), "{ch}");
     // The body is the same JSON error as on REST routes.
     let body: serde_json::Value = resp.json().await.unwrap();
     assert_eq!(body["error"]["code"], "AUTH_ERROR");
@@ -1215,10 +1240,10 @@ async fn mcp_401_carries_resource_metadata_challenge() {
         .await
         .unwrap();
     assert_eq!(resp.status(), reqwest::StatusCode::UNAUTHORIZED);
-    assert_eq!(
-        resp.headers()["www-authenticate"],
-        format!("Bearer error=\"invalid_token\", {want}").as_str()
-    );
+    let ch = resp.headers()["www-authenticate"].to_str().unwrap();
+    assert!(ch.starts_with("Bearer error=\"invalid_token\""), "{ch}");
+    assert!(ch.contains(&want), "{ch}");
+    assert!(ch.contains("atlas:tool:list_clusters"), "{ch}");
 
     // A token signed with another secret is refused the same way.
     let (other, _, _) = atlas_gateway::auth::mint_token(
@@ -1259,10 +1284,13 @@ async fn mcp_401_challenge_uses_configured_public_url() {
         .send()
         .await
         .unwrap();
-    assert_eq!(
-        resp.headers()["www-authenticate"],
-        format!("Bearer resource_metadata=\"https://atlas.example.com{MCP_META}\"").as_str()
+    let ch = resp.headers()["www-authenticate"].to_str().unwrap();
+    assert!(
+        ch.contains("resource_metadata=\"https://atlas.example.com/.well-known/oauth-protected-resource/api/atlas/v1/mcp\""),
+        "{ch}"
     );
+    assert!(ch.contains("atlas:role:viewer"), "{ch}");
+    assert!(!ch.contains("evil.example"), "{ch}");
 }
 
 /// REST 401s are untouched: same status and body, and no `WWW-Authenticate`.

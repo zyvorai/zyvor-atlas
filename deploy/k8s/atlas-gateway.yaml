@@ -67,10 +67,14 @@ rules:
   - apiGroups: ["ceph.rook.io"]
     resources: ["cephblockpools", "cephfilesystems", "cephobjectstores"]
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # Optional ATLAS_LONGHORN_ENABLE discovery; Longhorn mutations use Kubernetes PVCs above.
+  # ATLAS_LONGHORN_ENABLE: read nodes; native volume and snapshot writes go through the CRDs.
+  # PVC provisioning still uses the persistentvolumeclaims rule above.
   - apiGroups: ["longhorn.io"]
-    resources: ["nodes", "volumes"]
+    resources: ["nodes"]
     verbs: ["get", "list", "watch"]
+  - apiGroups: ["longhorn.io"]
+    resources: ["volumes", "snapshots"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
   # POST /ceph/devices validates the operator-supplied node name against the real cluster before
   # patching CephCluster against it.
   - apiGroups: [""]

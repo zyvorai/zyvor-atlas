@@ -184,6 +184,25 @@ impl AtlasMcp {
         Self { state, tool_router }
     }
 
+    /// Role scopes plus one `atlas:tool:<name>` per tool this process is serving. Used by the
+    /// protected-resource metadata and the `WWW-Authenticate` `scope` parameter.
+    pub(crate) fn scope_names(&self) -> Vec<String> {
+        let mut tools: Vec<String> = self
+            .tool_router
+            .list_all()
+            .into_iter()
+            .filter_map(|t| crate::oauth_resource::tool_scope_name(t.name.as_ref()))
+            .collect();
+        tools.sort();
+        tools.dedup();
+        let mut scopes: Vec<String> = crate::oauth_resource::ROLE_SCOPES
+            .iter()
+            .map(|s| (*s).to_string())
+            .collect();
+        scopes.extend(tools);
+        scopes
+    }
+
     #[tool(description = "List storage clusters known to Atlas, with capacity and health.")]
     async fn list_clusters(&self) -> Result<ToolJson<Value>, McpError> {
         let clusters = atlas_inventory::list_clusters(&self.state.pool)
@@ -633,6 +652,11 @@ impl ServerHandler for AtlasMcp {
     ) -> Result<ReadResourceResponse, McpError> {
         Ok(content::read_resource(&request.uri)?.into())
     }
+}
+
+/// Scopes advertised for this process: three role scopes and one tool scope per served tool.
+pub(crate) fn scopes_supported(state: &AppState) -> Vec<String> {
+    AtlasMcp::new(state.clone()).scope_names()
 }
 
 /// Public discovery card served at `/.well-known/mcp`. Deliberately static and small: it says where

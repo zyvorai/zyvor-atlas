@@ -300,6 +300,7 @@ pub(crate) async fn dispatch_object(
             storage_class,
             max_objects,
             max_size,
+            object_lock,
         } => {
             let k8s = require_k8s(k8s)?;
             let max_size = max_size.filter(|s| !s.is_empty());
@@ -384,9 +385,36 @@ pub(crate) async fn dispatch_object(
             } else {
                 false
             };
+
+            // Rook's ObjectBucketClaim has no object-lock field, and an unknown additionalConfig
+            // key fails the claim. Object lock is the CreateBucket header, which cannot be added
+            // later, so replace the empty bucket Rook just made with one created through the
+            // signed S3 call (`create_bucket_with_object_lock`).
+            if object_lock {
+                if bucket_name.is_empty() {
+                    anyhow::bail!(
+                        "OBC {obc_name} bound without a bucket name; cannot enable object lock"
+                    );
+                }
+                let s3 = build_s3_target(
+                    &k8s,
+                    &namespace,
+                    &obc_name,
+                    &endpoint,
+                    &region,
+                    &bucket_name,
+                )
+                .await?;
+                s3.delete_bucket()
+                    .await
+                    .context("remove the unlocked RGW bucket before enabling object lock")?;
+                s3.create_bucket_with_object_lock(true)
+                    .await
+                    .context("create the RGW bucket with S3 object lock")?;
+            }
             Ok(serde_json::json!({
                 "bucket_id": bucket_id, "bucket_name": bucket_name, "endpoint": endpoint,
-                "quota_set": quota_set
+                "quota_set": quota_set, "object_lock": object_lock
             }))
         }
 

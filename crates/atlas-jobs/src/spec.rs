@@ -75,6 +75,10 @@ pub enum JobSpec {
         /// Optional RGW quota (OBC additionalConfig): max size (e.g. "2G").
         #[serde(default)]
         max_size: Option<String>,
+        /// S3 Object Lock, set only at creation. `#[serde(default)]` so a job queued before this
+        /// field existed stays unlocked.
+        #[serde(default)]
+        object_lock: bool,
     },
     /// Provision a bucket directly via a signed S3 `CreateBucket` call — no Kubernetes operator
     /// involved (unlike `BucketCreate`'s Rook ObjectBucketClaim): synchronous, no bind-poll.
@@ -317,7 +321,7 @@ pub enum JobSpec {
         /// The backend's own id for the volume (what `write_volume` addresses).
         native_id: String,
         url: String,
-        /// Lower-case hex SHA-256 of the whole image, which the import must match.
+        /// Lower-case hex SHA-256 of the file at `url` (the qcow2, or the raw image).
         sha256: String,
         /// Expected image length in bytes, when the caller knows it.
         #[serde(default)]
@@ -325,6 +329,10 @@ pub enum JobSpec {
         /// Start after this many bytes already written by an earlier job (chunk-aligned).
         #[serde(default)]
         resume_from: u64,
+        /// `raw` (default) or `qcow2`. qcow2 is converted with `qemu-img convert -O raw` before
+        /// the bytes are written. Older jobs deserialize as raw.
+        #[serde(default = "default_raw_format")]
+        format: String,
     },
     /// Estimate what dedup (and compression) would save on a pool, without enabling either. Reads
     /// data and can run for hours, so it is a long job: its own task, one at a time by default,
@@ -632,4 +640,8 @@ impl JobSpec {
 /// ever target before RustFS existed.
 fn default_ceph_backend_id() -> String {
     "bkd_ceph_lab".to_string()
+}
+
+fn default_raw_format() -> String {
+    "raw".into()
 }

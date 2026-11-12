@@ -1002,6 +1002,170 @@ pub async fn rbd_group_image_list(
     rbd_cmd(&["group", "image", "list", &format!("{pool}/{group}")]).await
 }
 
+/// Largest single read or write. Image import uses 4 MiB; this leaves headroom without buffering
+/// an entire disk in the gateway.
+const MAX_RBD_IO: u64 = 16 * 1024 * 1024;
+
+/// `python3 -c` script. Pool, image, offset and length are argv, never interpolated. `sys.argv[0]`
+/// is `-c`, so the first real argument is `sys.argv[1]`.
+const RBD_IO_SCRIPT: &str = r#"
+import sys
+try:
+    import rados, rbd
+except ImportError as exc:
+    sys.stderr.write("python rbd module is not installed: %s\n" % exc)
+    sys.exit(2)
+op, pool, image, offset_s, conf = sys.argv[1:6]
+offset = int(offset_s)
+cluster = rados.Rados(conffile=conf)
+cluster.connect()
+try:
+    ioctx = cluster.open_ioctx(pool)
+    try:
+        img = rbd.Image(ioctx, image)
+        try:
+            if op == "read":
+                sys.stdout.buffer.write(img.read(offset, int(sys.argv[6])))
+            elif op == "write":
+                img.write(sys.stdin.buffer.read(), offset)
+            else:
+                sys.stderr.write("unknown op\n")
+                sys.exit(2)
+        finally:
+            img.close()
+    finally:
+        ioctx.close()
+finally:
+    cluster.shutdown()
+"#;
+
+fn rbd_name_ok(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 128
+        && !name.contains("..")
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'.' | b'_' | b'-'))
+}
+
+/// `rbd:pool/image`, the id discovery stores on a Ceph volume. A bare `pool/image` is accepted too.
+pub fn parse_rbd_native_id(id: &str) -> Result<(String, String), DriverError> {
+    let rest = id.strip_prefix("rbd:").unwrap_or(id);
+    let Some((pool, image)) = rest.split_once('/') else {
+        return Err(DriverError::Backend(format!(
+            "invalid: Ceph volume id {id:?} must be rbd:pool/image"
+        )));
+    };
+    if !rbd_name_ok(pool) || !rbd_name_ok(image) {
+        return Err(DriverError::Backend(format!(
+            "invalid: Ceph volume id {id:?} must be rbd:pool/image"
+        )));
+    }
+    Ok((pool.to_string(), image.to_string()))
+}
+
+fn rbd_python_bin() -> String {
+    std::env::var("ATLAS_RBD_PYTHON").unwrap_or_else(|_| "python3".into())
+}
+
+fn ceph_conf() -> String {
+    std::env::var("CEPH_CONF").unwrap_or_else(|_| "/etc/ceph/ceph.conf".into())
+}
+
+/// Read `len` bytes at `offset` via the python `rbd` module (librbd). Never-written bytes are zeros.
+pub async fn rbd_read(
+    pool: &str,
+    image: &str,
+    offset: u64,
+    len: u64,
+) -> Result<Vec<u8>, DriverError> {
+    if len > MAX_RBD_IO {
+        return Err(DriverError::Backend(format!(
+            "invalid: rbd read of {len} bytes exceeds {MAX_RBD_IO}"
+        )));
+    }
+    if len == 0 {
+        return Ok(Vec::new());
+    }
+    let bin = rbd_python_bin();
+    let output = cmd(&bin)
+        .arg("-c")
+        .arg(RBD_IO_SCRIPT)
+        .arg("read")
+        .arg(pool)
+        .arg(image)
+        .arg(offset.to_string())
+        .arg(ceph_conf())
+        .arg(len.to_string())
+        .output()
+        .await
+        .map_err(|e| DriverError::Unreachable(format!("failed to spawn `{bin}`: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(DriverError::Backend(format!(
+            "rbd read {pool}/{image} @ {offset}: {stderr}"
+        )));
+    }
+    if output.stdout.len() as u64 != len {
+        return Err(DriverError::Backend(format!(
+            "rbd read {pool}/{image} @ {offset}: wanted {len} bytes, got {}",
+            output.stdout.len()
+        )));
+    }
+    Ok(output.stdout)
+}
+
+/// Write `data` at `offset` via the python `rbd` module (librbd).
+pub async fn rbd_write(
+    pool: &str,
+    image: &str,
+    offset: u64,
+    data: &[u8],
+) -> Result<(), DriverError> {
+    if data.len() as u64 > MAX_RBD_IO {
+        return Err(DriverError::Backend(format!(
+            "invalid: rbd write of {} bytes exceeds {MAX_RBD_IO}",
+            data.len()
+        )));
+    }
+    if data.is_empty() {
+        return Ok(());
+    }
+    let bin = rbd_python_bin();
+    let mut child = cmd(&bin)
+        .arg("-c")
+        .arg(RBD_IO_SCRIPT)
+        .arg("write")
+        .arg(pool)
+        .arg(image)
+        .arg(offset.to_string())
+        .arg(ceph_conf())
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .map_err(|e| DriverError::Unreachable(format!("failed to spawn `{bin}`: {e}")))?;
+    let mut stdin = child
+        .stdin
+        .take()
+        .ok_or_else(|| DriverError::Backend("rbd write: no stdin".into()))?;
+    tokio::io::AsyncWriteExt::write_all(&mut stdin, data)
+        .await
+        .map_err(|e| DriverError::Backend(format!("rbd write {pool}/{image}: {e}")))?;
+    drop(stdin);
+    let output = child
+        .wait_with_output()
+        .await
+        .map_err(|e| DriverError::Backend(format!("rbd write wait: {e}")))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        return Err(DriverError::Backend(format!(
+            "rbd write {pool}/{image} @ {offset}: {stderr}"
+        )));
+    }
+    Ok(())
+}
+
 async fn run_json(bin: &str, args: &[&str]) -> Result<serde_json::Value, DriverError> {
     let output = cmd(bin)
         .args(args)
@@ -1030,8 +1194,20 @@ async fn run_json(bin: &str, args: &[&str]) -> Result<serde_json::Value, DriverE
 mod tests {
     use super::{
         interpret_ok_to_stop, journal_peers_replayed, mirror_promote_blocker, parse_du_images,
+        parse_rbd_native_id,
     };
     use serde_json::json;
+
+    #[test]
+    fn rbd_native_id_is_pool_and_image() {
+        assert_eq!(
+            parse_rbd_native_id("rbd:rbd-nvme-prod/web-01-root").unwrap(),
+            ("rbd-nvme-prod".into(), "web-01-root".into())
+        );
+        assert!(parse_rbd_native_id("rbd:pool/../image").is_err());
+        assert!(parse_rbd_native_id("pvc-1234").is_err());
+        assert!(parse_rbd_native_id("rbd:pool/image;rm").is_err());
+    }
 
     #[test]
     fn du_images_accept_the_squid_name_key_and_the_older_image_key() {

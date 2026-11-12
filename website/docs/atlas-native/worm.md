@@ -18,7 +18,7 @@ cover.
 ## 1. Locked snapshots (block and filesystem)
 
 A snapshot can be retention-locked. Until the lock expires, deleting it fails (HTTP 409) for every
-caller, admins included, and the lock can be extended but never shortened or removed.
+caller, admins included, and one caller can extend the lock but never shorten or remove it.
 
 ```sh
 atlasctl lock-snapshot snap_native_… --retain-secs 604800     # 7 days
@@ -42,6 +42,27 @@ Not covered: anyone with the raw data-node disks or the ability to stop the whol
 its metadata files can still destroy data; this is software retention, not hardware WORM. The node
 trusts its own wall clock, so a node whose clock is set far into the future would let a lock lapse
 early. Keep NTP healthy.
+
+### Early unlock (two people)
+
+A lock can be cleared before it expires only when two different admins agree. The first admin
+proposes a reason; a second admin, not the same account, confirms. The gateway then calls
+`unlock_snapshot` on the atlas-native driver, which clears `retain_until_unix` in the Raft catalog
+for a block snapshot or a filesystem snapshot. The gateway audit records `snapshot.unlock.proposed`
+and `snapshot.unlock`. The proposal expires after 15 minutes. Confirming your own proposal is
+refused (403). A snapshot that is not locked is refused by the node.
+
+```sh
+# admin A
+POST /api/atlas/v1/snapshots/{id}/unlock/propose   {"reason": "legal hold released"}
+# admin B, a different account
+POST /api/atlas/v1/snapshots/{id}/unlock/confirm   {"proposal_id": "prp_…"}
+```
+
+The node also accepts `POST /v1/snapshots/{id}/unlock` and `POST /v1/fs-snapshots/{id}/unlock`.
+That call is what the driver makes. Anyone who can reach the node API with its token can unlock
+without the second admin, so keep that API limited to the gateway. This is still software
+retention: it does not survive someone editing the catalog files.
 
 ## 2. S3 object retention
 

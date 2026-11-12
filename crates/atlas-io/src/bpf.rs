@@ -15,6 +15,7 @@ use aya::maps::{Array, HashMap, MapData, RingBuf};
 use aya::programs::TracePoint;
 use aya::Ebpf;
 
+use crate::probes::{self, OPTIONAL_FAMILIES};
 use crate::procscan;
 use crate::source::{parse_op, IoSource};
 use crate::{CARDINALITY_CAP, NATIVE_SLOW_US, PIN_DIR};
@@ -105,12 +106,35 @@ struct NativeSlowEvent {
     comm: [u8; 16],
 }
 
+/// `struct atlas_cgroup_key` in `bpf/atlas_cgroup.bpf.c`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CgroupKey {
+    cgroup_id: u64,
+}
+
+/// `struct atlas_cgroup_val`. 64 bytes, volume id is NUL-terminated.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct CgroupVal {
+    volume_id: [u8; 64],
+}
+
+// SAFETY: repr(C) integer-only struct; any bit pattern is valid.
+unsafe impl aya::Pod for CgroupKey {}
+// SAFETY: as above.
+unsafe impl aya::Pod for CgroupVal {}
+
 struct Attached {
     events: RingBuf<MapData>,
     dropped: Array<MapData, u64>,
     native_pids: HashMap<MapData, u32, u8>,
     native_stats: HashMap<MapData, NativeKey, NativeValue>,
     native_slow: RingBuf<MapData>,
+    /// Present when `atlas_cgroup` was in the object. Userspace attribution does not need it.
+    cgroup: Option<HashMap<MapData, CgroupKey, CgroupVal>>,
+    /// Optional probe families that attached (`atlas_nfs`, `atlas_zfs`, `atlas_uring`).
+    extra_loaded: Vec<String>,
     recent_slow: VecDeque<IoNativeSlow>,
     names: Vec<String>,
     tracked: Vec<u32>,
@@ -206,6 +230,18 @@ impl BpfSource {
         if let Err(e) = queue {
             tracing::warn!(error = %format!("{e:#}"), "queue-time program not attached; queued_ns stays 0");
         }
+        let mut extra_loaded = Vec::new();
+        for family in ["atlas_nfs", "atlas_zfs", "atlas_uring"] {
+            let mut attached_one = false;
+            for probe in probes::EXTRA_PROBES.iter().filter(|p| p.family == family) {
+                if try_attach(&mut ebpf, probe.program, probe.category, probe.tracepoint) {
+                    attached_one = true;
+                }
+            }
+            if attached_one {
+                extra_loaded.push(family.to_string());
+            }
+        }
         let pinned = pin_dir.and_then(|dir| match pin_native(&ebpf, dir) {
             Ok(dir) => Some(dir),
             Err(e) => {
@@ -230,12 +266,27 @@ impl BpfSource {
             ebpf.take_map("atlas_native_slow")
                 .context("atlas_native_slow map")?,
         )?;
+        let cgroup = match ebpf.take_map("atlas_cgroup") {
+            Some(map) => match HashMap::try_from(map) {
+                Ok(map) => Some(map),
+                Err(e) => {
+                    tracing::warn!(error = %e, "atlas_cgroup map has an unexpected shape");
+                    None
+                }
+            },
+            None => {
+                tracing::warn!("atlas_cgroup map missing from the BPF object");
+                None
+            }
+        };
         let mut attached = Attached {
             events,
             dropped,
             native_pids,
             native_stats,
             native_slow,
+            cgroup,
+            extra_loaded,
             recent_slow: VecDeque::with_capacity(SLOW_KEEP),
             names: native_processes.to_vec(),
             tracked: Vec::new(),
@@ -292,20 +343,26 @@ impl IoSource for BpfSource {
     }
 
     fn health(&self, seen: u64, dropped: u64, cardinality: u64) -> IoSensorHealth {
-        let kernel_dropped = self
-            .inner
-            .lock()
-            .expect("bpf source lock")
-            .kernel_dropped(0..2);
+        let g = self.inner.lock().expect("bpf source lock");
+        let kernel_dropped = g.kernel_dropped(0..2);
+        let mut programs_loaded = vec!["atlas_bio".into(), "atlas_native".into()];
+        let mut programs_missing = Vec::new();
+        for family in OPTIONAL_FAMILIES {
+            let loaded = if family == "atlas_cgroup" {
+                g.cgroup.is_some()
+            } else {
+                g.extra_loaded.iter().any(|s| s == family)
+            };
+            if loaded {
+                programs_loaded.push(family.to_string());
+            } else {
+                programs_missing.push(family.to_string());
+            }
+        }
         IoSensorHealth {
             mode: self.mode().to_string(),
-            programs_loaded: vec!["atlas_bio".into(), "atlas_native".into()],
-            programs_missing: vec![
-                "atlas_cgroup".into(),
-                "atlas_nfs".into(),
-                "atlas_zfs".into(),
-                "atlas_uring".into(),
-            ],
+            programs_loaded,
+            programs_missing,
             pin_dir: PIN_DIR.to_string(),
             events_seen: seen,
             events_dropped: dropped + kernel_dropped,
@@ -344,6 +401,55 @@ impl IoSource for BpfSource {
             slow: g.recent_slow.iter().cloned().collect(),
             dropped: g.kernel_dropped(2..4),
         })
+    }
+
+    fn set_cgroup_volume(&mut self, cgroup_id: u64, volume_id: Option<&str>) {
+        let g = self.inner.get_mut().expect("bpf source lock");
+        let Some(map) = g.cgroup.as_mut() else {
+            return;
+        };
+        let key = CgroupKey { cgroup_id };
+        match volume_id {
+            None => {
+                let _ = map.remove(&key);
+            }
+            Some(volume) => {
+                let mut val = CgroupVal {
+                    volume_id: [0; 64],
+                };
+                let bytes = volume.as_bytes();
+                let n = bytes.len().min(63);
+                val.volume_id[..n].copy_from_slice(&bytes[..n]);
+                if let Err(e) = map.insert(&key, &val, 0) {
+                    tracing::warn!(error = %e, cgroup_id, "atlas_cgroup map update failed");
+                }
+            }
+        }
+    }
+}
+
+/// Load and attach one optional probe. Failure is logged and reported as not loaded;
+/// the block-layer programs keep running.
+fn try_attach(ebpf: &mut Ebpf, program: &str, category: &str, tracepoint: &str) -> bool {
+    let loaded = (|| -> Result<()> {
+        let prog: &mut TracePoint = ebpf
+            .program_mut(program)
+            .with_context(|| format!("{program} missing from the BPF object"))?
+            .try_into()?;
+        prog.load().with_context(|| format!("load {program}"))?;
+        prog.attach(category, tracepoint)
+            .with_context(|| format!("attach {program} to {category}/{tracepoint}"))?;
+        Ok(())
+    })();
+    match loaded {
+        Ok(()) => {
+            tracing::info!(program, category, tracepoint, "optional I/O probe attached");
+            true
+        }
+        Err(e) => {
+            tracing::warn!(program, error = %format!("{e:#}"), "optional I/O probe not attached");
+            false
+        }
     }
 }
 
@@ -436,6 +542,8 @@ mod tests {
         assert_eq!(std::mem::size_of::<NativeKey>(), 24);
         assert_eq!(std::mem::size_of::<NativeValue>(), 40);
         assert_eq!(std::mem::size_of::<NativeSlowEvent>(), 72);
+        assert_eq!(std::mem::size_of::<CgroupKey>(), 8);
+        assert_eq!(std::mem::size_of::<CgroupVal>(), 64);
     }
 
     #[test]

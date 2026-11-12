@@ -21,6 +21,8 @@ pub struct OracleSourceConnector {
     service: String,
     user: String,
     password: String,
+    /// Source `tls_mode`. `disable` is Easy Connect; anything else is a TCPS descriptor.
+    tls_mode: String,
 }
 
 impl OracleSourceConnector {
@@ -39,7 +41,15 @@ impl OracleSourceConnector {
             service: service.to_string(),
             user: user.to_string(),
             password: password.to_string(),
+            tls_mode: "disable".into(),
         }
+    }
+
+    /// `tls_mode` from the migration source (`disable` plaintext, `tcps` / `require` /
+    /// `verify-full` TCPS). See [`crate::connectors::oracle_dsn`].
+    pub fn with_tls_mode(mut self, tls_mode: impl Into<String>) -> Self {
+        self.tls_mode = tls_mode.into();
+        self
     }
 }
 
@@ -55,10 +65,13 @@ impl SourceConnector for OracleSourceConnector {
         let service = self.service.clone();
         let user = self.user.clone();
         let password = self.password.clone();
+        let tls_mode = self.tls_mode.clone();
 
         // The oracle crate is blocking (OCI); keep it off the async runtime threads.
         tokio::task::spawn_blocking(move || -> Result<DiscoveredSchema> {
-            let connect_string = format!("//{host}:{port}/{service}");
+            let connect_string = crate::connectors::oracle_dsn::connect_string(
+                &host, port, &service, &tls_mode,
+            )?;
             let conn = oracle::Connection::connect(&user, &password, &connect_string)
                 .context("connect to source Oracle")?;
 

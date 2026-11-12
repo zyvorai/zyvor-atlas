@@ -61,6 +61,14 @@ async fn spawn_with(
         zfs_host: None,
         zfs_pools: Vec::new(),
         zfs_driver_mode,
+        san_enable: false,
+        san_server: None,
+        san_targets: Vec::new(),
+        san_driver_mode: atlas_common::config::DriverMode::Fake,
+        cloudblock_enable: false,
+        cloudblock_server: None,
+        cloudblock_targets: Vec::new(),
+        cloudblock_driver_mode: atlas_common::config::DriverMode::Fake,
         oidc: None,
         rook_namespace: "rook-ceph".into(),
         rook_cluster_name: "rook-ceph".into(),
@@ -123,6 +131,94 @@ async fn post_backend_registers_live_nfs_driver() {
         "the live NFS backend should have discovered an export pool: {pools}"
     );
     assert!(!bid.is_empty());
+}
+
+#[tokio::test]
+async fn post_backend_registers_live_san_driver() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+
+    let created: Value = c
+        .post(format!("{base}/backends"))
+        .json(&json!({
+            "name": "extra-san",
+            "backend_type": "san",
+            "server": "10.1.0.9:3260",
+            "targets": ["iqn.2026-01.com.zyvor:lun0"]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        created["status"], "active",
+        "san backend should be live, not pending: {created}"
+    );
+    assert_eq!(created["capabilities"]["block"], true, "{created}");
+    assert_eq!(created["capabilities"]["expansion"], true, "{created}");
+
+    let pools: Value = c
+        .get(format!("{base}/pools"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        pools
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| { p["kind"] == "san_portal" && p["name"] == "10.1.0.9:3260" }),
+        "the live SAN backend should have discovered a portal pool: {pools}"
+    );
+}
+
+#[tokio::test]
+async fn post_backend_registers_live_cloudblock_driver() {
+    let base = format!("http://{}/api/atlas/v1", spawn().await);
+    let c = reqwest::Client::new();
+
+    let created: Value = c
+        .post(format!("{base}/backends"))
+        .json(&json!({
+            "name": "extra-ebs",
+            "backend_type": "cloud_block",
+            "server": "aws",
+            "targets": ["vol-aaa"]
+        }))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(
+        created["status"], "active",
+        "cloud_block backend should be live, not pending: {created}"
+    );
+    assert_eq!(created["capabilities"]["block"], true, "{created}");
+    assert_eq!(created["capabilities"]["expansion"], true, "{created}");
+
+    let pools: Value = c
+        .get(format!("{base}/pools"))
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        pools
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|p| p["kind"] == "cloud_block" && p["name"] == "aws"),
+        "the live cloud-block backend should have discovered a provider pool: {pools}"
+    );
 }
 
 /// With `nfs_driver_mode: Real` and an unreachable server, the live NFS driver's discovery fails

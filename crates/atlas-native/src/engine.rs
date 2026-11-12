@@ -1141,6 +1141,17 @@ impl NativeEngine {
         Ok(retain_until_unix)
     }
 
+    /// Clears a retention lock. The gateway calls this only after two distinct admins confirm.
+    /// Refused when the snapshot is not locked.
+    pub fn unlock_snapshot(&self, snapshot_id: &str) -> Result<(), NativeError> {
+        self.commit(
+            MetaCommand::UnlockSnapshot {
+                snapshot_id: snapshot_id.to_string(),
+            },
+            None,
+        )
+    }
+
     pub fn read_snapshot(
         &self,
         snapshot_id: &str,

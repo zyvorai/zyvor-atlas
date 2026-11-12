@@ -212,7 +212,17 @@ validation jobs as `sslmode`.
 Checked on 2026-10-26 against a Postgres 14 that accepts only `hostssl` connections, with a private CA and a
 server certificate for `127.0.0.1`: `disable` was refused by the server; `prefer` and `require` connected;
 `verify-full` failed without the CA and connected with it; an unknown mode connected over TLS. A full load and
-CDC run over TLS has not been done.
+CDC run over TLS has not been done. The full-load Job spec carries `sslmode=${SRC_SSL}` (unit-tested).
+`live_pg_full_load_over_tls` is an ignored test: it checks that spec against `DATABRIDGE_TEST_PG` /
+`DATABRIDGE_TEST_PG_TLS` and does not run `pg_dump`.
+
+Oracle `tls_mode` of `disable` stays Easy Connect. `tcps`, `require`, `verify-ca`, `verify-full`, and any
+other value build a `PROTOCOL=TCPS` connect descriptor (`connectors/oracle_dsn.rs`, unit-tested). The
+wallet and DN match stay in the client's `sqlnet.ora`. No TCPS listener has been dialed.
+
+`GET /databridge/plans/{id}/rollback-drill` (and `atlasctl databridge-stage PLAN rollback-drill`) lists
+the steps `pipeline::rollback` already runs: mark the cutover and the plan `rolled_back`. It does not
+copy rows back and does not change the plan. The mutating rollback is still `POST .../rollback`.
 
 ## Testing
 - **Fake pipeline (no infra)**: `cargo test --workspace` covers the unit tests plus the gateway

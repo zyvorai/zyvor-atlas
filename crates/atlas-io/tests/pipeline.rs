@@ -190,6 +190,66 @@ async fn live_mode_without_bpf_has_no_native_view() {
 }
 
 #[tokio::test]
+async fn cgroup_map_api_attributes_a_later_poll() {
+    use atlas_api_types::{BioEvent, IoOp};
+    let ev = BioEvent {
+        issued_ns: 10,
+        completed_ns: 20_000,
+        queued_ns: 0,
+        bytes: 512,
+        op: IoOp::Write,
+        major: 3,
+        minor: 2,
+        pid: 11,
+        cgroup_id: 99,
+        comm: "nfsd".into(),
+    };
+    let c = Collector::new(Box::new(FakeSource::new(vec![ev])), DeviceMap::new());
+    let app = router(c);
+    let put = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/io/cgroup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"cgroup_id":99,"volume_id":"vol_nfs"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(put.status(), StatusCode::OK);
+    let listed = get_json(app.clone(), "/io/cgroup").await;
+    assert_eq!(listed[0]["volume_id"], "vol_nfs");
+    let work = get_json(app.clone(), "/io/workloads").await;
+    assert_eq!(work[0]["volume_id"], "vol_nfs");
+    let bad = app
+        .clone()
+        .oneshot(
+            Request::builder()
+                .method("PUT")
+                .uri("/io/cgroup")
+                .header("content-type", "application/json")
+                .body(Body::from(r#"{"cgroup_id":1,"volume_id":"no spaces"}"#))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(bad.status(), StatusCode::BAD_REQUEST);
+    let del = app
+        .oneshot(
+            Request::builder()
+                .method("DELETE")
+                .uri("/io/cgroup/99")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(del.status(), StatusCode::NO_CONTENT);
+}
+
+#[tokio::test]
 async fn live_mode_reports_missing_programs() {
     use atlas_io::source::LiveSource;
     let c = Collector::new(Box::new(LiveSource), DeviceMap::new());

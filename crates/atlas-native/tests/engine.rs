@@ -243,6 +243,20 @@ fn locked_snapshot_refuses_delete_and_survives_gc() {
 }
 
 #[test]
+fn unlock_snapshot_allows_delete_and_refuses_a_second_unlock() {
+    let root = test_root("worm-unlock");
+    let e = NativeEngine::open(EngineConfig::new(&root), nodes()).unwrap();
+    let v = e.create_volume("vault", 16 * 1024 * 1024).unwrap();
+    let s = e.create_snapshot(&v, "immutable").unwrap();
+    e.lock_snapshot(&s, 3600).unwrap();
+    assert!(e.delete_snapshot(&s).is_err());
+    e.unlock_snapshot(&s).unwrap();
+    assert!(e.unlock_snapshot(&s).is_err());
+    e.delete_snapshot(&s).unwrap();
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
 fn lapsed_lock_allows_delete() {
     let root = test_root("worm-lapsed");
     let e = NativeEngine::open(EngineConfig::new(&root), nodes()).unwrap();

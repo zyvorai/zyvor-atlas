@@ -19,9 +19,9 @@ s3 = ["dep:atlas-driver-rgw", "dep:tokio", "dep:anyhow"]
 # RDMA (RoCE/InfiniBand) building blocks over libibverbs (Linux only); see src/rdma.rs. Off by
 # default: the data path stays TCP/TLS until this is wired in and measured.
 rdma = ["dep:ibverbs"]
-# Placeholder for a future lazily loaded (dlopen) cuFile binding. It adds NO dependency and NO code
-# today: `src/gpu.rs` is a files-only capability probe that is always compiled. Nothing is gated on
-# this feature, and no GPU I/O path exists or was tested (see docs/NATIVE_GPU.md).
+# Optional dlopen probe of libcufile (src/cufile.rs). No native library is linked at build time
+# and no cuFile call is made. The files-only probe in src/gpu.rs is always compiled. See
+# docs/NATIVE_GPU.md. Not part of `make native-features`: it performs no I/O.
 cufile = []
 
 [dependencies]

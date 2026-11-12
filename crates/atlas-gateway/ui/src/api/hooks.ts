@@ -9,7 +9,7 @@ import type {
   SnapshotSchedule, StorageBucket, StorageCluster, StoragePool, StorageSnapshot, StorageVolume,
   TenantPolicy, TenantQuota, VolumeProtectionStatus, ZfsBlockDevice,
   MigrationSource, MigrationPlan, EdgeDbCluster, CdcStream, ValidationRun, ObjectMigration,
-  IoAiReport, NvmeReport, ObjectStoreReport, SizingReport
+  IoAiReport, IoHeatmapReport, NvmeReport, ObjectStoreReport, SizingReport
 } from "./types";
 
 const g = async <T,>(path: string): Promise<T> => (await http.get<T>(path)).data;
@@ -179,3 +179,4 @@ export const useCephSizing = () => useApiQuery<SizingReport>(["ceph-sizing"], "/
 export const useCephObjectStore = () =>
   useApiQuery<ObjectStoreReport>(["ceph-osd-objectstore"], "/ceph/osd-objectstore", 60000);
 export const useIoAi = () => useApiQuery<IoAiReport>(["io-ai"], "/io/ai", 15000);
+export const useIoHeatmap = () => useApiQuery<IoHeatmapReport>(["io-heatmap"], "/io/heatmap?minutes=15", 15000);

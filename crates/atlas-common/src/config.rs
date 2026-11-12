@@ -29,19 +29,20 @@ impl CephDriverMode {
     }
 }
 
-/// Which NFS/ZFS driver implementation the gateway wires up — same `Real`/`Fake` shape as
-/// `CephDriverMode`, shared across both backends since neither has anything Ceph-specific about
-/// the choice (kept as a separate type from `CephDriverMode` since the two aren't
-/// interchangeable — a `CephDriverMode` accidentally passed where an NFS/ZFS mode was meant
-/// wouldn't be a compile error otherwise).
+/// Which NFS/ZFS/SAN/cloud-block driver implementation the gateway wires up — same `Real`/`Fake`
+/// shape as `CephDriverMode`, shared across these backends since none of them has anything
+/// Ceph-specific about the choice (kept as a separate type from `CephDriverMode` since the two
+/// aren't interchangeable — a `CephDriverMode` accidentally passed where one of these modes was
+/// meant wouldn't be a compile error otherwise).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DriverMode {
-    /// Shell out to real commands (`showmount`/`df` for NFS, `zpool`/`zfs` for ZFS) against a
-    /// real, reachable target. Errors (unreachable, command missing) surface as real errors —
+    /// Shell out to real commands (`showmount`/`df` for NFS, `zpool`/`zfs` for ZFS, `iscsiadm`
+    /// for SAN, `aws ec2 describe-volumes` for cloud block) against a real, reachable target.
+    /// Errors (unreachable, command missing, provider not implemented) surface as real errors —
     /// never a fabricated fallback value.
     Real,
-    /// Serve canned fixtures (local dev / tests without real NFS/ZFS infra) — the historical MVP
-    /// behavior, still the default so existing deployments/demos are unaffected.
+    /// Serve canned fixtures (local dev / tests without real NFS/ZFS/SAN/cloud infra) — the
+    /// historical MVP behavior, still the default so existing deployments/demos are unaffected.
     Fake,
 }
 
@@ -174,6 +175,26 @@ pub struct Config {
     /// `Fake` (default) serves canned fixtures; `Real` shells out to local `zpool`/`zfs` commands
     /// (assumes the gateway runs on/near the ZFS host — no remote/SSH support). See `DriverMode`.
     pub zfs_driver_mode: DriverMode,
+    /// Register a SAN (iSCSI) backend. The portal is one pool (`kind = san_portal`); targets are
+    /// block LUNs.
+    pub san_enable: bool,
+    /// iSCSI portal (`host` or `host:port`). Defaults to a demo portal when enabled without one.
+    pub san_server: Option<String>,
+    /// Comma-separated LUN/target paths (the IQNs `iscsiadm` prints). Defaults to demo targets
+    /// when enabled without any.
+    pub san_targets: Vec<String>,
+    /// `Fake` (default) serves canned fixtures; `Real` shells out to `iscsiadm -m discovery`.
+    /// See `DriverMode`.
+    pub san_driver_mode: DriverMode,
+    /// Register a cloud-block backend (AWS EBS in real mode; GCP and Azure are not implemented).
+    pub cloudblock_enable: bool,
+    /// Provider id in the driver `server` field: `aws`, `gcp`, or `azure`.
+    pub cloudblock_server: Option<String>,
+    /// Comma-separated cloud volume ids. Defaults to demo ids when enabled without any.
+    pub cloudblock_targets: Vec<String>,
+    /// `Fake` (default) invents the configured volumes; `Real` shells out to
+    /// `aws ec2 describe-volumes` for `aws` and returns `NotImplemented` for `gcp`/`azure`.
+    pub cloudblock_driver_mode: DriverMode,
     /// OIDC/SSO login (`None` = feature disabled — no unauthenticated OIDC routes are mounted).
     pub oidc: Option<OidcConfig>,
     /// Kubernetes namespace the Rook operator/CephCluster runs in — used when reading Rook's own
@@ -403,6 +424,52 @@ impl Config {
             zfs_driver_mode: DriverMode::from_env_str(
                 &std::env::var("ATLAS_ZFS_DRIVER_MODE").unwrap_or_else(|_| "fake".into()),
             ),
+            san_enable: matches!(
+                std::env::var("ATLAS_SAN_ENABLE")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_lowercase()
+                    .as_str(),
+                "1" | "true" | "yes"
+            ),
+            san_server: std::env::var("ATLAS_SAN_SERVER")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            san_targets: std::env::var("ATLAS_SAN_TARGETS")
+                .ok()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            san_driver_mode: DriverMode::from_env_str(
+                &std::env::var("ATLAS_SAN_DRIVER_MODE").unwrap_or_else(|_| "fake".into()),
+            ),
+            cloudblock_enable: matches!(
+                std::env::var("ATLAS_CLOUDBLOCK_ENABLE")
+                    .unwrap_or_default()
+                    .trim()
+                    .to_lowercase()
+                    .as_str(),
+                "1" | "true" | "yes"
+            ),
+            cloudblock_server: std::env::var("ATLAS_CLOUDBLOCK_SERVER")
+                .ok()
+                .filter(|s| !s.trim().is_empty()),
+            cloudblock_targets: std::env::var("ATLAS_CLOUDBLOCK_TARGETS")
+                .ok()
+                .map(|s| {
+                    s.split(',')
+                        .map(|x| x.trim().to_string())
+                        .filter(|x| !x.is_empty())
+                        .collect()
+                })
+                .unwrap_or_default(),
+            cloudblock_driver_mode: DriverMode::from_env_str(
+                &std::env::var("ATLAS_CLOUDBLOCK_DRIVER_MODE").unwrap_or_else(|_| "fake".into()),
+            ),
             oidc: oidc_from_env(),
             rook_namespace: std::env::var("ATLAS_ROOK_NAMESPACE")
                 .ok()
@@ -500,6 +567,14 @@ impl Default for Config {
             zfs_host: None,
             zfs_pools: Vec::new(),
             zfs_driver_mode: DriverMode::Fake,
+            san_enable: false,
+            san_server: None,
+            san_targets: Vec::new(),
+            san_driver_mode: DriverMode::Fake,
+            cloudblock_enable: false,
+            cloudblock_server: None,
+            cloudblock_targets: Vec::new(),
+            cloudblock_driver_mode: DriverMode::Fake,
             oidc: None,
             rook_namespace: "rook-ceph".into(),
             rook_cluster_name: "rook-ceph".into(),

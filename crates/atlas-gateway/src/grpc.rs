@@ -17,9 +17,10 @@ use crate::proto::{
     Alert, Bucket, Cluster, CreateSnapshotRequest, CreateVolumeReply, CreateVolumeRequest,
     DeleteVolumeRequest, Empty, ExpandVolumeRequest, GetJobRequest, GetVolumeRequest, HealthReply,
     HealthRequest, Job, JobReply, ListAlertsReply, ListAlertsRequest, ListBucketsReply,
-    ListClustersReply, ListJobsReply, ListJobsRequest, ListPoolsReply, ListSnapshotsReply,
-    ListSnapshotsRequest, ListTenantsReply, ListVolumesByOwnerRequest, ListVolumesReply,
-    MetricsSummary, Pool, Snapshot, Tenant, Volume,
+    ListClustersReply, ListJobsReply, ListJobsRequest, ListPoolsReply, ListSchedulesReply,
+    ListSchedulesRequest, ListSnapshotsReply, ListSnapshotsRequest, ListTenantsReply,
+    ListVolumesByOwnerRequest, ListVolumesReply, MetricsSummary, Pool, Schedule, Snapshot, Tenant,
+    Volume,
 };
 use crate::state::AppState;
 
@@ -724,6 +725,37 @@ impl AtlasStorage for GrpcService {
             })
             .collect();
         Ok(Response::new(ListTenantsReply { tenants }))
+    }
+
+    async fn list_schedules(
+        &self,
+        req: Request<ListSchedulesRequest>,
+    ) -> Result<Response<ListSchedulesReply>, Status> {
+        let scope = self.authorize(&req).await?;
+        let q = req.into_inner();
+        let volume = if q.volume_id.is_empty() {
+            None
+        } else {
+            Some(q.volume_id.as_str())
+        };
+        let schedules = atlas_inventory::schedules::list(&self.state.pool, volume)
+            .await
+            .map_err(internal)?
+            .into_iter()
+            .filter(|s| scope.as_deref().is_none_or(|t| s.tenant_id == t))
+            .map(|s| Schedule {
+                id: s.id,
+                tenant_id: s.tenant_id,
+                volume_id: s.volume_id,
+                kind: s.kind,
+                mode: s.mode,
+                interval_secs: s.interval_secs,
+                keep: s.keep,
+                enabled: s.enabled,
+                next_run_at: s.next_run_at,
+            })
+            .collect();
+        Ok(Response::new(ListSchedulesReply { schedules }))
     }
 }
 

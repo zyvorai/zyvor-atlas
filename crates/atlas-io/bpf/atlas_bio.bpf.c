@@ -291,5 +291,12 @@ int atlas_rq_complete(struct trace_event_raw_block_rq_completion *ctx)
     return 0;
 }
 
+// NFS, ZFS and io_uring counters, plus the cgroup→volume map. Each attach is optional
+// (src/bpf.rs); a host without the tracepoint keeps that family in programs_missing.
+#include "atlas_cgroup.bpf.c"
+#include "atlas_nfs.bpf.c"
+#include "atlas_zfs.bpf.c"
+#include "atlas_uring.bpf.c"
+
 // Only non-GPL helpers are used, so the program loads under the project's own license.
 char LICENSE[] SEC("license") = "Apache-2.0";

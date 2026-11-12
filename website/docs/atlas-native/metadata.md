@@ -418,8 +418,20 @@ explicit `ring` provider, TLS 1.2/1.3) and both sides verify the other against t
 - handshakes are bounded by a 5 s timeout and counted in
   `atlas_native_transport_tls_handshake_failures_total` / `atlas_native_data_tls_handshake_failures_total`.
 
-Without an identity both transports stay plaintext, as before. There is no certificate rotation
-without restarting the server, and no revocation (CRL/OCSP) checking.
+Without an identity both transports stay plaintext, as before. There is no revocation (CRL/OCSP)
+checking.
+
+Data-node certificates can be re-read without restarting the process. When the node was given
+PEM paths, the accept loop reloads them if the file mtimes change (checked about once a second)
+or when the process receives SIGHUP (`tls::install_cert_reload_sighup` in `atlas-native-node`).
+A reload that does not parse keeps the previous config. Raft peer certificates are not reloaded
+this way.
+
+`ATLAS_NATIVE_DATA_AUTH=1` rejects a data-node session that has neither a verified client
+certificate nor an `Auth` bearer matching `ATLAS_NATIVE_DATA_TOKEN`. With TLS configured, a
+missing client certificate is allowed through the handshake so the bearer can be the proof; a
+presented certificate is still verified against the cluster CA. Without the flag, mutual TLS
+still requires a client certificate, as before.
 
 `tests/tls.rs` runs an mTLS Raft cluster, isolates a peer holding a CA-signed certificate for another
 node's name (frames rejected, never dialled successfully) and a peer from a different CA (handshake
@@ -428,10 +440,18 @@ Raft-backed engines writing to TLS data nodes.
 
 Not implemented yet:
 
-- per-client authorization on data nodes, certificate hot reload and revocation;
-- membership changes: the voter set is fixed at open (quorum math already supports joint
-  configurations);
-- lease-based reads (every read barrier costs the leader one round of appends).
+- per-client authorization beyond "any CA-signed certificate or the one shared bearer", and
+  revocation (CRL/OCSP);
+- lease-based reads. [`RaftNode::read_index`] remains the linearizable barrier: the leader
+  confirms a quorum before answering. A leader-lease shortcut (serve the read locally while a
+  lease from the last successful quorum is still inside a bounded clock skew) is not in the
+  sans-IO core. Adding one needs a monotonic lease deadline tied to check-quorum, which is
+  larger than a flag on the existing barrier, so it is left out rather than half-implemented.
+
+Membership changes are in. `RaftNode::add_voter` / `remove_voter` (and `change_membership` for a
+full set) append a `Joint` configuration, then the leader appends the `Stable` one once the joint
+entry commits. `Membership::add_voter_steps` / `remove_voter_steps` are the two configurations,
+unit-tested for the both-majorities rule. `POST /v1/members` still replaces the whole voter set.
 
 ## Failure model covered
 
@@ -459,6 +479,6 @@ Not implemented yet:
 
 - a container image, Helm chart and gateway integration for `atlas-native-node`
   (`docs/NATIVE_NODE.md`);
-- joint-consensus membership changes;
+- lease-based reads (see above; ReadIndex stays);
 - hole punching for freed ranges at the device tail;
 - io_uring/raw-NVMe data path.

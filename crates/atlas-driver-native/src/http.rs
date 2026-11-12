@@ -426,4 +426,18 @@ impl NativeApi for HttpApi {
         let path = format!("/v1/fs-snapshots/{}/lock", path_id(id)?);
         self.lock_call(&path, retain_secs).await
     }
+
+    async fn unlock_snapshot(&self, id: &str) -> Result<(), DriverError> {
+        let path = format!("/v1/snapshots/{}/unlock", path_id(id)?);
+        self.call(Method::POST, &path, Some(Body::Json(json!({}))))
+            .await
+            .map(drop)
+    }
+
+    async fn unlock_fs_snapshot(&self, id: &str) -> Result<(), DriverError> {
+        let path = format!("/v1/fs-snapshots/{}/unlock", path_id(id)?);
+        self.call(Method::POST, &path, Some(Body::Json(json!({}))))
+            .await
+            .map(drop)
+    }
 }

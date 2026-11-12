@@ -7,6 +7,7 @@
 
 pub mod fake;
 pub mod mysql;
+pub mod oracle_dsn;
 pub mod postgres;
 
 #[cfg(feature = "mongodb")]

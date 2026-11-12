@@ -10,6 +10,10 @@ use std::process::Command;
 fn main() {
     println!("cargo:rerun-if-changed=bpf/atlas_bio.bpf.c");
     println!("cargo:rerun-if-changed=bpf/atlas_native_io.bpf.c");
+    println!("cargo:rerun-if-changed=bpf/atlas_cgroup.bpf.c");
+    println!("cargo:rerun-if-changed=bpf/atlas_nfs.bpf.c");
+    println!("cargo:rerun-if-changed=bpf/atlas_zfs.bpf.c");
+    println!("cargo:rerun-if-changed=bpf/atlas_uring.bpf.c");
     println!("cargo:rerun-if-env-changed=CLANG");
     if env::var_os("CARGO_FEATURE_BPF").is_none()
         || env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("linux")

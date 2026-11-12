@@ -26,6 +26,7 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
+    atlas_native::tls::install_cert_reload_sighup();
     let node = match NativeNode::start(cfg) {
         Ok(n) => n,
         Err(e) => {

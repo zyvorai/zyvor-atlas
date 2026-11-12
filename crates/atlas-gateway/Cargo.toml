@@ -17,6 +17,8 @@ atlas-api-types = { workspace = true }
 atlas-driver-core = { workspace = true }
 atlas-driver-ceph = { workspace = true }
 atlas-driver-nfs = { workspace = true }
+atlas-driver-san = { workspace = true }
+atlas-driver-cloudblock = { workspace = true }
 atlas-driver-native = { workspace = true }
 atlas-driver-zfs = { workspace = true }
 atlas-driver-longhorn = { workspace = true }

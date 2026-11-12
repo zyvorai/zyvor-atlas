@@ -10,7 +10,7 @@ use std::{
 };
 
 use atlas_api_types::AlertRecord;
-use atlas_common::{AppError, AppResult};
+use atlas_common::{ids, AppError, AppResult};
 use axum::{
     extract::{Query, State},
     Extension, Json,
@@ -317,6 +317,8 @@ pub(crate) struct AdvisorResponse {
     warnings: Vec<String>,
     /// Deliberately false: this endpoint advises but cannot execute a runbook.
     can_execute: bool,
+    /// Row written to `advisor_findings` for this run.
+    finding_id: String,
 }
 
 /// Shared advisor computation behind both `POST /ai/advisor` and the `ops_advisor` MCP tool
@@ -408,6 +410,28 @@ pub(crate) async fn compute_advisor(
         },
     };
 
+    let finding_id = ids::finding_id();
+    let payload = json!({
+        "evidence": &evidence,
+        "actions": &actions,
+        "warnings": &warnings,
+        "io_risk": &io_risk,
+        "io_ai": &io_ai,
+        "can_execute": false,
+    });
+    atlas_inventory::advisor::insert(
+        &s.pool,
+        &finding_id,
+        &actor.tenant_id,
+        &actor.id,
+        question,
+        mode_str,
+        i64::from(risk_score),
+        risk_level,
+        &summary,
+        &payload,
+    )
+    .await?;
     let _ = atlas_inventory::audit::record(
         &s.pool,
         Some(&actor.tenant_id),
@@ -417,7 +441,7 @@ pub(crate) async fn compute_advisor(
         "global",
         "success",
         None,
-        Some(json!({ "mode": mode_str, "risk_score": risk_score })),
+        Some(json!({ "mode": mode_str, "risk_score": risk_score, "finding_id": finding_id })),
     )
     .await;
 
@@ -432,7 +456,26 @@ pub(crate) async fn compute_advisor(
         actions,
         warnings,
         can_execute: false,
+        finding_id,
     })
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct FindingsQuery {
+    limit: Option<i64>,
+}
+
+/// `GET /ai/advisor/findings` — advisor runs persisted by `POST /ai/advisor`. Read-only.
+pub(crate) async fn list_advisor_findings(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Query(q): Query<FindingsQuery>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_OPERATOR)?;
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let tenant = crate::auth::tenant_scope(s.config.auth_required, &actor);
+    let rows = atlas_inventory::advisor::list(&s.pool, tenant, limit).await?;
+    Ok(Json(json!(rows)))
 }
 
 /// `POST /ai/advisor` — synthesize an explainable storage posture and a prioritized runbook.
@@ -457,6 +500,26 @@ pub(crate) async fn get_io_ai(
     Ok(Json(match io_agent_from_env() {
         Some((url, timeout)) => fetch_io_ai(&url, timeout).await,
         None => io_ai_unavailable("ATLAS_IO_AGENT_URL is not configured"),
+    }))
+}
+
+#[derive(Debug, Deserialize)]
+pub(crate) struct HeatmapQuery {
+    minutes: Option<u64>,
+}
+
+/// `GET /io/heatmap` — the atlas-io agent's per-minute latency columns, for the Observatory.
+/// Any signed-in role may read it. An unconfigured or unreachable agent is `unavailable`.
+pub(crate) async fn get_io_heatmap(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Query(q): Query<HeatmapQuery>,
+) -> AppResult<Json<IoHeatmapView>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_VIEWER)?;
+    let minutes = q.minutes.unwrap_or(15).clamp(1, 60);
+    Ok(Json(match io_agent_from_env() {
+        Some((url, timeout)) => fetch_io_heatmap(&url, timeout, minutes).await,
+        None => io_heatmap_unavailable("ATLAS_IO_AGENT_URL is not configured"),
     }))
 }
 
@@ -1407,6 +1470,147 @@ pub(crate) async fn fetch_io_ai(base_url: &str, timeout: Duration) -> IoAiView {
     }
 }
 
+/// One minute of one (device, op) series, reduced to a count and the hottest log2-µs bucket so the
+/// console can colour a cell without trusting a free-form string from the agent.
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct IoHeatColumn {
+    start_unix: u64,
+    count: u64,
+    /// Latency in microseconds of the busiest log2 bucket (1µs, 2µs, 4µs, …).
+    peak_us: u64,
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq, Eq)]
+pub(crate) struct IoHeatSeries {
+    device: String,
+    op: &'static str,
+    volume_id: Option<String>,
+    columns: Vec<IoHeatColumn>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub(crate) struct IoHeatmapView {
+    /// "ok" | "unavailable"
+    status: &'static str,
+    series: Vec<IoHeatSeries>,
+    detail: Option<String>,
+}
+
+const IO_HEAT_MAX_SERIES: usize = 32;
+const IO_HEAT_MAX_COLUMNS: usize = 60;
+
+fn io_heatmap_unavailable(detail: impl Into<String>) -> IoHeatmapView {
+    IoHeatmapView {
+        status: "unavailable",
+        series: Vec::new(),
+        detail: Some(detail.into()),
+    }
+}
+
+pub(crate) async fn fetch_io_heatmap(
+    base_url: &str,
+    timeout: Duration,
+    minutes: u64,
+) -> IoHeatmapView {
+    match fetch_agent_body(
+        base_url,
+        &format!("/io/heatmap?minutes={minutes}"),
+        timeout,
+    )
+    .await
+    {
+        Ok(body) => parse_io_heatmap(&body),
+        Err(why) => io_heatmap_unavailable(why),
+    }
+}
+
+fn parse_io_heatmap(body: &[u8]) -> IoHeatmapView {
+    let Ok(Value::Array(items)) = serde_json::from_slice::<Value>(body) else {
+        return io_heatmap_unavailable("agent returned an unrecognised response");
+    };
+    let mut series = Vec::new();
+    for e in items.iter().take(IO_HEAT_MAX_SERIES) {
+        let op = match e.get("op").and_then(Value::as_str) {
+            Some("read") => "read",
+            Some("write") => "write",
+            Some("flush") => "flush",
+            Some("discard") => "discard",
+            Some("other") => "other",
+            _ => continue,
+        };
+        let device: String = e
+            .get("device")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown")
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.'))
+            .take(64)
+            .collect();
+        let volume_raw: String = e
+            .get("volume_id")
+            .and_then(Value::as_str)
+            .unwrap_or("")
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | ':' | '.'))
+            .take(63)
+            .collect();
+        let volume_id = if volume_raw.is_empty() {
+            None
+        } else {
+            Some(volume_raw)
+        };
+        let mut columns = Vec::new();
+        for col in e
+            .get("columns")
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or(&[])
+            .iter()
+            .take(IO_HEAT_MAX_COLUMNS)
+        {
+            let start_unix = col.get("start_unix").and_then(Value::as_u64).unwrap_or(0);
+            let buckets = col
+                .get("buckets")
+                .and_then(Value::as_array)
+                .map(Vec::as_slice)
+                .unwrap_or(&[]);
+            let mut count = 0u64;
+            let mut peak_us = 0u64;
+            let mut peak_n = 0u64;
+            for (i, b) in buckets.iter().take(26).enumerate() {
+                let n = b.as_u64().unwrap_or(0);
+                count = count.saturating_add(n);
+                if n > peak_n {
+                    peak_n = n;
+                    peak_us = 1u64 << i.min(62);
+                }
+            }
+            if count == 0 {
+                continue;
+            }
+            columns.push(IoHeatColumn {
+                start_unix,
+                count,
+                peak_us,
+            });
+        }
+        if device.is_empty() || columns.is_empty() {
+            continue;
+        }
+        series.push(IoHeatSeries {
+            device,
+            op,
+            volume_id,
+            columns,
+        });
+    }
+    IoHeatmapView {
+        status: "ok",
+        series,
+        detail: None,
+    }
+}
+
 fn parse_io_ai(body: &[u8]) -> IoAiView {
     let Ok(Value::Array(items)) = serde_json::from_slice::<Value>(body) else {
         return io_ai_unavailable("agent returned an unrecognised response");
@@ -1767,6 +1971,32 @@ mod tests {
         assert!(f.contains("checkpoint") && !f.contains("IGNORE"));
         assert_eq!(v.devices[1].device, "nvme1n1rm-rf");
         assert!(v.devices[1].finding.is_none());
+    }
+
+    #[test]
+    fn io_heatmap_keeps_counts_and_drops_a_bad_op() {
+        let body = json!([
+            {
+                "device": "rbd0",
+                "op": "write",
+                "volume_id": "vol_vm_web01",
+                "columns": [{ "start_unix": 100, "buckets": [0, 0, 4] }]
+            },
+            { "device": "sda", "op": "made-up", "columns": [{ "start_unix": 1, "buckets": [1] }] }
+        ]);
+        let v = parse_io_heatmap(body.to_string().as_bytes());
+        assert_eq!(v.status, "ok");
+        assert_eq!(v.series.len(), 1);
+        assert_eq!(v.series[0].device, "rbd0");
+        assert_eq!(v.series[0].op, "write");
+        assert_eq!(v.series[0].volume_id.as_deref(), Some("vol_vm_web01"));
+        assert_eq!(v.series[0].columns[0].count, 4);
+        assert_eq!(v.series[0].columns[0].peak_us, 4);
+        assert_eq!(parse_io_heatmap(b"{}").status, "unavailable");
+        assert_eq!(
+            parse_io_heatmap(b"{}").detail.as_deref(),
+            Some("agent returned an unrecognised response")
+        );
     }
 
     #[test]

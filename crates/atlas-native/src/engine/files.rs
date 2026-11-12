@@ -732,6 +732,11 @@ impl NativeEngine {
         Ok(retain_until_unix)
     }
 
+    /// Clears a filesystem snapshot's retention lock. Refused when it is not locked.
+    pub fn unlock_fs_snapshot(&self, id: &str) -> Result<(), NativeError> {
+        self.fs_commit(FsOp::UnlockFsSnapshot { id: id.into() })
+    }
+
     /// A writable copy-on-write filesystem from a snapshot, with a caller-chosen id.
     pub fn clone_fs_as(
         &self,
