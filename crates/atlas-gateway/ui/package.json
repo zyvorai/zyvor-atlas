@@ -19,7 +19,7 @@
     "@tanstack/react-table": "^9.3.1",
     "axios": "^1.21.1",
     "clsx": "^2.1.1",
-    "lucide-react": "^1.70.0",
+    "lucide-react": "^1.71.0",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
     "react-hook-form": "^7.91.0",
@@ -46,7 +46,7 @@
     "postcss": "^8.5.30",
     "tailwindcss": "^4.3.5",
     "typescript": "^6.0.3",
-    "typescript-eslint": "^8.71.2",
+    "typescript-eslint": "^8.72.2",
     "vite": "^8.3.7",
     "vitest": "^5.0.0"
   },
