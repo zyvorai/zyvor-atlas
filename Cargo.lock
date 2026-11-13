@@ -579,7 +579,7 @@ dependencies = [
  "openidconnect",
  "p256 0.13.2",
  "prost",
- "rand 0.8.8",
+ "rand 0.10.3",
  "reqwest 0.13.5",
  "rmcp",
  "rsa 0.10.0",
