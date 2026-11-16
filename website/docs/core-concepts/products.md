@@ -20,7 +20,7 @@ Atlas is the shared storage control plane. Products call **REST** and/or **gRPC*
 
 | Field | Example | Meaning |
 |---|---|---|
-| `product` | `hyper2kvm`, `guestkit`, `aether`, `relay`, `kryton`, `zorvia`, `veyron`, `packetwolf`, `ragnarok`, `machina`, `hypersdk`, `zeus` | Product id recorded in `product_bindings` |
+| `product` | `hyper2kvm`, `guestkit`, `aether`, `relay`, `kryton`, `zorvia`, `veyron`, `packetwolf`, `fabric`, `netra`, `kavira`, `ragnarok`, `machina`, `hypersdk`, `zeus` | Product id recorded in `product_bindings` |
 | `resource_type` | `vm`, `datastore`, `volume`, `fleet`, `database` | Product-side resource class |
 | `resource_id` | product UUID / name | Product-side id |
 | `role` | `owner` (default), `consumer`, `data_disk` | Binding role |
@@ -31,23 +31,25 @@ The product named **Transiva** is recorded as owner id `hyper2kvm`. That wire id
 enterprise/future products that aren't public yet (see `docs/ROADMAP.md`'s Slice 3+ section).
 Atlas does not call those products.
 
-`crates/atlas-client` records five of them locally (`owners::KnownProduct`): Transiva's wire id
+`crates/atlas-client` records eight of them locally (`owners::KnownProduct`): Transiva's wire id
 `hyper2kvm` (the display name `transiva` is not accepted as an id), `machina`, `veyron`,
-`guestkit` and `packetwolf`. `owners::owner` builds an `Owner` for `CreateVolume`.
-`owners::health_ping` is a local stub (`called_remote: false`, `status: not_called`). It does not
-dial the product. `AtlasClient::ping` is `GET /readyz` on Atlas itself.
+`guestkit`, `packetwolf`, `fabric`, `netra` and `kavira`. `owners::owner` builds an `Owner` for
+`CreateVolume`. `owners::health_ping` is a local stub (`called_remote: false`, `status: not_called`).
+It does not dial the product. `AtlasClient::ping` is `GET /readyz` on Atlas itself.
 `AtlasClient::record_owner_workflow` POSTs `/api/atlas/v1/owners/{wire}/workflow`.
+`AtlasClient::list_owner_workflows` GETs `/api/atlas/v1/owners/{wire}/workflows`.
 
-The gateway exposes the same five wire ids (it does not depend on `atlas-client`; the lists are
+The gateway exposes the same eight wire ids (it does not depend on `atlas-client`; the lists are
 kept aligned by tests):
 
 | Route | Role | Does |
 | --- | --- | --- |
-| `GET /api/atlas/v1/owners` | viewer | The five owners, each `called_remote: false` |
+| `GET /api/atlas/v1/owners` | viewer | The eight owners, each `called_remote: false` |
 | `GET /api/atlas/v1/owners/{id}/health` | viewer | The same stub for one wire id. `transiva` and any other unknown id are 404 |
+| `GET /api/atlas/v1/owners/{id}/workflows` | viewer | Recent rows from `owner_workflows` for that wire id (newest first, limit 50). `atlasctl owner-workflows` |
 | `POST /api/atlas/v1/owners/{id}/workflow` | operator | `{intent, note?}`. `intent` is 1–64 characters of `[A-Za-z0-9_-]`. `note` is at most 512 characters. Writes a row in `owner_workflows` (migration `0042`) and audits `owner.workflow`. No product RPC |
 
-There is no RPC to Transiva, Machina, Veyron, GuestKit or PacketWolf.
+There is no RPC to Transiva, Machina, Veyron, GuestKit, PacketWolf, Fabric, Netra or Kavira.
 
 Enumerate owned volumes with `ListVolumesByOwner(product, resource_id?)`.
 
@@ -138,9 +140,10 @@ Configure on the Zorvia server with `ATLAS_URL` (required to enable the integrat
 
 Fabric's Storage page can manage **Ceph RBD images** for a pool by proxying
 through Atlas (`fabric/docs/user/pages/infrastructure/storage-pools.md`: "proxied through the
-Atlas storage control plane"). This is a thinner integration than Kryton/Zorvia — it proxies RBD
-image list/create/delete for an existing Ceph pool and doesn't go through the `Owner`/
-`product_bindings` mechanism, so there's no `product` id to record for it yet.
+Atlas storage control plane"). That RBD proxy is thinner than Kryton/Zorvia and does not require
+`product_bindings`. The wire id `fabric` is still registered in the local owner registry so
+Fabric can stamp `Owner` on volumes and record workflow intent the same way as the other suite
+products. Atlas does not call Fabric.
 
 ## Rust client
 
@@ -153,5 +156,5 @@ stand-in for the gateway, not a live one. There is no Go client yet.
 ## Follow-ups (product repos)
 
 Generate/vendor stubs from `crates/atlas-gateway/proto/atlas.proto` into each product. Atlas records
-workflow intent for the five owners above and does not call those products. Per-product workflow
+workflow intent for the eight owners above and does not call those products. Per-product workflow
 code still lives in each product repo.

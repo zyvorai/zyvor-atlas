@@ -32,6 +32,8 @@ enum Command {
     Health,
     /// GET /readyz — readiness deep-check (DB + driver + k8s)
     Ready,
+    /// GET /doctor — operator one-pager (ready + inventory + alerts + jobs)
+    Doctor,
     /// GET /version
     Version,
     /// GET /api/atlas/v1/backends
@@ -232,6 +234,8 @@ enum Command {
     Tenants,
     /// GET /api/atlas/v1/volumes/{id}/bindings — product ownership for a volume
     VolumeBindings { id: String },
+    /// GET /api/atlas/v1/owners/{id}/workflows — recorded owner intents (newest first)
+    OwnerWorkflows { id: String },
     /// GET /api/atlas/v1/volumes/{id}/labels
     VolumeLabels { id: String },
     /// PUT /api/atlas/v1/volumes/{id}/labels — merge one label (--key --value)
@@ -719,6 +723,7 @@ async fn main() -> Result<()> {
     let (method, path, body): (&str, String, Option<serde_json::Value>) = match &cli.command {
         Command::Health => ("GET", "/health".to_string(), None),
         Command::Ready => ("GET", "/readyz".to_string(), None),
+        Command::Doctor => ("GET", "/doctor".to_string(), None),
         Command::Version => ("GET", "/version".to_string(), None),
         Command::Backends => ("GET", "/api/atlas/v1/backends".to_string(), None),
         Command::BackendsSummary => ("GET", "/api/atlas/v1/backends/summary".to_string(), None),
@@ -927,6 +932,9 @@ async fn main() -> Result<()> {
         Command::Tenants => ("GET", "/api/atlas/v1/tenants".to_string(), None),
         Command::VolumeBindings { id } => {
             ("GET", format!("/api/atlas/v1/volumes/{id}/bindings"), None)
+        }
+        Command::OwnerWorkflows { id } => {
+            ("GET", format!("/api/atlas/v1/owners/{id}/workflows"), None)
         }
         Command::VolumeLabels { id } => ("GET", format!("/api/atlas/v1/volumes/{id}/labels"), None),
         Command::SetVolumeLabel { id, key, value } => (

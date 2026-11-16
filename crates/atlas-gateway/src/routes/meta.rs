@@ -244,3 +244,52 @@ pub(crate) async fn version() -> Json<Value> {
         "api": "v1",
     }))
 }
+
+/// `GET /doctor` — operator one-pager: readiness, inventory rollup, open alerts and jobs by state.
+/// Unauthenticated like `/readyz` and `/metrics`. Always returns 200 with `ok` so a probe can
+/// scrape the body; use `/readyz` when you need a 503 for kubelet.
+pub(crate) async fn doctor(State(s): State<AppState>) -> Json<Value> {
+    let (ready_code, Json(ready)) = readyz(State(s.clone())).await;
+    let ready_ok = ready_code == StatusCode::OK;
+
+    let summary = atlas_inventory::metrics_summary(&s.pool)
+        .await
+        .unwrap_or(Value::Null);
+    let open_alerts = atlas_inventory::alerts::count_open(&s.pool)
+        .await
+        .unwrap_or(0);
+    let jobs = match atlas_inventory::jobs::count_by_state(&s.pool).await {
+        Ok(rows) => {
+            let mut m = serde_json::Map::new();
+            for (state, count) in rows {
+                m.insert(state, json!(count));
+            }
+            Value::Object(m)
+        }
+        Err(_) => Value::Object(serde_json::Map::new()),
+    };
+    let backends = atlas_inventory::backend_breakdown(&s.pool)
+        .await
+        .unwrap_or_default();
+
+    Json(json!({
+        "ok": ready_ok,
+        "product": "atlas",
+        "version": env!("CARGO_PKG_VERSION"),
+        "api": "v1",
+        "ready": ready,
+        "inventory": {
+            "volumes": summary.get("volumes").cloned().unwrap_or(json!(0)),
+            "snapshots": summary.get("snapshots").cloned().unwrap_or(json!(0)),
+            "buckets": summary.get("buckets").cloned().unwrap_or(json!(0)),
+            "backups": summary.get("backups").cloned().unwrap_or(json!(0)),
+            "pools": summary.get("pools").cloned().unwrap_or(json!(0)),
+            "clusters": summary.get("clusters").cloned().unwrap_or(json!(0)),
+            "raw_capacity_bytes": summary.get("raw_capacity_bytes").cloned().unwrap_or(json!(0)),
+            "used_capacity_bytes": summary.get("used_capacity_bytes").cloned().unwrap_or(json!(0)),
+        },
+        "alerts_open": open_alerts,
+        "jobs_by_state": jobs,
+        "backends": backends,
+    }))
+}

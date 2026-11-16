@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 //! Recorded owner workflow intent (`migrations/0042_owner_workflows.sql`).
 //!
-//! A row is what an operator asked Atlas to remember. Nothing here calls Transiva, Veyron,
-//! GuestKit, PacketWolf, or Machina.
+//! A row is what an operator asked Atlas to remember. Nothing here calls a product.
 
 use anyhow::Result;
 use serde::Serialize;

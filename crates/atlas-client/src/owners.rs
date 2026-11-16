@@ -2,8 +2,7 @@
 // SPDX-License-Identifier: Apache-2.0
 
 //! Owner ids Atlas records in `product_bindings`. This is a local registry, not a client of
-//! Transiva, Veyron, GuestKit, PacketWolf, or Machina: those products are not called from here.
-//! See `docs/PRODUCTS.md`.
+//! those products: they are not called from here. See `docs/PRODUCTS.md`.
 //!
 //! Transiva's wire id is `hyper2kvm` and is not renamed. The others use their lowercase wire ids.
 
@@ -21,6 +20,12 @@ pub enum KnownProduct {
     GuestKit,
     /// Display name PacketWolf. Wire id `packetwolf`.
     PacketWolf,
+    /// Display name Fabric. Wire id `fabric`.
+    Fabric,
+    /// Display name Netra. Wire id `netra`.
+    Netra,
+    /// Display name Kavira. Wire id `kavira`.
+    Kavira,
 }
 
 impl KnownProduct {
@@ -31,6 +36,9 @@ impl KnownProduct {
             Self::Veyron => "veyron",
             Self::GuestKit => "guestkit",
             Self::PacketWolf => "packetwolf",
+            Self::Fabric => "fabric",
+            Self::Netra => "netra",
+            Self::Kavira => "kavira",
         }
     }
 
@@ -41,6 +49,9 @@ impl KnownProduct {
             Self::Veyron => "Veyron",
             Self::GuestKit => "GuestKit",
             Self::PacketWolf => "PacketWolf",
+            Self::Fabric => "Fabric",
+            Self::Netra => "Netra",
+            Self::Kavira => "Kavira",
         }
     }
 
@@ -52,6 +63,9 @@ impl KnownProduct {
             Self::Veyron => &["vm", "volume"],
             Self::GuestKit => &["vm", "volume"],
             Self::PacketWolf => &["vm", "volume"],
+            Self::Fabric => &["vm", "volume", "pool"],
+            Self::Netra => &["node", "flow"],
+            Self::Kavira => &["incident", "repair"],
         }
     }
 }
@@ -64,6 +78,9 @@ pub fn lookup(wire_id: &str) -> Option<KnownProduct> {
         "veyron" => Some(KnownProduct::Veyron),
         "guestkit" => Some(KnownProduct::GuestKit),
         "packetwolf" => Some(KnownProduct::PacketWolf),
+        "fabric" => Some(KnownProduct::Fabric),
+        "netra" => Some(KnownProduct::Netra),
+        "kavira" => Some(KnownProduct::Kavira),
         _ => None,
     }
 }
@@ -75,6 +92,9 @@ pub fn known() -> &'static [KnownProduct] {
         KnownProduct::Veyron,
         KnownProduct::GuestKit,
         KnownProduct::PacketWolf,
+        KnownProduct::Fabric,
+        KnownProduct::Netra,
+        KnownProduct::Kavira,
     ]
 }
 
@@ -122,6 +142,9 @@ mod tests {
         assert_eq!(lookup("veyron"), Some(KnownProduct::Veyron));
         assert_eq!(lookup("guestkit"), Some(KnownProduct::GuestKit));
         assert_eq!(lookup("packetwolf"), Some(KnownProduct::PacketWolf));
+        assert_eq!(lookup("fabric"), Some(KnownProduct::Fabric));
+        assert_eq!(lookup("netra"), Some(KnownProduct::Netra));
+        assert_eq!(lookup("kavira"), Some(KnownProduct::Kavira));
         assert_eq!(lookup("PacketWolf"), None);
         let o = owner(KnownProduct::Machina, "vm", "vm-1");
         assert_eq!(o.product, "machina");

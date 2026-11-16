@@ -3,8 +3,8 @@
 //! Local owner registry and workflow intent.
 //!
 //! Wire ids match `atlas_client::owners::KnownProduct` and `docs/PRODUCTS.md`. Health is a stub:
-//! Atlas does not call Transiva, Veyron, GuestKit, PacketWolf, or Machina. `POST /owners/{id}/workflow`
-//! writes a row to `owner_workflows` and returns it.
+//! Atlas does not call those products. `POST /owners/{id}/workflow` writes a row to
+//! `owner_workflows`; `GET /owners/{id}/workflows` lists recent rows.
 
 use axum::{extract::Path, extract::State, Extension, Json};
 use serde::Deserialize;
@@ -22,6 +22,9 @@ const OWNERS: &[(&str, &str)] = &[
     ("veyron", "Veyron"),
     ("guestkit", "GuestKit"),
     ("packetwolf", "PacketWolf"),
+    ("fabric", "Fabric"),
+    ("netra", "Netra"),
+    ("kavira", "Kavira"),
 ];
 
 fn known(id: &str) -> Option<&'static str> {
@@ -77,6 +80,20 @@ fn valid_intent(intent: &str) -> bool {
         && intent
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-'))
+}
+
+/// `GET /owners/{id}/workflows` — recent recorded intents for this owner (newest first).
+pub(crate) async fn list_owner_workflows(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+) -> AppResult<Json<Value>> {
+    crate::auth::require_role(s.config.auth_required, &actor, crate::auth::ROLE_VIEWER)?;
+    if known(&id).is_none() {
+        return Err(AppError::NotFound(format!("owner {id}")));
+    }
+    let rows = atlas_inventory::owners::list_for_owner(&s.pool, &id, 50).await?;
+    Ok(Json(json!({ "items": rows, "owner_id": id })))
 }
 
 /// `POST /owners/{id}/workflow` — store intent. Does not call the product.
@@ -143,10 +160,22 @@ mod tests {
         let ids: Vec<&str> = OWNERS.iter().map(|(id, _)| *id).collect();
         assert_eq!(
             ids,
-            ["hyper2kvm", "machina", "veyron", "guestkit", "packetwolf"]
+            [
+                "hyper2kvm",
+                "machina",
+                "veyron",
+                "guestkit",
+                "packetwolf",
+                "fabric",
+                "netra",
+                "kavira",
+            ]
         );
         assert!(known("transiva").is_none());
         assert_eq!(known("hyper2kvm"), Some("Transiva"));
+        assert_eq!(known("fabric"), Some("Fabric"));
+        assert_eq!(known("netra"), Some("Netra"));
+        assert_eq!(known("kavira"), Some("Kavira"));
         assert!(valid_intent("health"));
         assert!(valid_intent("snapshot-now"));
         assert!(!valid_intent(""));
