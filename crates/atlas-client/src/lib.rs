@@ -9,10 +9,10 @@
 //!
 //! Owner convention: see `docs/PRODUCTS.md`; the JWT subject for a product is
 //! `product.service.<name>`. [`owners`] records Transiva (`hyper2kvm`), Machina, Veyron, GuestKit,
-//! and PacketWolf. [`owners::health_ping`] is a local stub and does not call them.
-//! [`AtlasClient::ping`] checks Atlas itself (`GET /readyz`).
+//! PacketWolf, Fabric, Netra and Kavira. [`owners::health_ping`] is a local stub and does not call
+//! them. [`AtlasClient::ping`] checks Atlas itself (`GET /readyz`).
 //! [`AtlasClient::record_owner_workflow`] posts intent to Atlas, which stores it and does not
-//! call the product.
+//! call the product. [`AtlasClient::list_owner_workflows`] lists those rows.
 
 use std::time::Duration;
 
@@ -86,8 +86,8 @@ impl AtlasClient {
     }
 
     /// `GET /readyz` on this Atlas gateway. This is Atlas's own health, not a ping of Transiva,
-    /// Machina, Veyron, GuestKit, PacketWolf, or any other product. For a product, use
-    /// [`owners::health_ping`], which does not make a request.
+    /// Machina, Veyron, GuestKit, PacketWolf, Fabric, Netra, Kavira, or any other product. For a
+    /// product, use [`owners::health_ping`], which does not make a request.
     pub async fn ping(&self) -> Result<(), ClientError> {
         let resp = self
             .http
@@ -102,6 +102,24 @@ impl AtlasClient {
             });
         }
         Ok(())
+    }
+
+    /// `GET /doctor` — operator one-pager (readiness + inventory rollup). Unauthenticated like
+    /// `/readyz`. Always HTTP 200; inspect `ok` in the body.
+    pub async fn doctor(&self) -> Result<Value, ClientError> {
+        let resp = self
+            .http
+            .get(format!("{}/doctor", self.base))
+            .send()
+            .await?;
+        let status = resp.status();
+        if !status.is_success() {
+            return Err(ClientError::Status {
+                status: status.as_u16(),
+                body: resp.text().await.unwrap_or_default(),
+            });
+        }
+        Ok(resp.json().await?)
     }
 
     fn request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
@@ -139,6 +157,15 @@ impl AtlasClient {
                 .json(&serde_json::json!({ "intent": intent, "note": note })),
         )
         .await
+    }
+
+    /// `GET /owners/{wire_id}/workflows`. Lists recent intent rows. Does not call the product.
+    pub async fn list_owner_workflows(
+        &self,
+        product: owners::KnownProduct,
+    ) -> Result<Value, ClientError> {
+        let path = format!("/owners/{}/workflows", product.wire_id());
+        Self::send(self.request(reqwest::Method::GET, &path)).await
     }
 
     /// `POST /volumes`. Returns the accepted job; follow it with [`Self::wait_for_job`].

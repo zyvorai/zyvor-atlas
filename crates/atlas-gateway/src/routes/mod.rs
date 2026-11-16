@@ -84,6 +84,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ai/advisor/actions/confirm", post(confirm_advisor_action))
         .route("/owners", get(list_owners))
         .route("/owners/{id}/health", get(owner_health))
+        .route("/owners/{id}/workflows", get(list_owner_workflows))
         .route("/owners/{id}/workflow", post(owner_workflow))
         .route("/ai/anomalies", get(ai_anomalies))
         .route(
@@ -451,6 +452,7 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(health))
         .route("/livez", get(livez))
         .route("/readyz", get(readyz))
+        .route("/doctor", get(doctor))
         .route("/version", get(version))
         .merge(metrics)
         .nest("/api/atlas/v1", public_api.merge(api));

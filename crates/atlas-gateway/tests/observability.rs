@@ -440,6 +440,18 @@ async fn readyz_probes_driver_and_livez_is_alive() {
         .await
         .unwrap();
     assert_eq!(ver["name"], "atlas-gateway");
+
+    // doctor: always 200; ok mirrors readiness; inventory rollup is present.
+    let d = c.get(format!("http://{addr}/doctor")).send().await.unwrap();
+    assert_eq!(d.status(), 200);
+    let doc: Value = d.json().await.unwrap();
+    assert_eq!(doc["ok"], true);
+    assert_eq!(doc["product"], "atlas");
+    assert_eq!(doc["ready"]["status"], "ready");
+    assert!(doc["inventory"]["volumes"].is_number());
+    assert!(doc["alerts_open"].is_number());
+    assert!(doc["jobs_by_state"].is_object());
+    assert!(doc["backends"].is_array());
 }
 
 /// The unified `/events` and `/audit` feeds are operator-gated: viewer → 403, operator → 200,

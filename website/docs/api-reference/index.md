@@ -53,6 +53,31 @@ Liveness probe — process is up (always `200` when the listener accepts).
 Readiness deep-check: SQLite open, Ceph/fake driver, optional k8s. Returns `200` when ready,
 `503` with per-check detail when not.
 
+### `GET /doctor`
+Operator one-pager (unauthenticated, like `/readyz`). Always `200`; use `ok` in the body (and
+`/readyz` when you need a `503` for kubelet). Rolls up readiness, inventory counts, open alerts,
+jobs by state and backend breakdown:
+
+```json
+{
+  "ok": true,
+  "product": "atlas",
+  "version": "0.13.0",
+  "api": "v1",
+  "ready": { "ok": true, "components": { "…": "…" } },
+  "inventory": {
+    "volumes": 0, "snapshots": 0, "buckets": 0, "backups": 0,
+    "pools": 0, "clusters": 0,
+    "raw_capacity_bytes": 0, "used_capacity_bytes": 0
+  },
+  "alerts_open": 0,
+  "jobs_by_state": {},
+  "backends": []
+}
+```
+
+`atlasctl doctor` hits this route.
+
 ### `GET /version`
 ```json
 { "name": "atlas-gateway", "version": "0.1.0", "api": "v1" }

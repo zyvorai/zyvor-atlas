@@ -11,6 +11,8 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- `GET /doctor` (and `atlasctl doctor` / `AtlasClient::doctor`): unauthenticated operator one-pager with readiness, inventory counts, open alerts, jobs by state and backend breakdown. Always HTTP 200; inspect `ok` (use `/readyz` when kubelet needs 503).
+- Owner registry: wire ids `fabric`, `netra` and `kavira` alongside the existing five; `GET /owners/{id}/workflows` lists recent intent rows (`atlasctl owner-workflows`, `AtlasClient::list_owner_workflows`). Still local stubs — Atlas does not call those products (`docs/PRODUCTS.md`).
 - SAN and cloud_block backends: `atlas-driver-san` / `atlas-driver-cloudblock` (fake + real), live `POST /backends`, `ATLAS_SAN_*` / `ATLAS_CLOUDBLOCK_*` startup registration (`docs/STATUS.md`).
 - Longhorn native Volume/Snapshot CRD write path; WEKA filesystem create/delete (fake + REST).
 - RGW bucket object-lock create plumbing; WORM two-person unlock propose/confirm; Ops Advisor persisted findings + optional two-operator alert ack.
