@@ -28,6 +28,8 @@
 
 </div>
 
+[Client overview (PDF)](docs/Atlas-Client-Overview.pdf)
+
 ---
 
 ## Why teams pick Atlas
