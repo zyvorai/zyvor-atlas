@@ -97,7 +97,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 # Auth / util
-jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+jsonwebtoken = { version = "12", default-features = false, features = ["rust_crypto"] }
 # Console password hashing (memory-hard KDF, replaces plain SHA-256).
 argon2 = "0.6"
 # OIDC/SSO login. default-features off + explicit "reqwest" feature keeps it on the workspace's
