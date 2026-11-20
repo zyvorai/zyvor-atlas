@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Safe `ceph`/`rbd` command wrappers.
 //!
 //! Security rule (PDF §17.3): pass arguments as an **array only**; never build a shell string.

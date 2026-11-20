@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Example workload held back by the data-ready gate (docs/AI_DATA_SERVICES.md, "Data-ready scheduling").
 # The init container exits 0 only once a trusted worker has staged and verified the job's artifacts;
 # on timeout it exits non-zero and the pod fails visibly. It WAITS, it does not place: the pod must

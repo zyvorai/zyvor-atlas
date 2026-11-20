@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Contributing to Atlas
 
 Atlas is licensed under the Apache License, Version 2.0 — see
@@ -12,7 +12,7 @@ All participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
   `scripts/check-license-headers.sh`):
   ```
   // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-  // SPDX-License-Identifier: Apache-2.0
+  // SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
   ```
   (`#` / `<!-- -->` / `/* */` / `--` variants by file type). Workspace Cargo
   `license = "Apache-2.0"`.

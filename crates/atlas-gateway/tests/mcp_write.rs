@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Guarded MCP write tools (`ATLAS_MCP_WRITE_ENABLE`). Own test binary: the gate is process-wide.
 #![cfg(feature = "mcp")]
 

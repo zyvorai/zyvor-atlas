@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! The pluggable storage-driver contract (PDF §17.2) plus the driver error type and a registry.
 //!
 //! A `StorageDriver` abstracts one storage backend (Ceph today; NFS/ZFS/SAN/cloud later). The

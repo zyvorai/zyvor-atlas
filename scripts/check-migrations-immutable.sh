@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Fail if a change modifies, renames or deletes a migration file that already existed at BASE.
 # sqlx records a checksum of every applied migration, so editing one — even a comment or a license
 # header — makes every existing database refuse to start ("migration N was previously applied but has

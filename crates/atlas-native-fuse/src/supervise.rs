@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Process supervision shared by the gateways (`atlas-native-nfs`, `atlas-native-smb`): child
 //! processes stopped in order, mount detection, and a SIGTERM/SIGINT flag.

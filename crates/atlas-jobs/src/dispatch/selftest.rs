@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Conformance self-test for an S3-compatible backend (Ceph RGW or BYO S3). Runs the operations Atlas's real
 //! workloads depend on — bucket create/delete, small and multipart object upload, streaming
 //! download, prefix listing and key-suffix "versioned" retention — against a throwaway bucket on

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """Real local bytes, HTTP, subprocess and Iceberg scenarios; no fake storage driver."""
 import base64
 from concurrent.futures import ThreadPoolExecutor

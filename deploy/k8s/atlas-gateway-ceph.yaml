@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Atlas gateway in ATLAS_CEPH_DRIVER_MODE=real. Runs in the rook-ceph namespace so it can mount
 # the mon endpoints ConfigMap + admin keyring Secret; an initContainer renders /etc/ceph/{ceph.conf,keyring}
 # so the credential never leaves the cluster. Live k8s driver also works via the mounted SA.

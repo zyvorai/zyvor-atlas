@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: Apache-2.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 -- Multi-image consistency groups (RBD groups, docs/DR.md) and the pool-level mirroring mode Atlas
 -- last applied. volume_groups maps 1:1 to `rbd group` <pool>/<name>; snapshots are group snapshots
 -- (one crash-consistent point across every member). They stay on this cluster: rbd-mirror does not

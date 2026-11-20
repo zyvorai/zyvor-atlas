@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # SMB gateway (docs/NATIVE_SMB.md): one pod running atlas-native-smb, which mounts every shared
 # filesystem through FUSE and serves the mounts with Samba, behind a Service. Open files and locks
 # live in the one smbd, so the Deployment has a single replica and is recreated, not rolled.

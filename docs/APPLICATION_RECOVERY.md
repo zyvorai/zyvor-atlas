@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Application recovery plans and restore drills
 
 `tools/atlas_recovery` is an operator-run, Python 3.10+ tool using Atlas's existing

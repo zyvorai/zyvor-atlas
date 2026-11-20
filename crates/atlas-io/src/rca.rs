@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Deterministic, read-only RCA from histograms + workloads.
 
 use atlas_api_types::{IoHistogram, IoOp, IoRca, IoWorkload};

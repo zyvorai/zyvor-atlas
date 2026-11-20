@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Container Storage Interface driver for atlas-native filesystems (binary `atlas-native-csi`).
 //! The controller service maps CSI volumes and snapshots onto `/v1/fs` filesystems and

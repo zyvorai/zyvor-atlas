@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Apple product-hero / tech-specs dashboard page: header, then a sequence of `.at-mod` module
 // blocks (an optional titled bar over free-form content). Covers both "full hero" pages
 // (Overview) and instrument-panel-only ops consoles (Ceph, Maintenance, DR, Observatory) — the

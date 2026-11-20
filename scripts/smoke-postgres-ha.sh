@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # HA smoke: verify the workspace builds and the whole query layer (not just connect+migrate)
 # actually runs against a real Postgres via the shared `sqlx::Any` driver. Postgres support is
 # unconditional now (no more `--features postgres` — see docs/HA.md) — `atlas_inventory::connect`

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """Optional real Apache Iceberg adapter, private SQL catalog and Parquet warehouse.
 
 Bounded compaction rewrites one table snapshot atomically; expiration is metadata

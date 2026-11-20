@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 #
 # Live verification of the retention-lock / ransomware / data-reduction features against a real
 # multi-process native cluster. Meant to run INSIDE the Dockerfile builder image on the lab host

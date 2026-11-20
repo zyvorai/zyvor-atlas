@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: Apache-2.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 -- Case-insensitive username uniqueness. The SQLite schema gets it from `COLLATE NOCASE` on the
 -- primary key; Postgres' plain TEXT primary key allowed `Admin` and `admin` to coexist while every
 -- lookup in crates/atlas-inventory/src/users.rs matches on `lower(username)`, so login/update/delete

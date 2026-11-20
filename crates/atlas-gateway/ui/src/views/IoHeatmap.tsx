@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Latency heatmap for the Observatory. Cells are the atlas-io agent's /io/heatmap columns,
 // proxied by the gateway as GET /api/atlas/v1/io/heatmap. Colour follows the busiest log2-µs
 // bucket in that minute. An unconfigured agent says unavailable; it never looks healthy.

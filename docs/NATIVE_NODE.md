@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # atlas-native-node
 
 `atlas-native-node --config <file.json>` runs one native storage node (`crates/atlas-native`,

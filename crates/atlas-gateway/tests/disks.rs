@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! `POST /zfs/pools/from-device` and `POST /ceph/devices` — provisioning a raw, unformatted disk.
 //! Fake driver, no infra: the fixture device path is the only one fake mode ever accepts, proving
 //! it never fabricates a formatted disk for anything else.

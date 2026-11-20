@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Verify migrations/ (SQLite) and migrations-postgres/ (Postgres) stay in lockstep: every
 # migration number present in one must be present in the other. migrations-postgres/ has
 # silently drifted behind migrations/ twice before this check existed (see docs/ROADMAP.md) —

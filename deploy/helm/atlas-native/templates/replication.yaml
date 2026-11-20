@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Asynchronous replication (docs/NATIVE_REPLICATION.md): one atlas-native-replicate Deployment per
 # entry in replication.jobs, sending a filesystem of this cluster to a replica on another cluster.
 # Each pod is stateless (the replica records where to continue), so it is simply recreated.

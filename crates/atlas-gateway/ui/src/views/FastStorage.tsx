@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Fast storage: NVMe drive health, host CPU/RAM sizing, OSD object store mix, and the atlas-io
 // agent's heuristic I/O shapes. Read-only; every number comes from the gateway, nothing is inferred
 // here, and an unconfigured or unreachable source says so instead of looking healthy.

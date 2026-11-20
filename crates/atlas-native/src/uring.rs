@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! `io_uring` backend for [`crate::raw::RawDevice`]: the device is opened `O_DIRECT | O_DSYNC`,
 //! so data bypasses the page cache and every write is durable when it completes. Each calling

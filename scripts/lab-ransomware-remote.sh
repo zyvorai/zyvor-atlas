@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Live ransomware test (real encrypting program over a FUSE mount) on the lab host; same shape as
 # lab-verify-remote.sh but the builder container gets /dev/fuse.
 #

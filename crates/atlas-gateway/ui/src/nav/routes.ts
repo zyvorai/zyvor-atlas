@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Single source for sidebar nav, spotlight, and App route paths.
 import type { LucideIcon } from "lucide-react";
 import type { ComponentType } from "react";

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Kafka Connect (Strimzi) uses the KubernetesSecretConfigProvider to resolve `${secrets:ns/name:key}`
 # in connector configs (source + edge DB credentials). That runs as the Connect pod's ServiceAccount,
 # which Strimzi names dynamically per KafkaConnect (dbz-connect-<id>-connect). Grant every SA in the

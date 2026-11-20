@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Two-person proposals (`migrations/0041_control_proposals.sql`).
 //!
 //! A proposal is pending until a *different* actor confirms it. Confirm moves the row to

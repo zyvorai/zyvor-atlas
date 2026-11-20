@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Audit-log export to an external sink (SIEM webhook / generic HTTP collector) before retention
 //! pruning deletes rows. Without this, `storage_audit_logs` retention is silent data loss with no
 //! external record — exactly what a compliance review (e.g. APRA CPS 234) flags first. Mirrors

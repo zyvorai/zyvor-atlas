@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! macOS storage driver: a Mac's own disks, internal and external, behind the `StorageDriver` trait.
 //!
 //! Each **APFS container** is a `StoragePool` (`kind = "apfs_container"`) and each APFS volume a

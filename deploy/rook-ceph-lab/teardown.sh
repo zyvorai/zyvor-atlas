@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # teardown.sh — DESTRUCTIVE. Completely uninstall Rook Ceph and wipe its OSD disk.
 # Reverses up.sh. DELETES ALL CEPH DATA (RBD volumes, CephFS, RGW buckets).
 #

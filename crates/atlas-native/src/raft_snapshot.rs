@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Snapshot transfer in chunks. The leader streams its applied catalog to a follower that fell
 //! behind its compacted log: a header (everything but extents and the inodes of filesystems),

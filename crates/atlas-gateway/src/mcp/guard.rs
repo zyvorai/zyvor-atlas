@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Guardrails at the one `call_tool` chokepoint: the agent's run id, its resource scope, and the call
 //! budgets. Kept out of `mcp.rs` so every tool, present and future, passes the same checks without
 //! carrying any of them.

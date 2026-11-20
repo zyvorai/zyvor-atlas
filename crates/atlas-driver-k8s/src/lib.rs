@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Live Kubernetes driver (read-only in MVP slice 1).
 //!
 //! Surfaces `StorageClass`, `PersistentVolumeClaim`, and `PersistentVolume` objects so the gateway

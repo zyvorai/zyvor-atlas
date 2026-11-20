@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # atlas-native-smb: SMB gateway for atlas-native filesystems (docs/NATIVE_SMB.md). Samba's smbd
 # serves FUSE mounts of each shared filesystem; atlas-native-smb mounts them, writes the Samba
 # configuration, creates the users' accounts and supervises smbd. Samba runs as its own,

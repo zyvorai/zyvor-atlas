@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Minimal SIEM-stand-in receiver for verifying ATLAS_AUDIT_EXPORT_URL against something real (not
 # just a test's in-process mock). See receiver.py for what it does. The ConfigMap holding
 # receiver.py itself is created by up.sh (--from-file, so the script lives in one place, not

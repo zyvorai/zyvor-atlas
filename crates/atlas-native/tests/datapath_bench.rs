@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Engine data-path throughput over real data-node connections on localhost (3 replicas).
 //! `cargo test --release -p atlas-native --test datapath_bench -- --ignored --nocapture`

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! A `BTreeMap` that remembers which keys changed since the last checkpoint, so the catalog
 //! store writes only those records. Reads go through `Deref`; every mutation goes through a

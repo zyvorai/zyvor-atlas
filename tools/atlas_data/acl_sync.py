@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """Turn a POSIX ACL (`getfacl` text) on a source directory into an artifact's reader list.
 
 Fail closed: only principals that the operator's map names become readers, a principal that is not in

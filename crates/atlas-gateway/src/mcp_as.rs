@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Lab-only OAuth authorization-server scaffolding. Off unless `ATLAS_MCP_AS_ENABLE` is set.
 //!
 //! It answers `client_credentials` for the configured client, a small Dynamic Client Registration

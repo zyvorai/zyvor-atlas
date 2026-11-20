@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Per-filesystem activity windows for ransomware assessment: files modified, renamed and
 //! deleted, bytes written, and how much of the written data looks encrypted (high Shannon
 //! entropy). Counted on the node that served the request and kept in memory only: a restart

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """CPU-only probes for the storage patterns described in docs/AI_STORAGE_RECIPES.md.
 
 No third-party packages, no GPU, no LMCache, no vLLM. Two subcommands:

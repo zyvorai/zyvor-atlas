@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Build and deploy atlas-native-node (deploy/k8s/atlas-native.yaml) to a remote k3s host.
 #
 #   ./scripts/deploy-native-remote.sh <host> [user] [--verify-failover]

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! The catalog on disk (`catalog.redb`): one record per volume, snapshot, extent, filesystem,
 //! inode and filesystem snapshot, plus one for the rest of the catalog's state. A checkpoint

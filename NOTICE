@@ -1,20 +1,13 @@
-SPDX-FileCopyrightText: Copyright (c) 2026 ZyvorAI Labs Private Limited.
-SPDX-License-Identifier: Apache-2.0
+zyvor-atlas
+Copyright 2026 Zyvor AI Labs
 
-Atlas
-Copyright (c) 2026 ZyvorAI Labs Private Limited.
+This product includes software developed at Zyvor AI Labs (https://zyvor.dev).
+Licensed under the Zyvor Production License v1.0
+(SPDX: LicenseRef-Zyvor-Production-1.0).
 
-Licensed under the Apache License, Version 2.0 (SPDX: Apache-2.0).
+Non-production use is free. Production use requires a separate paid
+commercial license from Zyvor AI Labs Private Limited.
 
-  See LICENSE and LICENSES/Apache-2.0.txt
-
-Contact: https://zyvor.dev
-
-Third-party open-source components bundled or linked by Atlas retain their
-own copyright notices and license terms. Dependency license policy for the
-Rust workspace is enforced by deny.toml (cargo-deny). Frontend dependencies
-are declared in crates/atlas-gateway/ui/package-lock.json.
-
-The gateway container images additionally bundle, under their own terms:
-the Oracle Instant Client (Oracle's redistributable Basic Lite license; see
-Dockerfile).
+Third-party software, trademarks, projects, and technologies referenced by this
+product remain the property of their respective owners and are governed by
+their respective licenses.

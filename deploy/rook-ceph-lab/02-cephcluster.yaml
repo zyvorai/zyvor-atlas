@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Minimal lab CephCluster (PDF §6.1 "minimum lab profile": 3 nodes, 1 OSD/node, host failure domain).
 # For production use dedicated disks, >=5 nodes, and an odd monitor count.
 apiVersion: ceph.rook.io/v1

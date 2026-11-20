@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! `POST /volumes/{id}/import` through the gateway: the request is validated, queued as a job,
 //! streamed from a local HTTP server into an atlas-native volume (fixture driver) and verified.
 //! The streaming, resume and checksum logic is tested in `atlas-jobs`; this covers the route, the

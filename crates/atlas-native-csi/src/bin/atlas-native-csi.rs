@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! `atlas-native-csi --controller|--node --endpoint https://atlas-native:7400`: the CSI plugin
 //! for atlas-native filesystems, serving on `--csi-endpoint` (a Unix socket).

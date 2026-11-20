@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Read-only I/O shape per device, for spotting AI-style access (large checkpoint writes, bulk
 //! dataset or model reads, small latency-sensitive reads).
 //!

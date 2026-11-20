@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Second bucket-provisioning StorageClass for the "Geo-Redundant Storage" tier in IronWolf's
 # object-storage wizard. A single-node lab has no second pool/DC to back real multi-site
 # replication, so this intentionally points at the same zyvor-rgw CephObjectStore as

@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Zyvor DataBridge — cloud-to-edge database mobility
 
 DataBridge migrates **managed cloud databases** to **open, self-managed engines at the edge** on

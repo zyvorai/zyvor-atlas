@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Agent workspace MCP tools (`ATLAS_MCP_WRITE_ENABLE`): two-phase and single-use tokens, scoped-token
 //! denial, tenant isolation and creator-only reset/discard. Own test binary: the write gate is a
 //! process-wide environment variable. The workspace behaviour itself is covered in `workspaces.rs`.

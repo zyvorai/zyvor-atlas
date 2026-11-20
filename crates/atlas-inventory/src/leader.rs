@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! DB-backed leader election (day-2 HA). A single `leader_lease` row per lease name is held by one
 //! instance at a time; the holder renews it before it expires. On single-replica SQLite this is a
 //! no-op (this instance always wins), but on a shared DB it ensures only the leader runs the

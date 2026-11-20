@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Day-2 upgrade orchestration: the pre-flight health gate. A quiet control plane is ready to
 //! upgrade; in-flight jobs and open critical alerts block it. Fake driver, no infra.
 

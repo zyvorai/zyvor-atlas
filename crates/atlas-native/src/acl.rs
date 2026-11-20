@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! POSIX ACLs in the Linux xattr encoding (`system.posix_acl_access` / `_default`): a 4-byte
 //! version (2) and 8-byte entries `(tag: u16, perm: u16, id: u32)`, little-endian. The kernel

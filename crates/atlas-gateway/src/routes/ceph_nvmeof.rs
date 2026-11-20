@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! `GET /ceph/nvmeof`: the Rook `CephNVMeOFGateway` CRs, their pods, and the StorageClasses of the
 //! Ceph-CSI NVMe-oF driver. Read-only.
 //!

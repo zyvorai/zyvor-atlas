@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # atlas-native edge profile
 
 `deploy/helm/atlas-native/values-edge.yaml` runs atlas-native on one small node: a single pod

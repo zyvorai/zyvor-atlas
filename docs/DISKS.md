@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Provisioning a raw disk (first integration slice)
 
 Atlas can turn a raw, unformatted block device (e.g. `/dev/sdb`) into usable capacity two ways:

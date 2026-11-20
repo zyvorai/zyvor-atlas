@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! `atlas-native-replicate --source https://a:7400 --target https://b:7400 --fs data`: keeps a
 //! read-only replica of a filesystem on another native cluster, one snapshot increment every

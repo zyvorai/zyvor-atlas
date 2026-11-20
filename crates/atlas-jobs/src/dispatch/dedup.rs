@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Run a dedup-savings estimate (`docs/DEDUP_ESTIMATE.md`) as a background job. The scan is one
 //! driver call that can run for hours (`zdb -S` on a big pool), so a heartbeat keeps the job from
 //! looking stale to the durable poller while it runs.

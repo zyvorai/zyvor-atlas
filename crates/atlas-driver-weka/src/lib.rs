@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! WEKA through the REST API (v2): `POST /login`, `GET /cluster`, `GET /fileSystems`.
 //! Filesystems become Atlas `filesystem` volumes in one pool. `create_volume` posts
 //! `/fileSystems` and `delete_volume` deletes `/fileSystems/{id}`. Fake mode keeps the same

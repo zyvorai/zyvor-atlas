@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Render docs/social/atlas-social-card.html (1600x900) to a JPEG for LinkedIn and X.
 # Needs Google Chrome and macOS `sips`; nothing is installed.
 #   ./docs/social/build-social-card.sh [output.jpg]

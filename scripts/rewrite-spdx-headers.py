@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """Rewrite Atlas source headers to the Apache-2.0 SPDX form.
 
 Replaces leading Zyvor copyright / "All rights reserved" banners with:
   <comment> Copyright (c) 2026 ZyvorAI Labs Private Limited.
-  <comment> SPDX-License-Identifier: Apache-2.0
+  <comment> SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 Preserves extra banner lines after the copyright (e.g. CSS product blurbs).
 """

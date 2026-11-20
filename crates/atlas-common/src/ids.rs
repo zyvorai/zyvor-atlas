@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Resource-id helpers using the prefix scheme from PDF §10.1 (`bkd_`, `cls_`, `pool_`, ...).
 
 use uuid::Uuid;

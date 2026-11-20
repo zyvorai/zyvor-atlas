@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """Contract tests for HttpGryvia against a local fake of Gryvia's API gateway.
 
 The fake copies routes, auth and payload shapes from the Gryvia repo (zyvorai/zyvor-gryvia,

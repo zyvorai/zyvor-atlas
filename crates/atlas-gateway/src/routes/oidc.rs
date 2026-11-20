@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! OIDC/SSO login. A second way to *obtain* an Atlas session JWT (alongside `POST /auth/login`'s
 //! local username/password) — a successful OIDC round-trip mints the exact same HS256 JWT
 //! `mint_token` always has, so `auth_middleware`/`require_role`/token revocation are all

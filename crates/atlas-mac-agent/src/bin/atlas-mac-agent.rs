@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Per-Mac agent. Fake mode (recorded fixtures) is the default so nothing touches a real disk
 //! unless `--mode real`. A non-loopback bind requires a token and TLS.
 

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Atlas Native storage driver: the `StorageDriver` for an `atlas-native-node` cluster
 //! (`docs/NATIVE_NODE.md`), spoken to over its HTTP API.
 //!

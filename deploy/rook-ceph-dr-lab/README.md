@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Two-site RBD mirroring lab
 
 What the two-way drill in [`docs/DR.md`](../../docs/DR.md) (2026-10-06) ran on. Each of two hosts

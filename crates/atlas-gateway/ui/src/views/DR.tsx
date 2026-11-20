@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Day-2 cross-cluster DR: mirroring peers, mirrored images, and failover (promote/demote).
 import { useState, type CSSProperties } from "react";
 import { submit, submitJob } from "../api/client";

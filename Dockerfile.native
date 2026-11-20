@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # atlas-native-node: the native storage node (crates/atlas-native, docs/NATIVE_NODE.md). Only the
 # one binary: it speaks its own TCP protocols plus a small HTTP endpoint, so the runtime image needs
 # nothing beyond CA certificates.

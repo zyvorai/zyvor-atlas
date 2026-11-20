@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Precise CDC offset-lag measurement via an embedded Kafka client.
 //!
 //! A JDBC-sink `KafkaConnector` reports RUNNING but not *how far behind* it is. The true replication

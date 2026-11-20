@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Cross-replica rate-limit sync (day-2 HA governance). Backs
 //! `crates/atlas-gateway/src/state.rs::RateLimiter`'s periodic background sync — see
 //! `migrations/0034_rate_limit_counters.sql`'s doc comment for the full design: the hot,

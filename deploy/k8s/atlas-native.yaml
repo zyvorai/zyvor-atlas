@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # atlas-native-node as a 3-replica StatefulSet (docs/NATIVE_NODE.md). Every pod runs both roles:
 # a data node serving its PVC and a metadata (Raft) voter. Pods find each other through the
 # headless Service's stable DNS names; addresses are re-resolved on every reconnect, so a

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Agent workspaces: an instant, isolated, disposable copy of an atlas-native volume or filesystem
 //! for one agent run (docs/NATIVE_FS.md#agent-workspaces).
 //!

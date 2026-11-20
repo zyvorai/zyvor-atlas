@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """Exercise all nine workflows against actual HTTP/file/Parquet operations.
 
 Run from repository root: PYTHONPATH=tools python3 examples/data/end_to_end.py

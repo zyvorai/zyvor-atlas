@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! The DataBridge reconciler: a periodic worker (mirrors `atlas_jobs::spawn_scheduler`) that
 //! advances long-running pipeline work the single-shot job engine can't hold open — polling edge
 //! operator CR status to `ready`, and (later slices) watching full-load/validation Jobs and CDC lag.

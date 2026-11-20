@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: Apache-2.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 -- Agent workspaces: a disposable, isolated copy-on-write clone of an atlas-native volume or filesystem
 -- for one agent run (docs/NATIVE_FS.md). `base_snapshot_id` is the point the clone was taken from (a
 -- reset re-clones from it); `owns_base_snapshot` is 1 when Atlas took that snapshot itself and must

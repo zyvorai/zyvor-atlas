@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Regression guard for the audit-log export-before-prune hook: rows are only ever deleted after
 //! a successful export to the configured sink, never unconditionally, so a SIEM outage can't
 //! silently lose audit history.

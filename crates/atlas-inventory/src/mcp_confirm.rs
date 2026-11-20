@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Durable single-use record of MCP write confirmation tokens (`migrations/0039_mcp_confirm_used.sql`).
 //! The gateway redeems a token by inserting its `jti`; the primary key makes the first insert win on every
 //! replica, so "already used" survives a restart and holds across replicas that share the database.

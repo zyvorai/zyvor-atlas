@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! macOS volume lifecycle through the gateway on the fixture driver (nothing is executed): the
 //! confirmations, the hard refusals (internal disk, boot container, system volume, disk image),
 //! and the happy path as jobs.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Dedup-savings estimate for an RBD pool. Ceph has no dedup to simulate, so this reads the data:
 //! each image's allocated extents come from `rbd export-diff pool/image -` (a sparse stream, so
 //! holes are never read) and go through [`DedupScanner`].

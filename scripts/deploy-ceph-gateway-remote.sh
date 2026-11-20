@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Deploy the **real-Ceph** Atlas gateway (`atlas-gateway-ceph` in `rook-ceph`) to a
 # remote k3s host. The sibling `deploy-remote.sh` builds the fake/k8s image
 # (`Dockerfile`) and deploys to `zyvor-system`; THIS one builds `Dockerfile.ceph`

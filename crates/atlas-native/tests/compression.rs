@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! LZ4-compressed extents: space saved, byte-exact reads (whole, partial overwrite, snapshots),
 //! erasure-coded payloads, repair, and incompressible data left alone.

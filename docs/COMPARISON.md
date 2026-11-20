@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Atlas compared with WEKA, vSAN and others
 
 WEKA (WekaFS) is a commercial parallel filesystem built for AI and HPC. Atlas is a storage control

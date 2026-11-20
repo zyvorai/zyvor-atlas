@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! The source-connector contract: discover a cloud/source database's schema so the pipeline can
 //! assess readiness, provision an edge target, and plan the load. Mirrors the `StorageDriver`
 //! trait split — the gateway/pipeline depend only on this trait, never on tokio-postgres/mysql.

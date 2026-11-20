@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! `GET /ceph/sizing`: do the hosts with NVMe drives have the CPU and RAM that Red Hat's sizing
 //! rule of thumb for IOPS-optimized NVMe clusters asks for? Read-only.
 //!

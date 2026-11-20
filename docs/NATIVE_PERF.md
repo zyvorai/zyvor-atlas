@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # atlas-native data-path performance (lab, spinning disk)
 
 **These are not NVMe results, and not a PEAK:AIO (or any competitor) comparison.** They are one

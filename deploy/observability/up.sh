@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Stand up a self-contained Prometheus + Grafana that scrape/visualize the Atlas control plane.
 # Requires kubectl pointed at the cluster running atlas-gateway-ceph (namespace rook-ceph).
 set -euo pipefail

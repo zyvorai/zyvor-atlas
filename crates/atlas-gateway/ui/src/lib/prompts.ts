@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 /** Agent handoff stub — reasoning-only CTAs; deterministic nav stays on the router. */
 
 type PromptListener = (q: string) => void;

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # atlas-io-agent: the observe-first storage I/O sensor (crates/atlas-io, docs/IO_EBPF.md). No UI,
 # no optional DataBridge connectors, no Ceph/ZFS CLIs — this binary only ever talks HTTP on
 # :5111 and, in `live` mode, attaches its block-layer BPF programs, so the image stays minimal on

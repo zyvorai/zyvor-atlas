@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Design tokens vendored from Zeus OS (v9s) so Atlas matches the suite look-and-feel.
 /** @type {import('tailwindcss').Config} */
 export default {

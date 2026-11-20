@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Rook (`ceph.rook.io/v1`) CR helpers built on the generic `apply_cr`/`get_cr_status`/`list_crs`
 //! mechanism in `lib.rs`. Returns raw `serde_json::Value`/plain structs like the rest of that
 //! generic layer — no typed CRD codegen dependency, since Rook's CR schemas are wide and this

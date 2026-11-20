@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Download, Plus, Upload } from "lucide-react";
 import { apiError, http, submitJob, toast } from "../api/client";

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Per-token, per-tool MCP call budget (`ATLAS_MCP_TOOL_CALLS_PER_MIN`). Its own test binary: the budget is read
 //! once per process, so the env var must not leak into other tests. A tool that is over its budget is refused and
 //! audited, while another tool on the same token and the same tool on another token still work.

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Stable rustfmt config. A whole-tree `cargo fmt` still rewrites denser committed style; CI runs
 # `cargo fmt --check` as informational. Prefer formatting files you touch.
 edition = "2021"

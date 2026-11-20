@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Single-core cost of the atlas-native data-reduction primitives on 4 MiB extents.
 //!
 //! Run with `cargo run --release -p atlas-native --example reduction_bench`. It measures only the

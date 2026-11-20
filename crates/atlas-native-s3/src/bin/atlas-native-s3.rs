@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! `atlas-native-s3 --endpoint https://node:7400 --buckets-file buckets.json --credentials-file
 //! credentials.json`: serves atlas-native filesystems over the S3 API (path-style, and

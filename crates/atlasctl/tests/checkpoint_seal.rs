@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! `atlasctl checkpoint seal` end to end: the real `atlasctl` binary against an in-process gateway
 //! on the fixture atlas-native driver, with fake DCP, Megatron and Orbax directory layouts on a
 //! temp dir standing in for the mounted filesystem. No cluster, no framework output.

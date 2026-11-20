@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Direct client writes at the engine level: the engine leases targets and grants, a "client"
 //! (plain `RemoteDevice`s that hold no key) writes the data nodes, and the engine commits. Data

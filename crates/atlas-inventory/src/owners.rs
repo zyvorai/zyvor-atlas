@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Recorded owner workflow intent (`migrations/0042_owner_workflows.sql`).
 //!
 //! A row is what an operator asked Atlas to remember. Nothing here calls a product.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Per-minute latency heatmap columns for the Observatory: for each (device, op), a ring of
 //! one-minute log2-µs bucket counts. The cumulative histograms answer "what is the distribution
 //! since start"; this answers "when did it get slow".

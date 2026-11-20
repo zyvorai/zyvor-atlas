@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Protection schedules: periodic snapshot policy per volume (PDF §12.3). The scheduler worker
 //! (in `atlas-jobs`) reads due schedules, enqueues snapshot jobs, and advances `next_run_at`.
 

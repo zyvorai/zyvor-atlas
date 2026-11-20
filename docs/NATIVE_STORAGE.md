@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Atlas Native storage engine — Phase 1
 
 This PR introduces the first native Atlas data-plane primitive: an append-only replicated extent engine.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! The write confirm flow on MCP's multi round-trip requests (MRTR, spec 2026-07-28), at the one
 //! `call_tool` chokepoint (`guard.rs`), with no change to any tool.
 //!

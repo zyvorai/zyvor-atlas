@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Block-hash scan behind the dedup-savings estimator: feed it data, read back how much of it was
 //! duplicate and how well the distinct blocks compress.
 //!

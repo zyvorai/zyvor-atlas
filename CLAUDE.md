@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Atlas — Zyvor Storage Control Plane
 
 Atlas is the central storage control plane for the Zyvor product suite. Products (Zeus OS/v9s,
@@ -262,7 +262,7 @@ integrations beyond the gRPC surface.
 
 ## Conventions
 - Every source file begins with a Zyvor copyright line plus
-  `SPDX-License-Identifier: Apache-2.0`
+  `SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0`
   (enforced by `make headers` / CI). Don't weaken license notices, [`CLA.md`](CLA.md),
   [`DCO.md`](DCO.md), or [`NOTICE`](NOTICE) without an explicit human request.
 - Match the monorepo Rust stack: axum 0.8, `sqlx::Any` (SQLite/Postgres, `$N` placeholders — no

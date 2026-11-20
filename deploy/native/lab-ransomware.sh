@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 #
 # Live ransomware test with a real encrypting program. Meant to run INSIDE the Dockerfile builder
 # image on the lab host (scripts/lab-ransomware-remote.sh) with /dev/fuse: the same plain-process

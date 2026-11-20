@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! More read-only MCP tools: Ceph status, DataBridge, policies and the audit trail.
 //!
 //! Every tool is stricter than (or equal to) its REST route: an explicit operator check where the REST

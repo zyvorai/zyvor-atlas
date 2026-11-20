@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Atlas gateway on Kubernetes. RBAC grants the read-only access the live k8s driver needs
 # (StorageClasses / PVCs / PVs). Ceph driver defaults to fake until a Ceph cluster exists.
 apiVersion: v1

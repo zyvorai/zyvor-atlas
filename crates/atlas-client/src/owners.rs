@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Owner ids Atlas records in `product_bindings`. This is a local registry, not a client of
 //! those products: they are not called from here. See `docs/PRODUCTS.md`.

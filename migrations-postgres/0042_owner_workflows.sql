@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: Apache-2.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 -- Intent a product owner asked Atlas to record. Atlas does not call the product.
 CREATE TABLE IF NOT EXISTS owner_workflows (
     id          TEXT PRIMARY KEY,

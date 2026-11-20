@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # reclaim-space.sh — SAFE, non-destructive host cleanup for the k3s lab node.
 # Reclaims disk on the ROOT filesystem (/dev/sda2) — NOT the Ceph OSD disk. Ceph data is untouched.
 #

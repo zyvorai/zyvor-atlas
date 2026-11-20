@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Mutual TLS for the Raft and data-node transports. Every node holds a certificate signed by a
 //! shared cluster CA whose DNS SAN is its node id; both sides of every connection verify the other.

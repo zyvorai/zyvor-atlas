@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //
 // Load test for Atlas's read-heavy REST surface — approximates the Storage Center console's own
 // traffic pattern (per crates/atlas-gateway/ui/src/api/hooks.ts: every dashboard panel polls its

@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Longhorn backend
 
 Atlas discovers Longhorn v1beta2 `nodes`, `volumes` and `replicas` through the Kubernetes API.

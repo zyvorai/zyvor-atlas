@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Node agent. Fake mode is the default so `make run` / CI never need CAP_BPF.
 
 use std::net::SocketAddr;

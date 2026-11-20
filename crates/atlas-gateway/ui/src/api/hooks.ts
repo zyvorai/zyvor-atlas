@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // react-query hooks for the Atlas API. Queries auto-refetch; write helpers live in views.
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { http } from "./client";

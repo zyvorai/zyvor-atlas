@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: Apache-2.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 -- Two-person proposals. `kind` is `snapshot_unlock` (WORM: a second admin clears a retention lock)
 -- or `alert_ack` (a second operator acknowledges an alert). `state` moves pending → confirming →
 -- confirmed; a failed confirm returns the row to pending. `expires_unix` is the deadline.

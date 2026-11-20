@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! The S3 API over [`Bucket`]s, served by s3s. Store calls block, so each runs on Tokio's blocking
 //! pool; object bodies stream through in [`CHUNK`]-sized pieces.

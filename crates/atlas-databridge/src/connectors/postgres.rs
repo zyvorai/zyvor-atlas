@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Live PostgreSQL source connector (RDS/Aurora/Cloud SQL or any PG endpoint). Introspects the
 //! schema over a real connection so the pipeline can assess readiness for a real migration.
 //!

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Content-defined chunking scaffolding for atlas-native data reduction.
 //!
 //! The write path still stores fixed-size extents and deduplicates them inside one metadata

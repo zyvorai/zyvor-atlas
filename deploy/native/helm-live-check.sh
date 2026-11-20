@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 #
 # Installs deploy/helm/atlas-native on the current kube context with Raft/data mutual TLS and
 # HTTPS + client-certificate auth (throwaway openssl PKI), then checks: auth refusals, unaligned

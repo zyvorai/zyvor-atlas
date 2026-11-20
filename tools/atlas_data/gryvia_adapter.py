@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """`HttpGryvia`: a `GryviaAdapter` over Gryvia's REST API gateway (services/api-gateway).
 
 Route and payload shapes are taken from the Gryvia sources (repo zyvorai/zyvor-gryvia), not from a

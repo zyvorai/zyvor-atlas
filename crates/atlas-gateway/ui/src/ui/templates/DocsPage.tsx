@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Apple Developer docs-style reference page: a header + a sequence of captioned panels, each
 // either free-form prose/code or a table of endpoint-shaped rows.
 // See docs/ATLAS_UI_CONTRACT.md's page-archetypes table ("Reference (docs)").

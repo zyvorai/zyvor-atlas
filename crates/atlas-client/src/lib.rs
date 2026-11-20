@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Typed client for the Atlas REST API, for Zyvor products (Transiva, Veyron, GuestKit, ...).
 //!
 //! Products state intent (a name, a size, a policy, who owns it) and follow the job Atlas

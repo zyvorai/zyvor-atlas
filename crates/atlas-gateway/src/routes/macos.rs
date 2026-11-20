@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Volume lifecycle for a Mac's external disks (`docs/MACOS.md`): erase, add/delete an APFS volume,
 //! eject. Admin only; erase and delete need the target typed back; each runs as a job and is audited.
 //! The refusals (internal disk, running system, system volumes, disk images) are checked here for a

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Minimal, generic S3 client (PDF §10.3 "Atlas → RGW: S3 API") — shared by Ceph RGW and any other
 //! S3-compatible backend (Ceph RGW, MinIO, Garage, ...). Nothing here is Ceph-specific: it's plain SigV4 signing
 //! against whatever endpoint/bucket/credentials the caller supplies.

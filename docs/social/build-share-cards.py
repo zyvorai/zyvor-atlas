@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """Generate the Atlas share cards (light + dark) as SVG from one palette.
 
     python3 docs/social/build-share-cards.py docs/social
@@ -64,7 +64,7 @@ def svg(p, label):
             f'<text x="{x}" y="498" font-size="38" font-weight="700" letter-spacing="-1" fill="{p["ink"]}">{num}</text>\n'
             f'    <text x="{x}" y="524" font-size="15" fill="{p["sec"]}">{lab}</text>')
     return f'''<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="{label}">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="630" gradientUnits="userSpaceOnUse">

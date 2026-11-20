@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! `GET /pools/{id}/dedup-estimate` through the gateway against the fake Ceph and ZFS drivers.
 
 use std::net::SocketAddr;

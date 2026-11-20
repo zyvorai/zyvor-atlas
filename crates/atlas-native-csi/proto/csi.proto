@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //
 // The part of the Container Storage Interface v1 (CSI spec v1.11.0,
 // github.com/container-storage-interface/spec, Apache-2.0) that atlas-native-csi serves:

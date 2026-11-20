@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! The gateway's bucket list (`buckets.json`) and access keys (`credentials.json`, from a
 //! Secret). Secret keys never appear in errors, logs or `Debug` output.

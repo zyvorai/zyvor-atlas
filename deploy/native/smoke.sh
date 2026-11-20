@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 #
 # Starts 3 metadata + 3 data atlas-native-node processes on localhost from generated configs,
 # exercises the HTTP API with curl, kills the metadata leader and checks the survivors keep serving.

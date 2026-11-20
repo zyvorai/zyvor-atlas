@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! A real-mode provision whose operator CR apply fails (API server or admission webhook down)
 //! must hand the plan back to `assessed`, so the next provision can run.
 

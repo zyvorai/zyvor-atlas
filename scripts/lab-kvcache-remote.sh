@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # KV-cache I/O smoke test on the lab host: rsync the tree, build the binaries in the Dockerfile's builder
 # image, and run deploy/native/lab-kvcache.sh there as plain host-network processes with /dev/fuse (a real
 # throwaway native cluster, an atlas-native-mount FUSE mount and the S3 gateway). Same shape as

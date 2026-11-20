@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! The CSI node service: each publish runs one `atlas-native-mount` process on the pod's target
 //! path, kept as a child of this plugin until the volume is unpublished. The mounts live as long

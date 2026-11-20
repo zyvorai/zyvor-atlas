@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 // Package atlas is a Go client for the Atlas storage control plane REST API
 // (base path /api/atlas/v1). It uses only the Go standard library so products

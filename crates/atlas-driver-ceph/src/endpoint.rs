@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Connection to a Ceph cluster that is not the gateway host's default `/etc/ceph/ceph.conf`.
 //!
 //! The driver passes these as argv to `ceph` and `rbd` (`--conf`, `--keyring`, `--mon-host`,

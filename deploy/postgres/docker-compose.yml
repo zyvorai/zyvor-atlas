@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Lab PostgreSQL for the future multi-replica Atlas cutover (see docs/HA.md).
 # Atlas still uses SQLite today — this compose file is scaffolding so operators can stand up
 # a shared DB and validate connectivity / backups before the sqlx port lands.

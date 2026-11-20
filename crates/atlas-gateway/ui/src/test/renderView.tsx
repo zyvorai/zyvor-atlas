@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Shared smoke-test harness: mount a view inside the providers it needs at runtime
 // (react-query + router) with the axios client and global fetch stubbed to resolve
 // empty/ok responses, so every view can be smoke-tested without a live gateway.

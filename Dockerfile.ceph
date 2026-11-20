@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # atlas-gateway image WITH the Ceph Squid client (ceph/rbd CLIs) for ATLAS_CEPH_DRIVER_MODE=real.
 # The runtime installs ceph-common from the upstream Squid apt repo so the client matches the
 # cluster major (v19) and the glibc lines up with the debian-bookworm-built binary.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Scrape the Ceph mgr Prometheus module (PDF §15.1, §10.3 "Atlas → Prometheus").
 //!
 //! We keep a curated whitelist of metrics (capacity, OSD latency/up/in, pool usage, health) — not

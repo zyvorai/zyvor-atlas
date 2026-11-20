@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! The atlas-native backend through the gateway: registration, synchronous volume and snapshot
 //! create/delete via the driver, and refusals for what the backend does not support. Fixture
 //! driver, no infra (`atlas-driver-native` tests the real driver against live nodes).

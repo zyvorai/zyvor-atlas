@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Builds the atlas-data image (Dockerfile.data) on the lab host and runs deploy/data/gate-smoke.sh there.
 # Own remote directory (not ~/.deployment/atlas-ci), so it can run next to a CI run.
 # Usage: scripts/atlas-data-image-remote.sh <host> <user>

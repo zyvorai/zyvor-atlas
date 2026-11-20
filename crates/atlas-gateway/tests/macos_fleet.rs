@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! A fleet Mac through the gateway: the backend registers, discovery fills the inventory with APFS
 //! containers (pools) and volumes, and a failing drive shows up as a critical pool. Fixture driver,
 //! no Mac needed (`atlas-driver-macos` tests the parser against recorded `diskutil` plists).

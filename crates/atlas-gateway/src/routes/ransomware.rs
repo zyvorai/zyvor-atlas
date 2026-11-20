@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Explainable, read-only ransomware-pattern assessment for one workload's activity window.
 //!
 //! The caller (a gateway, the I/O sensor, a SIEM) supplies per-interval activity samples; Atlas

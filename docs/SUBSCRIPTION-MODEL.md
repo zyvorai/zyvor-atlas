@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Atlas: enterprise subscription
 
 Atlas is available under an annual **enterprise subscription** for production use. One subscription covers product access, updates and upgrades, and the stated support level. There is no separate support surcharge.

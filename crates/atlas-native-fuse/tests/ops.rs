@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! The FUSE operations layer against a live in-process cluster: 3 Raft metadata nodes and 3
 //! data nodes on localhost.

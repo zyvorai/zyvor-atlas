@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """vLLM-style KV connector shape over `KVAdapter`; no vLLM dependency and not tested against vLLM.
 
 The serving engine hands over opaque serialized bytes per token block. This class maps each full

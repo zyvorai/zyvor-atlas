@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Which metadata group serves an id. An object lives in one group: a new volume or filesystem
 //! goes to the group its id hashes to, and a snapshot or clone joins its source's group (they

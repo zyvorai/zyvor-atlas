@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 """Contract for the gateway's MCP data tools (crates/atlas-gateway/src/mcp/data.rs).
 
 The Rust side sends exactly these actions with exactly these argument names and reads exactly these

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Savings report for atlas-native compression and extent sharing (`docs/NATIVE_DATA_REDUCTION.md`).
 //!
 //! The node reports raw counters cluster-wide; this adds the ratios an operator reads. Sharing

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! `/v1/fs/...`: the inode-based file API. Paths address inodes by number; names travel in JSON
 //! bodies (or a percent-encoded `name` query on lookup). A snapshot tree is read as `<fs>@<id>`.

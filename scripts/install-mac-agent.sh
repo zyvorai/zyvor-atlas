@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Install atlas-mac-agent on this Mac as a launchd daemon (read-only disk inventory for an Atlas
 # gateway). Run as root:  sudo scripts/install-mac-agent.sh <path-to-atlas-mac-agent> <bind> <cert.pem> <key.pem>
 #   <bind>   host:port the gateway will reach, e.g. 0.0.0.0:5112 (non-loopback needs the token and TLS)

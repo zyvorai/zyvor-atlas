@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Install/upgrade the Helm chart on the lab host next to the raw-manifest gateway, using the image
 # scripts/deploy-remote.sh already imported into k3s (localhost/atlas-gateway:dev). See
 # deploy/helm/atlas/values-lab.yaml. Never prints Secret contents.

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Lab Kafka for DataBridge CDC (Strimzi KRaft + NodePool, single dual-role broker).
 # Applied by `deploy/databridge/up.sh` when streaming is enabled. Bootstrap Service:
 #   zyvor-kafka-kafka-bootstrap.zyvor-databridge.svc:9092

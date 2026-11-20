@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Reed-Solomon erasure coding of extents. An extent under a `k+m` scheme is split into `k`
 //! data shards (the extent's bytes, zero-padded to `k * shard_len`) and `m` parity shards, each

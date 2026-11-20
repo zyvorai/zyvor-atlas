@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! `GET /ceph/nvme`: wear and health of the NVMe drives Ceph tracks, read from the SMART scrapes
 //! its device-health module holds (`ceph device get-health-metrics`). Read-only. A drive Ceph has
 //! not scraped is reported without metrics, never as healthy.

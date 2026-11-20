@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # Atlas I/O eBPF programs
 
 `atlas_bio.bpf.c` is compiled by `build.rs` (clang `-target bpf`) when the crate is built with the

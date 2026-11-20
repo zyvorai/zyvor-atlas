@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Rook CRD integration: read endpoints, then a full pool create -> Ready -> delete lifecycle.
 #
 # Pool size/failure-domain are env-overridable because they depend on real cluster capacity —

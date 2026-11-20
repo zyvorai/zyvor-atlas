@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 [workspace]
 members = [
     "crates/atlas-common",
@@ -37,7 +37,7 @@ resolver = "2"
 [workspace.package]
 version = "0.13.0"
 edition = "2021"
-license = "Apache-2.0"
+license = "LicenseRef-Zyvor-Production-1.0"
 authors = ["ZyvorAI Labs Private Limited"]
 
 [workspace.dependencies]

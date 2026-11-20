@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Verify the DataBridge REAL source connectors against ephemeral database containers. For each engine
 # this spins a throwaway instance, seeds a tiny `customers`/`orders` schema, exports the matching
 # DATABRIDGE_TEST_* var, and runs that engine's env-gated `#[tokio::test]` discovery test (which is a

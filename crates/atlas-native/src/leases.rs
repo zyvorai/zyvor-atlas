@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Client sessions and the byte-range locks they hold, replicated in the catalog so they survive
 //! a metadata leader failover. A session is a lease: the client renews it within its TTL, and

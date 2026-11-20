@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: Apache-2.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 -- Case-insensitive username uniqueness. SQLite already has it (the primary key is COLLATE NOCASE);
 -- this index keeps both dialects uniform and mirrors migrations-postgres/0036, where it is the
 -- actual enforcement (see the note there). Cannot fail here: NOCASE already forbids duplicates.

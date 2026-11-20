@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Stand up a throwaway Postgres in the lab k3s cluster to verify atlas-inventory's query layer
 # (connect()/migrate(), docs/HA.md) against real infrastructure — not just that it compiles
 # against sqlx::Any. See deployment.yaml.

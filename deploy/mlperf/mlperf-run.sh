@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Entry point of the atlas-mlperf image (Dockerfile.mlperf, docs/MLPERF.md): mounts an atlas-native
 # filesystem, runs `mlpstorage` with the arguments in MLPERF_ARGS, and unmounts.
 #

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Grafana with the Atlas Prometheus datasource + the Atlas overview dashboard auto-provisioned.
 # The dashboard JSON ConfigMap (atlas-grafana-dashboard) is created by up.sh from atlas-overview.json.
 # Admin password comes from Secret `atlas-grafana-admin` (created by up.sh if missing) — never

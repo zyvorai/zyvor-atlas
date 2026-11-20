@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Deterministic risk scoring that combines [`crate::rca`] results with an optional
 //! capacity signal. Read-only, no side effects, no I/O.
 //!

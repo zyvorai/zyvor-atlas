@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Read-only MCP view of the agent (`/mcp`, streamable HTTP). Same data and the same
 //! never-fabricate rules as the REST routes; there are deliberately no tools that grant a
 //! write-freeze lease or otherwise change anything.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! `POST /volumes/{id}/import`: queue a job that streams a disk image from an HTTP(S) server
 //! into a block volume and verifies it by reading the volume back. Raw images are written as
 //! they arrive. qcow2 is converted with `qemu-img convert -O raw` first. The volume's own

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Provision a raw, unformatted disk into a new ZFS pool or a new Ceph OSD (via Rook). A rare,
 // high-consequence admin action (wipes a disk) — deliberately its own destination rather than a
 // button on Backends/Cluster, and deliberately kept thin: one form, one recent-jobs table.

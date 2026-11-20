@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Integration tests for the native PagerDuty/Opsgenie/Slack alerting sinks
 //! (crates/atlas-monitor/src/notify/{pagerduty,opsgenie,slack}.rs): each is pointed at a tiny
 //! local axum server standing in for the real API, so these exercise the real HTTP round trip and

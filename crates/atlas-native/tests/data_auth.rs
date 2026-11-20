@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! Data-node client auth (`DataAuth`): a bearer or nothing. Certificate acceptance is covered
 //! by `tests/tls.rs` (mutual TLS). Here the node has no TLS, so the bearer is the only proof.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Day-2 governance: token revocation + bootstrap admin bearer. A minted token works until its
 //! `jti` is revoked, after which the auth middleware rejects it (401) before its TTL expires.
 //! Revocation is admin-only. Auth on.

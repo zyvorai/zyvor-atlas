@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! File and directory operations over the namespace in the catalog. File data goes through the
 //! same extent grid, replication and copy-on-write path as volume data.

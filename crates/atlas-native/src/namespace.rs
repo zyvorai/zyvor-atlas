@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 
 //! A POSIX-style file and directory namespace in the replicated catalog. A filesystem is a
 //! table of inodes; a directory inode holds its entries, a file inode holds an extent map on the

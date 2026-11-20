@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Namespace for DataBridge edge databases + their operators/streaming (matches EDGE_NAMESPACE
 # in atlas-databridge::pipeline). Edge CloudNativePG / Percona clusters and Debezium connectors
 # are created here by the migration pipeline.

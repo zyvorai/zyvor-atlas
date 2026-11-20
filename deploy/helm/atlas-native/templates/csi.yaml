@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # CSI driver for atlas-native filesystems (docs/NATIVE_CSI.md): a controller Deployment with the
 # external-provisioner and external-resizer (and optionally external-snapshotter) sidecars, and a
 # node DaemonSet that publishes volumes through FUSE.

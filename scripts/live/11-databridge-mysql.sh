@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Fake MySQL DataBridge: create → discover → plan → stages → delete (create-then-delete hygiene).
 set -euo pipefail
 # shellcheck source=lib.sh

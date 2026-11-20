@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Rook lifecycle jobs: create/delete a `CephBlockPool`/`CephFilesystem`/`CephObjectStore` CR plus
 //! its matching StorageClass, via the generic `apply_cr`/`delete_cr`/`apply_storage_class` k8s
 //! mechanism — the same one CloudNativePG/Percona/Strimzi CRs already go through

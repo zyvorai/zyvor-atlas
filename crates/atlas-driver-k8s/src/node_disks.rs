@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Kubernetes plumbing for turning a formatted, host-mounted disk into a usable volume: a
 //! `no-provisioner` StorageClass, a `local` PersistentVolume pinned to the node, a PVC bound to it,
 //! and the throwaway node-prep Job (status + logs) that formats and mounts the disk on the host.

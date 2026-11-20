@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Transparent LZ4 compression of extent payloads (`EngineConfig::compression`).
 //!
 //! An extent is compressed before it is replicated or erasure-coded, so every layer below the

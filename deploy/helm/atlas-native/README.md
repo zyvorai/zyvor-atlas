@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # atlas-native Helm chart
 
 Runs `atlas-native-node` ([`docs/NATIVE_NODE.md`](../../../docs/NATIVE_NODE.md)) as a StatefulSet:

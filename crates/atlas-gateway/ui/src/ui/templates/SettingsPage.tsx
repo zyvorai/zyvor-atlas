@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Apple System Settings-style preference pane: a panel of labelled radio-tile blocks.
 // See docs/ATLAS_UI_CONTRACT.md's page-archetypes table ("Reference (settings)").
 import type { ReactNode } from "react";

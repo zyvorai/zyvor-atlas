@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! The node HTTP API over reqwest, failing over across endpoints.
 
 use std::sync::atomic::{AtomicUsize, Ordering};

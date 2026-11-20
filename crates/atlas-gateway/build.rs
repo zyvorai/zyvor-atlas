@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Compile the gRPC proto. Requires `protoc` (system package `protobuf-compiler`) at build time —
 //! installed in the Docker builder stages and present on dev machines.
 fn main() {

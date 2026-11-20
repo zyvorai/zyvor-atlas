@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # All-in-one Jaeger (collector + query UI + in-memory storage) with native OTLP ingestion —
 # receives the spans atlas-gateway exports once ATLAS_OTEL_EXPORTER_ENDPOINT is set to this
 # service (see docs/TRACING.md; tracing itself is always compiled in, no Cargo feature needed).

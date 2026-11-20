@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Compact read/light-write Centers: Policies, Backends, Kubernetes, Cluster, Metrics.
 import { useNavigate } from "react-router-dom";
 import { submit } from "../api/client";

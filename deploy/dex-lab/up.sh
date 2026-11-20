@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: Apache-2.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 # Stand up a throwaway Dex OIDC provider in the lab k3s cluster to test Atlas's OIDC/SSO login
 # (crates/atlas-gateway/src/routes/oidc.rs). Plain HTTP, in-memory storage, static test users —
 # lab-only, mirrors deploy/rook-ceph-lab/README.md's "for the lab, NOT for production" posture.

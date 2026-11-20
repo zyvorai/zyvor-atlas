@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Protection Status: per-volume synthesis of replication, last snapshot/backup, DR mirror state,
 // and RPO target-vs-actual into one verdict — GET /protection-status, GET /volumes/{id}/protection.
 import type { CSSProperties } from "react";

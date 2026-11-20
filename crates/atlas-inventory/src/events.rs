@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! Unified activity feed: merges recent jobs, audit records, and alerts into one time-sorted
 //! timeline. All source tables stamp `created_at`/`updated_at` as `%Y-%m-%dT%H:%M:%fZ`, so ISO
 //! strings sort lexicographically = chronologically and we merge in Rust.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 // Atlas sign-in — same 2-chapter Store shell as h2kvm-, Atlas copy + auth.
 import { useEffect, useState, type FormEvent, useMemo } from "react";
 import {
