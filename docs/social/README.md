@@ -12,7 +12,7 @@ The README hero, the GitHub social preview, the LinkedIn/X card and the share ca
 | `atlas-share-card-dark.svg` / `.png` / `@2x.png` | Dark variant of the share card |
 | `build-share-cards.py` | Generates both share-card SVGs from one palette |
 
-The README cards (capabilities, native, DR, how it works, vs) live in `docs/ux/readme-*.html` and are
+The README cards (capabilities, native, DR, how it works) live in `docs/ux/readme-*.html` and are
 rendered by `docs/ux/build-readme-cards.sh`.
 
 ## Palette

@@ -241,8 +241,7 @@ integrations beyond the gRPC surface.
   fake/real, read-only discovery plus guarded external-disk lifecycle (`ops.rs`); pure parsing in `parse.rs` is tested on recorded plists on any OS); see `docs/MACOS.md`.
 - `crates/atlas-mac-agent` — per-Mac read-only HTTP agent (bin `atlas-mac-agent`) serving `RemoteMacosDriver`
   (`ATLAS_MACOS_AGENTS` on the gateway); see `docs/MACOS.md`.
-- `crates/atlas-driver-weka` — read-only WEKA discovery over its REST API (`ATLAS_WEKA_ENABLE`, fake/real);
- see `docs/COMPARISON.md`.
+- `crates/atlas-driver-weka` — read-only WEKA discovery over its REST API (`ATLAS_WEKA_ENABLE`, fake/real).
 - `crates/atlas-driver-k8s` — `kube-rs` read-only StorageClass/PVC/PV listing.
 - `crates/atlas-inventory` — read/upsert model against `sqlx::AnyPool` (SQLite or Postgres); also
   DB-backed rate-limit counters (`rate_limit.rs`).

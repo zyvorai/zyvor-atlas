@@ -12,7 +12,7 @@ custom_edit_url: "https://github.com/zyvorai/zyvor-atlas/edit/main/docs/NATIVE_S
 # Atlas Native storage engine — Phase 1
 
 This PR introduces the first native Atlas data-plane primitive: an append-only replicated extent engine.
-It intentionally does **not** claim WEKA-equivalent maturity. The purpose of Phase 1 is to establish durable
+The purpose of Phase 1 is to establish durable
 extent, checksum, placement, snapshot and telemetry contracts that later distributed metadata, RDMA, SPDK,
 GDS and erasure-coding work can build on.
 
@@ -34,7 +34,6 @@ GDS and erasure-coding work can build on.
 
 ## Status against the roadmap
 
-The roadmap and the comparison it serves are in [`COMPARISON.md`](../evaluate/comparison.md).
 
 | Step | Status |
 |---|---|

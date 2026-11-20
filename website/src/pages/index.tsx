@@ -9,7 +9,7 @@ import Heading from '@theme/Heading';
 import FeatureHighlights from '@site/src/components/FeatureHighlights';
 import ScreenshotStrip from '@site/src/components/ScreenshotStrip';
 import Reveal from '@site/src/components/Reveal';
-import {AnimatedFeatures, Compare, PromoteDemo, StatsBand, TypedTerminal} from '@site/src/components/Landing';
+import {AnimatedFeatures, PromoteDemo, StatsBand, TypedTerminal} from '@site/src/components/Landing';
 
 import styles from './index.module.css';
 
@@ -149,7 +149,6 @@ export default function Home(): ReactNode {
         <ProblemStatement />
         <AnimatedFeatures />
         <PromoteDemo />
-        <Compare />
         <Reveal>
           <FeatureHighlights />
         </Reveal>

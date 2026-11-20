@@ -174,32 +174,3 @@ export function PromoteDemo(): ReactNode {
     </section>
   );
 }
-
-const ROWS = [
-  ['What it is', 'Control plane with drivers per backend, plus its own filesystem', 'Kubernetes operator that runs Ceph'],
-  ['Interface', 'Intent-based REST, gRPC and SSE', 'Custom resources and CSI PVCs'],
-  ['Backends', 'Ceph, NFS, ZFS, Longhorn, macOS disks, Atlas Native, S3', 'Ceph'],
-  ['Cross-site DR', 'Two-way mirroring with a guarded failback; native replication', 'RBD mirroring CRDs'],
-  ['Database migration', 'DataBridge: discovery, full load, CDC, cutover', 'Not in scope'],
-  ['AI and agents', 'MCP server (53 read-only tools, opt-in guarded writes), Ops Advisor, eBPF I/O risk', 'Not in scope'],
-];
-
-export function Compare(): ReactNode {
-  return (
-    <section className={styles.compare}>
-      <div className="container">
-        <Reveal>
-          <p className={styles.eyebrow}>Atlas vs Rook alone</p>
-          <Heading as="h2" className={styles.h2}>Keep Ceph. Add one API over all your storage.</Heading>
-          <div className={styles.tableWrap}>
-            <table>
-              <thead><tr><th /><th>Atlas</th><th>Rook alone</th></tr></thead>
-              <tbody>{ROWS.map((r) => <tr key={r[0]}><th>{r[0]}</th><td>{r[1]}</td><td>{r[2]}</td></tr>)}</tbody>
-            </table>
-          </div>
-          <p className={styles.note}>Choose Rook alone when you only run Ceph inside Kubernetes and its own dashboard and CRDs are enough. Versus WEKA, including where WEKA is better today: <Link to="/docs/evaluate/comparison">the comparison</Link>.</p>
-        </Reveal>
-      </div>
-    </section>
-  );
-}

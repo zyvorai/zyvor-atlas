@@ -19,7 +19,7 @@
 .eyebrow{margin:0 0 10px;color:#6e6e73;font-weight:600;font-size:clamp(14px,1.3vw,17px)}
 .h2{font-size:clamp(30px,4.6vw,56px);font-weight:700;letter-spacing:-.04em;line-height:1.06;margin:0 0 16px}
 .lede{max-width:60ch;color:var(--ifm-color-emphasis-700)}
-.demo,.compare{padding:24px 0 72px}
+.demo{padding:24px 0 72px}
 .demoGrid{display:grid;grid-template-columns:1fr 1.3fr;gap:20px;margin-top:24px}
 .card{background:var(--ifm-background-surface-color);border:0;border-radius:28px;padding:28px;box-shadow:0 2px 24px rgba(0,0,0,.08)}
 .seg{display:flex;background:var(--ifm-background-color);border-radius:10px;padding:3px;margin-bottom:16px}

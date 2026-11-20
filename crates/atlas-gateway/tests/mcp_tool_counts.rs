@@ -1,7 +1,7 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
 //! How many MCP tools a session lists for each configuration gate, so the number quoted in the docs
-//! (`docs/STATUS.md`, `docs/COMPARISON.md`, `docs/ROADMAP.md`, the website) is the real one. Own test
+//! (`docs/STATUS.md`, `docs/ROADMAP.md`, the website) is the real one. Own test
 //! binary (one test): the gates are process-wide environment variables read when a session starts.
 //!
 //! The counts, with their sources:

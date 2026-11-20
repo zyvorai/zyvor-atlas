@@ -18,7 +18,7 @@ Atlas is a storage control plane. It gives you one API and one console over the 
 
 | I want to... | Start here |
 | --- | --- |
-| Evaluate Atlas | [Comparison](./evaluate/comparison.md), [Maturity status](./evaluate/status.md), [Subscription model](./evaluate/subscription-model.md) |
+| Evaluate Atlas | [Maturity status](./evaluate/status.md), [Subscription model](./evaluate/subscription-model.md) |
 | Run the control plane | [Quickstart](./getting-started/quickstart.md), [Build and run locally](./getting-started/build-and-run.md), [Deployment](./getting-started/deployment.md), [Architecture](./core-concepts/architecture.md) |
 | Run Atlas Native | [Storage overview](./atlas-native/overview.md), [Node](./atlas-native/node.md), [Filesystem](./atlas-native/filesystem.md), [CSI driver](./atlas-native/csi.md) |
 | Protect data from ransomware and deletion | [Retention locks and ransomware](./atlas-native/worm.md), [Compression and dedup](./atlas-native/data-reduction.md) |

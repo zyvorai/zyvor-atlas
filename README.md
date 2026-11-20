@@ -24,11 +24,9 @@
 
 **4 backends + Native** · **150+ REST endpoints** · **REST · gRPC · SSE** · **Two-way DR, clean failback** · **6 DB engines in DataBridge**
 
-[**Quickstart**](#quickstart) · [**Docs**](https://zyvorai.github.io/zyvor-atlas/) · [**Architecture**](docs/ARCHITECTURE.md) · [**API**](docs/API.md) · [**DR**](docs/DR.md) · [**Status**](docs/STATUS.md) · [**Comparison**](docs/COMPARISON.md)
+[**Quickstart**](#quickstart) · [**Docs**](https://zyvorai.github.io/zyvor-atlas/) · [**Architecture**](docs/ARCHITECTURE.md) · [**API**](docs/API.md) · [**DR**](docs/DR.md) · [**Status**](docs/STATUS.md)
 
 </div>
-
-[Client overview (PDF)](docs/Atlas-Client-Overview.pdf)
 
 ---
 
@@ -84,26 +82,13 @@ Everything below ran on real infrastructure in the Atlas lab. Lab verification i
 - **NFS, SMB, S3 and CSI on Native** verified with real clients and a single-node k3s ([NATIVE_NFS.md](docs/NATIVE_NFS.md)).
 - **DataBridge** through CDC and cutover for six source engines ([DATABRIDGE.md](docs/DATABRIDGE.md)).
 
-**Not yet:** NVMe and RDMA benchmark numbers, an IO500 submission, GPUDirect Storage, and cross-site mirroring of RBD consistency groups. See [COMPARISON.md](docs/COMPARISON.md).
+**Not yet:** NVMe and RDMA benchmark numbers, an IO500 submission, GPUDirect Storage, and cross-site mirroring of RBD consistency groups.
 
 ---
 
-## Atlas vs Rook alone, and vs WEKA
+### VMs and VMware migration
 
-| | **Atlas** | **Rook alone** |
-|---|---|---|
-| What it is | Storage control plane with drivers per backend, plus its own filesystem | Kubernetes operator that runs Ceph |
-| Interface for products | Intent-based REST, gRPC and SSE APIs | Kubernetes custom resources and CSI PVCs |
-| Backends | Ceph, NFS, ZFS, Longhorn, macOS disks, Atlas Native, generic S3 | Ceph |
-| Cross-site DR | Two-way RBD mirroring with a guarded failback; native replication | RBD mirroring CRDs |
-| Database migration | DataBridge (discovery, full load, CDC, cutover) | Not in scope |
-| **Choose Rook alone when** | | You only run Ceph inside Kubernetes and its own dashboard and CRDs are enough |
-
-Compared with a parallel filesystem such as WEKA, including where WEKA is the better choice today: [docs/COMPARISON.md](docs/COMPARISON.md).
-
-### Leaving VMware
-
-Atlas is the storage layer, not a hypervisor, so it sits next to VMware's vSAN rather than replacing the whole hyperconverged stack. VMs move with the rest of the Zyvor suite: [Scout](https://github.com/zyvorai/scout) scores readiness, [h2kvm](https://github.com/zyvorai/zyvor-h2kvm) repairs the guest offline and converts it to qcow2, and the VM lands on Kairon, Machina or KubeVirt with its disks on Atlas-managed Ceph, NFS, ZFS or Native storage. An `image.import` job streams a raw or qcow2 disk into an atlas-native or Ceph RBD (`rbd:pool/image`) volume with resume and a read-back checksum ([IMAGE_IMPORT.md](docs/IMAGE_IMPORT.md)). See [vSAN and migration in COMPARISON.md](docs/COMPARISON.md#compared-with-vmware-vsan-hyperconverged-infrastructure).
+Atlas is the storage layer, not a hypervisor. VMs move with the rest of the Zyvor suite: [Scout](https://github.com/zyvorai/scout) scores readiness, [h2kvm](https://github.com/zyvorai/zyvor-h2kvm) repairs the guest offline and converts it to qcow2, and the VM lands on Kairon, Machina or KubeVirt with its disks on Atlas-managed Ceph, NFS, ZFS or Native storage. An `image.import` job streams a raw or qcow2 disk into an atlas-native or Ceph RBD (`rbd:pool/image`) volume with resume and a read-back checksum ([IMAGE_IMPORT.md](docs/IMAGE_IMPORT.md)).
 
 ## Application recovery drills
 

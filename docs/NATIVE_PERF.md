@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
 # atlas-native data-path performance (lab, spinning disk)
 
-**These are not NVMe results, and not a PEAK:AIO (or any competitor) comparison.** They are one
+**These are not NVMe results, and not a comparison with any other product.** They are one
 run of the atlas-native engine data path on a shared, rotational disk on a single host. They exist
 to show the benchmark harness works, to give per-I/O latency and CPU-cost figures, and to be the
 baseline NVMe numbers will be compared against once NVMe hardware is available. Nothing here shows
@@ -90,6 +90,6 @@ fio, same directory (single copy):
 - No RDMA (`rdma` feature needs libibverbs headers, absent on the host: skipped), no FUSE-mount
   workload, no MLPerf Storage run (`docs/MLPERF.md` still has no benchmark result).
 - One run, no repeats, no confidence intervals, a noisy shared host.
-- Not comparable with any other vendor's published figures (PEAK:AIO included): different
+- Not comparable with any other vendor's published figures: different
   hardware, different workload, different durability setting (every Atlas write is synced on 3
   replicas).

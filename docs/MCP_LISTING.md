@@ -3,8 +3,7 @@
 # MCP directory listings
 
 Draft text for MCP directories and awesome-lists. Nothing here has been submitted; the maintainers
-decide when and where to post it. Keep claims factual: other storage vendors also ship MCP servers (see
-[COMPARISON.md](COMPARISON.md#other-storage-mcp-servers)), so do not describe Atlas as the first.
+decide when and where to post it. Keep claims factual: other storage vendors also ship MCP servers, so do not describe Atlas as the first.
 
 ## One-line description
 

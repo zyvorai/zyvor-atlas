@@ -69,8 +69,6 @@ const DOCS = [
   ['DR.md', 'disaster-recovery', 'dr', 1, 'Disaster recovery (Ceph)'],
   ['NATIVE_REPLICATION.md', 'disaster-recovery', 'native-replication', 2, 'Native replication'],
   ['APPLICATION_RECOVERY.md', 'disaster-recovery', 'application-recovery', 3, 'Application recovery drills'],
-
-  ['COMPARISON.md', 'evaluate', 'comparison', 1, 'Comparison'],
   ['STATUS.md', 'evaluate', 'status', 2, 'Maturity status'],
   ['LICENSING.md', 'evaluate', '/licensing', 3, 'Licensing'],
   ['SUBSCRIPTION-MODEL.md', 'evaluate', 'subscription-model', 4, 'Subscription model'],
