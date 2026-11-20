@@ -32,7 +32,7 @@ Priced per usable TB per year, billed annually in advance, with an annual minimu
 
 **Volume.** The rate for the whole subscription drops with total usable capacity: over 500 TB, 10% off; over 2 PB, 20% off; over 10 PB, 30% off (or a flat per-node price, on request). A three-year prepay takes a further 10% off. Volume and multi-year discounts together never exceed 40%.
 
-**Edge.** A single-pod edge site (the [edge profile](NATIVE_EDGE.md)) is a flat $1,500 per site per year, so a fleet of small sites is not priced by capacity it barely has.
+**Edge.** A single-pod edge site (the [edge profile](../atlas-native/edge.md)) is a flat $1,500 per site per year, so a fleet of small sites is not priced by capacity it barely has.
 
 **Examples** (Enterprise, $22 per usable TB, annual minimum $24,000 applied after discounts):
 
