@@ -1,0 +1,196 @@
+{
+  "routes": [
+    {
+      "label": "Command Deck",
+      "path": "/",
+      "category": "STORAGE",
+      "legacy": false
+    },
+    {
+      "label": "Volumes",
+      "path": "/volumes",
+      "category": "STORAGE",
+      "legacy": false
+    },
+    {
+      "label": "RBD Images",
+      "path": "/rbd",
+      "category": "STORAGE",
+      "legacy": false
+    },
+    {
+      "label": "Snapshots",
+      "path": "/snapshots",
+      "category": "STORAGE",
+      "legacy": false
+    },
+    {
+      "label": "Schedules",
+      "path": "/schedules",
+      "category": "STORAGE",
+      "legacy": false
+    },
+    {
+      "label": "Backups",
+      "path": "/backups",
+      "category": "DATA PROTECTION",
+      "legacy": false
+    },
+    {
+      "label": "Buckets",
+      "path": "/buckets",
+      "category": "DATA PROTECTION",
+      "legacy": false
+    },
+    {
+      "label": "Protection Status",
+      "path": "/protection",
+      "category": "DATA PROTECTION",
+      "legacy": false
+    },
+    {
+      "label": "Observatory",
+      "path": "/observatory",
+      "category": "OBSERVABILITY",
+      "legacy": false
+    },
+    {
+      "label": "Activity",
+      "path": "/activity",
+      "category": "OBSERVABILITY",
+      "legacy": false
+    },
+    {
+      "label": "Alerts",
+      "path": "/alerts",
+      "category": "OBSERVABILITY",
+      "legacy": false
+    },
+    {
+      "label": "Metrics",
+      "path": "/metrics-dashboard",
+      "category": "OBSERVABILITY",
+      "legacy": false
+    },
+    {
+      "label": "Jobs",
+      "path": "/jobs",
+      "category": "OBSERVABILITY",
+      "legacy": false
+    },
+    {
+      "label": "Audit",
+      "path": "/audit",
+      "category": "OBSERVABILITY",
+      "legacy": false
+    },
+    {
+      "label": "Tenants",
+      "path": "/tenants",
+      "category": "GOVERNANCE",
+      "legacy": false
+    },
+    {
+      "label": "Access",
+      "path": "/access",
+      "category": "GOVERNANCE",
+      "legacy": false
+    },
+    {
+      "label": "Policies",
+      "path": "/policies",
+      "category": "GOVERNANCE",
+      "legacy": false
+    },
+    {
+      "label": "Settings",
+      "path": "/settings",
+      "category": "GOVERNANCE",
+      "legacy": false
+    },
+    {
+      "label": "API Docs",
+      "path": "/api-docs",
+      "category": "GOVERNANCE",
+      "legacy": false
+    },
+    {
+      "label": "Cloud Databases",
+      "path": "/databridge/sources",
+      "category": "DATABRIDGE",
+      "legacy": false
+    },
+    {
+      "label": "Migration Plans",
+      "path": "/databridge/plans",
+      "category": "DATABRIDGE",
+      "legacy": false
+    },
+    {
+      "label": "Plan Detail",
+      "path": "/databridge/plans/:id",
+      "category": "DATABRIDGE",
+      "legacy": false
+    },
+    {
+      "label": "Edge DB Clusters",
+      "path": "/databridge/edge-clusters",
+      "category": "DATABRIDGE",
+      "legacy": false
+    },
+    {
+      "label": "Replication",
+      "path": "/databridge/replication",
+      "category": "DATABRIDGE",
+      "legacy": false
+    },
+    {
+      "label": "Validation",
+      "path": "/databridge/validation",
+      "category": "DATABRIDGE",
+      "legacy": false
+    },
+    {
+      "label": "Backends",
+      "path": "/backends",
+      "category": "INFRASTRUCTURE",
+      "legacy": false
+    },
+    {
+      "label": "Kubernetes",
+      "path": "/kubernetes",
+      "category": "INFRASTRUCTURE",
+      "legacy": false
+    },
+    {
+      "label": "Cluster",
+      "path": "/cluster",
+      "category": "INFRASTRUCTURE",
+      "legacy": false
+    },
+    {
+      "label": "Ceph",
+      "path": "/ceph",
+      "category": "INFRASTRUCTURE",
+      "legacy": false
+    },
+    {
+      "label": "Pool Detail",
+      "path": "/pools/:id",
+      "category": "INFRASTRUCTURE",
+      "legacy": false
+    },
+    {
+      "label": "Maintenance",
+      "path": "/maintenance",
+      "category": "INFRASTRUCTURE",
+      "legacy": false
+    },
+    {
+      "label": "Disaster Recovery",
+      "path": "/dr",
+      "category": "INFRASTRUCTURE",
+      "legacy": false
+    }
+  ]
+}

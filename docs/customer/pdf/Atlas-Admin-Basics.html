@@ -1,0 +1,89 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>Admin Basics — Atlas</title>
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<style>
+@page{size:A4;margin:15mm 16mm}*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font-family:'Segoe UI',system-ui,sans-serif;color:#1f2937;line-height:1.58;font-size:10.5pt}
+.cover{height:262mm;margin:-15mm -16mm 0;background:linear-gradient(135deg,#0a1628,#0e7490,#0d1b2a);color:#fff;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always;position:relative}
+.cover .kicker{letter-spacing:5px;text-transform:uppercase;opacity:.72;margin-bottom:1.4em}
+.cover h1{font-size:3.2em;font-weight:800;letter-spacing:-2px}
+.cover h1 span{color:#38bdf8}
+.cover .sub{font-size:1.3em;font-weight:300;opacity:.93;margin:1em 0;max-width:24em}
+.cover .badge{display:inline-block;background:rgba(96,165,250,.2);border:1px solid #38bdf8;padding:8px 22px;border-radius:20px;margin-top:2em}
+.cover .foot{position:absolute;bottom:34px;font-size:.82em;opacity:.6}
+h2{page-break-before:always;margin:0 0 .35em;font-size:1.55em;font-weight:750;color:#12203a;border-bottom:2px solid #e5edfb;padding-bottom:.28em}
+h2:first-of-type{page-break-before:avoid}
+h3{margin:1.1em 0 .4em;font-size:1.12em;font-weight:700}
+p,li{margin:.4em 0}ul,ol{margin:.5em 0 .9em 1.4em}
+a{color:#2563eb;text-decoration:none}
+code{background:#eef2f7;padding:1px 6px;border-radius:4px;font-size:.86em;font-family:ui-monospace,Menlo,monospace}
+pre{background:#0f172a;color:#e2e8f0;padding:12px 15px;border-radius:9px;overflow-x:auto;margin:.8em 0}
+table{width:100%;border-collapse:collapse;margin:.8em 0 1.1em;font-size:9.5pt}
+th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left;vertical-align:top}th{background:#f1f5f9}
+hr{border:none;border-top:1px solid #e5e7eb;margin:1.2em 0}
+</style></head><body>
+<section class="cover"><div class="kicker">ZyvorAI Labs · Customer Documentation</div>
+<h1>At<span>las</span></h1>
+<div class="sub">Admin Basics</div>
+<div class="badge">2026-09-01</div>
+<div class="foot">zyvor.dev · Confidential — for licensed customers</div></section>
+<main><h2>Ports</h2>
+<table>
+<thead>
+<tr>
+<th>Port</th>
+<th>Service</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><strong>5110</strong></td>
+<td>REST + Storage Center UI (<code>ATLAS_BIND_ADDR</code>)</td>
+</tr>
+<tr>
+<td><strong>5111</strong></td>
+<td>gRPC (<code>ATLAS_GRPC_ADDR</code>; empty disables)</td>
+</tr>
+<tr>
+<td><strong>30511</strong></td>
+<td>Common cluster REST/UI NodePort</td>
+</tr>
+<tr>
+<td><strong>30512</strong></td>
+<td>Common gRPC NodePort</td>
+</tr>
+<tr>
+<td><strong>30543</strong></td>
+<td>Optional HTTPS NodePort</td>
+</tr>
+</tbody></table>
+<p>Always document hosts as <code>&lt;host&gt;</code> — never paste lab IPs into customer runbooks.</p>
+<h2>Auth</h2>
+<ul>
+<li>Lab: <code>ATLAS_AUTH_REQUIRED=0</code> (open).</li>
+<li>Production: <code>ATLAS_AUTH_REQUIRED=1</code> + JWT secret (<code>atlas-gateway-auth</code>); weak defaults rejected at start.</li>
+<li>Mint tokens: <code>POST /api/atlas/v1/auth/tokens</code>, or paste into the rail <strong>key</strong> icon.</li>
+<li>Local users: <strong>GOVERNANCE → Access → Create user</strong>.</li>
+<li>CLI: <code>--token</code> / <code>ATLAS_TOKEN</code>; API base <code>/api/atlas/v1/...</code>.</li>
+<li>Unauthenticated: <code>/health</code>, <code>/metrics</code>.</li>
+</ul>
+<h2>Install sketch</h2>
+<pre><code class="language-bash">make run          # local gateway + UI
+atlasctl health
+atlasctl discover
+</code></pre>
+<p>Open <code>http://&lt;host&gt;:5110/</code>. Cluster: follow product deployment docs / Ceph gateway manifests.</p>
+<h2>Operate from the console (admin)</h2>
+<ol>
+<li>Confirm <code>/health</code> and Command Deck health chip.</li>
+<li><strong>Backends</strong> registered → <strong>Volumes</strong> can provision.</li>
+<li>Pause / cordon only from <strong>Maintenance</strong> when you mean to quiesce.</li>
+<li>Mutations return <code>202</code> + job id — watch <strong>Jobs</strong> (UI or gRPC <code>WatchJob</code>).</li>
+</ol>
+<h2>Related</h2>
+<ul>
+<li><a href="getting-started.md">Getting Started</a></li>
+<li><a href="using-the-dashboard.md">Using the Dashboard</a></li>
+<li><a href="pages/infrastructure/dr.md">Disaster Recovery</a></li>
+</ul>
+</main></body></html>

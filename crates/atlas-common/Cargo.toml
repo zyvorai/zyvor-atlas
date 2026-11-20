@@ -1,0 +1,29 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+[package]
+name = "atlas-common"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+axum = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+anyhow = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+chrono = { workspace = true }
+uuid = { workspace = true }
+dotenvy = { workspace = true }
+# Distributed tracing (OTLP/HTTP exporter) — off unless ATLAS_OTEL_EXPORTER_ENDPOINT is set (see
+# init_tracing()). trace-only: no metrics/logs pipeline, that's a separate, larger effort.
+opentelemetry = "0.33"
+opentelemetry_sdk = { version = "0.33", features = ["rt-tokio"] }
+# reqwest-blocking-client (not reqwest-client): the batch span processor flushes from its own
+# dedicated OS thread, not inside the Tokio runtime, so the exporter's HTTP calls must be
+# synchronous — verified live: reqwest-client's async client panics there ("no reactor running").
+opentelemetry-otlp = { version = "0.33", default-features = false, features = ["http-proto", "reqwest-blocking-client", "trace"] }
+tracing-opentelemetry = "0.34"

@@ -1,0 +1,147 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# NFS gateway (docs/NATIVE_NFS.md): one pod running atlas-native-nfs, which mounts every exported
+# filesystem through FUSE and serves the mounts with NFS-Ganesha, behind a Service. NFSv4 state
+# lives in the one Ganesha process, so the Deployment has a single replica and is recreated, not
+# rolled.
+{{- if .Values.nfs.enabled }}
+{{- if .Values.httpTls.requireClientCert }}
+{{- fail "nfs.enabled does not support httpTls.requireClientCert yet" }}
+{{- end }}
+{{- if not .Values.nfs.exports }}
+{{- fail "nfs.enabled needs at least one entry in nfs.exports" }}
+{{- end }}
+{{- $full := include "atlas-native.fullname" . }}
+{{- $scheme := ternary "https" "http" .Values.httpTls.enabled }}
+{{- $endpoints := list }}
+{{- range $i := until (int .Values.replicas) }}
+{{- $endpoints = append $endpoints (printf "%s://%s:7480" $scheme (include "atlas-native.podHost" (list $ $i))) }}
+{{- end }}
+{{- $image := printf "%s:%s" .Values.nfs.image.repository (.Values.nfs.image.tag | default .Chart.AppVersion) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-nfs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nfs
+data:
+  exports.json: {{ toJson .Values.nfs.exports | quote }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-nfs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nfs
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      {{- include "atlas-native.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: nfs
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-native.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: nfs
+      annotations:
+        checksum/exports: {{ toJson .Values.nfs.exports | sha256sum }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nfs.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nfs.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # On SIGTERM the gateway stops Ganesha, then unmounts, which sends buffered writes.
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: nfs
+          image: {{ $image }}
+          imagePullPolicy: {{ .Values.nfs.image.pullPolicy }}
+          # FUSE mounts, and Ganesha opens files by handle (CAP_DAC_READ_SEARCH).
+          securityContext: { privileged: true }
+          args:
+            - --endpoint={{ join "," $endpoints }}
+            - --token-file=/etc/atlas-native-nfs/api/token
+            - --exports-file=/etc/atlas-native-nfs/exports/exports.json
+            {{- if .Values.nfs.v3 }}
+            - --nfs-v3
+            {{- end }}
+            {{- if .Values.httpTls.enabled }}
+            - --mount-arg=--ca-file=/etc/atlas-native-nfs/http-tls/ca.crt
+            {{- end }}
+            {{- range .Values.nfs.mountArgs }}
+            - --mount-arg={{ . }}
+            {{- end }}
+          ports:
+            - { name: nfs, containerPort: 2049, protocol: TCP }
+            {{- if .Values.nfs.v3 }}
+            - { name: rpcbind, containerPort: 111, protocol: TCP }
+            - { name: mountd, containerPort: 20048, protocol: TCP }
+            - { name: nlm, containerPort: 32803, protocol: TCP }
+            {{- end }}
+          readinessProbe:
+            tcpSocket: { port: nfs }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: nfs }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          volumeMounts:
+            - { name: fuse, mountPath: /dev/fuse }
+            - { name: api-token, mountPath: /etc/atlas-native-nfs/api, readOnly: true }
+            - { name: exports, mountPath: /etc/atlas-native-nfs/exports, readOnly: true }
+            {{- if .Values.httpTls.enabled }}
+            - { name: http-ca, mountPath: /etc/atlas-native-nfs/http-tls, readOnly: true }
+            {{- end }}
+          resources: {{- toYaml .Values.nfs.resources | nindent 12 }}
+      volumes:
+        - name: fuse
+          hostPath: { path: /dev/fuse, type: CharDevice }
+        - name: api-token
+          secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+        - name: exports
+          configMap: { name: {{ $full }}-nfs }
+        {{- if .Values.httpTls.enabled }}
+        - name: http-ca
+          secret:
+            secretName: {{ .Values.httpTls.existingSecret }}
+            items: [{ key: ca.crt, path: ca.crt }]
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-nfs
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: nfs
+  {{- with .Values.nfs.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.nfs.service.type }}
+  {{- with .Values.nfs.service.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  selector:
+    {{- include "atlas-native.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: nfs
+  ports:
+    - { name: nfs, port: 2049, targetPort: nfs, protocol: TCP }
+    {{- if .Values.nfs.v3 }}
+    - { name: rpcbind, port: 111, targetPort: rpcbind, protocol: TCP }
+    - { name: mountd, port: 20048, targetPort: mountd, protocol: TCP }
+    - { name: nlm, port: 32803, targetPort: nlm, protocol: TCP }
+    {{- end }}
+{{- end }}

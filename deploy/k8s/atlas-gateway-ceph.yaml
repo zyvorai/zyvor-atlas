@@ -1,0 +1,324 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Atlas gateway in ATLAS_CEPH_DRIVER_MODE=real. Runs in the rook-ceph namespace so it can mount
+# the mon endpoints ConfigMap + admin keyring Secret; an initContainer renders /etc/ceph/{ceph.conf,keyring}
+# so the credential never leaves the cluster. Live k8s driver also works via the mounted SA.
+#
+# Auth: ATLAS_AUTH_REQUIRED=1 with jwt-secret from Secret `atlas-gateway-auth` (created by
+# scripts/deploy-ceph-gateway-remote.sh). Optional bootstrap-admin-token for first mint.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: atlas-gateway
+  namespace: rook-ceph
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: atlas-gateway-readonly-cephns
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: atlas-gateway-readonly           # ClusterRole defined in atlas-gateway.yaml
+subjects:
+  - kind: ServiceAccount
+    name: atlas-gateway
+    namespace: rook-ceph
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-gateway-ceph
+  namespace: rook-ceph
+  labels:
+    app: atlas-gateway-ceph
+spec:
+  replicas: 1
+  # Recreate: the SQLite PVC is ReadWriteOnce; old pod must release it before the new one mounts.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: atlas-gateway-ceph
+  template:
+    metadata:
+      labels:
+        app: atlas-gateway-ceph
+    spec:
+      serviceAccountName: atlas-gateway
+      # Non-root: initContainer writes keyring as uid 10001; main process matches Dockerfile.ceph.
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      initContainers:
+        - name: render-ceph-config
+          image: busybox:1.36
+          securityContext:
+            runAsUser: 0
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              # MON_ENDPOINTS looks like "a=10.43.1.2:6789" (comma-separated for multiple mons).
+              mon_host=$(echo "$MON_ENDPOINTS" | tr ',' '\n' | sed 's/^[^=]*=//' | paste -sd, - 2>/dev/null || echo "${MON_ENDPOINTS#*=}")
+              cat > /etc/ceph/ceph.conf <<CONF
+              [global]
+              mon_host = $mon_host
+              [client.admin]
+              keyring = /etc/ceph/keyring
+              CONF
+              cat > /etc/ceph/keyring <<KR
+              [$CEPH_USER]
+              key = $CEPH_KEY
+              KR
+              chown -R 10001:10001 /etc/ceph
+              chmod 0644 /etc/ceph/ceph.conf
+              chmod 0600 /etc/ceph/keyring
+              echo "rendered /etc/ceph for mon_host=$mon_host user=$CEPH_USER (uid 10001)"
+          env:
+            - name: MON_ENDPOINTS
+              valueFrom:
+                configMapKeyRef:
+                  name: rook-ceph-mon-endpoints
+                  key: data
+            - name: CEPH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-mon
+                  key: ceph-username
+            - name: CEPH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: rook-ceph-mon
+                  key: ceph-secret
+          volumeMounts:
+            - name: ceph-config
+              mountPath: /etc/ceph
+      containers:
+        - name: atlas-gateway
+          image: localhost/atlas-gateway:ceph
+          imagePullPolicy: Never
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          env:
+            - name: ATLAS_BIND_ADDR
+              value: "0.0.0.0:5110"
+            - name: ATLAS_GRPC_ADDR
+              value: "0.0.0.0:5111"
+            - name: ATLAS_DATABASE_URL
+              value: "sqlite:///var/lib/atlas/atlas.db?mode=rwc"
+            - name: ATLAS_CEPH_DRIVER_MODE
+              value: "real"
+            - name: ATLAS_AUTH_REQUIRED
+              value: "1"
+            - name: ATLAS_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-gateway-auth
+                  key: jwt-secret
+            - name: ATLAS_BOOTSTRAP_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-gateway-auth
+                  key: bootstrap-admin-token
+                  optional: true
+            - name: ATLAS_ADMIN_USERNAME
+              value: "admin"
+            - name: ATLAS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-gateway-auth
+                  key: admin-password
+            - name: ATLAS_CEPH_PROMETHEUS_URL
+              value: "http://rook-ceph-mgr.rook-ceph.svc:9283/metrics"
+            # GET /dr/status and /dr/preflight's `dataplane_verified` field — see docs/DR.md's
+            # "Live two-site checklist". Defaults to false (Config::dr_dataplane_verified) —
+            # only set to "true" once *this specific deployment's* operator has personally
+            # completed steps 1-6 of that checklist against a real peer cluster. Never copy a
+            # "true" value between deployments; it is not a claim about the Atlas product, only
+            # about whether this cluster has actually been drilled.
+            # - name: ATLAS_DR_DATAPLANE_VERIFIED
+            #   value: "true"
+            # Public RGW endpoint so presigned backup-download URLs are reachable off-cluster.
+            # Bound to this node's hostIP (not a hard-coded lab address).
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: ATLAS_RGW_PUBLIC_ENDPOINT
+              value: "http://$(NODE_IP):30513"
+            # Self-state backup: periodic VACUUM INTO snapshots of Atlas's own control-plane DB
+            # (inventory/jobs/audit/quotas/DataBridge state) uploaded to RGW, separate from the
+            # tenant-volume backups Atlas already does. Uses a dedicated RGW user/bucket
+            # (atlas-state-backup / atlas-self-state) created via radosgw-admin, not an OBC — this
+            # needs a standing S3 credential up front, which OBCs don't provide. Distinct prefix
+            # from the fake+k8s gateway's backup so the two deployments' snapshots don't collide
+            # in the shared bucket. Deliberately NOT ATLAS_RGW_PUBLIC_ENDPOINT's port (30513) —
+            # that's a separate, more restricted service meant for presigned download URLs and
+            # returns 400 InvalidArgument on the PUT/bucket-management calls this needs; use the
+            # plain rook-ceph-rgw-*-nodeport S3 endpoint instead (30800, same as the fake+k8s
+            # gateway's working config).
+            - name: ATLAS_STATE_BACKUP_SECS
+              value: "3600"
+            - name: ATLAS_STATE_BACKUP_ENDPOINT
+              value: "http://$(NODE_IP):30800"
+            - name: ATLAS_STATE_BACKUP_BUCKET
+              value: "atlas-self-state"
+            - name: ATLAS_STATE_BACKUP_PREFIX
+              value: "atlas-state-ceph"
+            - name: ATLAS_STATE_BACKUP_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-gateway-auth
+                  key: state-backup-access-key
+                  optional: true
+            - name: ATLAS_STATE_BACKUP_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-gateway-auth
+                  key: state-backup-secret-key
+                  optional: true
+            # Protection-schedule worker: check for due snapshot schedules this often (seconds).
+            - name: ATLAS_SNAPSHOT_TICK_SECS
+              value: "15"
+            # Demo second backend: an NFS server registered alongside Ceph (fixture capacity) to
+            # showcase the pluggable-driver architecture in the console.
+            - name: ATLAS_NFS_ENABLE
+              value: "1"
+            - name: ATLAS_NFS_SERVER
+              value: "nfs01.zyvor.lab"
+            - name: ATLAS_NFS_EXPORTS
+              value: "/exports/vmstore,/exports/backups"
+            # Demo third backend: a ZFS host registered alongside Ceph + NFS.
+            - name: ATLAS_ZFS_ENABLE
+              value: "1"
+            - name: ATLAS_ZFS_HOST
+              value: "zfs01.zyvor.lab"
+            - name: ATLAS_ZFS_POOLS
+              value: "tank,vault"
+            # HTTPS listener (self-signed cert in the atlas-tls Secret; browsers warn on first visit).
+            - name: ATLAS_HTTPS_ADDR
+              value: "0.0.0.0:5443"
+            - name: ATLAS_TLS_CERT
+              value: "/etc/atlas-tls/tls.crt"
+            - name: ATLAS_TLS_KEY
+              value: "/etc/atlas-tls/tls.key"
+            # Per-actor rate limit (0 = off, the shipped default). 600/min is generous headroom
+            # for a busy multi-widget console dashboard's background polling (each panel refetches
+            # every ~8s) while still bounding a runaway/malicious client — tune based on real
+            # usage once live traffic patterns are known.
+            - name: ATLAS_RATE_LIMIT_RPM
+              value: "600"
+            - name: RUST_LOG
+              value: "info,atlas_gateway=debug,atlas_driver_ceph=debug"
+          ports:
+            - containerPort: 5110
+            - containerPort: 5111
+            - containerPort: 5443
+          # livez is cheap; readyz shells out to `ceph` (often 0.5–2s under load). Default
+          # timeoutSeconds=1 caused ~2k Unhealthy flaps / 27h on the lab node and yanked the
+          # NodePort out from under the console (AUTH false-positive + "Failed to load").
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 5110
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 5110
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: ceph-config
+              mountPath: /etc/ceph
+              readOnly: true
+            - name: data
+              mountPath: /var/lib/atlas
+            - name: tls
+              mountPath: /etc/atlas-tls
+              readOnly: true
+      volumes:
+        - name: ceph-config
+          emptyDir: {}                     # ceph.conf/keyring regenerated each start; not durable state
+        - name: data
+          persistentVolumeClaim:
+            claimName: atlas-gateway-ceph-data
+        - name: tls
+          secret:
+            secretName: atlas-tls
+            optional: true
+---
+# Durable SQLite storage on the platform's own Ceph class (dogfooding zyvor-rbd-prod).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: atlas-gateway-ceph-data
+  namespace: rook-ceph
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: zyvor-rbd-prod
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-gateway-ceph
+  namespace: rook-ceph
+  labels:
+    app: atlas-gateway-ceph
+spec:
+  type: NodePort
+  selector:
+    app: atlas-gateway-ceph
+  ports:
+    - name: http
+      port: 5110
+      targetPort: 5110
+      nodePort: 30511
+    - name: grpc
+      port: 5111
+      targetPort: 5111
+      nodePort: 30512
+    - name: https
+      port: 5443
+      targetPort: 5443
+      nodePort: 30543
+---
+# Expose the Rook RGW off-cluster so presigned backup-download URLs (signed against
+# ATLAS_RGW_PUBLIC_ENDPOINT) are reachable from outside the cluster.
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-rgw-public
+  namespace: rook-ceph
+  labels:
+    app: atlas-rgw-public
+spec:
+  type: NodePort
+  selector:
+    app: rook-ceph-rgw
+    rook_object_store: zyvor-rgw
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+      nodePort: 30513

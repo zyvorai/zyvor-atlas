@@ -1,0 +1,690 @@
+{
+  "theme": "day",
+  "routes": [
+    {
+      "path": "/",
+      "label": "Overview",
+      "ok": true,
+      "title": "Overview",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/volumes",
+      "label": "Volumes",
+      "ok": true,
+      "title": "Volumes",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/volumes"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/rbd",
+      "label": "RBD Images",
+      "ok": true,
+      "title": "RBD Images",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/rbd"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/snapshots",
+      "label": "Snapshots",
+      "ok": true,
+      "title": "Snapshots",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/snapshots"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/schedules",
+      "label": "Schedules",
+      "ok": true,
+      "title": "Schedules",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/schedules"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/backups",
+      "label": "Backups",
+      "ok": true,
+      "title": "Backups",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/backups"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/buckets",
+      "label": "Buckets",
+      "ok": true,
+      "title": "Buckets",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/buckets"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/protection",
+      "label": "Protection Status",
+      "ok": true,
+      "title": "Protection Status",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/protection"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/databridge/sources",
+      "label": "DataBridge Sources",
+      "ok": true,
+      "title": "Cloud Databases",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/databridge/sources"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/databridge/plans",
+      "label": "Migration Plans",
+      "ok": true,
+      "title": "Migration Plans",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/databridge/plans"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/databridge/edge-clusters",
+      "label": "Edge DB Clusters",
+      "ok": true,
+      "title": "Edge DB Clusters",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/databridge/edge-clusters"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/databridge/replication",
+      "label": "Replication",
+      "ok": true,
+      "title": "Replication",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/databridge/replication"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/databridge/validation",
+      "label": "Validation",
+      "ok": true,
+      "title": "Validation",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/databridge/validation"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/observatory",
+      "label": "Observatory",
+      "ok": true,
+      "title": "Observatory",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/observatory"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/activity",
+      "label": "Activity",
+      "ok": true,
+      "title": "Activity",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/activity"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/alerts",
+      "label": "Alerts",
+      "ok": true,
+      "title": "Alerts",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/alerts"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/metrics-dashboard",
+      "label": "Metrics",
+      "ok": true,
+      "title": "Metrics",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/metrics-dashboard"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/jobs",
+      "label": "Jobs",
+      "ok": true,
+      "title": "Jobs",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/jobs"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/audit",
+      "label": "Audit",
+      "ok": true,
+      "title": "Audit",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/audit"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/tenants",
+      "label": "Tenants",
+      "ok": true,
+      "title": "Tenants",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/tenants"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/access",
+      "label": "Access",
+      "ok": true,
+      "title": "Access",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 2,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/access"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/policies",
+      "label": "Policies",
+      "ok": true,
+      "title": "Policies",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 6,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/policies"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/settings",
+      "label": "Settings",
+      "ok": true,
+      "title": "Settings",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 3,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/settings"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/api-docs",
+      "label": "API Docs",
+      "ok": true,
+      "title": "API Docs",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/api-docs"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/backends",
+      "label": "Backends",
+      "ok": true,
+      "title": "Backends",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 2,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/backends"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/kubernetes",
+      "label": "Kubernetes",
+      "ok": true,
+      "title": "Kubernetes",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/kubernetes"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/cluster",
+      "label": "Cluster",
+      "ok": true,
+      "title": "Cluster",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 0,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/cluster"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/ceph",
+      "label": "Ceph",
+      "ok": true,
+      "title": "Ceph",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 2,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/ceph"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/maintenance",
+      "label": "Maintenance",
+      "ok": true,
+      "title": "Maintenance",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 2,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/maintenance"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/dr",
+      "label": "Disaster Recovery",
+      "ok": true,
+      "title": "Disaster Recovery",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 1,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/dr"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    },
+    {
+      "path": "/pools/pool_rbd_nvme_prod",
+      "label": "Pool Detail",
+      "ok": true,
+      "title": "rbd-nvme-prod",
+      "shell": "day",
+      "blank": false,
+      "hasApp": true,
+      "contrastFails": [],
+      "lowContrastSamples": 2,
+      "consoleErrors": [
+        {
+          "text": "Failed to load resource: the server responded with a status of 500 ()",
+          "url": "http://212.8.248.187:30510/pools/pool_rbd_nvme_prod"
+        }
+      ],
+      "pageErrors": [],
+      "failedApi": []
+    }
+  ],
+  "menus": [
+    {
+      "label": "Storage",
+      "visible": true,
+      "itemCount": 3,
+      "portaled": true,
+      "hit": {
+        "tag": "A",
+        "cls": "at-top-menu-item",
+        "inPanel": true
+      }
+    },
+    {
+      "label": "Protect",
+      "visible": true,
+      "itemCount": 3,
+      "portaled": true,
+      "hit": {
+        "tag": "A",
+        "cls": "at-top-menu-item",
+        "inPanel": true
+      }
+    },
+    {
+      "label": "DataBridge",
+      "visible": true,
+      "itemCount": 4,
+      "portaled": true,
+      "hit": {
+        "tag": "A",
+        "cls": "at-top-menu-item",
+        "inPanel": true
+      }
+    },
+    {
+      "label": "Observe",
+      "visible": true,
+      "itemCount": 3,
+      "portaled": true,
+      "hit": {
+        "tag": "A",
+        "cls": "at-top-menu-item",
+        "inPanel": true
+      }
+    },
+    {
+      "label": "Govern",
+      "visible": true,
+      "itemCount": 5,
+      "portaled": true,
+      "hit": {
+        "tag": "A",
+        "cls": "at-top-menu-item",
+        "inPanel": true
+      }
+    },
+    {
+      "label": "Infra",
+      "visible": true,
+      "itemCount": 5,
+      "portaled": true,
+      "hit": {
+        "tag": "A",
+        "cls": "at-top-menu-item",
+        "inPanel": true
+      }
+    }
+  ],
+  "interactions": [
+    {
+      "name": "search-spotlight",
+      "ok": true,
+      "open": true
+    },
+    {
+      "name": "ceph-terminal",
+      "ok": true,
+      "visible": true
+    },
+    {
+      "name": "jobs-page",
+      "ok": true,
+      "panelsOrRows": 1
+    },
+    {
+      "name": "observatory-orbital",
+      "ok": true,
+      "canvas": 1
+    },
+    {
+      "name": "settings-theme-night",
+      "ok": true,
+      "shell": "night"
+    }
+  ],
+  "issues": []
+}

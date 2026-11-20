@@ -1,0 +1,12 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Only for the fake/k8s-driver shape — the real-Ceph shape runs in ceph.rookNamespace, which Rook
+# itself owns and creates; Atlas must not manage that namespace's lifecycle.
+{{- if and (not .Values.ceph.enabled) .Values.namespace.create }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ .Values.namespace.name }}
+  labels:
+    zyvor.dev/component: control-plane
+{{- end }}

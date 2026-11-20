@@ -1,0 +1,336 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Atlas gateway on Kubernetes. RBAC grants the read-only access the live k8s driver needs
+# (StorageClasses / PVCs / PVs). Ceph driver defaults to fake until a Ceph cluster exists.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zyvor-system
+  labels:
+    zyvor.dev/component: control-plane
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: atlas-gateway
+  namespace: zyvor-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: atlas-gateway-readonly   # name kept for compatibility; now includes the write path
+rules:
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumesnapshotclasses"]
+    verbs: ["get", "list", "watch"]
+  # Rook pool/filesystem/object-store lifecycle jobs also create/delete the paired StorageClass.
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Write path: create/expand/delete PVCs.
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # Write path: snapshots.
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Object storage: ObjectBucketClaims + reading the resulting Secret/ConfigMap.
+  - apiGroups: ["objectbucket.io"]
+    resources: ["objectbucketclaims", "objectbuckets"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  # DataBridge: manage edge DB operator CRs, migration/validation Jobs, and Debezium connectors.
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["pxc.percona.com"]
+    resources: ["perconaxtradbclusters"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["psmdb.percona.com"]
+    resources: ["perconaservermongodbs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kafka.strimzi.io"]
+    resources: ["kafkaconnects", "kafkaconnectors"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  # Rook CRD read integration + pool/filesystem/object-store lifecycle automation. CephCluster
+  # also needs `patch` for POST /ceph/devices (raw-disk-to-OSD provisioning), which merge-patches
+  # spec.storage.nodes — the other three CRs are also created/deleted by Atlas.
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephclusters"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephblockpools", "cephfilesystems", "cephobjectstores"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # ATLAS_LONGHORN_ENABLE: read nodes and replicas; volume, snapshot and backup writes go
+  # through the CRDs. PVC provisioning still uses the persistentvolumeclaims rule above.
+  - apiGroups: ["longhorn.io"]
+    resources: ["nodes", "replicas", "backupvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["longhorn.io"]
+    resources: ["volumes", "snapshots", "backups", "backuptargets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # POST /ceph/devices validates the operator-supplied node name against the real cluster before
+  # patching CephCluster against it.
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: atlas-gateway-readonly
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: atlas-gateway-readonly
+subjects:
+  - kind: ServiceAccount
+    name: atlas-gateway
+    namespace: zyvor-system
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-gateway
+  namespace: zyvor-system
+  labels:
+    app: atlas-gateway
+spec:
+  replicas: 1
+  # Recreate (not RollingUpdate): the SQLite PVC is ReadWriteOnce, so the old pod must release it
+  # before the new one mounts it.
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: atlas-gateway
+  template:
+    metadata:
+      labels:
+        app: atlas-gateway
+    spec:
+      serviceAccountName: atlas-gateway
+      # Give the gateway time to drain in-flight requests on SIGTERM (graceful shutdown).
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        # Image runs as uid/gid 10001; fsGroup makes the mounted volume writable for the SQLite file.
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      containers:
+        - name: atlas-gateway
+          image: localhost/atlas-gateway:dev
+          imagePullPolicy: Never   # image is imported into k3s containerd, not pulled
+          securityContext:
+            # Raw-disk provisioning (ATLAS_ZFS_DRIVER_MODE=real below) needs `zpool create`/`wipefs`
+            # to open and write a real host block device and the host's /dev/zfs. Tried, and ruled
+            # out live, two narrower alternatives before landing here:
+            #   1. `capabilities.add: [DAC_OVERRIDE, SYS_ADMIN]` without `privileged` fixed the
+            #      file-permission-bits check (root:disk 0660 — DAC_OVERRIDE bypasses that), but
+            #      wipefs then failed differently ("Operation not permitted", not "Permission
+            #      denied"): Kubernetes' device cgroup still blocked raw I/O against /dev/sdb's
+            #      major:minor — that's a separate, mandatory control that capabilities alone don't
+            #      bypass; only `privileged: true` opens the device cgroup to everything.
+            #   2. `privileged: true` alone opens the device cgroup, but this container runs as a
+            #      non-root uid (10001, see the pod-level securityContext below) — confirmed live
+            #      that Kubernetes only populates the *bounding* capability set for a privileged,
+            #      non-root container, not its effective/ambient set, so wipefs/zpool still couldn't
+            #      use those capabilities.
+            # Combining both closes each gap: `privileged: true` for full device-cgroup access, and
+            # file capabilities (`setcap` on the specific binaries in the Dockerfile) for the actual
+            # effective capabilities a non-root exec needs — file capabilities are granted from the
+            # binary's own xattr on exec regardless of the calling shell's empty effective set.
+            # See docs/DISKS.md.
+            privileged: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 1000m
+              memory: 512Mi
+          env:
+            - name: ATLAS_BIND_ADDR
+              value: "0.0.0.0:5110"
+            - name: ATLAS_DATABASE_URL
+              value: "sqlite:///var/lib/atlas/atlas.db?mode=rwc"
+            - name: ATLAS_CEPH_DRIVER_MODE
+              value: "fake"          # switch to "real" once Rook Ceph + ceph client are present
+            # Cluster deploys require JWT auth. Local `make run` stays open (default ATLAS_AUTH_REQUIRED unset).
+            - name: ATLAS_AUTH_REQUIRED
+              value: "1"
+            - name: ATLAS_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-gateway-auth
+                  key: jwt-secret
+            - name: ATLAS_BOOTSTRAP_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-gateway-auth
+                  key: bootstrap-admin-token
+                  optional: true
+            - name: ATLAS_ADMIN_USERNAME
+              value: "admin"
+            - name: ATLAS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-gateway-auth
+                  key: admin-password
+            # Browser-reachable RGW endpoint for presigned object upload/download URLs.
+            # NODE_IP is this node's address (public on the lab hosts); 30800 is the RGW NodePort
+            # created alongside the CephObjectStore (see deploy/rook-ceph-lab/*rgw*.yaml).
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            - name: ATLAS_RGW_PUBLIC_ENDPOINT
+              value: "http://$(NODE_IP):30800"
+            # Third ZFS backend, real mode: `zpool`/`zfs`/`lsblk`/`wipefs`/`findmnt`/`blockdev` shell
+            # out against the host's own block devices (privileged + hostPath /dev below). No pools
+            # exist yet at startup (ATLAS_ZFS_POOLS unset) — POST /zfs/pools/from-device provisions
+            # the first one; see docs/DISKS.md.
+            - name: ATLAS_ZFS_ENABLE
+              value: "1"
+            - name: ATLAS_ZFS_DRIVER_MODE
+              value: "real"
+            - name: ATLAS_ZFS_HOST
+              value: "$(NODE_IP)"
+            # Closes the root/boot-disk detection gap: without this, the dynamic check can only
+            # see the container's own mount namespace (via `findmnt`), not the host's — see
+            # docs/DISKS.md and host-mountinfo below.
+            - name: ATLAS_HOST_MOUNTINFO_PATH
+              value: "/host-mountinfo"
+            # OIDC/SSO login against the throwaway Dex instance (see deploy/dex-lab/) — a lab-only
+            # test IdP, not a real identity provider. Remove these four ATLAS_OIDC_* vars (or leave
+            # Dex torn down) to disable the "Sign in with SSO" button; the feature auto-gates off
+            # when unset (see crates/atlas-common/src/config.rs's oidc_from_env()).
+            - name: ATLAS_OIDC_ISSUER_URL
+              value: "http://$(NODE_IP):30556"
+            - name: ATLAS_OIDC_CLIENT_ID
+              value: "atlas-console"
+            # Points at the Secret deploy/dex-lab/up.sh already creates (dex-oidc-client) — never
+            # duplicate the value into a plaintext env var. A real IdP integration would instead
+            # point this at whatever Secret the bank's own Vault/secrets-manager sync populates.
+            - name: ATLAS_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: dex-oidc-client
+                  key: client-secret
+                  optional: true
+            - name: ATLAS_OIDC_REDIRECT_URL
+              value: "http://$(NODE_IP):30510/api/atlas/v1/auth/oidc/callback"
+            - name: ATLAS_OIDC_ADMIN_GROUP
+              value: "admin"
+            - name: ATLAS_OIDC_OPERATOR_GROUP
+              value: "operator"
+            # Per-actor rate limit (0 = off, the shipped default). 600/min is generous headroom
+            # for a busy multi-widget console dashboard's background polling (each panel refetches
+            # every ~8s) while still bounding a runaway/malicious client — tune based on real
+            # usage once live traffic patterns are known.
+            - name: ATLAS_RATE_LIMIT_RPM
+              value: "600"
+            - name: RUST_LOG
+              value: "info,atlas_gateway=debug"
+          ports:
+            - containerPort: 5110
+          # Liveness: process is up (restart on failure). Readiness: dependencies OK — deep-checks the
+          # DB + probes the backend driver, so a wedged gateway is depooled without being killed.
+          # readyz deep-probes the driver; keep timeoutSeconds ≥ the handler's 5s probe budget
+          # so kubelet doesn't flap NotReady on a slow-but-alive gateway.
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 5110
+            initialDelaySeconds: 3
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 5110
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/atlas
+            # Raw-disk provisioning: the host's real device nodes (including /dev/zfs) so the
+            # zpool/lsblk/wipefs/findmnt/blockdev commands above act on real hardware, not the
+            # container's own minimal devtmpfs.
+            - name: host-dev
+              mountPath: /dev
+            # zpool create's own partition-reopen wait polls udev's device database
+            # (/run/udev/data/b<major>:<minor>) to know the partition it just asked the kernel to
+            # create is ready — found live via strace: without this mount that file can NEVER
+            # appear from inside the container (ENOENT forever, not a timing race), so every
+            # whole-disk zpool create failed identically no matter how many times zpool_create's
+            # own retry (see atlas-driver-zfs) waited. Read-only: this is metadata lookup only,
+            # nothing here ever needs to write into the host's udev database.
+            - name: host-run-udev
+              mountPath: /run/udev
+              readOnly: true
+            # The host's real root-mount-namespace mount table (PID 1 on the node, i.e. the
+            # node's own init) — read-only, a single virtual file, not the whole host /proc. Lets
+            # the ZFS root/boot-disk check resolve the *host's* actual root/boot device instead of
+            # only ever seeing the container's own mount namespace via `findmnt` (confirmed live:
+            # without this, /dev/sda — this lab host's real root disk — wasn't flagged and showed
+            # up in the Disks UI picker as safely wipeable). See docs/DISKS.md.
+            - name: host-mountinfo
+              mountPath: /host-mountinfo
+              readOnly: true
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: atlas-gateway-data
+        - name: host-dev
+          hostPath:
+            path: /dev
+            type: Directory
+        - name: host-run-udev
+          hostPath:
+            path: /run/udev
+            type: Directory
+        - name: host-mountinfo
+          hostPath:
+            path: /proc/1/mountinfo
+            type: File
+---
+# Durable SQLite storage. Uses the cluster's DEFAULT StorageClass (omit storageClassName) so this
+# deploys on any cluster — including one without Ceph yet (e.g. k3s local-path). The real-mode
+# gateway (atlas-gateway-ceph.yaml) dogfoods the Ceph class instead.
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: atlas-gateway-data
+  namespace: zyvor-system
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 1Gi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-gateway
+  namespace: zyvor-system
+  labels:
+    app: atlas-gateway
+spec:
+  type: NodePort
+  selector:
+    app: atlas-gateway
+  ports:
+    - name: http
+      port: 5110
+      targetPort: 5110
+      nodePort: 30510

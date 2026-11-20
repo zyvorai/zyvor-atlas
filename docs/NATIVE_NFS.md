@@ -1,0 +1,104 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# atlas-native NFS gateway
+
+The NFS gateway serves atlas-native filesystems ([`NATIVE_FS.md`](NATIVE_FS.md)) to NFS clients:
+NFSv4.1 and v4.2, and optionally NFSv3 with NLM locks. It is a pod running
+[NFS-Ganesha](https://github.com/nfs-ganesha/nfs-ganesha) over atlas-native FUSE mounts:
+
+| Process | Role |
+|---|---|
+| `atlas-native-nfs` (`crates/atlas-native-fuse`, bin) | Supervisor: one `atlas-native-mount` per export under `/export/<fs>`, writes `ganesha.conf`, starts Ganesha (and, with v3, `rpcbind` and `rpc.statd`), stops everything in order on `SIGTERM` |
+| `atlas-native-mount` | FUSE client per filesystem, mounted with `--allow-other` (`--read-only` for `ro` exports) |
+| `ganesha.nfsd` | NFS server; exports each mount through `FSAL_VFS` |
+
+Ganesha is LGPL-3.0 and runs as a separate, unmodified process from Debian's packages; nothing in
+Atlas links it. The image is `Dockerfile.native-nfs`.
+
+## Install
+
+Create the filesystems first (`POST /v1/fs`, `atlasctl create-volume --kind filesystem --backend
+bkd_native`, or a CSI PVC, whose PV `volumeHandle` is the filesystem id), then enable the
+gateway in the `atlas-native` chart:
+
+```yaml
+nfs:
+  enabled: true
+  v3: true                        # optional: NFSv3 + NLM
+  exports:
+    - fs: team-share
+      clients: ["10.0.0.0/8"]     # addresses, CIDRs, host names or wildcards
+      access: rw                  # or ro
+      squash: root                # root (default), none or all
+      # pseudo: /team-share       # NFSv4 pseudo path (and v3 mount path); default /<fs>
+  service:
+    type: LoadBalancer
+```
+
+```
+mount -t nfs -o vers=4.2 <service-ip>:/team-share /mnt/team-share
+mount -t nfs -o vers=3,mountproto=tcp <service-ip>:/team-share /mnt/team-share
+```
+
+The chart adds a ConfigMap with the exports, a single-replica Deployment (`Recreate`, privileged
+for `/dev/fuse`), and a Service on 2049, plus 111 (rpcbind), 20048 (mountd) and 32803 (NLM) with
+v3. The supervisor reaches the storage nodes with the release's API token; with `httpTls.enabled`
+it trusts the Secret's `ca.crt`. `httpTls.requireClientCert` is not supported yet.
+`nfs.mountArgs` (default `--cache-leases`) is passed to every mount.
+
+Changing the exports changes the ConfigMap checksum and replaces the pod.
+
+## Behaviour
+
+- **Security:** `sec=sys` only (no Kerberos). The client list is enforced per export. Root
+  squashing is Ganesha's (`Root_Squash`, `No_Root_Squash`, `All_Squash`).
+- **Permissions:** the gateway's FUSE mounts enforce mode bits and POSIX ACLs. Ganesha presents
+  them to NFSv4 clients as synthesized NFSv4 ACLs, so `ls -l` shows a `+`. Setting NFSv4 ACLs is
+  not supported.
+- **Consistency with native mounts:** each export sets `Attr_Expiration_Time = 0`, so Ganesha
+  re-reads attributes from the FUSE mount on every request. With `--cache-leases`, changes made
+  through native mounts (new names and new data) are visible to NFS clients immediately. NFS
+  clients keep their own attribute cache (`actimeo`), as with any NFS server.
+- **File handles survive restarts:** each export has a fixed `Filesystem_id` (`fsid_override`),
+  and its `Export_Id` and `Filesystem_id` are derived from the filesystem id. Reordering the
+  export list, or restarting the pod, never maps a client's handle to a different filesystem.
+  The FUSE client supports kernel export (`FUSE_EXPORT_SUPPORT`, with `.` and `..` lookups), so
+  Ganesha can reopen a handle by inode number.
+- **Locks:** NFSv4 locks, NLM (v3) locks and locks taken through native mounts all conflict with
+  each other. There is one exception: when a native mount holds the lock, a non-blocking NFSv4
+  lock attempt fails with `EIO` instead of `EAGAIN`: the lock is still refused, but the error is
+  the wrong one (blocking attempts are untested). The reason: Ganesha doesn't know the external holder, so it reports the
+  placeholder owner `ganesha_unknown_owner` (21 bytes) in `NFS4ERR_DENIED`, and the Linux client
+  fails to decode lock owners longer than 16 bytes in a `LOCK` reply. `LOCKT` (`F_GETLK`) and NFSv3
+  clients report the conflict correctly.
+- **Grace period:** off (`Graceless`); client state is not recovered after a gateway restart.
+  NFS clients must re-take their locks after a gateway restart.
+
+## Requirements and limits
+
+- **Ganesha 9.14 or later.** The 7.x Linux client sends `GET_DIR_DELEGATION`, which older Ganesha
+  answers with `NFS4ERR_OP_ILLEGAL`, and directory reads then fail with `EREMOTEIO`. The image is
+  built on Debian testing and checks the version at build time.
+- **One gateway pod.** There is no active/active or failover gateway; when the pod is replaced,
+  clients see a pause and then carry on with the same handles.
+- **NFSv3 clients** need `rpcbind` and `rpc.statd` running for locks (`nolock` mounts skip NLM).
+- Throughput is bounded by the gateway pod's single FUSE mount per export.
+
+## Verification
+
+Verified on the lab k3s (single node, kernel 7.0 client, Ganesha 9.14), through the Helm-deployed
+Deployment and Service:
+
+- **NFSv4.1 and v4.2:** files, directories, symlinks, hard links, rename, `find`, `rm -rf`, and
+  mode-bit denial (a `0700` directory refused another uid). Sticky directories, `chown` with
+  `squash: none`, and exclusive `flock` also work. A 64 MiB random file has the same SHA-256
+  through NFS and through the gateway's FUSE mount.
+- **Native mounts and NFS:** new names and data written through a native mount appear at once on
+  NFS.
+- **Restarts:** after the gateway pod restarts, the client's working directory and open files keep
+  working.
+- **NFSv3:** a mount of the pseudo path (`mountproto=tcp`) handles files, directories, `find` and
+  `rm -rf`.
+- **Locks:** NFSv3 and NFSv4 locks conflict both ways. A lock held through NFSv4 refuses native
+  mounts, and a lock held through a native mount refuses NFSv3. The NFSv4 `EIO` case is
+  described above.

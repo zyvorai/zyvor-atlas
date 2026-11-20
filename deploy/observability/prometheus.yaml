@@ -1,0 +1,103 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Minimal standalone Prometheus that scrapes the Atlas control plane's own /metrics
+# (atlas_* gauges) plus the Ceph mgr Prometheus module. No operator/CRDs required.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atlas-prometheus-config
+  namespace: rook-ceph
+  labels: { app: atlas-prometheus }
+data:
+  prometheus.yml: |
+    global:
+      scrape_interval: 30s
+      evaluation_interval: 30s
+    rule_files:
+      - /etc/prometheus/rules/*.yml
+    scrape_configs:
+      - job_name: atlas-gateway
+        metrics_path: /metrics
+        authorization:
+          credentials_file: /etc/prometheus/secrets/bootstrap-admin-token
+        static_configs:
+          - targets: ["atlas-gateway-ceph.rook-ceph.svc:5110"]
+            labels: { component: control-plane }
+      - job_name: ceph-mgr
+        metrics_path: /metrics
+        static_configs:
+          - targets: ["rook-ceph-mgr.rook-ceph.svc:9283"]
+            labels: { component: ceph }
+  rules.yml: |
+    groups:
+      - name: atlas
+        rules:
+          - alert: AtlasCapacityHigh
+            expr: atlas_capacity_used_bytes / atlas_capacity_raw_bytes > 0.85
+            for: 5m
+            labels: { severity: critical }
+            annotations:
+              summary: "Atlas cluster capacity above 85%"
+          - alert: AtlasOpenAlerts
+            expr: atlas_alerts_open > 0
+            for: 5m
+            labels: { severity: warning }
+            annotations:
+              summary: "Atlas has {{ $value }} open alert(s)"
+          - alert: AtlasControlPlaneDown
+            expr: up{job="atlas-gateway"} == 0
+            for: 2m
+            labels: { severity: critical }
+            annotations:
+              summary: "Atlas gateway /metrics is not scrapeable"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-prometheus
+  namespace: rook-ceph
+  labels: { app: atlas-prometheus }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: atlas-prometheus }
+  template:
+    metadata:
+      labels: { app: atlas-prometheus }
+    spec:
+      containers:
+        - name: prometheus
+          image: prom/prometheus:v2.54.1
+          args:
+            - --config.file=/etc/prometheus/prometheus.yml
+            - --storage.tsdb.path=/prometheus
+            - --storage.tsdb.retention.time=15d
+          ports:
+            - { name: web, containerPort: 9090 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/prometheus/prometheus.yml, subPath: prometheus.yml }
+            - { name: config, mountPath: /etc/prometheus/rules/rules.yml, subPath: rules.yml }
+            - { name: data, mountPath: /prometheus }
+            - { name: gateway-auth, mountPath: /etc/prometheus/secrets, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: atlas-prometheus-config }
+        - name: data
+          emptyDir: {}
+        - name: gateway-auth
+          secret:
+            secretName: atlas-gateway-auth
+            items:
+              - { key: bootstrap-admin-token, path: bootstrap-admin-token }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-prometheus
+  namespace: rook-ceph
+  labels: { app: atlas-prometheus }
+spec:
+  type: NodePort
+  selector: { app: atlas-prometheus }
+  ports:
+    - { name: web, port: 9090, targetPort: 9090, nodePort: 30514 }

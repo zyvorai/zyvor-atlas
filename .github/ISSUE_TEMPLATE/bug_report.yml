@@ -1,0 +1,47 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+name: Bug report
+description: Something in Atlas isn't working as expected
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: A clear description of the bug, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: Steps to reproduce
+      description: Commands run, API calls made, or UI steps taken.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Atlas version / commit
+      placeholder: "v0.2.0 or a commit SHA"
+    validations:
+      required: true
+  - type: dropdown
+    id: driver
+    attributes:
+      label: Storage driver
+      options:
+        - Ceph (real)
+        - Ceph (fake)
+        - NFS
+        - ZFS
+        - K8s
+        - DataBridge
+        - Not driver-related
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      description: Gateway logs, browser console output, etc. Redact secrets/tokens.
+      render: shell

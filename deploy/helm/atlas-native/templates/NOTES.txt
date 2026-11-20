@@ -1,0 +1,7 @@
+atlas-native deployed as StatefulSet {{ include "atlas-native.fullname" . }} ({{ .Values.replicas }} voters / data nodes) in namespace {{ .Release.Namespace }}.
+
+API (in cluster): {{ if .Values.httpTls.enabled }}https{{ else }}http{{ end }}://{{ include "atlas-native.fullname" . }}-api.{{ .Release.Namespace }}.svc:{{ .Values.service.port }}
+Token:            kubectl -n {{ .Release.Namespace }} get secret {{ include "atlas-native.tokenSecret" . }} -o jsonpath='{.data.token}' | base64 -d
+
+Mutations sent to a follower get 421 with the leader's pod name in "leader"; send them to
+<leader>.{{ include "atlas-native.fullname" . }}.{{ .Release.Namespace }}.svc instead.

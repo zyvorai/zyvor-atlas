@@ -1,0 +1,90 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# Atlas Day-2 Operations
+
+Atlas is an *operable* control plane, not just observe-and-provision. This is the operator runbook for
+the day-2 capabilities; see `docs/API.md` for full request/response detail. Everything below is
+fake-first tested + CI-green; where a capability needs real infra to fully verify, it's called out.
+
+## Control-plane durability & health
+- **Survives restarts**: on boot the job engine recovers — an interrupted `running` job is failed-safe
+  (never stuck), `queued`/`pending` jobs re-enqueued. Opt-in bounded retry per job.
+- **Graceful shutdown**: `SIGTERM` drains in-flight REST + gRPC before exit (`terminationGracePeriodSeconds: 30`).
+- **Probes**: `GET /livez` (liveness → restart) vs `GET /readyz` (deep: DB + real driver probe + worker
+  heartbeats → depool). Wire k8s livenessProbe→`/livez`, readinessProbe→`/readyz`.
+- **Self-state backup**: `ATLAS_STATE_BACKUP_SECS` + `_ENDPOINT`/`_BUCKET`/`_ACCESS_KEY`/`_SECRET_KEY`
+  (`_KEEP`, default 24) → `VACUUM INTO` snapshots of the control-plane DB to S3/RGW. Off by default.
+- **HA**: a DB leader lease (`leader_lease`) gates the periodic workers so only one replica schedules.
+  Single-replica SQLite always wins; **true multi-replica needs Postgres** (`ATLAS_DATABASE_URL`).
+  The job engine is already a **durable DB queue** (poller + atomic claim + stale reclaim) — see
+  [HA.md](HA.md). Postgres URLs are refused at connect until the sqlx port lands; lab compose is at
+  `deploy/postgres/`.
+
+## Alerting (operator)
+Rules: cluster health, pool near-full (75/85%), OSD down, capacity forecast, OSD latency, recovery,
+**jobs failing (15m), CDC replication error, tenant quota approaching (80/95%)**. Lifecycle:
+- `POST /alerts/{id}/ack` · `/silence[?secs]` (suppress webhook for a window) · `/resolve`.
+- One webhook sink via `ATLAS_ALERT_WEBHOOK_URL`.
+
+## Maintenance & cluster ops (admin)
+- **Cordon** `POST /backends/{id}/cordon` · `/uncordon` — a cordoned backend rejects new provisioning (503).
+- **Pause** `GET`/`POST /maintenance {paused}` — the job worker holds jobs (`queued`) until resumed.
+- **Cancel a wedged job** `POST /jobs/{id}/cancel` — the job worker is single-threaded, so a job
+  stuck inside a shelled-out `ceph`/`rbd` call that never returns (e.g. `rbd migration prepare`
+  against a degraded pool — verified live) blocks every other job on the gateway for up to
+  `ATLAS_JOB_TIMEOUT_SECS` (2h default). Cancel drops the dispatch future, killing any live
+  `rbd`/`ceph` child process; `404`/`409` if the job is unknown or already terminal. `radosgw-admin`
+  calls (bucket stats/quota) are separately bounded to 12s and can no longer wedge the queue this
+  way — verified live: a `bucket.create` quota-set step stuck `running` was freed by cancel before
+  the timeout fix landed; `ceph`/`rbd` calls have no equivalent bound and still need this endpoint.
+- **OSD ops** `POST /osds/{id}/out|in|reweight?weight=` (`ceph osd …`). *Real Ceph.*
+- **Safe to stop?** `GET /osds/ok-to-stop?ids=0,1` wraps `ceph osd ok-to-stop` so a node can be checked before
+  it is taken down for maintenance. Read-only; a "no" is a normal answer with Ceph's PG counts. The answer is
+  Ceph's own and was checked only against the fixture driver, not a live cluster.
+- **Dynamic backends** `POST /backends {backend_type:"nfs"|"zfs", server, targets}` — instantiates a live
+  driver + discovers it immediately (not just a catalog row).
+
+## Volume lifecycle
+- **QoS** `POST /rbd-images/{pool}/{image}/qos?iops=&bps=` (0 clears). *Real Ceph.*
+- **Resize-down** `POST …/resize {size_bytes, allow_shrink:true}` — shrink is opt-in (data-loss guard).
+- **Pool migration** `POST …/migrate?dest_pool=` (`rbd migration`). *Real Ceph.*
+- **Orphan GC** `GET /maintenance/orphans` — backups whose source volume is gone; clean via `DELETE /backups/{id}`.
+
+## Governance (admin/operator)
+- **Token revocation** `POST /auth/tokens/{jti}/revoke` + `GET /auth/tokens/revoked` — kill a leaked
+  token before its TTL. **Rate limiting** `ATLAS_RATE_LIMIT_RPM` (0=off) → 429.
+- **Audit** `GET /audit.csv` export; `ATLAS_AUDIT_RETENTION_DAYS` prunes old rows. When
+  `ATLAS_AUDIT_EXPORT_URL` is also set, rows are exported (batched JSON POST) to that sink — a
+  SIEM webhook, Splunk HTTP Event Collector, Elastic/Fluent Bit HTTP input, anything that accepts
+  a JSON POST — *before* deletion; a failed export leaves the rows in place for retry on the next
+  6h tick, so a sink outage can never silently lose audit history.
+- **Chargeback** `GET /chargeback` (`ATLAS_CHARGEBACK_USD_PER_GIB_MONTH`). **Policy drift** `GET /policy-drift`.
+
+## DataBridge day-2
+- CDC self-heal: `POST /databridge/plans/{id}/cdc/restart` re-establishes a stalled stream; the
+  reconciler also auto-restarts an unhealthy stream up to 3× before giving up (→ `error` → alert).
+
+## Cross-cluster DR (admin)
+Control-plane catalog + hardened failover API; live `rbd mirror` still needs a second Ceph cluster.
+See [DR.md](DR.md). `POST/GET /dr/peers`; `POST/DELETE /volumes/{id}/mirror` (peer required);
+`GET /dr/mirrors` · `/dr/status` · `/dr/preflight`; `POST /dr/mirrors/{id}/promote|demote`
+(`?force=1` for split-brain); `POST /dr/failover` (`confirm: true`); `POST /dr/mirrors/{id}/rpo`.
+Fake mode skips the `rbd` CLI so drills succeed locally.
+
+## Upgrades
+- **Pre-flight** `GET /upgrade/preflight` — no HEALTH_ERR cluster / open critical alerts / in-flight
+  jobs / lagging CDC → `{ ready, blockers }`. `scripts/deploy-remote.sh` gates on it and supports
+  `--rollback` (`kubectl rollout undo`) + `--force`.
+
+## Standard procedures
+- **Rolling upgrade**: `GET /upgrade/preflight` → if `ready:false`, `POST /maintenance {paused:true}`
+  and let jobs drain → `scripts/deploy-remote.sh <host> <user>` (auto-gates + rollout-restarts) →
+  `POST /maintenance {paused:false}`. Bad upgrade → `scripts/deploy-remote.sh <host> <user> --rollback`.
+- **Backend maintenance**: `POST /backends/{id}/cordon` → drain → do the work → `/uncordon`.
+- **Leaked credential**: `POST /auth/tokens/{jti}/revoke` (find the jti via the issue response or audit).
+- **Stalled migration**: alert fires on `CDC replication error` → `POST …/cdc/restart` (or wait for the
+  reconciler's bounded auto-restart).
+- **Wedged job blocking the queue**: `GET /jobs?state=running` to spot a job stuck well past its
+  expected duration → `POST /jobs/{id}/cancel` to free the worker immediately instead of waiting out
+  `ATLAS_JOB_TIMEOUT_SECS` (or restarting the pod, which only re-dispatches the same job if the
+  underlying condition — e.g. a degraded pool — hasn't cleared).

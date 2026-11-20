@@ -1,0 +1,33 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+/target
+**/*.rs.bk
+.env
+atlas.db
+atlas.db-wal
+atlas.db-shm
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+
+# Private keys — never commit (e.g. the atlas-license signing key)
+secrets/
+
+# Atlas Storage Center UI (React) — build artifacts (the Docker node stage / `make ui` regenerate dist)
+crates/atlas-gateway/ui/node_modules/
+crates/atlas-gateway/ui/dist/
+crates/atlas-gateway/ui/.screenshots/
+crates/atlas-gateway/ui/coverage/
+.docs-tools/
+
+# cargo-llvm-cov output
+/lcov.info
+
+# IO500 runs (scripts/io500-native-remote.sh)
+/io500-results/
+
+# Python companion bytecode and local environments
+__pycache__/
+*.py[cod]
+.venv/

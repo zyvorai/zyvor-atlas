@@ -1,0 +1,1490 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>Page-by-Page Product Manual — Atlas</title>
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<style>
+@page{size:A4;margin:15mm 16mm}*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font-family:'Segoe UI',system-ui,sans-serif;color:#1f2937;line-height:1.58;font-size:10.5pt}
+.cover{height:262mm;margin:-15mm -16mm 0;background:linear-gradient(135deg,#0a1628,#0e7490,#0d1b2a);color:#fff;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always;position:relative}
+.cover .kicker{letter-spacing:5px;text-transform:uppercase;opacity:.72;margin-bottom:1.4em}
+.cover h1{font-size:3.2em;font-weight:800;letter-spacing:-2px}
+.cover h1 span{color:#38bdf8}
+.cover .sub{font-size:1.3em;font-weight:300;opacity:.93;margin:1em 0;max-width:24em}
+.cover .badge{display:inline-block;background:rgba(96,165,250,.2);border:1px solid #38bdf8;padding:8px 22px;border-radius:20px;margin-top:2em}
+.cover .foot{position:absolute;bottom:34px;font-size:.82em;opacity:.6}
+h2{page-break-before:always;margin:0 0 .35em;font-size:1.55em;font-weight:750;color:#12203a;border-bottom:2px solid #e5edfb;padding-bottom:.28em}
+h2:first-of-type{page-break-before:avoid}
+h3{margin:1.1em 0 .4em;font-size:1.12em;font-weight:700}
+p,li{margin:.4em 0}ul,ol{margin:.5em 0 .9em 1.4em}
+a{color:#2563eb;text-decoration:none}
+code{background:#eef2f7;padding:1px 6px;border-radius:4px;font-size:.86em;font-family:ui-monospace,Menlo,monospace}
+pre{background:#0f172a;color:#e2e8f0;padding:12px 15px;border-radius:9px;overflow-x:auto;margin:.8em 0}
+table{width:100%;border-collapse:collapse;margin:.8em 0 1.1em;font-size:9.5pt}
+th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left;vertical-align:top}th{background:#f1f5f9}
+hr{border:none;border-top:1px solid #e5e7eb;margin:1.2em 0}
+</style></head><body>
+<section class="cover"><div class="kicker">ZyvorAI Labs · Customer Documentation</div>
+<h1>At<span>las</span></h1>
+<div class="sub">Page-by-Page Product Manual</div>
+<div class="badge">2026-09-01</div>
+<div class="foot">zyvor.dev · Confidential — for licensed customers</div></section>
+<main><h2>Page-by-page guides</h2>
+<p>Each guide follows: Purpose → When to use it → How to get there → Operate from the console (UX) → Related pages.</p>
+<p>Every route is also listed in the <a href="../PAGE_INDEX.md">complete page index</a>.</p>
+<h3>Data Protection</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="data-protection/backups.md">Backups</a></td>
+<td>Volume backups into object buckets — create, restore, and retire copies.</td>
+</tr>
+<tr>
+<td><a href="data-protection/buckets.md">Buckets</a></td>
+<td>Object gateway buckets for exports and backup destinations.</td>
+</tr>
+<tr>
+<td><a href="data-protection/protection.md">Protection Status</a></td>
+<td>Per-volume protection verdict — healthy / degraded / unprotected rollup.</td>
+</tr>
+</tbody></table>
+<h3>Databridge</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="databridge/databridge-edge-clusters.md">Edge DB Clusters</a></td>
+<td>Edge database clusters provisioned as migration targets.</td>
+</tr>
+<tr>
+<td><a href="databridge/databridge-plans-id.md">Plan Detail</a></td>
+<td>Single migration plan — stages, CDC controls, cutover, and validation hooks.</td>
+</tr>
+<tr>
+<td><a href="databridge/databridge-plans.md">Migration Plans</a></td>
+<td>Create and list DataBridge migration plans from registered sources.</td>
+</tr>
+<tr>
+<td><a href="databridge/databridge-replication.md">Replication</a></td>
+<td>CDC replication streams for active migration plans.</td>
+</tr>
+<tr>
+<td><a href="databridge/databridge-sources.md">Cloud Databases</a></td>
+<td>Register external / cloud database sources for DataBridge migrations.</td>
+</tr>
+<tr>
+<td><a href="databridge/databridge-validation.md">Validation</a></td>
+<td>Validation runs and per-table results for migrated data.</td>
+</tr>
+</tbody></table>
+<h3>Governance</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="governance/access.md">Access</a></td>
+<td>Local users for Storage Center sign-in — create and delete accounts.</td>
+</tr>
+<tr>
+<td><a href="governance/api-docs.md">API Docs</a></td>
+<td>Curated REST + gRPC map for operators and integrators.</td>
+</tr>
+<tr>
+<td><a href="governance/policies.md">Policies</a></td>
+<td>Built-in intent → placement catalog (atlas-policy) used when creating volumes.</td>
+</tr>
+<tr>
+<td><a href="governance/settings.md">Settings</a></td>
+<td>Console settings — theme and session preferences for Storage Center.</td>
+</tr>
+<tr>
+<td><a href="governance/tenants.md">Tenants</a></td>
+<td>Tenant index — quotas and policy overrides.</td>
+</tr>
+</tbody></table>
+<h3>Infrastructure</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="infrastructure/backends.md">Backends</a></td>
+<td>Registered storage backends — discovery and capacity summary.</td>
+</tr>
+<tr>
+<td><a href="infrastructure/ceph.md">Ceph</a></td>
+<td>Day-2 Ceph signals — health rollup, df pools, OSD tree.</td>
+</tr>
+<tr>
+<td><a href="infrastructure/cluster.md">Cluster</a></td>
+<td>Primary cluster inventory — health, pools, OSDs.</td>
+</tr>
+<tr>
+<td><a href="infrastructure/dr.md">Disaster Recovery</a></td>
+<td>Cross-cluster RBD mirroring — peers, mirrors, promote/demote/failover.</td>
+</tr>
+<tr>
+<td><a href="infrastructure/kubernetes.md">Kubernetes</a></td>
+<td>Discovered StorageClasses from the attached cluster.</td>
+</tr>
+<tr>
+<td><a href="infrastructure/maintenance.md">Maintenance</a></td>
+<td>Pause the job engine, cordon backends, and clean orphan backups.</td>
+</tr>
+<tr>
+<td><a href="infrastructure/pools-id.md">Pool Detail</a></td>
+<td>Single pool sounding — volumes and OSD cells for one pool.</td>
+</tr>
+</tbody></table>
+<h3>Observability</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="observability/activity.md">Activity</a></td>
+<td>Recent operator and system activity stream.</td>
+</tr>
+<tr>
+<td><a href="observability/alerts.md">Alerts</a></td>
+<td>Open alert ledger — silence or resolve before capacity work.</td>
+</tr>
+<tr>
+<td><a href="observability/audit.md">Audit</a></td>
+<td>Compliance trail of state-changing and sensitive actions.</td>
+</tr>
+<tr>
+<td><a href="observability/jobs.md">Jobs</a></td>
+<td>Durable async jobs for every mutation — progress, SSE live updates, failure detail.</td>
+</tr>
+<tr>
+<td><a href="observability/metrics-dashboard.md">Metrics</a></td>
+<td>Ceph-native metric samples and OSD utilization averages.</td>
+</tr>
+<tr>
+<td><a href="observability/observatory.md">Observatory</a></td>
+<td>Estate telemetry canvas — capacity lenses and jump to Deck or Alerts.</td>
+</tr>
+</tbody></table>
+<h3>Storage</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>What it covers</th>
+</tr>
+</thead>
+<tbody><tr>
+<td><a href="storage/home.md">Command Deck</a></td>
+<td>Estate overview — capacity sounding, pool tiles, protection gaps, and quick jumps into volumes, snapshots, and backups.</td>
+</tr>
+<tr>
+<td><a href="storage/rbd.md">RBD Images</a></td>
+<td>Raw Ceph RBD images for machina/libvirt and bare VMs (bypassing CSI).</td>
+</tr>
+<tr>
+<td><a href="storage/schedules.md">Schedules</a></td>
+<td>Automate periodic snapshots or backups for a volume.</td>
+</tr>
+<tr>
+<td><a href="storage/snapshots.md">Snapshots</a></td>
+<td>Point-in-time volume snapshots — clone or restore into new volumes.</td>
+</tr>
+<tr>
+<td><a href="storage/volumes.md">Volumes</a></td>
+<td>Intent-backed volume inventory — create, expand, snapshot, schedule, and delete across backends.</td>
+</tr>
+</tbody></table>
+<hr>
+<p>32 guides. Regenerate: <code>node scripts/customer-docs/generate-guide-index.mjs</code>.</p>
+<hr>
+<h2>Backups</h2>
+<h3>Purpose</h3>
+<p>Volume backups into object buckets — create, restore, and retire copies.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Backups</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/backups</code></li>
+<li>Nav: <strong>DATA PROTECTION → Backups</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/backups</code>.</li>
+<li><strong>Backup</strong> — select volume + destination bucket; wait for the job.</li>
+<li>Restore opens a modal (optional new volume name).</li>
+<li>Bulk-delete selected backups when retiring.</li>
+<li><strong>Empty / fail:</strong> Create a bucket first under Buckets; ensure volume exists.</li>
+<li><strong>Success:</strong> Backup row with created time; restore job completes.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="buckets.md">Buckets</a></li>
+<li><a href="../storage/volumes.md">Volumes</a></li>
+<li><a href="../observability/jobs.md">Jobs</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Buckets</h2>
+<h3>Purpose</h3>
+<p>Object gateway buckets for exports and backup destinations.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Buckets</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/buckets</code></li>
+<li>Nav: <strong>DATA PROTECTION → Buckets</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/buckets</code>.</li>
+<li><strong>Create bucket</strong> — name + backend/RGW target.</li>
+<li>Open a bucket to list/upload objects when the panel is wired.</li>
+<li><strong>Empty / fail:</strong> No RGW → check Ceph/RGW on Backends/Ceph pages.</li>
+<li><strong>Success:</strong> Bucket listed; usable as Backup destination.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="backups.md">Backups</a></li>
+<li><a href="../infrastructure/ceph.md">Ceph</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Protection Status</h2>
+<h3>Purpose</h3>
+<p>Per-volume protection verdict — healthy / degraded / unprotected rollup.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Protection Status</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/protection</code></li>
+<li>Nav: <strong>DATA PROTECTION → Protection Status</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/protection</code>.</li>
+<li>Scan worst-case headline (healthy vs unprotected counts).</li>
+<li>Drill volumes missing snaps/backups → Schedules or Backups.</li>
+<li><strong>Empty / fail:</strong> No volumes yet → provision first on Volumes.</li>
+<li><strong>Success:</strong> Every critical volume shows a healthy verdict.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="../storage/schedules.md">Schedules</a></li>
+<li><a href="backups.md">Backups</a></li>
+<li><a href="../storage/volumes.md">Volumes</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Edge DB Clusters</h2>
+<h3>Purpose</h3>
+<p>Edge database clusters provisioned as migration targets.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Edge DB Clusters</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/databridge/edge-clusters</code></li>
+<li>Nav: <strong>DATABRIDGE → Edge DB Clusters</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/databridge/edge-clusters</code>.</li>
+<li>Provision from a migration plan when empty.</li>
+<li>Confirm cluster health before cutover.</li>
+<li><strong>Empty / fail:</strong> No clusters → complete plan provisioning stage first.</li>
+<li><strong>Success:</strong> Cluster listed and healthy for the plan.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="databridge-plans.md">Migration Plans</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Plan Detail</h2>
+<h3>Purpose</h3>
+<p>Single migration plan — stages, CDC controls, cutover, and validation hooks.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Plan Detail</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/databridge/plans/:id</code></li>
+<li>Nav: <strong>DATABRIDGE → Migration Plans → plan row</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open a plan from <code>/databridge/plans</code>.</li>
+<li>Read engine/CDC badges; start or advance stages per UI.</li>
+<li><strong>Stop CDC</strong> / <strong>Restart CDC</strong> when streaming; use confirm for destructive cutover actions.</li>
+<li>Jump to Validation / Replication / Edge clusters as needed.</li>
+<li><strong>Empty / fail:</strong> Stage blocked → fix source connectivity or prior stage job.</li>
+<li><strong>Success:</strong> CDC live / cutover complete per badges; Jobs clean.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="databridge-validation.md">Validation</a></li>
+<li><a href="databridge-replication.md">Replication</a></li>
+<li><a href="../observability/jobs.md">Jobs</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Migration Plans</h2>
+<h3>Purpose</h3>
+<p>Create and list DataBridge migration plans from registered sources.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Migration Plans</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/databridge/plans</code></li>
+<li>Nav: <strong>DATABRIDGE → Migration Plans</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/databridge/plans</code> after registering a source.</li>
+<li><strong>Create</strong> New migration plan → open Plan Detail.</li>
+<li>Track stages and CDC from the detail page.</li>
+<li><strong>Empty / fail:</strong> No plans → register a Cloud Database first.</li>
+<li><strong>Success:</strong> Plan row links to <code>/databridge/plans/:id</code>.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="databridge-sources.md">Cloud Databases</a></li>
+<li><a href="databridge-plans-id.md">Plan Detail</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Replication</h2>
+<h3>Purpose</h3>
+<p>CDC replication streams for active migration plans.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Replication</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/databridge/replication</code></li>
+<li>Nav: <strong>DATABRIDGE → Replication</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/databridge/replication</code>.</li>
+<li>Confirm streams match plans with CDC started.</li>
+<li>Restart CDC from Plan Detail if a stream stalls.</li>
+<li><strong>Empty / fail:</strong> No streams → Start CDC on a plan.</li>
+<li><strong>Success:</strong> Stream lag/state acceptable for cutover.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="databridge-plans-id.md">Plan Detail</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Cloud Databases</h2>
+<h3>Purpose</h3>
+<p>Register external / cloud database sources for DataBridge migrations.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Cloud Databases</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/databridge/sources</code></li>
+<li>Nav: <strong>DATABRIDGE → Cloud Databases</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/databridge/sources</code>.</li>
+<li><strong>Register</strong> a source database (connection + engine).</li>
+<li>Open a source → schema SlideOver (tables).</li>
+<li>Then create a Migration Plan.</li>
+<li><strong>Empty / fail:</strong> Connection refused → network/creds; schema empty → privileges.</li>
+<li><strong>Success:</strong> Source listed with reachable schema.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="databridge-plans.md">Migration Plans</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Validation</h2>
+<h3>Purpose</h3>
+<p>Validation runs and per-table results for migrated data.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Validation</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/databridge/validation</code></li>
+<li>Nav: <strong>DATABRIDGE → Validation</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/databridge/validation</code> after plan stages that emit checks.</li>
+<li>Open a run → per-table SlideOver.</li>
+<li>Fix failures before cutover.</li>
+<li><strong>Empty / fail:</strong> No runs → trigger validation from Plan Detail / workflow.</li>
+<li><strong>Success:</strong> Tables pass; ready for cutover.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="databridge-plans-id.md">Plan Detail</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Access</h2>
+<h3>Purpose</h3>
+<p>Local users for Storage Center sign-in — create and delete accounts.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Access</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/access</code></li>
+<li>Nav: <strong>GOVERNANCE → Access</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/access</code>.</li>
+<li><strong>Create user</strong> with username/password; they sign in on the login page.</li>
+<li>Delete users from the table when retiring access.</li>
+<li>Paste service JWT via rail key icon for API automation.</li>
+<li><strong>Empty / fail:</strong> No users → create one; login fails → check ATLAS_AUTH_REQUIRED and token.</li>
+<li><strong>Success:</strong> New user can sign in; table lists accounts.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="settings.md">Settings</a></li>
+<li><a href="api-docs.md">API Docs</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>API Docs</h2>
+<h3>Purpose</h3>
+<p>Curated REST + gRPC map for operators and integrators.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>API Docs</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/api-docs</code></li>
+<li>Nav: <strong>GOVERNANCE → API Docs</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/api-docs</code>.</li>
+<li>Scan Meta, Auth, Inventory, Write path (async jobs), Observability, DR, DataBridge.</li>
+<li>Prefer <code>atlasctl</code> or REST with JWT; mutations return jobs.</li>
+<li><strong>Empty / fail:</strong> N/A — static reference; deep examples in product API docs.</li>
+<li><strong>Success:</strong> You can name the endpoint for the console action you just took.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="../observability/jobs.md">Jobs</a></li>
+<li><a href="access.md">Access</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Policies</h2>
+<h3>Purpose</h3>
+<p>Built-in intent → placement catalog (atlas-policy) used when creating volumes.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Policies</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/policies</code></li>
+<li>Nav: <strong>GOVERNANCE → Policies</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/policies</code> and review intent names (<code>production</code>, <code>database</code>, …).</li>
+<li>Use these intents in <strong>Create volume</strong>.</li>
+<li>Tenant overrides live under Tenants → Policies.</li>
+<li><strong>Empty / fail:</strong> Catalog empty → gateway policy pack missing.</li>
+<li><strong>Success:</strong> Intents listed and selectable on create.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="../storage/volumes.md">Volumes</a></li>
+<li><a href="tenants.md">Tenants</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Settings</h2>
+<h3>Purpose</h3>
+<p>Console settings — theme and session preferences for Storage Center.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Settings</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/settings</code></li>
+<li>Nav: <strong>GOVERNANCE → Settings (sidebar Settings)</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/settings</code>.</li>
+<li>Adjust Look &amp; feel from the top-bar theme menu (Carbon, Apple Lite) if not on this page.</li>
+<li>Confirm token/session via the Account menu (top-bar key icon).</li>
+<li><strong>Empty / fail:</strong> Changes not sticking → local storage blocked; re-auth.</li>
+<li><strong>Success:</strong> Theme/session match operator preference.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="access.md">Access</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Tenants</h2>
+<h3>Purpose</h3>
+<p>Tenant index — quotas and policy overrides.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Tenants</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/tenants</code></li>
+<li>Nav: <strong>GOVERNANCE → Tenants</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/tenants</code>.</li>
+<li>Open a tenant → set Quota (Save) or review Policies slide-over.</li>
+<li>Overrides fall back to built-in catalog when empty.</li>
+<li><strong>Empty / fail:</strong> No tenants → create via API/admin path your deploy uses; quotas block create if exceeded.</li>
+<li><strong>Success:</strong> Quota saved; volume creates respect limits.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="policies.md">Policies</a></li>
+<li><a href="access.md">Access</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Backends</h2>
+<h3>Purpose</h3>
+<p>Registered storage backends — discovery and capacity summary.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Backends</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/backends</code></li>
+<li>Nav: <strong>INFRASTRUCTURE → Backends</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/backends</code>.</li>
+<li>Confirm at least one backend is registered and healthy.</li>
+<li>Cordon/uncordon from Maintenance when draining.</li>
+<li><strong>Empty / fail:</strong> None registered → install driver/Ceph and discover (<code>atlasctl discover</code>).</li>
+<li><strong>Success:</strong> Backend row with capacity; Volumes can provision.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="ceph.md">Ceph</a></li>
+<li><a href="maintenance.md">Maintenance</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Ceph</h2>
+<h3>Purpose</h3>
+<p>Day-2 Ceph signals — health rollup, df pools, OSD tree.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Ceph</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/ceph</code></li>
+<li>Nav: <strong>INFRASTRUCTURE → Ceph (sidebar Ceph)</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/ceph</code>.</li>
+<li>Read rollup + df pools; jump to Cluster if needed.</li>
+<li>Investigate degraded/rebuilding before big provisions.</li>
+<li><strong>Empty / fail:</strong> No ceph df → driver/credentials; use lab fake driver only for demos.</li>
+<li><strong>Success:</strong> HEALTH_OK (or understood warn) with pools listed.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="cluster.md">Cluster</a></li>
+<li><a href="dr.md">Disaster Recovery</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Cluster</h2>
+<h3>Purpose</h3>
+<p>Primary cluster inventory — health, pools, OSDs.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Cluster</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/cluster</code></li>
+<li>Nav: <strong>INFRASTRUCTURE → Cluster</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/cluster</code>.</li>
+<li>Read primary name/health and pool/OSD counts.</li>
+<li>Drill pools toward Ceph / Pool detail.</li>
+<li><strong>Empty / fail:</strong> Waiting on inventory → gateway↔Ceph connectivity.</li>
+<li><strong>Success:</strong> Health matches Command Deck rollup.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="ceph.md">Ceph</a></li>
+<li><a href="../storage/home.md">Command Deck</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Disaster Recovery</h2>
+<h3>Purpose</h3>
+<p>Cross-cluster RBD mirroring — peers, mirrors, promote/demote/failover.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Disaster Recovery</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/dr</code></li>
+<li>Nav: <strong>INFRASTRUCTURE → Disaster Recovery</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/dr</code> and read peers/mirrors + control-plane/dataplane readiness.</li>
+<li>Add peer; enable mirroring on images; Promote / Demote / Failover with confirms.</li>
+<li>Force promote only for split-brain recovery.</li>
+<li><strong>Empty / fail:</strong> Dataplane unverified → need second Ceph site; peers=0 → add peer first.</li>
+<li><strong>Success:</strong> Mirrors healthy; failover job succeeds when rehearsed.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="ceph.md">Ceph</a></li>
+<li><a href="../observability/jobs.md">Jobs</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Kubernetes</h2>
+<h3>Purpose</h3>
+<p>Discovered StorageClasses from the attached cluster.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Kubernetes</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/kubernetes</code></li>
+<li>Nav: <strong>INFRASTRUCTURE → Kubernetes</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/kubernetes</code>.</li>
+<li>Verify StorageClasses expected by CSI consumers.</li>
+<li><strong>Empty / fail:</strong> No classes → check KUBECONFIG / RBAC for the gateway.</li>
+<li><strong>Success:</strong> Classes listed for the cluster Atlas manages.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="cluster.md">Cluster</a></li>
+<li><a href="backends.md">Backends</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Maintenance</h2>
+<h3>Purpose</h3>
+<p>Pause the job engine, cordon backends, and clean orphan backups.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Maintenance</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/maintenance</code></li>
+<li>Nav: <strong>INFRASTRUCTURE → Maintenance</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/maintenance</code>.</li>
+<li>Pause job engine only when you intend to quiesce (new jobs queue).</li>
+<li>Cordon a backend to reject new provisioning.</li>
+<li>Delete orphan backups carefully.</li>
+<li><strong>Empty / fail:</strong> Pause stuck → check API auth; cordon blocked → role.</li>
+<li><strong>Success:</strong> Desired pause/cordon state reflected; resume when done.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="backends.md">Backends</a></li>
+<li><a href="../observability/jobs.md">Jobs</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Pool Detail</h2>
+<h3>Purpose</h3>
+<p>Single pool sounding — volumes and OSD cells for one pool.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Pool Detail</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/pools/:id</code></li>
+<li>Nav: <strong>Command Deck / Cluster → pool tile</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/pools/:id</code> from a Deck or Cluster pool link.</li>
+<li>Review fill, volume list, OSD lattice.</li>
+<li>Jump to Volumes or Command Deck from actions.</li>
+<li><strong>Empty / fail:</strong> Pool not found → stale id; return to Deck.</li>
+<li><strong>Success:</strong> Pool metrics match Ceph df.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="../storage/home.md">Command Deck</a></li>
+<li><a href="../storage/volumes.md">Volumes</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Activity</h2>
+<h3>Purpose</h3>
+<p>Recent operator and system activity stream.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Activity</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/activity</code></li>
+<li>Nav: <strong>OBSERVABILITY → Activity</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/activity</code>.</li>
+<li>Scan recent events after provision/protect/migrate actions.</li>
+<li>Correlate failures with Jobs and Audit.</li>
+<li><strong>Empty / fail:</strong> Quiet estate → trigger a volume op and refresh.</li>
+<li><strong>Success:</strong> Activity lines match your last mutations.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="jobs.md">Jobs</a></li>
+<li><a href="audit.md">Audit</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Alerts</h2>
+<h3>Purpose</h3>
+<p>Open alert ledger — silence or resolve before capacity work.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Alerts</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/alerts</code></li>
+<li>Nav: <strong>OBSERVABILITY → Alerts</strong>, or the <strong>top-bar bell</strong> popover (same destination)</li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/alerts</code> (or top-bar bell → jump).</li>
+<li>Filter by state; read critical vs open counts in PageHead.</li>
+<li><strong>Silence</strong> (1h) or <strong>Resolve</strong> with confirm.</li>
+<li><strong>Empty / fail:</strong> Filter too tight → clear filter; webhook paging may still need silence.</li>
+<li><strong>Success:</strong> Criticals cleared or deliberately silenced.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="jobs.md">Jobs</a></li>
+<li><a href="../infrastructure/ceph.md">Ceph</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Audit</h2>
+<h3>Purpose</h3>
+<p>Compliance trail of state-changing and sensitive actions.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Audit</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/audit</code></li>
+<li>Nav: <strong>OBSERVABILITY → Audit</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/audit</code>.</li>
+<li>Filter by actor and action.</li>
+<li>Verify who created tokens, volumes, or DR failovers.</li>
+<li><strong>Empty / fail:</strong> No entries → auth/open mode may omit some events; confirm ATLAS auth mode.</li>
+<li><strong>Success:</strong> Expected mutations appear with actor + timestamp.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="../governance/access.md">Access</a></li>
+<li><a href="jobs.md">Jobs</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Jobs</h2>
+<h3>Purpose</h3>
+<p>Durable async jobs for every mutation — progress, SSE live updates, failure detail.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Jobs</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/jobs</code></li>
+<li>Nav: <strong>OBSERVABILITY → Jobs (sidebar Jobs)</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/jobs</code> after any create/backup/migrate/DR action.</li>
+<li>Select a job for created time, state, and error detail.</li>
+<li>Use rail Jobs chip for running count without leaving the page.</li>
+<li><strong>Empty / fail:</strong> No jobs → you have not mutated yet; failed jobs → fix cause and retry from source page.</li>
+<li><strong>Success:</strong> Job reaches succeeded; inventory refreshes.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="../storage/volumes.md">Volumes</a></li>
+<li><a href="activity.md">Activity</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Metrics</h2>
+<h3>Purpose</h3>
+<p>Ceph-native metric samples and OSD utilization averages.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Metrics</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/metrics-dashboard</code></li>
+<li>Nav: <strong>OBSERVABILITY → Metrics</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/metrics-dashboard</code>.</li>
+<li>Confirm samples arrive; note OSD average % when shown.</li>
+<li>Cross-check spikes with Observatory and Ceph.</li>
+<li><strong>Empty / fail:</strong> Waiting on samples → backend/Ceph metrics not streaming.</li>
+<li><strong>Success:</strong> Sample count &gt; 0 and averages look sane.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="observatory.md">Observatory</a></li>
+<li><a href="../infrastructure/ceph.md">Ceph</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Observatory</h2>
+<h3>Purpose</h3>
+<p>Estate telemetry canvas — capacity lenses and jump to Deck or Alerts.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Observatory</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/observatory</code></li>
+<li>Nav: <strong>OBSERVABILITY → Observatory (sidebar Observatory)</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/observatory</code> and wait for estate samples.</li>
+<li>Use lenses / panels for pool and OSD pressure.</li>
+<li>Jump <strong>Command Deck</strong> or <strong>Alerts</strong> from PageHead actions.</li>
+<li><strong>Empty / fail:</strong> No samples → Ceph metrics path cold; check <code>/metrics-dashboard</code> and gateway.</li>
+<li><strong>Success:</strong> Live estate picture matches Deck health.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="../storage/home.md">Command Deck</a></li>
+<li><a href="alerts.md">Alerts</a></li>
+<li><a href="metrics-dashboard.md">Metrics</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Command Deck</h2>
+<h3>Purpose</h3>
+<p>Estate overview — capacity sounding, pool tiles, protection gaps, and quick jumps into volumes, snapshots, and backups.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Command Deck</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/</code></li>
+<li>Nav: <strong>STORAGE → Command Deck</strong> (or press <strong>H</strong>)</li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/</code> (Command Deck) after the gateway is reachable.</li>
+<li>Read the health chip on the rail (HEALTH_OK / DEGRADED / …) and live job/alert counts.</li>
+<li>Use <strong>New volume</strong> to provision, or follow empty-state links (Create a volume →, Schedule nightly snapshots →, Create first bucket →).</li>
+<li>Open a pool tile to drill into <code>/pools/:id</code> (breadcrumbs: Storage · Pools · …), or jump via Spotlight (⌘K / Ctrl+K).</li>
+<li>Pause auto-refresh from the rail if you need a stable readout.</li>
+<li><strong>Empty / fail:</strong> No capacity → register a backend (INFRASTRUCTURE → Backends) and run discover; auth failures → paste JWT from the key icon.</li>
+<li><strong>Success:</strong> Sounding orb + pool/OSD lattice populate; jobs appear when you provision.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="volumes.md">Volumes</a></li>
+<li><a href="../observability/jobs.md">Jobs</a></li>
+<li><a href="../infrastructure/ceph.md">Ceph</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>RBD Images</h2>
+<h3>Purpose</h3>
+<p>Raw Ceph RBD images for machina/libvirt and bare VMs (bypassing CSI).</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>RBD Images</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/rbd</code></li>
+<li>Nav: <strong>STORAGE → RBD Images</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/rbd</code> and select the target pool (default often <code>rbd-nvme-prod</code>).</li>
+<li><strong>Create image</strong> with name + size; or Flatten / Clone / Resize / Snapshot from row actions.</li>
+<li>Clone needs an existing snapshot — create under Snaps first if the hint says so.</li>
+<li>Rollback is destructive — confirm before reverting to a snap.</li>
+<li><strong>Empty / fail:</strong> Wrong pool → switch pool; Ceph not ready → INFRASTRUCTURE → Ceph.</li>
+<li><strong>Success:</strong> Image listed in pool; jobs complete for flatten/clone/resize.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="../infrastructure/ceph.md">Ceph</a></li>
+<li><a href="snapshots.md">Snapshots</a></li>
+<li><a href="../observability/jobs.md">Jobs</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Schedules</h2>
+<h3>Purpose</h3>
+<p>Automate periodic snapshots or backups for a volume.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Schedules</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/schedules</code></li>
+<li>Nav: <strong>STORAGE → Schedules</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/schedules</code>.</li>
+<li>Click <strong>Schedule</strong> — choose volume, cadence, retention, snapshot vs backup.</li>
+<li>Confirm the schedule row appears; verify later runs under Snapshots / Backups / Jobs.</li>
+<li><strong>Empty / fail:</strong> Need at least one volume and (for backups) a bucket.</li>
+<li><strong>Success:</strong> Schedule listed; first fire shows as a job.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="volumes.md">Volumes</a></li>
+<li><a href="../data-protection/backups.md">Backups</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Snapshots</h2>
+<h3>Purpose</h3>
+<p>Point-in-time volume snapshots — clone or restore into new volumes.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Snapshots</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/snapshots</code></li>
+<li>Nav: <strong>STORAGE → Snapshots</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/snapshots</code> to list PIT copies.</li>
+<li>Create snaps from <strong>Volumes</strong> row → Snapshot (or schedule).</li>
+<li>Clone or Restore from a snapshot row (confirm modal).</li>
+<li>Bulk-delete selected snaps when retiring retention.</li>
+<li><strong>Empty / fail:</strong> No copies → open Volumes and snapshot a volume first.</li>
+<li><strong>Success:</strong> Snapshot row + clone/restore job succeeds.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="volumes.md">Volumes</a></li>
+<li><a href="schedules.md">Schedules</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Volumes</h2>
+<h3>Purpose</h3>
+<p>Intent-backed volume inventory — create, expand, snapshot, schedule, and delete across backends.</p>
+<h3>When to use it</h3>
+<ul>
+<li>Operate <strong>Volumes</strong> when your job matches this page</li>
+<li>Prefer <strong>Command Deck</strong> (<code>/</code>) if you are unsure where to start</li>
+<li>Confirm gateway auth and that a storage driver is registered if inventories look empty</li>
+</ul>
+<h3>How to get there</h3>
+<ul>
+<li>Route: <code>/volumes</code></li>
+<li>Nav: <strong>STORAGE → Volumes (sidebar Volumes)</strong></li>
+</ul>
+<h3>Operate from the console (UX)</h3>
+<ol>
+<li>Open <code>/volumes</code> and wait for the inventory table.</li>
+<li>Click <strong>Create volume</strong> — pick name, size, policy/intent, tenant; submit starts a durable job.</li>
+<li>Use <strong>Refresh</strong> / <strong>Export CSV</strong>; select rows for bulk delete when needed.</li>
+<li>Open a row → SlideOver: Snapshot, Expand, Create schedule, or delete.</li>
+<li>Watch <strong>Jobs</strong> (<code>/jobs</code>) until create/expand/snapshot succeed.</li>
+<li><strong>Empty / fail:</strong> No volumes → Create volume; empty after create → check Jobs and backend registration.</li>
+<li><strong>Success:</strong> Volume appears with state/size; mutations return <code>202</code> + job id.</li>
+</ol>
+<p>Use <code>http://&lt;host&gt;:5110/</code> for Storage Center (cluster NodePort often <code>:30511</code>, HTTPS <code>:30543</code>). Health: <code>GET /health</code>. Mutations return durable jobs — watch <strong>Jobs</strong>. Never publish lab IPs in customer docs.</p>
+<h3>Related pages</h3>
+<ul>
+<li><a href="snapshots.md">Snapshots</a></li>
+<li><a href="schedules.md">Schedules</a></li>
+<li><a href="../observability/jobs.md">Jobs</a></li>
+<li><a href="../../getting-started.md">Getting Started</a></li>
+<li><a href="../../PAGE_INDEX.md">Page index</a></li>
+</ul>
+<hr>
+<h2>Atlas — Complete page index</h2>
+<p>Every primary navigable dashboard route.</p>
+<p><em>Generated: 2026-09-01 · 32 routes</em></p>
+<p>Regenerate: <code>node scripts/customer-docs/generate-page-index.mjs</code></p>
+<h3>STORAGE</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Route</th>
+<th>Purpose</th>
+<th>Guide</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Command Deck</td>
+<td><code>/</code></td>
+<td>Estate overview — capacity sounding, pool tiles, protection gaps, and quick jumps into volumes, snapshots, and backups.</td>
+<td><a href="pages/storage/home.md">Open</a></td>
+</tr>
+<tr>
+<td>Volumes</td>
+<td><code>/volumes</code></td>
+<td>Intent-backed volume inventory — create, expand, snapshot, schedule, and delete across backends.</td>
+<td><a href="pages/storage/volumes.md">Open</a></td>
+</tr>
+<tr>
+<td>RBD Images</td>
+<td><code>/rbd</code></td>
+<td>Raw Ceph RBD images for machina/libvirt and bare VMs (bypassing CSI).</td>
+<td><a href="pages/storage/rbd.md">Open</a></td>
+</tr>
+<tr>
+<td>Snapshots</td>
+<td><code>/snapshots</code></td>
+<td>Point-in-time volume snapshots — clone or restore into new volumes.</td>
+<td><a href="pages/storage/snapshots.md">Open</a></td>
+</tr>
+<tr>
+<td>Schedules</td>
+<td><code>/schedules</code></td>
+<td>Automate periodic snapshots or backups for a volume.</td>
+<td><a href="pages/storage/schedules.md">Open</a></td>
+</tr>
+</tbody></table>
+<h3>DATA PROTECTION</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Route</th>
+<th>Purpose</th>
+<th>Guide</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Backups</td>
+<td><code>/backups</code></td>
+<td>Volume backups into object buckets — create, restore, and retire copies.</td>
+<td><a href="pages/data-protection/backups.md">Open</a></td>
+</tr>
+<tr>
+<td>Buckets</td>
+<td><code>/buckets</code></td>
+<td>Object gateway buckets for exports and backup destinations.</td>
+<td><a href="pages/data-protection/buckets.md">Open</a></td>
+</tr>
+<tr>
+<td>Protection Status</td>
+<td><code>/protection</code></td>
+<td>Per-volume protection verdict — healthy / degraded / unprotected rollup.</td>
+<td><a href="pages/data-protection/protection.md">Open</a></td>
+</tr>
+</tbody></table>
+<h3>OBSERVABILITY</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Route</th>
+<th>Purpose</th>
+<th>Guide</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Observatory</td>
+<td><code>/observatory</code></td>
+<td>Estate telemetry canvas — capacity lenses and jump to Deck or Alerts.</td>
+<td><a href="pages/observability/observatory.md">Open</a></td>
+</tr>
+<tr>
+<td>Activity</td>
+<td><code>/activity</code></td>
+<td>Recent operator and system activity stream.</td>
+<td><a href="pages/observability/activity.md">Open</a></td>
+</tr>
+<tr>
+<td>Alerts</td>
+<td><code>/alerts</code></td>
+<td>Open alert ledger — silence or resolve before capacity work.</td>
+<td><a href="pages/observability/alerts.md">Open</a></td>
+</tr>
+<tr>
+<td>Metrics</td>
+<td><code>/metrics-dashboard</code></td>
+<td>Ceph-native metric samples and OSD utilization averages.</td>
+<td><a href="pages/observability/metrics-dashboard.md">Open</a></td>
+</tr>
+<tr>
+<td>Jobs</td>
+<td><code>/jobs</code></td>
+<td>Durable async jobs for every mutation — progress, SSE live updates, failure detail.</td>
+<td><a href="pages/observability/jobs.md">Open</a></td>
+</tr>
+<tr>
+<td>Audit</td>
+<td><code>/audit</code></td>
+<td>Compliance trail of state-changing and sensitive actions.</td>
+<td><a href="pages/observability/audit.md">Open</a></td>
+</tr>
+</tbody></table>
+<h3>GOVERNANCE</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Route</th>
+<th>Purpose</th>
+<th>Guide</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Tenants</td>
+<td><code>/tenants</code></td>
+<td>Tenant index — quotas and policy overrides.</td>
+<td><a href="pages/governance/tenants.md">Open</a></td>
+</tr>
+<tr>
+<td>Access</td>
+<td><code>/access</code></td>
+<td>Local users for Storage Center sign-in — create and delete accounts.</td>
+<td><a href="pages/governance/access.md">Open</a></td>
+</tr>
+<tr>
+<td>Policies</td>
+<td><code>/policies</code></td>
+<td>Built-in intent → placement catalog (atlas-policy) used when creating volumes.</td>
+<td><a href="pages/governance/policies.md">Open</a></td>
+</tr>
+<tr>
+<td>Settings</td>
+<td><code>/settings</code></td>
+<td>Console settings — theme and session preferences for Storage Center.</td>
+<td><a href="pages/governance/settings.md">Open</a></td>
+</tr>
+<tr>
+<td>API Docs</td>
+<td><code>/api-docs</code></td>
+<td>Curated REST + gRPC map for operators and integrators.</td>
+<td><a href="pages/governance/api-docs.md">Open</a></td>
+</tr>
+</tbody></table>
+<h3>DATABRIDGE</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Route</th>
+<th>Purpose</th>
+<th>Guide</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Cloud Databases</td>
+<td><code>/databridge/sources</code></td>
+<td>Register external / cloud database sources for DataBridge migrations.</td>
+<td><a href="pages/databridge/databridge-sources.md">Open</a></td>
+</tr>
+<tr>
+<td>Migration Plans</td>
+<td><code>/databridge/plans</code></td>
+<td>Create and list DataBridge migration plans from registered sources.</td>
+<td><a href="pages/databridge/databridge-plans.md">Open</a></td>
+</tr>
+<tr>
+<td>Plan Detail</td>
+<td><code>/databridge/plans/:id</code></td>
+<td>Single migration plan — stages, CDC controls, cutover, and validation hooks.</td>
+<td><a href="pages/databridge/databridge-plans-id.md">Open</a></td>
+</tr>
+<tr>
+<td>Edge DB Clusters</td>
+<td><code>/databridge/edge-clusters</code></td>
+<td>Edge database clusters provisioned as migration targets.</td>
+<td><a href="pages/databridge/databridge-edge-clusters.md">Open</a></td>
+</tr>
+<tr>
+<td>Replication</td>
+<td><code>/databridge/replication</code></td>
+<td>CDC replication streams for active migration plans.</td>
+<td><a href="pages/databridge/databridge-replication.md">Open</a></td>
+</tr>
+<tr>
+<td>Validation</td>
+<td><code>/databridge/validation</code></td>
+<td>Validation runs and per-table results for migrated data.</td>
+<td><a href="pages/databridge/databridge-validation.md">Open</a></td>
+</tr>
+</tbody></table>
+<h3>INFRASTRUCTURE</h3>
+<table>
+<thead>
+<tr>
+<th>Page</th>
+<th>Route</th>
+<th>Purpose</th>
+<th>Guide</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Backends</td>
+<td><code>/backends</code></td>
+<td>Registered storage backends — discovery and capacity summary.</td>
+<td><a href="pages/infrastructure/backends.md">Open</a></td>
+</tr>
+<tr>
+<td>Kubernetes</td>
+<td><code>/kubernetes</code></td>
+<td>Discovered StorageClasses from the attached cluster.</td>
+<td><a href="pages/infrastructure/kubernetes.md">Open</a></td>
+</tr>
+<tr>
+<td>Cluster</td>
+<td><code>/cluster</code></td>
+<td>Primary cluster inventory — health, pools, OSDs.</td>
+<td><a href="pages/infrastructure/cluster.md">Open</a></td>
+</tr>
+<tr>
+<td>Ceph</td>
+<td><code>/ceph</code></td>
+<td>Day-2 Ceph signals — health rollup, df pools, OSD tree.</td>
+<td><a href="pages/infrastructure/ceph.md">Open</a></td>
+</tr>
+<tr>
+<td>Pool Detail</td>
+<td><code>/pools/:id</code></td>
+<td>Single pool sounding — volumes and OSD cells for one pool.</td>
+<td><a href="pages/infrastructure/pools-id.md">Open</a></td>
+</tr>
+<tr>
+<td>Maintenance</td>
+<td><code>/maintenance</code></td>
+<td>Pause the job engine, cordon backends, and clean orphan backups.</td>
+<td><a href="pages/infrastructure/maintenance.md">Open</a></td>
+</tr>
+<tr>
+<td>Disaster Recovery</td>
+<td><code>/dr</code></td>
+<td>Cross-cluster RBD mirroring — peers, mirrors, promote/demote/failover.</td>
+<td><a href="pages/infrastructure/dr.md">Open</a></td>
+</tr>
+</tbody></table>
+<h3>Related</h3>
+<ul>
+<li><a href="README.md">Customer docs home</a></li>
+<li><a href="pages/README.md">Page-by-page guides</a></li>
+</ul>
+</main></body></html>

@@ -1,0 +1,393 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited. */
+/* SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 */
+/**
+ * Any CSS included here will be global. The classic template
+ * bundles Infima by default. Infima is a CSS framework designed to
+ * work well for content-centric websites.
+ *
+ * Design system: large type + generous whitespace + minimal chrome,
+ * in the spirit of Apple's product pages — adapted for a docs site
+ * (readable article pages, not just a marketing hero). Shared across
+ * the whole Zyvor docs-site family; keep repo-specific overrides out
+ * of this file.
+ */
+
+/* Apple-blue palette — matches the MkDocs-based Zyvor docs sites'
+   apple-glass.css (--primary: #0071e3 light / #0a84ff dark).
+   Shared across the whole Zyvor docs-site family. */
+:root {
+  --ifm-color-primary: #0071e3;
+  --ifm-color-primary-dark: #0064cc;
+  --ifm-color-primary-darker: #005bbf;
+  --ifm-color-primary-darkest: #004a99;
+  --ifm-color-primary-light: #1a7fe6;
+  --ifm-color-primary-lighter: #338ce9;
+  --ifm-color-primary-lightest: #66a8ef;
+  --ifm-code-font-size: 95%;
+  --docusaurus-highlighted-code-line-bg: rgba(0, 0, 0, 0.1);
+
+  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, 'SF Pro Display',
+    'SF Pro Text', 'Segoe UI', Roboto, system-ui, sans-serif;
+  --ifm-heading-font-weight: 600;
+  --ifm-line-height-base: 1.6;
+  --ifm-font-color-base: #1d1d1f;
+  --ifm-link-color: #0066cc;
+  --ifm-background-color: #ffffff;
+  --ifm-global-radius: 12px;
+  --ifm-code-border-radius: 8px;
+  --ifm-toc-border-color: rgba(0, 0, 0, 0.08);
+
+  /* Generous, Apple-esque section rhythm — used by hero/section wrappers
+     in src/pages, not by Infima directly. */
+  --zv-section-space: clamp(4rem, 9vw, 9rem);
+  --zv-hero-space: clamp(5rem, 12vw, 11rem);
+}
+
+/* For readability concerns, you should choose a lighter palette in dark mode. */
+[data-theme='dark'] {
+  --ifm-color-primary: #0a84ff;
+  --ifm-color-primary-dark: #0074e6;
+  --ifm-color-primary-darker: #0068cc;
+  --ifm-color-primary-darkest: #0055a8;
+  --ifm-color-primary-light: #3399ff;
+  --ifm-color-primary-lighter: #52a6ff;
+  --ifm-color-primary-lightest: #85c0ff;
+  --docusaurus-highlighted-code-line-bg: rgba(255, 255, 255, 0.1);
+  --ifm-font-color-base: #f5f5f7;
+  --ifm-link-color: #2997ff;
+  --ifm-background-color: #000000;
+  --ifm-background-surface-color: #1d1d1f;
+  --ifm-toc-border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* The hero band itself stays pure black with white text regardless of
+   site theme — apple.com's product-page hero treatment, not a
+   light/dark-mode-dependent color. */
+.hero--primary {
+  --ifm-hero-text-color: #f5f5f7;
+  background: #000;
+}
+
+.hero--primary .button--secondary {
+  color: #000;
+  background: #f5f5f7;
+  border-color: #f5f5f7;
+  border-radius: 980px;
+}
+
+.hero--primary .button--secondary:hover {
+  background: #ffffff;
+  border-color: #ffffff;
+}
+
+.hero--primary .button--outline.button--secondary {
+  color: #f5f5f7;
+  background: transparent;
+  border-color: rgba(245, 245, 247, 0.4);
+  border-radius: 980px;
+}
+
+.hero--primary .button--outline.button--secondary:hover {
+  border-color: #f5f5f7;
+}
+
+.button.button--primary {
+  border-radius: 980px;
+}
+
+/* ---------------------------------------------------------------------
+ * Minimal nav: apple.com's persistent black top bar — thin, translucent,
+ * always dark regardless of the page's light/dark theme.
+ * ------------------------------------------------------------------- */
+.navbar {
+  height: 3.25rem;
+  padding-block: 0;
+  box-shadow: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+  backdrop-filter: saturate(180%) blur(20px);
+  background: rgba(22, 22, 23, 0.8);
+}
+
+.navbar__brand,
+.navbar__link,
+.navbar__title {
+  color: #f5f5f7;
+}
+
+.navbar__link {
+  font-size: 0.8125rem;
+  opacity: 0.85;
+}
+
+.navbar__link:hover,
+.navbar__link--active {
+  color: #ffffff;
+  opacity: 1;
+}
+
+.navbar__brand {
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+.navbar__items--right .navbar__link {
+  font-weight: 500;
+}
+
+/* Docusaurus's light/dark toggle icon defaults to a dark glyph — force it
+   light so it's visible on the always-black navbar. */
+.navbar [class*='toggle'] svg {
+  color: #f5f5f7;
+}
+
+/* ---------------------------------------------------------------------
+ * Hero / section typography used by src/pages/index.tsx across repos.
+ * ------------------------------------------------------------------- */
+.hero__title {
+  font-size: clamp(2.75rem, 6.5vw, 5.5rem);
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  line-height: 1.02;
+}
+
+.hero__subtitle {
+  font-size: clamp(1.05rem, 1.6vw, 1.375rem);
+  font-weight: 400;
+  line-height: 1.5;
+  /* Always on the forced-black hero background (see .hero--primary above),
+     so this stays a fixed light gray rather than a theme-dependent token. */
+  color: #a1a1a6;
+  max-width: 42rem;
+}
+
+/* Scroll-reveal: see src/components/Reveal. Respects prefers-reduced-motion. */
+.zv-reveal {
+  opacity: 0;
+  transform: translateY(24px);
+  transition: opacity 0.7s ease, transform 0.7s ease;
+}
+
+.zv-reveal--visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .zv-reveal {
+    opacity: 1;
+    transform: none;
+    transition: none;
+  }
+}
+
+/* ---------------------------------------------------------------------
+ * Docs article pages: more air, bigger headings, quieter sidebar.
+ * ------------------------------------------------------------------- */
+article .markdown h1 {
+  font-size: 2.5rem;
+  letter-spacing: -0.02em;
+  margin-bottom: 1.5rem;
+}
+
+article .markdown h2 {
+  font-size: 1.75rem;
+  letter-spacing: -0.015em;
+  margin-top: 3rem;
+}
+
+article .markdown h3 {
+  font-size: 1.3rem;
+  letter-spacing: -0.01em;
+  margin-top: 2.25rem;
+}
+
+article .markdown p,
+article .markdown li {
+  font-size: 1.0625rem;
+}
+
+.theme-doc-sidebar-container {
+  border-right: 1px solid var(--ifm-color-emphasis-200) !important;
+}
+
+.menu__link {
+  font-size: 0.9rem;
+  border-radius: 8px;
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  font-weight: 600;
+}
+
+.theme-doc-markdown {
+  max-width: 46rem;
+}
+
+/* ---------------------------------------------------------------------
+ * Apple-style polish: calm surfaces, soft radii, hairline borders.
+ * ------------------------------------------------------------------- */
+html {
+  scroll-behavior: smooth;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
+
+a {
+  text-decoration: none;
+}
+
+article .markdown a:hover,
+.footer__link-item:hover {
+  text-decoration: underline;
+}
+
+/* Docs pages */
+article .markdown h1 {
+  font-size: clamp(2.2rem, 4.5vw, 3.25rem);
+  font-weight: 700;
+  letter-spacing: -0.035em;
+  line-height: 1.08;
+}
+
+article .markdown h2 {
+  font-weight: 650;
+  letter-spacing: -0.025em;
+  padding-top: 0.5rem;
+}
+
+article .markdown > p:first-of-type {
+  font-size: 1.25rem;
+  line-height: 1.5;
+  color: var(--ifm-color-emphasis-700);
+}
+
+article .markdown table {
+  display: table;
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--ifm-toc-border-color);
+  border-radius: 14px;
+  overflow: hidden;
+  font-size: 0.95rem;
+}
+
+article .markdown table th,
+article .markdown table td {
+  border: 0;
+  border-bottom: 1px solid var(--ifm-toc-border-color);
+  padding: 0.7rem 1rem;
+}
+
+article .markdown table tr:last-child td {
+  border-bottom: 0;
+}
+
+article .markdown table tr {
+  background: transparent !important;
+}
+
+article .markdown table th {
+  background: var(--ifm-color-emphasis-100);
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  color: var(--ifm-color-emphasis-700);
+}
+
+article .markdown code:not(pre code) {
+  border: 0;
+  border-radius: 6px;
+  background: var(--ifm-color-emphasis-100);
+  padding: 0.12em 0.4em;
+}
+
+article .markdown pre,
+div[class*='codeBlockContainer'] {
+  border-radius: 14px;
+  box-shadow: none;
+}
+
+.alert {
+  border: 0;
+  border-left: 0;
+  border-radius: 16px;
+  background: var(--ifm-color-emphasis-100);
+  color: var(--ifm-font-color-base);
+  box-shadow: none;
+}
+
+[data-theme='dark'] .alert {
+  background: #1d1d1f;
+}
+
+.pagination-nav__link {
+  border: 0;
+  border-radius: 18px;
+  background: var(--ifm-color-emphasis-100);
+  transition: background 0.2s ease;
+}
+
+.pagination-nav__link:hover {
+  background: var(--ifm-color-emphasis-200);
+}
+
+.table-of-contents__link--active {
+  font-weight: 600;
+}
+
+.theme-doc-sidebar-container {
+  border-right-color: var(--ifm-toc-border-color) !important;
+}
+
+.menu__link:hover {
+  background: var(--ifm-color-emphasis-100);
+}
+
+.menu__link--active:not(.menu__link--sublist) {
+  background: rgba(0, 113, 227, 0.1);
+  color: var(--ifm-color-primary);
+}
+
+/* Footer: apple.com's quiet light-grey legal footer */
+.footer {
+  background: #f5f5f7;
+  color: #6e6e73;
+  font-size: 0.8125rem;
+  border-top: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.footer .footer__title {
+  color: #1d1d1f;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.footer .footer__link-item {
+  color: #424245;
+}
+
+.footer .footer__copyright {
+  color: #6e6e73;
+}
+
+[data-theme='dark'] .footer {
+  background: #161617;
+  color: #86868b;
+  border-top-color: rgba(255, 255, 255, 0.1);
+}
+
+[data-theme='dark'] .footer .footer__title {
+  color: #f5f5f7;
+}
+
+[data-theme='dark'] .footer .footer__link-item {
+  color: #a1a1a6;
+}

@@ -1,0 +1,51 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  schedule:
+    # Mondays 06:00 UTC — catches newly-published CodeQL query packs even on quiet weeks.
+    - cron: "0 6 * * 1"
+
+permissions:
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (${{ matrix.language }})
+    runs-on: ubuntu-latest
+    # security-events:write is scoped to this job, not the workflow default, since it's the only
+    # one of the two that needs it (there's only one job here, but Scorecard's Token-Permissions
+    # check wants write grants declared at the job that uses them, not the workflow top level).
+    permissions:
+      contents: read
+      security-events: write
+    strategy:
+      fail-fast: false
+      matrix:
+        language: [javascript-typescript, rust]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      # Rust is a compiled language for CodeQL — it needs the same native deps as ci.yml's
+      # build-test job (protoc for the gRPC crates, cmake+libcurl for the kafka-lag feature's
+      # vendored librdkafka) before `autobuild` can compile the workspace.
+      - if: matrix.language == 'rust'
+        uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - if: matrix.language == 'rust'
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
+
+      # init, autobuild and analyze must be the same release: analyze refuses a config written by
+      # a different init version. Bump all three together.
+      - uses: github/codeql-action/init@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          languages: ${{ matrix.language }}
+
+      - uses: github/codeql-action/autobuild@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+
+      - uses: github/codeql-action/analyze@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        with:
+          category: "/language:${{ matrix.language }}"

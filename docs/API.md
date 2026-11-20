@@ -1,0 +1,831 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# Atlas API Reference (v1)
+
+> Atlas also exposes a **gRPC edge** (`tonic`) on `ATLAS_GRPC_ADDR` (default `:5111`, NodePort 30512
+> in the ceph deployment): service `atlas.v1.AtlasStorage` with `Health`, `ListClusters/Pools/Volumes`,
+> `GetVolume`, `CreateVolume` (→ job; takes an `Owner` recorded in `product_bindings`), `DeleteVolume`
+> (→ job, admin), `CreateSnapshot` (→ job, operator), `ListVolumesByOwner(product, resource_id?)` so a
+> product enumerates only the volumes it owns, `GetJob`, `WatchJob` (server-streaming job updates),
+> `ListAlerts`, `GetMetricsSummary`, `ListBuckets`. Auth: HS256 JWT in `authorization` metadata when
+> `ATLAS_AUTH_REQUIRED=1`, with the same role hierarchy as REST. Every call also checks the token's `jti`
+> against the revocation list (a database error lets the call through, as on REST), and a non-admin
+> caller is confined to its own tenant: `ListVolumes`, `GetVolume`, `ListVolumesByOwner`, `ListSnapshots`,
+> `ListBuckets` and `ListTenants` return only that tenant's rows, `GetVolume`, `ExpandVolume` and
+> `CreateSnapshot` answer `not_found` for another tenant's volume, and `CreateVolume` for another tenant is
+> `permission_denied`. Clusters, pools, alerts, metrics and jobs are not tenant-filtered (nor on REST).
+> Server reflection is enabled, so:
+> `grpcurl -plaintext <host>:5111 list` and `grpcurl -plaintext <host>:5111 atlas.v1.AtlasStorage/ListPools`.
+> The proto is at `crates/atlas-gateway/proto/atlas.proto`. Product ownership conventions: [PRODUCTS.md](PRODUCTS.md).
+> In-console curated map: **API Docs** page (`/api-docs`).
+
+> **Go client:** [`clients/go`](../clients/go/README.md) (`github.com/zyvorai/atlas/clients/go`,
+> stdlib-only), contract-tested against a live gateway in CI.
+
+Base path: `/api/atlas/v1`. All responses are JSON. Errors use
+`{ "error": { "code": "...", "message": "..." } }` with an appropriate HTTP status.
+
+MVP covers the full control plane: inventory, async write path, day-2 ops, DR scaffolding,
+DataBridge, and the embedded console. See [ROADMAP.md](ROADMAP.md) for deferred items.
+
+Auth: when `ATLAS_AUTH_REQUIRED=1`, send `Authorization: Bearer <HS256 JWT>`.
+When `0` (dev default), routes are open and the actor is `anonymous`.
+
+## Meta
+
+### `GET /health`
+```json
+{ "status": "ok" }
+```
+
+### `GET /livez`
+Liveness probe — process is up (always `200` when the listener accepts).
+
+### `GET /readyz`
+Readiness deep-check: SQLite open, Ceph/fake driver, optional k8s. Returns `200` when ready,
+`503` with per-check detail when not.
+
+### `GET /doctor`
+Operator one-pager (unauthenticated, like `/readyz`). Always `200`; use `ok` in the body (and
+`/readyz` when you need a `503` for kubelet). Rolls up readiness, inventory counts, open alerts,
+jobs by state and backend breakdown:
+
+```json
+{
+  "ok": true,
+  "product": "atlas",
+  "version": "0.13.0",
+  "api": "v1",
+  "ready": { "ok": true, "components": { "…": "…" } },
+  "inventory": {
+    "volumes": 0, "snapshots": 0, "buckets": 0, "backups": 0,
+    "pools": 0, "clusters": 0,
+    "raw_capacity_bytes": 0, "used_capacity_bytes": 0
+  },
+  "alerts_open": 0,
+  "jobs_by_state": {},
+  "backends": []
+}
+```
+
+`atlasctl doctor` hits this route.
+
+### `GET /version`
+```json
+{ "name": "atlas-gateway", "version": "0.1.0", "api": "v1" }
+```
+
+### `GET /metrics`
+Prometheus text exposition of Atlas's own gauges (unauthenticated, like `/health`).
+
+### `GET /api/atlas/v1/events`
+Unified activity feed (audit + jobs + alerts). Optional `?limit=`.
+
+## Backends
+
+### `GET /api/atlas/v1/backends`
+List registered backends.
+```json
+[{ "id": "bkd_ceph_lab", "name": "zyvor-ceph-lab", "backend_type": "ceph",
+   "mode": "managed_rook", "status": "active",
+   "capabilities": { "block": true, "file": true, "object": true,
+                     "snapshots": true, "clone": true, "expansion": true, "replication": true },
+   "connection_ref": null }]
+```
+
+### `POST /api/atlas/v1/backends`
+Register a backend row (no cluster lifecycle; starts `pending`).
+```json
+// request
+{ "name": "ceph-prod", "backend_type": "ceph", "mode": "external" }
+```
+`backend_type` ∈ `ceph|nfs|zfs|san|cloud_block|kubernetes` (default `ceph`).
+`mode` ∈ `managed_rook|external|read_only` (default `external`).
+
+A `ceph` body that includes `mon_host` and/or `conf_path` (optional `keyring_path`, `ceph_user`)
+registers a live `RealCephDriver` and returns `status: active`. Those fields are paths and monitor
+addresses on the gateway host; the keyring file is not stored. Without them, Ceph stays `pending`.
+See [CEPH_EXTERNAL.md](CEPH_EXTERNAL.md).
+
+### `POST /api/atlas/v1/backends/{id}/discover`
+Run a discovery pass for the backend and persist inventory (PDF §8.1). Writes an audit row. Also
+reconciles any snapshot still stuck `creating` (re-checks the underlying VolumeSnapshot's
+`readyToUse` status) — previously only the periodic monitor tick did this, so a manual resync was
+a no-op for a stuck snapshot.
+```json
+{ "state": "succeeded",
+  "summary": { "backend_id": "bkd_ceph_lab", "cluster_id": "cls_5ace73d1-...",
+               "pools": 1, "osds": 1, "volumes": 1 } }
+```
+
+## Clusters & inventory
+
+### `GET /api/atlas/v1/clusters`
+```json
+[{ "id": "cls_5ace73d1-...", "backend_id": "bkd_ceph_lab", "name": "bkd_ceph_lab",
+   "native_fsid": "5ace73d1-c30c-4e93-9970-d665de3b05a2", "health": "warn",
+   "raw_capacity_bytes": 1000204886016, "used_capacity_bytes": 27631616,
+   "available_capacity_bytes": 1000177254400 }]
+```
+
+### `GET /api/atlas/v1/clusters/{id}/health`
+```json
+{ "status": "warn", "summary": "WARN", "raw_capacity_bytes": 1000204886016,
+  "used_capacity_bytes": 27631616, "available_capacity_bytes": 1000177254400,
+  "recovering": false, "degraded_objects": 0 }
+```
+
+### `GET /api/atlas/v1/clusters/{id}/capabilities`
+Returns the backend's capability flags for that cluster.
+
+### `GET /api/atlas/v1/nodes`
+Storage nodes (derived from distinct OSD hosts in the MVP): `[{ "host": "node01" }]`.
+
+### `GET /api/atlas/v1/osds`
+```json
+[{ "id": 0, "cluster_id": "cls_5ace73d1-...", "up": true, "in_cluster": true,
+   "device_class": "hdd", "host": null, "used_bytes": null, "capacity_bytes": null }]
+```
+
+### `GET /api/atlas/v1/ceph/devices`
+The drives Ceph tracks (`ceph device ls`: device id, host and path, the OSD daemons on it, and its life
+expectancy window), plus a `summary` listing the drives Ceph predicts will fail within 90 days (`at_risk`,
+with `already_due` once the window has passed). A drive with no prediction is not known to be healthy, only
+not known to be failing: predictions need Ceph's device-health module to be on and to have scraped it.
+Read-only.
+
+### `GET /api/atlas/v1/pools`
+Filters: `?backend=&kind=` (kind in rbd|cephfs_data|cephfs_metadata|rgw|nfs_export|other).
+```json
+[{ "id": "pool_1", "cluster_id": "cls_5ace73d1-...", "name": "rbd-nvme-prod",
+   "kind": "rbd", "device_class": null, "replica_size": null,
+   "used_bytes": 8192, "max_bytes": 950167011328, "health": "ok" }]
+```
+`kind` ∈ `rbd|cephfs_data|cephfs_metadata|rgw|other`.
+
+### `GET /api/atlas/v1/volumes` · `GET /api/atlas/v1/volumes/{id}`
+Filters: `?state=&tenant=&backend=&kind=` (kind in block|filesystem|object).
+```json
+[{ "id": "vol_rbd-nvme-prod_csi-vol-fe4aa484-...", "cluster_id": "cls_5ace73d1-...",
+   "pool_id": "pool_1", "name": "csi-vol-fe4aa484-...", "kind": "block",
+   "backend_native_id": "rbd-nvme-prod/csi-vol-fe4aa484-...",
+   "size_bytes": 2147483648, "used_bytes": null, "state": "available",
+   "health": "ok", "kubernetes_namespace": null, "pvc_name": null,
+   "storage_class_name": null }]
+```
+`GET /volumes/{id}` returns `404 NOT_FOUND` when the id is unknown.
+
+### `GET /api/atlas/v1/metrics/summary`
+Aggregate capacity across clusters (PDF §13.2 overview cards).
+```json
+{ "raw_capacity_bytes": 1000204886016, "used_capacity_bytes": 27631616,
+  "available_capacity_bytes": 1000177254400, "clusters": 1, "pools": 1, "volumes": 1 }
+```
+
+### `GET /api/atlas/v1/metrics/ceph[?prefix=ceph_osd]`
+Latest Ceph metrics scraped from the mgr Prometheus module (PDF §15.1). A curated whitelist
+(capacity, OSD up/in/latency, pool usage, pg, health), latest value per (name, labels).
+```json
+[{ "name": "ceph_cluster_total_bytes", "value": 1000204886016.0, "labels": {} },
+ { "name": "ceph_osd_apply_latency_ms", "value": 11.0, "labels": { "ceph_daemon": "osd.0" } }]
+```
+
+### `GET /api/atlas/v1/alerts[?state=open]`
+Alerts produced by the monitor worker (PDF §15.2): cluster unhealthy, pool near-full (75/85%),
+OSD down, capacity forecast, **jobs failing (last 15m), CDC replication error, tenant quota
+approaching (80/95%)**. Filter by `state` (`open`/`resolved`). Records also carry
+`acknowledged_at`/`acknowledged_by`/`silenced_until`.
+```json
+[{ "id": "alert_cluster_unhealthy_cls_5ace73d1-...", "severity": "warning", "source": "monitor",
+   "resource_type": "cluster", "resource_id": "cls_5ace73d1-...",
+   "title": "Cluster health degraded", "description": "Cluster ... is HEALTH_WARN",
+   "evidence": { "health": "warn" }, "state": "open", "created_at": "...", "resolved_at": null }]
+```
+
+### `POST /api/atlas/v1/alerts/evaluate`
+Run the alert rules on demand (also runs every `ATLAS_MONITOR_INTERVAL_SECS`).
+```json
+{ "evaluated": true, "open_alerts": 1 }
+```
+
+### Alert lifecycle (operator, day-2)
+- `POST /api/atlas/v1/alerts/{id}/ack` — record that an operator has seen it (not a resolve).
+- `POST /api/atlas/v1/alerts/{id}/silence[?secs=3600]` — suppress webhook delivery for a window
+  (default 1h, max 30d); the condition keeps being tracked and still shows in `/alerts`.
+- `POST /api/atlas/v1/alerts/{id}/resolve` — operator override to resolve an open alert.
+
+### Maintenance & cluster ops (admin, day-2)
+- `POST /api/atlas/v1/backends/{id}/cordon` · `/uncordon` — stop / resume new provisioning onto a
+  backend (existing volumes untouched). A create against a cordoned backend returns **503**.
+- `GET /api/atlas/v1/maintenance` · `POST /api/atlas/v1/maintenance {"paused":true|false}` — pause /
+  resume the job engine. Paused jobs stay `queued` (the worker holds them) and drain when resumed.
+- `POST /api/atlas/v1/osds/{osd_id}/out` · `/in` · `/reweight?weight=0.8` — OSD maintenance as async
+  jobs (`ceph osd out|in|reweight`); `202 + job id`.
+- `GET /api/atlas/v1/osds/ok-to-stop?ids=0,1` — would stopping these OSDs together leave every placement
+  group available (`ceph osd ok-to-stop`)? Read-only. Returns `{ok_to_stop, osd_ids, detail}`; a `false`
+  answer carries Ceph's PG counts and reason in `detail` rather than being an error. `404` for an OSD that does
+  not exist, `400` for a missing, malformed or oversized (over 64) `ids`. Ask this before taking a node down.
+- `POST /api/atlas/v1/rbd-images/{pool}/{image}/qos?iops=&bps=` — per-image QoS throttle
+  (`rbd config image set rbd_qos_*_limit`); `0` clears a cap; `202 + job id` (operator).
+- `POST /api/atlas/v1/rbd-images/{pool}/{image}/resize` `{size_bytes, allow_shrink}` — resize an RBD
+  image; shrink requires `allow_shrink: true` (guarded).
+- `POST /api/atlas/v1/rbd-images/{pool}/{image}/migrate?dest_pool=<pool>` — live-migrate an image to
+  another pool (`rbd migration`).
+- `GET /api/atlas/v1/maintenance/orphans` — day-2 hygiene: backups whose source volume no longer
+  exists (dangling catalog rows). Clean each via `DELETE /backups/{id}`.
+- `GET /api/atlas/v1/upgrade/preflight` — health-gated "safe to upgrade?" verdict: no HEALTH_ERR
+  cluster, no open critical alerts, no in-flight jobs, no lagging CDC → `{ "ready": bool, "checks":
+  [...], "blockers": [...] }`. `scripts/deploy-remote.sh` gates on this (and supports `--rollback`).
+
+### Cross-cluster DR (RBD mirroring, admin, day-2)
+> Control-plane catalog + hardened failover API. One-way and two-way (`rx-tx`) `rbd mirror` with
+> clean failback, journal and pool modes, and local consistency groups were verified live between two Rook clusters (see [DR.md](DR.md)). Fake mode skips
+> the CLI so drills succeed.
+- `POST /api/atlas/v1/dr/peers` · `GET /dr/peers` · `DELETE /dr/peers/{id}` — peer catalog (`secret_ref` only).
+- `POST /api/atlas/v1/volumes/{id}/mirror?mode=snapshot|journal&peer=<id>` · `DELETE .../mirror` — enable / disable (peer required).
+- `GET /api/atlas/v1/dr/mirrors` · `GET /dr/status` · `GET /dr/preflight` — catalog, posture, checklist.
+- `GET /api/atlas/v1/dr/mirrors/{id}/status` — live `rbd mirror image status`, `promote_ready`, `promote_blocker`;
+  journal mode adds `journal_peers_replayed` (read it on the demoted site).
+- `POST /api/atlas/v1/dr/mirrors/{id}/promote?force=0|1&peer_replayed=0|1` · `/demote` · `/resync` — failover with role guards;
+  in real mode a non-forced promote is 409 until this site has replayed the peer's demotion. In journal mode it also
+  needs `peer_replayed=1`, after the peer reports `journal_peers_replayed: true`.
+- `POST /api/atlas/v1/dr/failover` `{ mirror_id, confirm: true, force?, peer_replayed? }` — confirm-gated runbook.
+- `POST /api/atlas/v1/dr/mirrors/{id}/rpo` `{ rpo_seconds }` — record observed RPO.
+- `GET /api/atlas/v1/dr/pools/{pool}/mirroring` · `PUT ... {"mode":"image"|"pool"|"disabled"}` — pool mirroring mode
+  (live `rbd mirror pool info` in real mode). In a `pool`-mode pool only `mode=journal` image enables are accepted.
+- `POST /api/atlas/v1/volume-groups` `{ name, volume_ids }` · `GET /volume-groups` · `GET|DELETE /volume-groups/{id}` —
+  multi-image consistency groups (`rbd group`; all members in one pool, one group per volume).
+- `POST /api/atlas/v1/volume-groups/{id}/snapshots` `{ name }` · `GET .../snapshots` · `DELETE .../snapshots/{snap}` —
+  crash-consistent group snapshots. `POST .../snapshots/{snap}/rollback` `{ confirm: true }` is a job (admin).
+  Group snapshots are local to one cluster: rbd-mirror does not replicate them (see DR.md).
+
+## Write path (async jobs) — slice 2
+
+All write operations enqueue a job and return **`202 Accepted`** with a `job_id`; poll
+`GET /jobs/{id}` for progress. The job state machine is
+`pending → queued → running → verifying → succeeded | failed` (PDF §10.5).
+
+### `POST /api/atlas/v1/volumes`
+Create a Ceph-backed volume (a PVC). Intent `policy` is resolved to a StorageClass by `atlas-policy`;
+`kubernetes.storage_class` overrides it. Idempotent on `(tenant_id, name, size_bytes)` (PDF §17.4).
+A named policy's storage kind is **authoritative over the request's `kind` field** — e.g.
+`policy: "shared"` always provisions CephFS (`kind: "filesystem"`) regardless of what `kind` the
+request sends or defaults to; the resolved kind is what gets persisted to inventory. `name` is
+validated as a Kubernetes resource name (RFC 1123: lowercase alphanumeric, `-`/`.`, must start/end
+alphanumeric) — an invalid name is rejected with `400 VALIDATION_ERROR` up front rather than being
+accepted with `202` and failing later with a raw Kubernetes API error. Likewise, a `policy` value
+that isn't a known built-in intent and isn't a tenant-specific policy
+(`PUT /tenants/{id}/policies/{intent}`) is rejected with `400 VALIDATION_ERROR` rather than silently
+falling back to the kind's default placement — a typo in `policy` fails loudly instead of quietly
+provisioning storage the caller didn't ask for.
+```json
+// request
+{ "tenant_id": "tenant_acme", "name": "billing-db-root", "size_bytes": 3221225472,
+  "kind": "block", "policy": "database",
+  "owner": { "product": "veyron", "resource_type": "virtual_machine",
+             "resource_id": "vm_01", "role": "root_disk" },
+  "kubernetes": { "namespace": "default", "create_pvc": true } }
+// 202 response
+{ "job_id": "job_3819884b6149", "state": "queued",
+  "resource": { "volume_id": "vol_b16c40e12b76", "storage_class": "zyvor-rbd-prod",
+                "namespace": "default", "pvc": "billing-db-root" },
+  "links": { "job": "/api/atlas/v1/jobs/job_3819884b6149" } }
+```
+CephFS shared/RWX volume (see also "CephFS shared volumes (RWX)" in ROADMAP.md):
+```json
+// request — kind is optional and, if given, is overridden to "filesystem" by the "shared" policy
+{ "tenant_id": "tenant_acme", "name": "iso-library", "size_bytes": 107374182400,
+  "policy": "shared", "kubernetes": { "namespace": "default", "create_pvc": true } }
+```
+
+### `DELETE /api/atlas/v1/volumes/{id}`
+Delete the PVC + inventory row (async job). `404` if the volume is unknown.
+
+### `POST /api/atlas/v1/volumes/{id}/expand`
+```json
+{ "new_size_bytes": 6442450944 }
+```
+`400` if not larger than the current size.
+
+### `POST /api/atlas/v1/volumes/{id}/import`
+Stream a raw disk image from an HTTP(S) server into an atlas-native volume and verify it (async job).
+```json
+{ "url": "http://images.internal/disk.raw", "sha256": "<64 hex>", "size_bytes": 42949672960 }
+```
+`403` unless the host is in `ATLAS_IMPORT_ALLOWED_HOSTS`, `400` for a bad URL, checksum or size, `404` for an
+unknown volume. Operator role. See [IMAGE_IMPORT.md](IMAGE_IMPORT.md).
+
+### `POST /api/atlas/v1/volumes/{id}/snapshots`
+Create a VolumeSnapshot from the volume's PVC (async job).
+```json
+{ "name": "optional-name", "snapshot_class": "zyvor-rbd-snapclass", "if_not_exists": false }
+```
+Snapshot names are **not unique**: by default every call makes a new snapshot, even with a name the
+volume already has. `if_not_exists: true` (optional, default `false`) makes the call return the
+volume's existing snapshot of that name instead, as `200 { "snapshot_id", "volume_id", "name",
+"state", "existing": true }` (the oldest one, if there are several). It is best effort, a read
+followed by a create: two requests racing can each pass the check and both create (on one gateway or
+across replicas), and on the Kubernetes path a snapshot whose job has not yet written its row is not
+seen. There is deliberately no unique index (workspaces, protection schedules and other callers rely
+on creating same-named snapshots). `atlasctl checkpoint seal` uses it, then removes its own newer
+duplicate if a race still produced one.
+
+### `POST /api/atlas/v1/snapshots/{id}/clone`
+Provision a new **independent** volume (PVC) populated from the snapshot (`dataSource`). `name` is
+required; `namespace`/`storage_class`/`size_bytes` default from the source volume.
+```json
+{ "name": "clone-of-demo", "namespace": "default" }
+// 202 → resource: { volume_id, from_snapshot, mode: "clone", pvc, storage_class }
+```
+
+### `POST /api/atlas/v1/snapshots/{id}/restore`
+Provision a point-in-time copy of the source volume from the snapshot. Same body as clone; `name`
+defaults to `restore-<snap-suffix>`. `resource.mode` is `"restore"`.
+
+### `DELETE /api/atlas/v1/snapshots/{id}[?force=true]`
+Delete the VolumeSnapshot + snapshot row (async job). **Blocked with `409 CONFLICT`** if any volume
+was cloned/restored from it (PDF §8.3); pass `?force=true` to override.
+
+## Direct RBD (bypassing CSI)
+
+The **only** bypass-CSI surface in Atlas — for non-Kubernetes consumers (machina/libvirt, bare VMs)
+that need a raw RBD image with no PVC. Every other backend (NFS, ZFS, CephFS) goes through the
+`POST /volumes` PVC path above. Direct-RBD create/clone get the same admission checks as `POST
+/volumes`: **cordon check** (`503` if the backend is cordoned), a **name-collision check** (`409`
+if `backend_native_id` already exists), **quota admission**, and an **audit-log record**. Volume ids
+are deterministic (`vol_{pool}_{image}`) and `backend_native_id` is `rbd:{pool}/{image}` — stable
+across resize/flatten and rewritten by migrate, which keeps DR mirroring and QoS pointed at the
+right image.
+
+- `POST /api/atlas/v1/rbd-images {name, size_bytes, pool?}` — `rbd create`; records a volume row
+  (no PVC). `202 + job id`. `atlasctl create-rbd-image`.
+- `GET /api/atlas/v1/rbd-images[?pool=]` — list RBD images (from inventory).
+- `DELETE /api/atlas/v1/rbd-images/{pool}/{image}` — `rbd rm`; `202 + job id`.
+- `POST /api/atlas/v1/rbd-images/{pool}/{image}/clone {name, snap?}` — snapshot + protect the base,
+  `rbd clone` a COW copy (golden-image → per-VM workflow). `202 + job id`.
+- `GET /api/atlas/v1/rbd-images/{pool}/{image}/snapshots` · `POST .../snapshots {name}` — list / take
+  a raw RBD snapshot.
+- `POST /api/atlas/v1/rbd-images/{pool}/{image}/rollback {snap}` — `rbd snap rollback`.
+- `DELETE /api/atlas/v1/rbd-images/{pool}/{image}/snapshots/{snap}` — unprotect + `rbd snap rm`
+  (idempotent: an already-unprotected snap is treated as success).
+- `POST /api/atlas/v1/rbd-images/{pool}/{image}/flatten` — detach a COW clone from its parent
+  snapshot. `202 + job id`.
+- `POST /api/atlas/v1/rbd-usage/refresh` — recompute `used_bytes` via `rbd du` for every volume
+  (resolves the image from the `rbd:` id, or the PVC→PV for CSI volumes). `atlasctl refresh-usage`.
+
+See also QoS/resize/migrate under "Maintenance & cluster ops" above — those are day-2 operator
+actions on an existing RBD image, not creation.
+
+## Object storage & backups (RGW) — slice 3
+
+### `POST /api/atlas/v1/buckets`
+Provision an RGW bucket via an ObjectBucketClaim (async job). `name` is validated as a Kubernetes
+resource name (same RFC 1123 rule as `POST /volumes`) — invalid names are rejected up front with
+`400 VALIDATION_ERROR`. The inventory row is only written once the OBC create call is accepted by
+Kubernetes (from the job dispatcher, not this endpoint) — a failed create (bad name, cordoned
+backend, cluster issue) leaves **no** row behind, rather than a permanent orphan with
+`bucket_name: null`.
+```json
+{ "name": "atlas-backups", "namespace": "rook-ceph", "storage_class": "zyvor-rgw-bucket",
+  "max_objects": 1000, "max_size": "2G", "object_lock": false }
+// 202 → resource: { bucket_id, namespace }
+```
+`max_objects` / `max_size` (optional) set an RGW per-bucket quota (enforced via `radosgw-admin`,
+best-effort — the job result's `quota_set` field is `false` if the quota call failed or timed out,
+even though the job itself still reports `succeeded`; every `radosgw-admin` call is bounded to 12s
+so it can no longer wedge the single-threaded job queue). `object_lock: true` asks for S3 Object
+Lock. Rook's ObjectBucketClaim cannot set that header, so the job deletes the empty bucket the claim
+just created and recreates it with `x-amz-bucket-object-lock-enabled` using the claim's credentials.
+
+### `GET /api/atlas/v1/buckets/{id}/stats`
+RGW usage + quota for the bucket (`radosgw-admin bucket stats`, 12s bound). Soft-fails instead of
+erroring — `available: false` on timeout/driver error (e.g. no `radosgw-admin` binary in a
+fake-driver deployment) so the console can show "unavailable" instead of hanging or crashing.
+```json
+{ "bucket_id": "bkt_9624f5a6596f", "bucket": "atlas-backups-63f4f511-...", "available": true,
+  "num_objects": 42, "size_bytes": 1048576, "quota": { "max_objects": 1000 } }
+```
+
+### `GET /api/atlas/v1/buckets` · `GET /api/atlas/v1/buckets/{id}`
+```json
+[{ "id": "bkt_9624f5a6596f", "tenant_id": "global", "name": "atlas-backups",
+   "bucket_name": "atlas-backups-63f4f511-...", "endpoint": "http://rook-ceph-rgw-...:80",
+   "region": "us-east-1", "secret_ref": "atlas-backups", "namespace": "rook-ceph",
+   "state": "bound", "created_at": "..." }]
+```
+`secret_ref` is the Kubernetes Secret name holding the S3 credentials — the keys are never returned.
+
+### `DELETE /api/atlas/v1/buckets/{id}[?force=true]`
+Delete the bucket: removes its ObjectBucketClaim (Rook releases the bucket) + row (async job).
+**Blocked with `409`** if backups still reference the bucket; `?force=true` overrides. Requires operator.
+
+### `POST /api/atlas/v1/backup-jobs`
+Snapshot a volume and write a backup manifest to a (bound) bucket over S3, verifying the write.
+```json
+{ "volume_id": "vol_cfe1c97958f3", "bucket_id": "bkt_9624f5a6596f", "mode": "manifest",
+  "keep": 0, "max_age_secs": 0 }
+// 202 → resource: { backup_id, object_key, bucket_id }
+```
+`keep` (default `ATLAS_BACKUP_KEEP`, 0=unlimited) retains only the most recent N backups for the
+volume, pruning older ones. `max_age_secs` (default `ATLAS_BACKUP_MAX_AGE_SECS`, 0=disabled) prunes
+backups for the volume older than the cutoff. Both prune via delete jobs after the backup completes.
+List with `GET /api/atlas/v1/backups?volume_id=<id>` to scope to one volume.
+`mode` (default `manifest`) — `data` also exports the **real RBD image data** (`rbd export-diff`) to
+`<object_key>.rbd-diff` in the bucket and records `data_bytes`/`data_checksum` in the manifest. The
+data is **streamed** `rbd export-diff` → S3 multipart upload (16 MiB parts, sha256 over the stream) —
+there is no in-memory size cap. Restore streams the object back into `rbd import-diff`.
+`400` if the bucket is not `bound`; `404` if the volume/bucket is unknown.
+
+### `GET /api/atlas/v1/jobs/{id}/watch`
+**Server-Sent Events** (`text/event-stream`): emits the job on each state change until it reaches a
+terminal state (REST parity with the gRPC `WatchJob` stream).
+```
+event: job
+data: {"id":"job_...","state":"running","progress_percent":5,...}
+
+event: job
+data: {"id":"job_...","state":"succeeded","progress_percent":100,...}
+```
+
+### `POST /api/atlas/v1/restore-jobs`
+Restore a volume from a backup (PDF §16, DR-2): the job reads + checksum-verifies the backup
+manifest from RGW, then provisions a **new PVC from the backup's VolumeSnapshot**.
+```json
+{ "backup_id": "bkp_915f18cde6e7f0cf", "name": "restored-vol", "mode": "snapshot" }
+// 202 → resource: { volume_id, from_backup, namespace, pvc }
+```
+`mode` (default `snapshot`) restores from the CSI VolumeSnapshot; `data` reconstructs the volume from
+the RBD diff in S3 (creates an empty PVC → downloads + checksum-verifies the diff → `rbd import-diff`).
+`404` if the backup is unknown.
+
+### `DELETE /api/atlas/v1/backups/{id}`
+Remove a backup: deletes its S3 manifest + `.rbd-diff` data objects (idempotent) and the RBD
+snapshot (best-effort), then the row (async job). `202 + job id`. Requires operator.
+
+### `GET /api/atlas/v1/backups/{id}/download?what=data|manifest`
+Returns a **time-limited presigned S3 URL** for the backup object, signed with the bucket's
+credentials (read in-cluster, never returned). The client downloads straight from RGW.
+```json
+{ "url": "http://rook-ceph-rgw-...svc/<bucket>/<key>?X-Amz-...", "object_key": "backups/.../....rbd-diff",
+  "expires_in_secs": 900 }
+```
+`what` = `manifest` (default) or `data` (the `.rbd-diff` object). Needs a reachable cluster (`502` otherwise).
+When `ATLAS_RGW_PUBLIC_ENDPOINT` is set the URL is signed against that public host (e.g.
+`http://<node-ip>:30513/...`) so it resolves off-cluster; otherwise the bucket's in-cluster endpoint
+is used. The signature binds to the host, so the client must connect to the endpoint in the URL.
+
+### `GET /api/atlas/v1/backups` · `GET /api/atlas/v1/backups/{id}`
+```json
+[{ "id": "bkp_691e0b1e464b604c", "tenant_id": "global", "volume_id": "vol_cfe1c97958f3",
+   "snapshot_id": "snap_697f4a9351c9", "bucket_id": "bkt_9624f5a6596f",
+   "object_key": "backups/vol_cfe1c97958f3/bkp_691e0b1e464b604c.manifest.json",
+   "format": "manifest-v1", "checksum": "8495f123...", "state": "verified", "created_at": "..." }]
+```
+
+## DataBridge — cloud-to-edge DB migration
+
+Migrate managed cloud databases to edge databases on Ceph RBD. Source kinds:
+`postgres` · `mysql` · `mariadb` · `oracle` · `sqlserver` · `mongodb` (homogeneous or
+heterogeneous per [DATABRIDGE.md](DATABRIDGE.md)). Stage triggers return `202 + job id`
+(track via `/jobs/{id}/watch`); reads return inventory rows.
+
+### Sources
+- `GET /api/atlas/v1/databridge/sources` · `POST` — list / register
+  (`{name, kind, cloud, endpoint, port, database, secret_ref, secret_namespace, tls_mode, driver_mode: fake|real}`).
+- `GET`/`DELETE /api/atlas/v1/databridge/sources/{id}` — get / delete.
+- `POST /api/atlas/v1/databridge/sources/{id}/discover` — introspect schema (job).
+
+### Plans & pipeline
+- `GET /api/atlas/v1/databridge/plans` · `POST` — list / create (`{name, source_id, rollback_window_secs?}`).
+- `GET`/`DELETE /api/atlas/v1/databridge/plans/{id}`
+- `POST .../assess` · `.../provision` · `.../full-load` — readiness, edge CR, dump→load (jobs).
+- `POST .../cdc/start` · `.../cdc/stop` · `.../cdc/restart` — Debezium CDC control (jobs).
+  Real `stop` deletes the source/sink `KafkaConnector` CRs (KafkaConnect stays up); `restart`
+  re-applies them (self-heal; also auto-triggered by the reconciler up to 3 times).
+- `POST .../validate` — row-count/checksum compare (job).
+- `POST .../cutover` — **admin, guarded** (validated + validation passed + CDC lag under threshold).
+  Real mode leaves the cutover `draining`; the reconciler completes once lag is **zero** (tears down
+  connectors + KafkaConnect) or fails past the 5-minute drain deadline and returns the plan to
+  `validated`. Fake mode drains instantly.
+- `POST .../rollback` — **admin**, within the rollback window (job). Always marks the cutover and
+  the plan `rolled_back`. With `ATLAS_DATABRIDGE_ROLLBACK_COPY=1`, a homogeneous Postgres source
+  that still has an endpoint also gets a reverse `pg_dump | psql` Job (edge into the source) when
+  Kubernetes is available. Other engines stay a state flip. See [DATABRIDGE.md](DATABRIDGE.md).
+- `GET .../rollback-drill` — the steps that rollback runs (state flip, and the reverse-copy step
+  when the flag is set) and whether the window is still open. Does not change the plan.
+  `atlasctl databridge-stage PLAN_ID rollback-drill`.
+
+### Object leg (cloud object store → Ceph RGW)
+- `GET`/`POST /api/atlas/v1/databridge/object` · `GET`/`DELETE .../{id}` · `POST .../{id}/start`
+
+### Read models
+- `GET /api/atlas/v1/databridge/edge-clusters` · `/{id}` · `DELETE /{id}`
+- `GET /api/atlas/v1/databridge/cdc-streams` · `/{id}` (live lag)
+- `GET /api/atlas/v1/databridge/validations[?plan_id=]`
+- `GET /api/atlas/v1/databridge/cutovers`
+
+## Jobs, snapshots, policies
+
+### `GET /api/atlas/v1/jobs` · `GET /api/atlas/v1/jobs/{id}`
+```json
+{ "id": "job_3819884b6149", "tenant_id": "tenant_acme", "job_type": "volume.create",
+  "state": "succeeded", "requested_by": "anonymous", "progress_percent": 100,
+  "error": null, "result": { "bound": true, "phase": "Bound", "volume_id": "vol_b16c40e12b76" },
+  "created_at": "...", "updated_at": "..." }
+```
+
+### `POST /api/atlas/v1/jobs/{id}/cancel` (admin)
+The operator escape hatch for a wedged job. The job engine's worker is single-threaded by design
+(PDF-aligned ordering guarantee — one job at a time), so a job stuck inside a shelled-out
+`ceph`/`rbd` call that never errors or returns (e.g. `rbd migration prepare` against a degraded
+destination pool) blocks every other job on the gateway, for every tenant, for up to the 2h default
+`ATLAS_JOB_TIMEOUT_SECS` — verified live against a real degraded pool; before this endpoint existed
+the only recovery was finding and `kill -9`ing the underlying OS process inside the pod by hand.
+Cancelling the currently-running job drops its dispatch future, which kills any live `rbd`/`ceph`
+child process (`kill_on_drop`); a `queued`/`pending` job is marked failed before the worker ever
+picks it up. `404` if the job doesn't exist; `409` if it's already `succeeded`/`failed`.
+
+Every `radosgw-admin` call (bucket stats, bucket quota set/enable) is separately bounded to 12s at
+the driver layer, so `bucket.create`'s quota-set step can no longer be a source of this scenario —
+this endpoint stays necessary for genuine `ceph`/`rbd` hangs (e.g. `rbd migration prepare` above),
+which have no equivalent bound.
+```json
+// 200 → { "id": "job_...", "cancelled": true }
+```
+
+### `GET /api/atlas/v1/snapshots`
+```json
+[{ "id": "snap_29a557037a28", "tenant_id": "global", "volume_id": "vol_b16c40e12b76",
+   "name": "billing-db-root-29a557037a28", "consistency": "crash", "state": "ready",
+   "protected": false, "parent_snapshot_id": null, "created_at": "...", "locked_until": 1793000000 }]
+```
+`locked_until` (unix seconds) appears only on a snapshot the gateway retention-locked
+(`POST /snapshots/{id}/lock`, ransomware protect); it is the end of the lock, so a value in the past
+means the lock has expired. It is absent for a snapshot the gateway never locked, including one
+locked directly on a native node (see [WORM.md](WORM.md)). Two different admins can clear a lock
+early: `POST /snapshots/{id}/unlock/propose` then `POST /snapshots/{id}/unlock/confirm`.
+
+### `GET /api/atlas/v1/policies`
+The built-in intent → placement catalog (PDF §12.3).
+```json
+[{ "intent": "database", "storage_class": "zyvor-rbd-prod",
+   "access_mode": "ReadWriteOnce", "volume_mode": "Filesystem",
+   "description": "Databases — RBD NVMe, hourly snapshots, daily backup" }]
+```
+
+### `POST /api/atlas/v1/volumes/{id}/schedule` · `GET /schedules` · `DELETE /schedules/{id}`
+Protection schedules: a background worker snapshots the volume every `interval_secs` and prunes its
+scheduler-created snapshots to `keep`.
+```json
+// POST body (operator) — snapshot schedule
+{ "interval_secs": 3600, "keep": 24 }
+// POST body — backup schedule (to a bound bucket)
+{ "kind": "backup", "bucket_id": "bkt_...", "interval_secs": 86400, "keep": 7, "mode": "data" }
+// 201 → { "id": "sched_...", "volume_id": "vol_...", "kind": "snapshot", "interval_secs": 3600,
+//         "keep": 24, "enabled": true, "next_run_at": "..." }
+```
+`kind` is `snapshot` (default) or `backup`; backups need a bound `bucket_id` (+ optional `mode`).
+Worker cadence is `ATLAS_SNAPSHOT_TICK_SECS` (0 disables). Scheduled snapshots are named
+`<volume>-sched-<id>`; retention only prunes scheduler-created snapshots/backups, never manual ones.
+
+### Console login
+Two ways to obtain a console session JWT — both mint the exact same kind of Atlas-issued HS256
+token via `mint_token`, so everything downstream (role gating, revocation) is identical regardless
+of which path a session came from.
+
+- `POST /api/atlas/v1/auth/login` `{ username, password, ttl_secs? }` — local credentials (an
+  admin-created `console_users` row, or the `ATLAS_ADMIN_USERNAME`/`_PASSWORD` bootstrap fallback).
+  `202` → `{ token, jti, subject, role, level, expires_at, ttl_secs }`. `ttl_secs` defaults to 24h,
+  clamped to `[60, 7776000]`.
+- **OIDC/SSO** (optional — only mounted when `ATLAS_OIDC_ISSUER_URL`/`_CLIENT_ID`/`_REDIRECT_URL`
+  are all set; see `deploy/dex-lab/` for a throwaway test IdP):
+  - `GET /api/atlas/v1/auth/oidc/status` — unauthenticated, `{ "enabled": bool }`; the console's
+    "Sign in with SSO" button only renders when this is `true`.
+  - `GET /api/atlas/v1/auth/oidc/login` — `302` redirect to the identity provider's authorization
+    endpoint (PKCE + CSRF state + nonce). Must be a real browser navigation.
+  - `GET /api/atlas/v1/auth/oidc/callback?code=&state=` — the IdP redirects back here. Exchanges
+    the code, verifies the ID token (signature/issuer/audience/nonce/expiry), maps the `groups`
+    claim to a role via `ATLAS_OIDC_ADMIN_GROUP`/`ATLAS_OIDC_OPERATOR_GROUP` (no match → `viewer`),
+    mints an Atlas JWT, and `302`s to `/?atlas_token=<jwt>&atlas_role=<role>` for the SPA to pick up.
+
+### `POST /api/atlas/v1/auth/tokens`
+Mint a scoped service-account JWT for a product (admin). The shared secret never leaves Atlas.
+```json
+// body
+{ "subject": "veyron", "role": "operator", "ttl_secs": 3600 }
+// 201 → { "token": "<jwt>", "jti": "jti_...", "subject": "veyron", "role": "operator",
+//         "level": 1, "expires_at": 1783480966, "ttl_secs": 3600 }
+```
+`role`: `viewer` (default), `operator`, `admin`, or `product.service.<name>` (→ operator). `ttl_secs`
+is clamped to `[60, 7776000]` (90 days). The product sends the token as `Authorization: Bearer <jwt>`.
+The response `jti` identifies the token for revocation.
+
+**Scoped agent tokens.** Add `"tools": ["ceph_nvme", "ops_advisor"]` to mint a token that is valid
+**only on the MCP edge** and can call just those tools; the response echoes the (deduplicated) list.
+The role still applies on top, so a scope narrows a token and never widens it, and the token is
+refused with 403 on every REST route and `/metrics` (and `permission_denied` on gRPC) so it cannot
+be used elsewhere with the role's full reach. Names are `[a-z0-9_]`, at most 64 per token; an
+unknown name grants nothing. Omitted or empty `tools` mints an ordinary token. A call outside the
+scope is refused and audited as `mcp.tool.denied`.
+
+### Governance reports (operator, day-2)
+- `GET /api/atlas/v1/audit.csv` — export the audit trail as CSV (SIEM/compliance). Retention:
+  `ATLAS_AUDIT_RETENTION_DAYS` prunes rows older than N days (0 = keep forever).
+- `GET /api/atlas/v1/chargeback` — per-tenant usage + optional cost (`ATLAS_CHARGEBACK_USD_PER_GIB_MONTH`).
+- `GET /api/atlas/v1/policy-drift` — volumes whose applied StorageClass no longer matches their policy.
+
+### Token revocation & rate limiting (admin, day-2)
+- `POST /api/atlas/v1/auth/tokens/{jti}/revoke` — kill a minted token before its TTL; the auth
+  middleware then rejects it with **401** (a deny-list, checked per request).
+- `GET /api/atlas/v1/auth/tokens/revoked` — the current revocation list.
+- **Rate limiting**: set `ATLAS_RATE_LIMIT_RPM=N` (default `0` = off) to cap requests **per actor per
+  minute** across `/api/atlas/v1/*`; over-limit requests get **429**.
+
+### `GET /api/atlas/v1/tenants/{id}/quota` · `PUT .../quota`
+Per-tenant storage quota + live usage (PDF §14 multi-tenancy). `PUT` (admin) sets the limits.
+```json
+// PUT body — 0 means unlimited for that dimension
+{ "max_bytes": 1610612736, "max_volumes": 10 }
+// GET/PUT reply
+{ "tenant_id": "acme", "max_bytes": 1610612736, "max_volumes": 10,
+  "used_bytes": 1073741824, "volume_count": 1 }
+```
+`POST /volumes` (and gRPC `CreateVolume`) rejects a create that would exceed either limit with `409`
+(`resource_exhausted` on gRPC) *before* enqueueing the job. Usage is computed live from the tenant's
+volume rows.
+
+### `GET /api/atlas/v1/tenants/{id}/policies` · `PUT|DELETE .../policies/{intent}`
+Per-tenant policy overrides: remap an intent to a specific placement for one tenant (admin to set).
+```json
+// PUT body
+{ "storage_class": "zyvor-cephfs-shared", "access_mode": "ReadWriteMany", "volume_mode": "Filesystem" }
+```
+When a create names an intent (`policy`) and the tenant has an override, it wins over the built-in
+catalog — precedence: request-pinned `kubernetes.storage_class` › tenant override › catalog.
+
+## Live Kubernetes (served straight from the cluster)
+
+### `GET /api/atlas/v1/storage-classes`
+Ceph-backed classes are tagged `is_ceph: true` (PDF §7.1). `502 DRIVER_ERROR` if no cluster.
+```json
+[{ "name": "zyvor-rbd-prod", "provisioner": "rook-ceph.rbd.csi.ceph.com",
+   "reclaim_policy": "Delete", "volume_binding_mode": "Immediate",
+   "allow_volume_expansion": true, "is_ceph": true,
+   "labels": { "zyvor.dev/storage-backend": "ceph", "zyvor.dev/storage-kind": "block",
+               "zyvor.dev/live-migration": "review-required" } }]
+```
+
+### `GET /api/atlas/v1/kubernetes/pvcs` · `GET /api/atlas/v1/kubernetes/pvs`
+Live PVC/PV listings (namespace/phase/storage class/capacity/csi driver).
+
+## Rook integration
+
+Reads Rook's own `ceph.rook.io` CRs via the Kubernetes API — a second, precise source of truth
+alongside the `ceph`/`rbd` CLI path (`ATLAS_ROOK_NAMESPACE`/`ATLAS_ROOK_CLUSTER_NAME`, both
+default `rook-ceph`). `404` if no k8s driver is attached.
+
+### `GET /api/atlas/v1/ceph/rook-status`
+Raw CR view: `CephCluster` phase/health plus every `CephBlockPool`/`CephFilesystem`/
+`CephObjectStore`'s name and phase.
+```json
+{ "namespace": "rook-ceph",
+  "cluster": { "name": "rook-ceph", "phase": "Ready", "health": "HEALTH_WARN" },
+  "block_pools": [{ "name": "rbd-nvme-prod", "phase": "Ready" }],
+  "filesystems": [{ "name": "zyvorfs", "phase": "Ready" }],
+  "object_stores": [{ "name": "zyvor-rgw", "phase": "Ready" }] }
+```
+
+### `GET`/`POST /api/atlas/v1/ceph/pools` · `DELETE /api/atlas/v1/ceph/pools/{name}[?force=true]`
+Create/list/delete a `CephBlockPool` + matching StorageClass (replicated pools only — erasure
+coding isn't modeled). `POST` body: `{name, namespace?, storage_class?, replicated_size?,
+failure_domain?, device_class?}` (defaults: `replicated_size: 3, failure_domain: "host"`,
+`storage_class: "zyvor-<name>"`). Returns `202` + job id (`ceph.pool.create`/`.delete`). `DELETE`
+is `409` while a volume still references the StorageClass, unless `force=true`.
+
+### `GET`/`POST /api/atlas/v1/ceph/filesystems` · `DELETE .../ceph/filesystems/{name}[?force=true]`
+Create/list/delete a `CephFilesystem` (RWX CephFS) + StorageClass. `POST` body: `{name,
+namespace?, storage_class?, data_pool_name?, replicated_size?}` (defaults: `data_pool_name:
+"data0"`, `replicated_size: 3`, `storage_class: "zyvor-<name>-shared"`).
+
+### `GET`/`POST /api/atlas/v1/ceph/object-stores` · `DELETE .../ceph/object-stores/{name}[?force=true]`
+Create/list/delete a `CephObjectStore` (RGW) + bucket StorageClass. `POST` body: `{name,
+namespace?, storage_class?, replicated_size?, gateway_port?, gateway_instances?}` (defaults:
+`gateway_port: 80, gateway_instances: 1`, `storage_class: "zyvor-<name>-bucket"`). `DELETE` is
+`409` while a bucket still references the StorageClass, unless `force=true`.
+
+> **Cluster-side prerequisite for delete:** Ceph defaults `mon_allow_pool_delete=false`. Atlas's
+> `DELETE` correctly removes the k8s-level CR + StorageClass regardless, but Rook's own finalizer
+> can't complete the underlying pool purge until a cluster operator sets that mon config — until
+> then the CR sits `Terminating` (harmless; nothing can provision against it once the StorageClass
+> is gone).
+
+## MCP (Model Context Protocol)
+
+Beyond tools, the server also advertises three read-only prompts (`triage`, `capacity_review`, `dr_readiness`) and documentation resources (`atlas://docs/*`, `atlas://skill/ops`), and `GET /.well-known/mcp` is a public discovery card (endpoint and auth scheme only). The MCP endpoint's 401 carries an RFC 9728 `WWW-Authenticate: Bearer resource_metadata=...` challenge and `/.well-known/oauth-protected-resource[/api/atlas/v1/mcp]` serves the metadata (`authorization_servers` only when `ATLAS_MCP_IDP_ISSUER` is set, in which case the endpoint also accepts that identity provider's JWT access tokens; see [MCP.md](MCP.md#oauth-protected-resource-metadata-rfc-9728) for what it does not do). See [MCP.md](MCP.md#prompts-and-resources).
+
+Built with the `mcp` Cargo feature (default-off for `cargo build`, but included in the shipped `Dockerfile` / `Dockerfile.ceph` images — `cargo build -p atlas-gateway --features mcp`),
+Atlas exposes an MCP server, read-only by default (two opt-in guarded writes, below), at `POST /api/atlas/v1/mcp` (streamable-HTTP
+transport), behind the same bearer-JWT `auth_middleware` as the rest of this API — no separate
+port or auth mechanism. Any MCP host (e.g. [Hermes Agent](HERMES_AGENT.md), Claude) can
+connect and call:
+
+| Tool | Mirrors |
+|---|---|
+| `list_clusters` | `GET /clusters` |
+| `cluster_health` | `GET /clusters/{id}/health` |
+| `list_backends` | `GET /backends/summary` |
+| `list_pools` | `GET /pools` |
+| `list_volumes` | `GET /volumes` (tenant-scoped for non-admin callers, same as REST) |
+| `list_alerts` | `GET /alerts` |
+| `metrics_summary` | `GET /metrics/summary` |
+| `ops_advisor` | `POST /ai/advisor` (local mode only — never triggers an outbound LLM call) |
+| `list_incidents` | `GET /ai/incidents` (local mode only, same rationale as `ops_advisor`) |
+| `detect_anomalies` | `GET /ai/anomalies` — pauses itself (`telemetry_status: "stale"/"unavailable"`, empty results) rather than scoring on telemetry older than 15 minutes or missing/invalid timestamps |
+| `what_if_capacity` | `POST /ai/what-if` |
+| `io_risk` | the atlas-io agent's `GET /io/risk` via `ATLAS_IO_AGENT_URL` — `status: "unavailable"` (never healthy) when unset/unreachable; operator role |
+| `dr_status` | `GET /dr/status` |
+| `dr_preflight` | `GET /dr/preflight` (prepares a human-run failover; never starts one) |
+| `list_dr_mirrors` | `GET /dr/mirrors` |
+| `dr_mirror_status` | `GET /dr/mirrors/{id}/status` |
+| `list_volume_groups` | `GET /volume-groups` |
+| `list_snapshots` | `GET /snapshots` (operator role; stricter than REST, and limited to the caller's tenant unless admin) |
+| `list_jobs` | `GET /jobs` (operator role; stricter than REST) |
+| `get_job` | `GET /jobs/{id}` (operator role; stricter than REST) |
+| `ceph_status` | `GET /ceph/status` (operator role; stricter than REST; output capped at 256 KiB) |
+| `ceph_df` | `GET /ceph/df` (operator role; capped) |
+| `ceph_osd_tree` | `GET /ceph/osd-tree`, summarised to node counts and the OSDs that are down or out (operator role) |
+| `databridge_plans` | `GET /databridge/plans` (operator role; limited to the caller's tenant unless admin) |
+| `databridge_validations` | `GET /databridge/validations` (operator; tenant-filtered; optional `plan_id`) |
+| `databridge_cutovers` | `GET /databridge/cutovers` (operator; tenant-filtered) |
+| `list_buckets` | `GET /buckets` (operator; tenant-filtered; secret reference only) |
+| `list_backups` | `GET /backups` (operator; tenant-filtered; optional `volume_id`; no download URL) |
+| `list_schedules` | `GET /schedules` (operator; tenant-filtered; optional `volume_id`) |
+| `list_osds` | `GET /osds` (operator; cluster-wide) |
+| `databridge_cdc_streams` | `GET /databridge/cdc/streams` (operator role; tenant-filtered) |
+| `list_policies` | `GET /policies` (static catalogue) |
+| `list_audit` | `GET /audit` (operator role; tenant-filtered; request and result bodies not returned; at most 200 entries) |
+
+**Host header check.** The MCP transport only accepts loopback `Host` headers by default, which
+would reject every remote client. When authentication is required (the deployed case) the check is
+lifted because the endpoint is bearer-token gated; with auth off it stays loopback-only. Override
+with `ATLAS_MCP_ALLOWED_HOSTS` (`*` disables the check; otherwise a comma-separated `host[:port]`
+allow-list).
+
+Write tools are **off by default**. With `ATLAS_MCP_WRITE_ENABLE=1` the server additionally
+lists `create_snapshot` (one volume, reversible) `ack_alert` (records that an operator saw an alert; it
+neither resolves nor silences it) and `silence_alert` (webhook notifications for one alert, 60 s to 24 h). All are two-phase: a call without
+`confirmation_token` changes nothing and returns the plan plus a 5-minute, single-use token bound to
+the caller, the tool and the exact arguments; the same call with that token executes the REST
+handler (so its role and tenant checks apply). Every proposal, rejection and execution is audited
+as `mcp.<tool>`. Failover, promote/demote, delete, restore/rollback and disk operations are
+never exposed over MCP; use the REST/gRPC API or `atlasctl` for them (`dr_preflight` lets an agent
+prepare a human-run failover). The token is signed with a key derived from `ATLAS_JWT_SECRET` and its single use is recorded in the database, so it survives a restart and works on any replica sharing the database and secret, exactly once. A client on protocol 2026-07-28 that declared elicitation is asked to confirm through an `input_required` round instead of handling the token ([MCP.md](MCP.md#confirmation-as-an-input_required-round-2026-07-28)).
+
+## HTTP status codes
+
+| Code | Meaning |
+|---|---|
+| 200 | OK |
+| 400 | `VALIDATION_ERROR` |
+| 401 | `AUTH_ERROR` (when auth required) |
+| 404 | `NOT_FOUND` |
+| 500 | `INTERNAL` / DB error |
+| 502 | `DRIVER_ERROR` (backend/k8s unreachable) |
+
+## `atlasctl` equivalents
+
+Thin REST client (`ATLAS_BASE_URL`, `ATLAS_TOKEN`). Full list: `atlasctl --help` and
+[crates/atlasctl/README.md](../crates/atlasctl/README.md).
+
+```bash
+# Meta / inventory
+atlasctl health | ready | version | backends | backends-summary | discover [backend]
+atlasctl clusters | pools | osds | volumes | storage-classes | metrics | alerts
+atlasctl ceph-status | ceph-osd-tree | ceph-osd-df | ceph-df | history | forecast | self-metrics
+atlasctl ceph-pools | create-ceph-pool NAME | delete-ceph-pool NAME [--force]
+atlasctl ceph-filesystems | create-ceph-filesystem NAME | delete-ceph-filesystem NAME [--force]
+atlasctl ceph-object-stores | create-ceph-object-store NAME | delete-ceph-object-store NAME [--force]
+
+# Write path / RBD / object
+atlasctl create-volume NAME --size-gib 5 --policy database
+atlasctl snapshot-volume | clone-snapshot | restore-snapshot | delete-volume | delete-snapshot
+atlasctl create-rbd-image | rbd-images | flatten-rbd-image | rbd-snaps | rollback-rbd-image
+atlasctl create-bucket | buckets | backup-volume | restore-backup | backups
+
+# Day-2 / DR / DataBridge
+atlasctl maintenance | set-maintenance --paused true|false
+atlasctl cordon-backend ID | uncordon-backend ID | upgrade-preflight | orphans
+atlasctl dr-peers | dr-register-peer NAME | dr-preflight | dr-status | dr-mirrors
+atlasctl dr-promote ID [--force] | dr-demote ID | dr-failover MIRROR_ID [--force]
+atlasctl dr-set-rpo ID --rpo-seconds 60
+atlasctl volume-mirror-enable ID --peer PEER | volume-mirror-disable ID
+atlasctl databridge-sources | databridge-plans
+atlasctl databridge-stage PLAN_ID assess|provision|full-load|cdc-start|cdc-stop|cdc-restart|validate|cutover|rollback
+```
+
+## AI data companion API
+
+The experimental `atlas_data` companion exposes its own authenticated endpoint on
+5120, separate from the Rust REST/gRPC gateway. Its explicit RPC action/argument
+reference, binary chunk routes and compatibility limits are documented in
+[AI_DATA_SERVICES.md](AI_DATA_SERVICES.md). It does not accept gateway JWTs.

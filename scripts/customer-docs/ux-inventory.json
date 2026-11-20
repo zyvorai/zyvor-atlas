@@ -1,0 +1,431 @@
+{
+  "product": "Atlas",
+  "surfaces": [
+    {
+      "path": "/",
+      "label": "Command Deck",
+      "category": "STORAGE",
+      "nav": "STORAGE \u2192 Command Deck (sidebar Deck, or the H shortcut)",
+      "operate": [
+        "Open `/` (Command Deck) after the gateway is reachable.",
+        "Read the health chip on the rail (HEALTH_OK / DEGRADED / \u2026) and live job/alert counts.",
+        "Use **New volume** to provision, or follow empty-state links (Create a volume \u2192, Schedule nightly snapshots \u2192, Create first bucket \u2192).",
+        "Open a pool tile to drill into `/pools/:id`, or jump via Spotlight (\u2318K / Ctrl+K).",
+        "Pause auto-refresh from the rail if you need a stable readout.",
+        "**Empty / fail:** No capacity \u2192 register a backend (INFRASTRUCTURE \u2192 Backends) and run discover; auth failures \u2192 paste JWT from the key icon.",
+        "**Success:** Sounding orb + pool/OSD lattice populate; jobs appear when you provision."
+      ]
+    },
+    {
+      "path": "/volumes",
+      "label": "Volumes",
+      "category": "STORAGE",
+      "nav": "STORAGE \u2192 Volumes (sidebar Volumes)",
+      "operate": [
+        "Open `/volumes` and wait for the inventory table.",
+        "Click **Create volume** \u2014 pick name, size, policy/intent, tenant; submit starts a durable job.",
+        "Use **Refresh** / **Export CSV**; select rows for bulk delete when needed.",
+        "Open a row \u2192 SlideOver: Snapshot, Expand, Create schedule, or delete.",
+        "Watch **Jobs** (`/jobs`) until create/expand/snapshot succeed.",
+        "**Empty / fail:** No volumes \u2192 Create volume; empty after create \u2192 check Jobs and backend registration.",
+        "**Success:** Volume appears with state/size; mutations return `202` + job id."
+      ]
+    },
+    {
+      "path": "/rbd",
+      "label": "RBD Images",
+      "category": "STORAGE",
+      "nav": "STORAGE \u2192 RBD Images",
+      "operate": [
+        "Open `/rbd` and select the target pool (default often `rbd-nvme-prod`).",
+        "**Create image** with name + size; or Flatten / Clone / Resize / Snapshot from row actions.",
+        "Clone needs an existing snapshot \u2014 create under Snaps first if the hint says so.",
+        "Rollback is destructive \u2014 confirm before reverting to a snap.",
+        "**Empty / fail:** Wrong pool \u2192 switch pool; Ceph not ready \u2192 INFRASTRUCTURE \u2192 Ceph.",
+        "**Success:** Image listed in pool; jobs complete for flatten/clone/resize."
+      ]
+    },
+    {
+      "path": "/snapshots",
+      "label": "Snapshots",
+      "category": "STORAGE",
+      "nav": "STORAGE \u2192 Snapshots",
+      "operate": [
+        "Open `/snapshots` to list PIT copies.",
+        "Create snaps from **Volumes** row \u2192 Snapshot (or schedule).",
+        "Clone or Restore from a snapshot row (confirm modal).",
+        "Bulk-delete selected snaps when retiring retention.",
+        "**Empty / fail:** No copies \u2192 open Volumes and snapshot a volume first.",
+        "**Success:** Snapshot row + clone/restore job succeeds."
+      ]
+    },
+    {
+      "path": "/schedules",
+      "label": "Schedules",
+      "category": "STORAGE",
+      "nav": "STORAGE \u2192 Schedules",
+      "operate": [
+        "Open `/schedules`.",
+        "Click **Schedule** \u2014 choose volume, cadence, retention, snapshot vs backup.",
+        "Confirm the schedule row appears; verify later runs under Snapshots / Backups / Jobs.",
+        "**Empty / fail:** Need at least one volume and (for backups) a bucket.",
+        "**Success:** Schedule listed; first fire shows as a job."
+      ]
+    },
+    {
+      "path": "/backups",
+      "label": "Backups",
+      "category": "DATA PROTECTION",
+      "nav": "DATA PROTECTION \u2192 Backups",
+      "operate": [
+        "Open `/backups`.",
+        "**Backup** \u2014 select volume + destination bucket; wait for the job.",
+        "Restore opens a modal (optional new volume name).",
+        "Bulk-delete selected backups when retiring.",
+        "**Empty / fail:** Create a bucket first under Buckets; ensure volume exists.",
+        "**Success:** Backup row with created time; restore job completes."
+      ]
+    },
+    {
+      "path": "/buckets",
+      "label": "Buckets",
+      "category": "DATA PROTECTION",
+      "nav": "DATA PROTECTION \u2192 Buckets",
+      "operate": [
+        "Open `/buckets`.",
+        "**Create bucket** \u2014 name + backend/RGW target.",
+        "Open a bucket to list/upload objects when the panel is wired.",
+        "**Empty / fail:** No RGW \u2192 check Ceph/RGW on Backends/Ceph pages.",
+        "**Success:** Bucket listed; usable as Backup destination."
+      ]
+    },
+    {
+      "path": "/protection",
+      "label": "Protection Status",
+      "category": "DATA PROTECTION",
+      "nav": "DATA PROTECTION \u2192 Protection Status",
+      "operate": [
+        "Open `/protection`.",
+        "Scan worst-case headline (healthy vs unprotected counts).",
+        "Drill volumes missing snaps/backups \u2192 Schedules or Backups.",
+        "**Empty / fail:** No volumes yet \u2192 provision first on Volumes.",
+        "**Success:** Every critical volume shows a healthy verdict."
+      ]
+    },
+    {
+      "path": "/observatory",
+      "label": "Observatory",
+      "category": "OBSERVABILITY",
+      "nav": "OBSERVABILITY \u2192 Observatory (sidebar Observatory)",
+      "operate": [
+        "Open `/observatory` and wait for estate samples.",
+        "Use lenses / panels for pool and OSD pressure.",
+        "Jump **Command Deck** or **Alerts** from PageHead actions.",
+        "**Empty / fail:** No samples \u2192 Ceph metrics path cold; check `/metrics-dashboard` and gateway.",
+        "**Success:** Live estate picture matches Deck health."
+      ]
+    },
+    {
+      "path": "/activity",
+      "label": "Activity",
+      "category": "OBSERVABILITY",
+      "nav": "OBSERVABILITY \u2192 Activity",
+      "operate": [
+        "Open `/activity`.",
+        "Scan recent events after provision/protect/migrate actions.",
+        "Correlate failures with Jobs and Audit.",
+        "**Empty / fail:** Quiet estate \u2192 trigger a volume op and refresh.",
+        "**Success:** Activity lines match your last mutations."
+      ]
+    },
+    {
+      "path": "/alerts",
+      "label": "Alerts",
+      "category": "OBSERVABILITY",
+      "nav": "OBSERVABILITY \u2192 Alerts (sidebar Alerts, or the top-bar bell)",
+      "operate": [
+        "Open `/alerts` (or rail bell \u2192 jump).",
+        "Filter by state; read critical vs open counts in PageHead.",
+        "**Silence** (1h) or **Resolve** with confirm.",
+        "**Empty / fail:** Filter too tight \u2192 clear filter; webhook paging may still need silence.",
+        "**Success:** Criticals cleared or deliberately silenced."
+      ]
+    },
+    {
+      "path": "/metrics-dashboard",
+      "label": "Metrics",
+      "category": "OBSERVABILITY",
+      "nav": "OBSERVABILITY \u2192 Metrics",
+      "operate": [
+        "Open `/metrics-dashboard`.",
+        "Confirm samples arrive; note OSD average % when shown.",
+        "Cross-check spikes with Observatory and Ceph.",
+        "**Empty / fail:** Waiting on samples \u2192 backend/Ceph metrics not streaming.",
+        "**Success:** Sample count > 0 and averages look sane."
+      ]
+    },
+    {
+      "path": "/jobs",
+      "label": "Jobs",
+      "category": "OBSERVABILITY",
+      "nav": "OBSERVABILITY \u2192 Jobs (sidebar Jobs)",
+      "operate": [
+        "Open `/jobs` after any create/backup/migrate/DR action.",
+        "Select a job for created time, state, and error detail.",
+        "Use rail Jobs chip for running count without leaving the page.",
+        "**Empty / fail:** No jobs \u2192 you have not mutated yet; failed jobs \u2192 fix cause and retry from source page.",
+        "**Success:** Job reaches succeeded; inventory refreshes."
+      ]
+    },
+    {
+      "path": "/audit",
+      "label": "Audit",
+      "category": "OBSERVABILITY",
+      "nav": "OBSERVABILITY \u2192 Audit",
+      "operate": [
+        "Open `/audit`.",
+        "Filter by actor and action.",
+        "Verify who created tokens, volumes, or DR failovers.",
+        "**Empty / fail:** No entries \u2192 auth/open mode may omit some events; confirm ATLAS auth mode.",
+        "**Success:** Expected mutations appear with actor + timestamp."
+      ]
+    },
+    {
+      "path": "/tenants",
+      "label": "Tenants",
+      "category": "GOVERNANCE",
+      "nav": "GOVERNANCE \u2192 Tenants",
+      "operate": [
+        "Open `/tenants`.",
+        "Open a tenant \u2192 set Quota (Save) or review Policies slide-over.",
+        "Overrides fall back to built-in catalog when empty.",
+        "**Empty / fail:** No tenants \u2192 create via API/admin path your deploy uses; quotas block create if exceeded.",
+        "**Success:** Quota saved; volume creates respect limits."
+      ]
+    },
+    {
+      "path": "/access",
+      "label": "Access",
+      "category": "GOVERNANCE",
+      "nav": "GOVERNANCE \u2192 Access",
+      "operate": [
+        "Open `/access`.",
+        "**Create user** with username/password; they sign in on the login page.",
+        "Delete users from the table when retiring access.",
+        "Paste service JWT via rail key icon for API automation.",
+        "**Empty / fail:** No users \u2192 create one; login fails \u2192 check ATLAS_AUTH_REQUIRED and token.",
+        "**Success:** New user can sign in; table lists accounts."
+      ]
+    },
+    {
+      "path": "/policies",
+      "label": "Policies",
+      "category": "GOVERNANCE",
+      "nav": "GOVERNANCE \u2192 Policies",
+      "operate": [
+        "Open `/policies` and review intent names (`production`, `database`, \u2026).",
+        "Use these intents in **Create volume**.",
+        "Tenant overrides live under Tenants \u2192 Policies.",
+        "**Empty / fail:** Catalog empty \u2192 gateway policy pack missing.",
+        "**Success:** Intents listed and selectable on create."
+      ]
+    },
+    {
+      "path": "/settings",
+      "label": "Settings",
+      "category": "GOVERNANCE",
+      "nav": "GOVERNANCE \u2192 Settings (sidebar Settings)",
+      "operate": [
+        "Open `/settings`.",
+        "Adjust Look & feel from the top-bar theme menu (Carbon, Apple Lite) if not on this page.",
+        "Confirm token/session via rail key icon.",
+        "**Empty / fail:** Changes not sticking \u2192 local storage blocked; re-auth.",
+        "**Success:** Theme/session match operator preference."
+      ]
+    },
+    {
+      "path": "/api-docs",
+      "label": "API Docs",
+      "category": "GOVERNANCE",
+      "nav": "GOVERNANCE \u2192 API Docs",
+      "operate": [
+        "Open `/api-docs`.",
+        "Scan Meta, Auth, Inventory, Write path (async jobs), Observability, DR, DataBridge.",
+        "Prefer `atlasctl` or REST with JWT; mutations return jobs.",
+        "**Empty / fail:** N/A \u2014 static reference; deep examples in product API docs.",
+        "**Success:** You can name the endpoint for the console action you just took."
+      ]
+    },
+    {
+      "path": "/databridge/sources",
+      "label": "Cloud Databases",
+      "category": "DATABRIDGE",
+      "nav": "DATABRIDGE \u2192 Cloud Databases",
+      "operate": [
+        "Open `/databridge/sources`.",
+        "**Register** a source database (connection + engine).",
+        "Open a source \u2192 schema SlideOver (tables).",
+        "Then create a Migration Plan.",
+        "**Empty / fail:** Connection refused \u2192 network/creds; schema empty \u2192 privileges.",
+        "**Success:** Source listed with reachable schema."
+      ]
+    },
+    {
+      "path": "/databridge/plans",
+      "label": "Migration Plans",
+      "category": "DATABRIDGE",
+      "nav": "DATABRIDGE \u2192 Migration Plans",
+      "operate": [
+        "Open `/databridge/plans` after registering a source.",
+        "**Create** New migration plan \u2192 open Plan Detail.",
+        "Track stages and CDC from the detail page.",
+        "**Empty / fail:** No plans \u2192 register a Cloud Database first.",
+        "**Success:** Plan row links to `/databridge/plans/:id`."
+      ]
+    },
+    {
+      "path": "/databridge/plans/:id",
+      "label": "Plan Detail",
+      "category": "DATABRIDGE",
+      "nav": "DATABRIDGE \u2192 Migration Plans \u2192 plan row",
+      "operate": [
+        "Open a plan from `/databridge/plans`.",
+        "Read engine/CDC badges; start or advance stages per UI.",
+        "**Stop CDC** / **Restart CDC** when streaming; use confirm for destructive cutover actions.",
+        "Jump to Validation / Replication / Edge clusters as needed.",
+        "**Empty / fail:** Stage blocked \u2192 fix source connectivity or prior stage job.",
+        "**Success:** CDC live / cutover complete per badges; Jobs clean."
+      ]
+    },
+    {
+      "path": "/databridge/edge-clusters",
+      "label": "Edge DB Clusters",
+      "category": "DATABRIDGE",
+      "nav": "DATABRIDGE \u2192 Edge DB Clusters",
+      "operate": [
+        "Open `/databridge/edge-clusters`.",
+        "Provision from a migration plan when empty.",
+        "Confirm cluster health before cutover.",
+        "**Empty / fail:** No clusters \u2192 complete plan provisioning stage first.",
+        "**Success:** Cluster listed and healthy for the plan."
+      ]
+    },
+    {
+      "path": "/databridge/replication",
+      "label": "Replication",
+      "category": "DATABRIDGE",
+      "nav": "DATABRIDGE \u2192 Replication",
+      "operate": [
+        "Open `/databridge/replication`.",
+        "Confirm streams match plans with CDC started.",
+        "Restart CDC from Plan Detail if a stream stalls.",
+        "**Empty / fail:** No streams \u2192 Start CDC on a plan.",
+        "**Success:** Stream lag/state acceptable for cutover."
+      ]
+    },
+    {
+      "path": "/databridge/validation",
+      "label": "Validation",
+      "category": "DATABRIDGE",
+      "nav": "DATABRIDGE \u2192 Validation",
+      "operate": [
+        "Open `/databridge/validation` after plan stages that emit checks.",
+        "Open a run \u2192 per-table SlideOver.",
+        "Fix failures before cutover.",
+        "**Empty / fail:** No runs \u2192 trigger validation from Plan Detail / workflow.",
+        "**Success:** Tables pass; ready for cutover."
+      ]
+    },
+    {
+      "path": "/backends",
+      "label": "Backends",
+      "category": "INFRASTRUCTURE",
+      "nav": "INFRASTRUCTURE \u2192 Backends",
+      "operate": [
+        "Open `/backends`.",
+        "Confirm at least one backend is registered and healthy.",
+        "Cordon/uncordon from Maintenance when draining.",
+        "**Empty / fail:** None registered \u2192 install driver/Ceph and discover (`atlasctl discover`).",
+        "**Success:** Backend row with capacity; Volumes can provision."
+      ]
+    },
+    {
+      "path": "/kubernetes",
+      "label": "Kubernetes",
+      "category": "INFRASTRUCTURE",
+      "nav": "INFRASTRUCTURE \u2192 Kubernetes",
+      "operate": [
+        "Open `/kubernetes`.",
+        "Verify StorageClasses expected by CSI consumers.",
+        "**Empty / fail:** No classes \u2192 check KUBECONFIG / RBAC for the gateway.",
+        "**Success:** Classes listed for the cluster Atlas manages."
+      ]
+    },
+    {
+      "path": "/cluster",
+      "label": "Cluster",
+      "category": "INFRASTRUCTURE",
+      "nav": "INFRASTRUCTURE \u2192 Cluster",
+      "operate": [
+        "Open `/cluster`.",
+        "Read primary name/health and pool/OSD counts.",
+        "Drill pools toward Ceph / Pool detail.",
+        "**Empty / fail:** Waiting on inventory \u2192 gateway\u2194Ceph connectivity.",
+        "**Success:** Health matches Command Deck rollup."
+      ]
+    },
+    {
+      "path": "/ceph",
+      "label": "Ceph",
+      "category": "INFRASTRUCTURE",
+      "nav": "INFRASTRUCTURE \u2192 Ceph (sidebar Ceph)",
+      "operate": [
+        "Open `/ceph`.",
+        "Read rollup + df pools; jump to Cluster if needed.",
+        "Investigate degraded/rebuilding before big provisions.",
+        "**Empty / fail:** No ceph df \u2192 driver/credentials; use lab fake driver only for demos.",
+        "**Success:** HEALTH_OK (or understood warn) with pools listed."
+      ]
+    },
+    {
+      "path": "/pools/:id",
+      "label": "Pool Detail",
+      "category": "INFRASTRUCTURE",
+      "nav": "Command Deck / Cluster \u2192 pool tile",
+      "operate": [
+        "Open `/pools/:id` from a Deck or Cluster pool link.",
+        "Review fill, volume list, OSD lattice.",
+        "Jump to Volumes or Command Deck from actions.",
+        "**Empty / fail:** Pool not found \u2192 stale id; return to Deck.",
+        "**Success:** Pool metrics match Ceph df."
+      ]
+    },
+    {
+      "path": "/maintenance",
+      "label": "Maintenance",
+      "category": "INFRASTRUCTURE",
+      "nav": "INFRASTRUCTURE \u2192 Maintenance",
+      "operate": [
+        "Open `/maintenance`.",
+        "Pause job engine only when you intend to quiesce (new jobs queue).",
+        "Cordon a backend to reject new provisioning.",
+        "Delete orphan backups carefully.",
+        "**Empty / fail:** Pause stuck \u2192 check API auth; cordon blocked \u2192 role.",
+        "**Success:** Desired pause/cordon state reflected; resume when done."
+      ]
+    },
+    {
+      "path": "/dr",
+      "label": "Disaster Recovery",
+      "category": "INFRASTRUCTURE",
+      "nav": "INFRASTRUCTURE \u2192 Disaster Recovery",
+      "operate": [
+        "Open `/dr` and read peers/mirrors + control-plane/dataplane readiness.",
+        "Add peer; enable mirroring on images; Promote / Demote / Failover with confirms.",
+        "Force promote only for split-brain recovery.",
+        "**Empty / fail:** Dataplane unverified \u2192 need second Ceph site; peers=0 \u2192 add peer first.",
+        "**Success:** Mirrors healthy; failover job succeeds when rehearsed."
+      ]
+    }
+  ]
+}

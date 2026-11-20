@@ -1,0 +1,162 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Creates a GitHub Release on a `v*` tag push: body pulled from CHANGELOG.md's matching
+# section, atlasctl binaries for common platforms, a UI dist bundle, and SHA256SUMS for those
+# assets. Runs independently of docker-publish.yml (same trigger, no cross-workflow `needs:`) —
+# both fire on the same tag. Image signatures and CycloneDX SBOMs are produced by docker-publish.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  create-release:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+
+      # CHANGELOG.md follows Keep a Changelog: rename [Unreleased] -> [x.y.z] - date before
+      # tagging. Extracts everything between this tag's "## [x.y.z]" heading and the next
+      # "## [" heading as the release body.
+      - name: Extract changelog section
+        id: changelog
+        run: |
+          version="${GITHUB_REF_NAME#v}"
+          awk -v ver="$version" '
+            $0 ~ "^## \\[" ver "\\]" { found=1; next }
+            found && /^## \[/ { exit }
+            found { print }
+          ' CHANGELOG.md > release-notes.md
+          if [ ! -s release-notes.md ]; then
+            echo "No CHANGELOG.md section found for [$version] - falling back to a placeholder body." >&2
+            echo "_(No CHANGELOG.md [$version] section found.)_" > release-notes.md
+          fi
+
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
+        with:
+          body_path: release-notes.md
+          generate_release_notes: true
+
+  binaries:
+    needs: create-release
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-latest
+          - target: x86_64-apple-darwin
+            os: macos-latest
+          - target: aarch64-apple-darwin
+            os: macos-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - if: contains(matrix.target, 'linux')
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
+      - if: contains(matrix.target, 'darwin')
+        run: brew install protobuf cmake
+      # `package: atlasctl` (not just `bin: atlasctl`) matters here: without -p, cross/cargo
+      # resolves features against the whole workspace's Cargo.lock, and atlas-gateway's default
+      # reqwest (native-tls/openssl-sys) bleeds back in even though atlasctl itself uses
+      # rustls-tls-native-roots — reintroducing the exact cross-compile failure that dependency
+      # override exists to avoid.
+      - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
+        with:
+          bin: atlasctl
+          package: atlasctl
+          target: ${{ matrix.target }}
+          archive: atlasctl-$tag-$target
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The per-Mac agent (docs/MACOS.md) is only useful on a Mac, so only macOS targets are built.
+  mac-agent:
+    needs: create-release
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [x86_64-apple-darwin, aarch64-apple-darwin]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - run: brew install protobuf cmake
+      - uses: taiki-e/upload-rust-binary-action@f0d45ae91ee7b8ee928de7a9d04d893a08bcbec6 # v1.30.2
+        with:
+          bin: atlas-mac-agent
+          package: atlas-mac-agent
+          target: ${{ matrix.target }}
+          archive: atlas-mac-agent-$tag-$target
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+  ui-dist:
+    needs: create-release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    defaults:
+      run:
+        working-directory: crates/atlas-gateway/ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: crates/atlas-gateway/ui/.nvmrc
+          cache: npm
+          cache-dependency-path: crates/atlas-gateway/ui/package-lock.json
+      - run: npm ci
+      - run: npm run build
+      - run: (cd dist && zip -r "../atlas-ui-dist-${GITHUB_REF_NAME}.zip" .)
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
+        with:
+          files: crates/atlas-gateway/ui/atlas-ui-dist-*.zip
+
+  # CLI archives and the UI zip are uploaded by the jobs above. This job checksums only those
+  # name patterns so a parallel docker-publish SBOM cannot land in SHA256SUMS.txt.
+  checksums:
+    needs: [binaries, mac-agent, ui-dist]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write # keyless cosign signing of SHA256SUMS.txt
+    steps:
+      - name: Checksum CLI archives and UI zip
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p assets
+          gh release download "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --dir assets \
+            --pattern 'atlasctl-*' --pattern 'atlas-mac-agent-*' --pattern 'atlas-ui-dist-*'
+          cd assets
+          sha256sum atlasctl-* atlas-mac-agent-* atlas-ui-dist-* | tee SHA256SUMS.txt
+          test -s SHA256SUMS.txt
+
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # Keyless signature over the checksum file (same OIDC identity model as the container images),
+      # so one verified file vouches for every archive listed in it. The bundle carries the
+      # certificate and the transparency-log entry; verification is documented in docs/RELEASING.md.
+      - name: Sign SHA256SUMS.txt (keyless)
+        working-directory: assets
+        run: cosign sign-blob --yes --bundle SHA256SUMS.txt.sigstore.json SHA256SUMS.txt
+
+      - uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3 # v3
+        with:
+          files: |
+            assets/SHA256SUMS.txt
+            assets/SHA256SUMS.txt.sigstore.json

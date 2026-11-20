@@ -1,0 +1,124 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# Retention locks and ransomware assessment
+
+Atlas native (`bkd_native`) can make data undeletable for a fixed period and can tell you when a
+filesystem's activity looks like ransomware. These are the pieces; each says what it does **not**
+cover.
+
+## 1. Locked snapshots (block and filesystem)
+
+A snapshot can be retention-locked. Until the lock expires, deleting it fails (HTTP 409) for every
+caller, admins included, and one caller can extend the lock but never shorten or remove it.
+
+```sh
+atlasctl lock-snapshot snap_native_… --retain-secs 604800     # 7 days
+# POST /api/atlas/v1/snapshots/{id}/lock   {"retain_secs": 604800}   (admin, 1 s … 10 years)
+# node: POST /v1/snapshots/{id}/lock and POST /v1/fs-snapshots/{id}/lock
+```
+
+The gateway records the expiry it was given in the snapshot's inventory row and shows it as
+`locked_until` (unix seconds) on `GET /snapshots` (and on the lock response as `retain_until_unix`).
+It only ever moves out, like the lock. It is the gateway's record, not the enforcement: a lock set
+directly on a node (`POST /v1/snapshots/{id}/lock`) or before this field existed is enforced but not
+reflected, and `locked_until` is not read back from the node, so the node's own value wins if the two
+ever differ. A value in the past means the lock has expired.
+
+How it is enforced: the expiry is part of the snapshot in the Raft-replicated catalog.
+`DeleteSnapshot` carries the proposing node's clock, so every replica judges the lock at the same
+instant, and a lagging replica cannot disagree. Catalogs and log entries from before locking load
+as unlocked. Deleting the source volume does not free a locked snapshot's extents.
+
+Not covered: anyone with the raw data-node disks or the ability to stop the whole cluster and edit
+its metadata files can still destroy data; this is software retention, not hardware WORM. The node
+trusts its own wall clock, so a node whose clock is set far into the future would let a lock lapse
+early. Keep NTP healthy.
+
+### Early unlock (two people)
+
+A lock can be cleared before it expires only when two different admins agree. The first admin
+proposes a reason; a second admin, not the same account, confirms. The gateway then calls
+`unlock_snapshot` on the atlas-native driver, which clears `retain_until_unix` in the Raft catalog
+for a block snapshot or a filesystem snapshot. The gateway audit records `snapshot.unlock.proposed`
+and `snapshot.unlock`. The proposal expires after 15 minutes. Confirming your own proposal is
+refused (403). A snapshot that is not locked is refused by the node.
+
+```sh
+# admin A
+POST /api/atlas/v1/snapshots/{id}/unlock/propose   {"reason": "legal hold released"}
+# admin B, a different account
+POST /api/atlas/v1/snapshots/{id}/unlock/confirm   {"proposal_id": "prp_…"}
+```
+
+The node also accepts `POST /v1/snapshots/{id}/unlock` and `POST /v1/fs-snapshots/{id}/unlock`.
+That call is what the driver makes. Anyone who can reach the node API with its token can unlock
+without the second admin, so keep that API limited to the gateway. This is still software
+retention: it does not survive someone editing the catalog files.
+
+## 2. S3 object retention
+
+`PutObjectRetention` / `GetObjectRetention` on the native S3 gateway, compliance mode only; see
+[`NATIVE_S3.md`](NATIVE_S3.md). It protects an object against the S3 API only. A client with a
+FUSE, NFS or SMB mount of the same filesystem can still unlink the file, so combine it with a
+locked **filesystem snapshot**, which they cannot touch.
+
+## 3. Ransomware assessment
+
+`POST /api/atlas/v1/ai/ransomware/assess` scores any activity series you send. For native
+filesystems Atlas records the series itself: per minute (kept four hours, in memory, on the node
+that served the operations) the files modified, renamed and deleted, bytes written, and the share
+of sampled written blocks with Shannon entropy above 7.5 bits per byte (encrypted or compressed
+data). Every write through the native filesystem API is counted, which includes the S3 gateway
+(its writes reach the same API). Renames and deletes of `.atlas_*` names are not counted: the S3
+gateway lands each PUT as a temp file renamed into place, which would otherwise look like mass
+renaming.
+
+```sh
+GET  /api/atlas/v1/volumes/{id}/ransomware            # operator; read-only verdict
+POST /api/atlas/v1/volumes/{id}/ransomware/protect    # admin; optional {"retain_secs": 3600…604800}
+```
+
+The verdict is `insufficient_data` (fewer than 7 windows), `normal`, `suspicious` or
+`likely_ransomware`, with the signals behind it. It is `likely_ransomware` only when the risk score
+is at least 0.6, new high-entropy writes are present **and** there is a behavioural tell (a burst of
+modified files, mass renames or mass deletes). A large backup or media ingest is bursty but not
+encrypted, so it is not flagged; compressed media alone is not either. The assessment never
+executes anything (`can_execute: false`).
+
+`protect` re-assesses on the server and, for `suspicious` or worse, takes a snapshot named
+`ransomware-guard-<time>` and locks it (default 24 hours, at most 7 days, because a false positive
+pins that capacity; its `locked_until` is recorded like any other lock). On normal activity it returns 409 and does nothing. It is audited as
+`snapshot.ransomware_guard`.
+
+### Automatic protection (opt-in)
+
+`ATLAS_RANSOMWARE_AUTOPROTECT=1` makes the gateway check every native filesystem volume each
+`ATLAS_RANSOMWARE_INTERVAL_SECS` (default 60, minimum 10) and run `protect` for
+`likely_ransomware` only, at most once per volume every 6 hours. It acts as
+`system:ransomware-guard`. Off by default.
+
+## Verification status
+
+Unit and integration tested (engine, Raft catalog, node HTTP, driver fake, gateway, S3 gateway).
+
+Live, 2026-10-18, on the lab k3s (`atlas-native` StatefulSet; only two of three pods could be
+scheduled because the shared node was at its pod limit, which still leaves a Raft quorum): over
+the node HTTP API a block snapshot and a filesystem snapshot were each locked, `DELETE` was refused
+with 409, and a shorter lock was refused with 409.
+
+Live, 2026-10-26, `deploy/native/lab-verify.sh` (via `scripts/lab-verify-remote.sh`) on the lab
+host: a six-process native cluster (3 metadata + 3 data nodes, compression and dedup on), the S3
+gateway and the Atlas gateway with `ATLAS_RANSOMWARE_AUTOPROTECT=1`, all as plain processes. 27 of
+27 checks passed:
+
+- S3 compliance retention: set, read back, a locked object refused delete and overwrite (403) with
+  its content unchanged, shortening refused, extending accepted, an unlocked object unaffected.
+- Ransomware: after an 8-minute quiet baseline the volume was assessed `normal`; a burst of 60
+  random-byte writes and deletes put entropy 1.0 in two one-minute windows (28 and 32 deletes) and
+  was assessed `likely_ransomware` (`can_execute: false`). Auto-protect then took a locked snapshot
+  that refused deletion (409), `ransomware/protect` locked another, and shortening its lock was
+  refused (409).
+
+**Limits of that run:** the "encryption" is random bytes written through the S3 gateway, not a real
+encrypting program, and the cluster was single-host. A real ransomware workload over a FUSE/NFS
+mount is still untried.

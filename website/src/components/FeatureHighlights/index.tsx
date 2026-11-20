@@ -1,0 +1,111 @@
+// Copyright (c) 2026 ZyvorAI Labs Private Limited.
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+import type {ReactNode} from 'react';
+import Link from '@docusaurus/Link';
+import Heading from '@theme/Heading';
+import styles from './styles.module.css';
+
+type FeatureItem = {
+  eyebrow: string;
+  title: string;
+  description: ReactNode;
+  to: string;
+  cta: string;
+  to2?: string;
+  cta2?: string;
+};
+
+const FeatureList: FeatureItem[] = [
+  {
+    eyebrow: 'Control plane',
+    title: 'Intent → any backend',
+    description:
+      'Volumes, snapshots, clones, CephFS RWX and buckets over REST and gRPC, mapped to Ceph, NFS, ZFS and Longhorn by one StorageDriver trait. A fake driver runs the whole console with no cluster.',
+    to: '/docs/core-concepts/architecture',
+    cta: 'Architecture',
+  },
+  {
+    eyebrow: 'Atlas Native',
+    title: 'A filesystem of its own.',
+    description:
+      'Striped, checksummed extents with sharded Raft metadata, erasure coding and rebuild, S3 tiering, and NFS, SMB, S3 and CSI over the same files. Lab-verified; NVMe and RDMA benchmarks pending.',
+    to: 'https://github.com/zyvorai/zyvor-atlas/blob/main/docs/NATIVE_STORAGE.md',
+    cta: 'Native roadmap status',
+  },
+  {
+    eyebrow: 'Data protection',
+    title: 'Locked means locked.',
+    description:
+      'Retention-locked snapshots that refuse delete and shorter locks, S3 compliance retention, and an explainable ransomware assessment that can take a locked snapshot for you. Lab-verified 27 of 27 on a synthetic burst; a real encrypting workload is still to come.',
+    to: '/docs/atlas-native/worm',
+    cta: 'Retention and ransomware',
+  },
+  {
+    eyebrow: 'Efficiency',
+    title: 'Store less, know exactly how much.',
+    description:
+      'Opt-in LZ4 compression and extent dedup on Atlas Native, with a per-volume savings report that separates compression from sharing. And before you change anything, a read-only estimator tells you what dedup would save on a Ceph or ZFS pool. Checked on a real Rook Ceph and a real zpool, small data so far.',
+    to: '/docs/atlas-native/data-reduction',
+    cta: 'Data reduction',
+    to2: '/docs/control-plane/dedup-estimate',
+    cta2: 'Dedup estimator',
+  },
+  {
+    eyebrow: 'DataBridge',
+    title: 'Cloud to edge, on Ceph.',
+    description:
+      'Six source engines, CDC, cutover, and Ceph-backed edge targets — migration as a control-plane product.',
+    to: '/docs/getting-started/quickstart',
+    cta: 'Quickstart',
+  },
+  {
+    eyebrow: 'Agent-ready',
+    title: 'Let an agent look. Not leap.',
+    description:
+      'An MCP server with 53 read-only tools: inventory, the Ops Advisor, eBPF I/O risk, Ceph, DR and jobs, with the same roles and tenant limits as the API. Six opt-in writes (snapshots, alert acknowledgement and silencing, agent workspaces), each behind a single-use confirmation token and an audit record. Failover and delete are never exposed.',
+    to: '/docs/control-plane/mcp',
+    cta: 'MCP and agents',
+  },
+  {
+    eyebrow: 'Day-2 and DR',
+    title: 'Fail over. Fail back cleanly.',
+    description:
+      'Alerts, maintenance, quotas, upgrade preflight, two-way RBD mirroring (snapshot, journal and pool modes) with a guarded failback, RBD consistency groups, and native replication to a second site.',
+    to: '/gallery',
+    cta: 'See the console',
+  },
+];
+
+function Feature({eyebrow, title, description, to, cta, to2, cta2, light}: FeatureItem & {light: boolean}) {
+  return (
+    <article className={light ? `${styles.band} ${styles.light}` : styles.band}>
+      <div className={styles.inner}>
+        <p className={styles.eyebrow}>{eyebrow}</p>
+        <Heading as="h2" className={styles.title}>
+          {title}
+        </Heading>
+        <p className={styles.copy}>{description}</p>
+        <div className={styles.links}>
+          <Link className={styles.link} to={to}>
+            {cta} <span aria-hidden="true">›</span>
+          </Link>
+          {to2 && cta2 && (
+            <Link className={styles.link} to={to2}>
+              {cta2} <span aria-hidden="true">›</span>
+            </Link>
+          )}
+        </div>
+      </div>
+    </article>
+  );
+}
+
+export default function FeatureHighlights(): ReactNode {
+  return (
+    <section className={styles.features} aria-label="Capabilities">
+      {FeatureList.map((props, i) => (
+        <Feature key={props.title} light={i % 2 === 1} {...props} />
+      ))}
+    </section>
+  );
+}

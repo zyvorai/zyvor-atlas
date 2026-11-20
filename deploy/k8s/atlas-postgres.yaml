@@ -1,0 +1,105 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Sketch only — NOT applied to the lab. Atlas gateways still use SQLite (see docs/HA.md).
+#
+# Option A: plain Deployment + PVC (single-replica Postgres for smoke / CI).
+# Option B (commented): CloudNativePG Cluster CR for a real HA Postgres later.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: atlas-ha
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: atlas-postgres
+  namespace: atlas-ha
+type: Opaque
+stringData:
+  POSTGRES_USER: atlas
+  POSTGRES_PASSWORD: atlas
+  POSTGRES_DB: atlas
+  # Future gateway: ATLAS_DATABASE_URL=postgres://atlas:atlas@atlas-postgres:5432/atlas
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: atlas-postgres-data
+  namespace: atlas-ha
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-postgres
+  namespace: atlas-ha
+  labels:
+    app: atlas-postgres
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app: atlas-postgres
+  template:
+    metadata:
+      labels:
+        app: atlas-postgres
+    spec:
+      containers:
+        - name: postgres
+          image: postgres:16-alpine
+          ports:
+            - containerPort: 5432
+              name: postgres
+          envFrom:
+            - secretRef:
+                name: atlas-postgres
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+          readinessProbe:
+            exec:
+              command: ["pg_isready", "-U", "atlas", "-d", "atlas"]
+            initialDelaySeconds: 5
+            periodSeconds: 5
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: atlas-postgres-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-postgres
+  namespace: atlas-ha
+spec:
+  selector:
+    app: atlas-postgres
+  ports:
+    - port: 5432
+      targetPort: postgres
+# ---
+# Option B — CloudNativePG (requires the CNPG operator installed):
+# apiVersion: postgresql.cnpg.io/v1
+# kind: Cluster
+# metadata:
+#   name: atlas-pg
+#   namespace: atlas-ha
+# spec:
+#   instances: 3
+#   storage:
+#     size: 20Gi
+#     # storageClass: <rwx-or-local>
+#   bootstrap:
+#     initdb:
+#       database: atlas
+#       owner: atlas
+#       secret:
+#         name: atlas-postgres

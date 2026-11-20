@@ -1,0 +1,16 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+[Unit]
+Description=Loop device backing the Atlas DR-lab Ceph OSD
+DefaultDependencies=no
+Before=k3s.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/sbin/losetup /dev/loop30 /var/lib/ceph-dr-osd.img
+ExecStop=/sbin/losetup -d /dev/loop30
+
+[Install]
+WantedBy=multi-user.target

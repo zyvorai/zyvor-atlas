@@ -1,0 +1,24 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Lab PostgreSQL for the future multi-replica Atlas cutover (see docs/HA.md).
+# Atlas still uses SQLite today — this compose file is scaffolding so operators can stand up
+# a shared DB and validate connectivity / backups before the sqlx port lands.
+services:
+  atlas-postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: atlas
+      POSTGRES_PASSWORD: atlas
+      POSTGRES_DB: atlas
+    ports:
+      - "5432:5432"
+    volumes:
+      - atlas-pg-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atlas -d atlas"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  atlas-pg-data:

@@ -1,0 +1,124 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Asynchronous replication (docs/NATIVE_REPLICATION.md): one atlas-native-replicate Deployment per
+# entry in replication.jobs, sending a filesystem of this cluster to a replica on another cluster.
+# Each pod is stateless (the replica records where to continue), so it is simply recreated.
+{{- if .Values.replication.enabled }}
+{{- if .Values.httpTls.requireClientCert }}
+{{- fail "replication.enabled does not support httpTls.requireClientCert yet" }}
+{{- end }}
+{{- if not .Values.replication.jobs }}
+{{- fail "replication.enabled needs at least one entry in replication.jobs" }}
+{{- end }}
+{{- $full := include "atlas-native.fullname" . }}
+{{- $scheme := ternary "https" "http" .Values.httpTls.enabled }}
+{{- $endpoints := list }}
+{{- range $i := until (int .Values.replicas) }}
+{{- $endpoints = append $endpoints (printf "%s://%s:7480" $scheme (include "atlas-native.podHost" (list $ $i))) }}
+{{- end }}
+{{- $image := printf "%s:%s" .Values.replication.image.repository (.Values.replication.image.tag | default .Chart.AppVersion) }}
+{{- $target := .Values.replication.target }}
+{{- if not $target.endpoints }}
+{{- fail "replication.target.endpoints is required" }}
+{{- end }}
+{{- if not $target.tokenSecret }}
+{{- fail "replication.target.tokenSecret is required" }}
+{{- end }}
+{{- range $job := .Values.replication.jobs }}
+{{- if not $job.fs }}
+{{- fail "every replication.jobs entry needs fs" }}
+{{- end }}
+{{- $name := printf "%s-replicate-%s" $full $job.fs | trunc 63 | trimSuffix "-" }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $name }}
+  namespace: {{ $.Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" $ | nindent 4 }}
+    app.kubernetes.io/component: replicate
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      {{- include "atlas-native.selectorLabels" $ | nindent 6 }}
+      app.kubernetes.io/component: replicate
+      atlas.zyvor.io/replicate-fs: {{ $job.fs | quote }}
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-native.selectorLabels" $ | nindent 8 }}
+        app.kubernetes.io/component: replicate
+        atlas.zyvor.io/replicate-fs: {{ $job.fs | quote }}
+    spec:
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.replication.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with $.Values.replication.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: replicate
+          image: {{ $image }}
+          imagePullPolicy: {{ $.Values.replication.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          args:
+            - --source={{ join "," $endpoints }}
+            - --source-token-file=/etc/atlas-native-replicate/source/token
+            {{- if $.Values.httpTls.enabled }}
+            - --source-ca-file=/etc/atlas-native-replicate/source-tls/ca.crt
+            {{- end }}
+            - --target={{ join "," $target.endpoints }}
+            - --target-token-file=/etc/atlas-native-replicate/target/token
+            {{- if $target.caSecret }}
+            - --target-ca-file=/etc/atlas-native-replicate/target-tls/ca.crt
+            {{- end }}
+            - --fs={{ $job.fs }}
+            {{- with $job.targetFs }}
+            - --target-fs={{ . }}
+            {{- end }}
+            - --interval-secs={{ $job.intervalSecs | default $.Values.replication.intervalSecs }}
+            - --keep={{ $job.keep | default $.Values.replication.keep }}
+          volumeMounts:
+            - { name: source-token, mountPath: /etc/atlas-native-replicate/source, readOnly: true }
+            - { name: target-token, mountPath: /etc/atlas-native-replicate/target, readOnly: true }
+            {{- if $.Values.httpTls.enabled }}
+            - { name: source-ca, mountPath: /etc/atlas-native-replicate/source-tls, readOnly: true }
+            {{- end }}
+            {{- if $target.caSecret }}
+            - { name: target-ca, mountPath: /etc/atlas-native-replicate/target-tls, readOnly: true }
+            {{- end }}
+          resources: {{- toYaml $.Values.replication.resources | nindent 12 }}
+      volumes:
+        - name: source-token
+          secret: { secretName: {{ include "atlas-native.tokenSecret" $ }} }
+        - name: target-token
+          secret:
+            secretName: {{ $target.tokenSecret }}
+            items: [{ key: {{ $target.tokenKey | default "token" }}, path: token }]
+        {{- if $.Values.httpTls.enabled }}
+        - name: source-ca
+          secret:
+            secretName: {{ $.Values.httpTls.existingSecret }}
+            items: [{ key: ca.crt, path: ca.crt }]
+        {{- end }}
+        {{- if $target.caSecret }}
+        - name: target-ca
+          secret:
+            secretName: {{ $target.caSecret }}
+            items: [{ key: {{ $target.caKey | default "ca.crt" }}, path: ca.crt }]
+        {{- end }}
+{{- end }}
+{{- end }}

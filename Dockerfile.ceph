@@ -1,0 +1,66 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# atlas-gateway image WITH the Ceph Squid client (ceph/rbd CLIs) for ATLAS_CEPH_DRIVER_MODE=real.
+# The runtime installs ceph-common from the upstream Squid apt repo so the client matches the
+# cluster major (v19) and the glibc lines up with the debian-bookworm-built binary.
+# ---- UI builder (React Storage Center → dist) ----
+FROM docker.io/library/node:26-alpine@sha256:8996bb5821d62a8fd9bb27c1cb07462f3fdce6e47d640c6a881ead0b064ce216 AS ui
+WORKDIR /ui
+# npm >=11 is required: node:22-alpine's npm 10.9.8 mis-resolves this lockfile's optional/platform
+# deps (npm ci "succeeds" but leaves node_modules incomplete — vite/rollup then fail to resolve
+# packages like recharts that are present on disk with a valid package.json). The digest-pinned
+# node:26-alpine image bundles npm 11.x, so no global npm upgrade step is needed (it was a
+# download without a hash pin, flagged by Scorecard's PinnedDependencies check).
+COPY crates/atlas-gateway/ui/package.json crates/atlas-gateway/ui/package-lock.json ./
+RUN npm ci
+COPY crates/atlas-gateway/ui/ ./
+RUN npm run build
+
+# ---- builder ----
+FROM docker.io/library/rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
+# protoc for gRPC; cmake for vendored librdkafka (kafka-lag). Match Dockerfile features so real
+# MongoDB discovery/CDC and precise lag work on the Ceph gateway image too.
+RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler cmake \
+    && rm -rf /var/lib/apt/lists/*
+WORKDIR /build
+COPY . .
+# Embed the freshly built UI (rust-embed reads crates/atlas-gateway/ui/dist at compile time).
+COPY --from=ui /ui/dist crates/atlas-gateway/ui/dist
+RUN cargo build --release -p atlas-gateway -p atlasctl \
+    --features atlas-gateway/mcp,atlas-databridge/mongodb,atlas-databridge/sqlserver,atlas-databridge/oracle,atlas-databridge/kafka-lag
+
+# ---- runtime (debian + ceph squid client) ----
+FROM docker.io/library/debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc AS runtime
+# zfsutils-linux/util-linux/setcap: same raw-disk provisioning tooling as `Dockerfile` (Disks page,
+# helm `disks.enabled`) — see the long comment there for the file-capabilities rationale and
+# docs/DISKS.md. zfsutils-linux is in Debian's `contrib` component.
+# Oracle Instant Client + libaio: the `oracle` feature above dlopens libclntsh.so at runtime, same as
+# `Dockerfile` (see the comment there; ORACLE_IC_URL can point at an internal mirror). unzip stays
+# installed: ceph-common pulls in luarocks, which depends on it, so purging it removes the Ceph CLIs.
+ARG ORACLE_IC_URL=https://download.oracle.com/otn_software/linux/instantclient/2113000/instantclient-basiclite-linux.x64-21.13.0.0.0dbru.zip
+RUN echo "deb http://deb.debian.org/debian bookworm contrib" >> /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl gnupg unzip libaio1 \
+    && curl -fsSL https://download.ceph.com/keys/release.asc | gpg --dearmor -o /usr/share/keyrings/ceph.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/ceph.gpg] https://download.ceph.com/debian-squid/ bookworm main" > /etc/apt/sources.list.d/ceph.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ceph-common zfsutils-linux util-linux xfsprogs libcap2-bin \
+    && for bin in /usr/sbin/wipefs /usr/sbin/zpool /usr/sbin/zfs /usr/bin/lsblk /usr/bin/findmnt /usr/sbin/blockdev; do \
+         setcap cap_dac_override,cap_sys_admin=ep "$bin"; \
+       done \
+    && apt-get purge -y --auto-remove libcap2-bin \
+    && curl -fsSL -o /tmp/ic.zip "$ORACLE_IC_URL" \
+    && mkdir -p /opt/oracle && unzip -q /tmp/ic.zip -d /opt/oracle && rm /tmp/ic.zip \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --system --uid 10001 --home /var/lib/atlas atlas \
+    && mkdir -p /var/lib/atlas /etc/ceph && chown atlas:atlas /var/lib/atlas /etc/ceph
+ENV LD_LIBRARY_PATH=/opt/oracle/instantclient_21_13
+COPY --from=builder /build/target/release/atlas-gateway /usr/local/bin/atlas-gateway
+COPY --from=builder /build/target/release/atlasctl /usr/local/bin/atlasctl
+COPY --from=builder /build/migrations /usr/local/share/atlas/migrations
+USER atlas
+WORKDIR /var/lib/atlas
+ENV ATLAS_BIND_ADDR=0.0.0.0:5110 \
+    ATLAS_DATABASE_URL=sqlite:///var/lib/atlas/atlas.db?mode=rwc
+EXPOSE 5110
+ENTRYPOINT ["/usr/local/bin/atlas-gateway"]

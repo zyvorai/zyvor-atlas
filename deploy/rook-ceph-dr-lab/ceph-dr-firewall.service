@@ -1,0 +1,16 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+[Unit]
+Description=Restrict the Atlas DR-lab Ceph ports to the mirror peer
+After=network-online.target k3s.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+# The secondary cluster's public IP.
+Environment=PEER=203.0.113.10
+ExecStart=/usr/local/sbin/ceph-dr-firewall.sh
+
+[Install]
+WantedBy=multi-user.target

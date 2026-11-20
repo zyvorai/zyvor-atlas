@@ -1,0 +1,61 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Lab Kafka for DataBridge CDC (Strimzi KRaft + NodePool, single dual-role broker).
+# Applied by `deploy/databridge/up.sh` when streaming is enabled. Bootstrap Service:
+#   zyvor-kafka-kafka-bootstrap.zyvor-databridge.svc:9092
+#
+# start_cdc hard-codes that bootstrap. RF=1 is lab-only — raise replicas for production.
+# Requires Strimzi operator already installed in the namespace (up.sh installs it first).
+apiVersion: kafka.strimzi.io/v1
+kind: KafkaNodePool
+metadata:
+  name: dual-role
+  namespace: zyvor-databridge
+  labels:
+    strimzi.io/cluster: zyvor-kafka
+spec:
+  replicas: 1
+  roles:
+    - controller
+    - broker
+  storage:
+    type: jbod
+    volumes:
+      - id: 0
+        type: persistent-claim
+        size: 20Gi
+        class: zyvor-rbd-prod
+        deleteClaim: false
+---
+apiVersion: kafka.strimzi.io/v1
+kind: Kafka
+metadata:
+  name: zyvor-kafka
+  namespace: zyvor-databridge
+  annotations:
+    strimzi.io/node-pools: enabled
+    strimzi.io/kraft: enabled
+spec:
+  kafka:
+    # Must match the Strimzi operator's supported set (lab: 4.2.0 / 4.2.1 / 4.3.0).
+    # Align with deploy/databridge/connect/Dockerfile (quay.io/strimzi/kafka:*-kafka-4.3.0).
+    version: 4.3.0
+    metadataVersion: 4.3-IV0
+    listeners:
+      - name: plain
+        port: 9092
+        type: internal
+        tls: false
+      - name: tls
+        port: 9093
+        type: internal
+        tls: true
+    config:
+      offsets.topic.replication.factor: 1
+      transaction.state.log.replication.factor: 1
+      transaction.state.log.min.isr: 1
+      default.replication.factor: 1
+      min.insync.replicas: 1
+  entityOperator:
+    topicOperator: {}
+    userOperator: {}

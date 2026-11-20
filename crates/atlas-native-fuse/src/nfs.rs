@@ -1,0 +1,319 @@
+// Copyright (c) 2026 ZyvorAI Labs Private Limited.
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+
+//! NFS gateway configuration (binary `atlas-native-nfs`): which filesystems to export to which
+//! clients, checked and rendered as an NFS-Ganesha configuration serving each filesystem's FUSE
+//! mount through FSAL_VFS.
+
+use std::{collections::HashSet, fmt::Write, path::Path};
+
+use serde::Deserialize;
+
+/// One exported filesystem.
+#[derive(Debug, Clone, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct Export {
+    /// Filesystem id.
+    pub fs: String,
+    /// NFSv4 pseudo path; `/<fs>` if absent.
+    #[serde(default)]
+    pub pseudo: Option<String>,
+    /// Clients allowed to mount: addresses, CIDR networks, host names or wildcards.
+    pub clients: Vec<String>,
+    #[serde(default)]
+    pub access: Access,
+    #[serde(default)]
+    pub squash: Squash,
+    /// Ganesha export id (1–65535); derived from `fs` if absent. Clients' file handles carry it,
+    /// so it must not change while they have the export mounted.
+    #[serde(default)]
+    pub export_id: Option<u16>,
+}
+
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Access {
+    #[default]
+    Rw,
+    Ro,
+}
+
+/// Which client identities are mapped to the anonymous user (65534).
+#[derive(Debug, Clone, Copy, Default, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum Squash {
+    /// uid 0 only.
+    #[default]
+    Root,
+    None,
+    All,
+}
+
+/// Major number of every export's filesystem id ("ATLS").
+const FSID_MAJOR: u64 = 0x4154_4c53;
+
+fn fnv1a(s: &str) -> u64 {
+    s.bytes().fold(0xcbf2_9ce4_8422_2325, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3)
+    })
+}
+
+impl Export {
+    pub fn pseudo(&self) -> String {
+        self.pseudo
+            .clone()
+            .unwrap_or_else(|| format!("/{}", self.fs))
+    }
+
+    pub fn export_id(&self) -> u16 {
+        self.export_id
+            .unwrap_or_else(|| 1 + (fnv1a(&self.fs) % 65535) as u16)
+    }
+
+    /// The filesystem id Ganesha puts in file handles instead of the FUSE mount's device
+    /// number, which changes on every mount: derived from `fs` alone, so handles stay valid
+    /// across gateway restarts and never resolve in another filesystem. Both halves fit in 32
+    /// bits: Ganesha keeps a FUSE mount's fsid as two 32-bit numbers in its handles.
+    pub fn fsid(&self) -> (u64, u64) {
+        let h = fnv1a(&self.fs);
+        (FSID_MAJOR, (h ^ (h >> 32)) & 0xffff_ffff)
+    }
+}
+
+fn plain(s: &str, extra: &str) -> bool {
+    !s.is_empty()
+        && s.chars()
+            .all(|c| c.is_ascii_alphanumeric() || "._-".contains(c) || extra.contains(c))
+}
+
+/// Checks `exports` so every value can go into the configuration unquoted or in quotes as is.
+pub fn validate(exports: &[Export]) -> Result<(), String> {
+    if exports.is_empty() {
+        return Err("no exports".into());
+    }
+    let (mut fss, mut pseudos) = (HashSet::new(), HashSet::new());
+    for e in exports {
+        if !plain(&e.fs, "") || e.fs.len() > 128 || e.fs.starts_with('.') {
+            return Err(format!("invalid filesystem id {:?}", e.fs));
+        }
+        let p = e.pseudo();
+        if !p.starts_with('/')
+            || p == "/"
+            || !plain(&p, "/")
+            || p.split('/').any(|c| c == "." || c == "..")
+        {
+            return Err(format!("invalid pseudo path {p:?} for {}", e.fs));
+        }
+        if e.clients.is_empty() {
+            return Err(format!("export {} lists no clients", e.fs));
+        }
+        if let Some(c) = e.clients.iter().find(|c| !plain(c, ":/*")) {
+            return Err(format!("invalid client {c:?} for {}", e.fs));
+        }
+        if !fss.insert(e.fs.as_str()) {
+            return Err(format!("filesystem {} exported twice", e.fs));
+        }
+        if !pseudos.insert(p.clone()) {
+            return Err(format!("pseudo path {p} used twice"));
+        }
+        if e.export_id() == 0 {
+            return Err(format!("export {}: export_id 0 is the pseudo root", e.fs));
+        }
+    }
+    let mut ids = HashSet::new();
+    for e in exports {
+        if !ids.insert(e.export_id()) {
+            return Err(format!(
+                "export {} has the export id {} of another export; set export_id",
+                e.fs,
+                e.export_id()
+            ));
+        }
+    }
+    let fsids: HashSet<_> = exports.iter().map(Export::fsid).collect();
+    if fsids.len() != exports.len() {
+        return Err("two filesystem ids hash to one NFS filesystem id".into());
+    }
+    Ok(())
+}
+
+/// The Ganesha configuration exporting each filesystem mounted at `<root>/<fs>` (NFSv4.1 and
+/// 4.2, plus NFSv3 with `v3`). Call [`validate`] first.
+pub fn render(exports: &[Export], root: &Path, v3: bool) -> String {
+    let protocols = if v3 { "3, 4" } else { "4" };
+    let mut c = String::from("# Generated by atlas-native-nfs.\n");
+    let _ = writeln!(c, "NFS_CORE_PARAM {{");
+    let _ = writeln!(c, "    Protocols = {protocols};");
+    let _ = writeln!(c, "    NFS_Port = 2049;");
+    if v3 {
+        let _ = writeln!(c, "    MNT_Port = 20048;");
+        let _ = writeln!(c, "    NLM_Port = 32803;");
+        let _ = writeln!(c, "    Enable_NLM = true;");
+        // NFSv3 clients mount the same path as NFSv4 ones (the pseudo path).
+        let _ = writeln!(c, "    mount_path_pseudo = true;");
+    } else {
+        let _ = writeln!(c, "    Enable_NLM = false;");
+    }
+    let _ = writeln!(c, "    Enable_RQUOTA = false;");
+    let _ = writeln!(c, "    fsid_override = true;");
+    let _ = writeln!(c, "}}");
+    // No recovery store survives a gateway restart, so there is no grace period to reclaim in.
+    let _ = writeln!(
+        c,
+        "NFSV4 {{\n    Minor_Versions = 1, 2;\n    Graceless = true;\n    Only_Numeric_Owners = true;\n}}"
+    );
+    let _ = writeln!(c, "NFS_KRB5 {{\n    Active_krb5 = false;\n}}");
+    let _ = writeln!(c, "LOG {{\n    Default_Log_Level = EVENT;\n}}");
+    for e in exports {
+        let squash = match e.squash {
+            Squash::Root => "Root_Squash",
+            Squash::None => "No_Root_Squash",
+            Squash::All => "All_Squash",
+        };
+        let access = match e.access {
+            Access::Rw => "RW",
+            Access::Ro => "RO",
+        };
+        let _ = writeln!(c, "EXPORT {{");
+        let (major, minor) = e.fsid();
+        let _ = writeln!(c, "    Export_Id = {};", e.export_id());
+        let _ = writeln!(c, "    Filesystem_id = {major}.{minor};");
+        let _ = writeln!(c, "    Path = \"{}\";", root.join(&e.fs).display());
+        let _ = writeln!(c, "    Pseudo = \"{}\";", e.pseudo());
+        let _ = writeln!(c, "    Protocols = {protocols};");
+        let _ = writeln!(c, "    Transports = TCP;");
+        let _ = writeln!(c, "    SecType = sys;");
+        let _ = writeln!(c, "    Access_Type = None;");
+        let _ = writeln!(c, "    Squash = {squash};");
+        // Other clients change the filesystem too: take attributes from the mount every time
+        // (its cache leases keep that cheap) rather than from Ganesha's cache for 60 s.
+        let _ = writeln!(c, "    Attr_Expiration_Time = 0;");
+        let _ = writeln!(c, "    FSAL {{\n        Name = VFS;\n    }}");
+        let _ = writeln!(
+            c,
+            "    CLIENT {{\n        Clients = {};\n        Protocols = {protocols};\n        Access_Type = {access};\n    }}",
+            e.clients.join(", ")
+        );
+        let _ = writeln!(c, "}}");
+    }
+    c
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn export(fs: &str) -> Export {
+        Export {
+            fs: fs.into(),
+            pseudo: None,
+            clients: vec!["10.0.0.0/8".into()],
+            access: Access::Rw,
+            squash: Squash::Root,
+            export_id: None,
+        }
+    }
+
+    #[test]
+    fn renders_one_block_per_export() {
+        let mut ro = export("b");
+        ro.pseudo = Some("/data/b".into());
+        ro.access = Access::Ro;
+        ro.squash = Squash::All;
+        ro.clients.push("*.lab".into());
+        let exports = [export("a"), ro];
+        validate(&exports).unwrap();
+        let c = render(&exports, Path::new("/export"), false);
+        assert!(c.contains("Protocols = 4;") && c.contains("fsid_override = true;"));
+        assert!(c.contains("Enable_NLM = false;"));
+        for e in &exports {
+            let (major, minor) = e.fsid();
+            assert!(c.contains(&format!(
+                "Export_Id = {};\n    Filesystem_id = {major}.{minor};\n    Path = \"/export/{}\";\n    Pseudo = \"{}\";",
+                e.export_id(),
+                e.fs,
+                e.pseudo()
+            )));
+        }
+        assert!(c.contains("Squash = All_Squash;\n    Attr_Expiration_Time = 0;"));
+        assert!(c.contains(
+            "Clients = 10.0.0.0/8, *.lab;\n        Protocols = 4;\n        Access_Type = RO;"
+        ));
+        let v3 = render(&exports, Path::new("/export"), true);
+        assert!(v3.contains("Protocols = 3, 4;") && v3.contains("MNT_Port = 20048;"));
+        assert!(v3.contains("mount_path_pseudo = true;"));
+    }
+
+    #[test]
+    fn ids_follow_the_filesystem_not_its_place_in_the_list() {
+        let (a, b) = (export("a"), export("b"));
+        let one = render(&[a.clone(), b.clone()], Path::new("/export"), false);
+        let two = render(&[b.clone(), a.clone()], Path::new("/export"), false);
+        for e in [&a, &b] {
+            let block = |c: &str| {
+                let at = c.find(&format!("Path = \"/export/{}\"", e.fs)).unwrap();
+                c[..at].rsplit("EXPORT {").next().unwrap().to_string()
+            };
+            assert_eq!(block(&one), block(&two));
+        }
+        assert_ne!(a.export_id(), b.export_id());
+        assert_ne!(a.fsid(), b.fsid());
+        assert!(a.fsid().0 <= u64::from(u32::MAX) && a.fsid().1 <= u64::from(u32::MAX));
+        let mut clash = export("c");
+        clash.export_id = Some(a.export_id());
+        assert!(validate(&[a.clone(), clash]).is_err());
+        let mut zero = export("z");
+        zero.export_id = Some(0);
+        assert!(validate(&[zero]).is_err());
+    }
+
+    #[test]
+    fn refuses_what_could_break_out_of_the_configuration() {
+        for bad in [
+            Export {
+                fs: "a\";} EXPORT {".into(),
+                ..export("x")
+            },
+            Export {
+                fs: "..".into(),
+                ..export("x")
+            },
+            Export {
+                pseudo: Some("/a/../b".into()),
+                ..export("a")
+            },
+            Export {
+                pseudo: Some("/".into()),
+                ..export("a")
+            },
+            Export {
+                clients: vec!["10.0.0.0/8; Access_Type = RW".into()],
+                ..export("a")
+            },
+            Export {
+                clients: vec![],
+                ..export("a")
+            },
+        ] {
+            assert!(validate(std::slice::from_ref(&bad)).is_err(), "{bad:?}");
+        }
+        assert!(validate(&[]).is_err());
+        assert!(validate(&[export("a"), export("a")]).is_err());
+        let mut dup = export("b");
+        dup.pseudo = Some("/a".into());
+        assert!(validate(&[export("a"), dup]).is_err());
+    }
+
+    #[test]
+    fn parses_the_chart_format() {
+        let e: Vec<Export> = serde_json::from_str(
+            r#"[{"fs":"pvc-1","clients":["*"]},{"fs":"x","pseudo":"/y","clients":["a"],"access":"ro","squash":"none"}]"#,
+        )
+        .unwrap();
+        assert_eq!(e[0].pseudo(), "/pvc-1");
+        assert_eq!((e[1].access, e[1].squash), (Access::Ro, Squash::None));
+        assert!(
+            serde_json::from_str::<Vec<Export>>(r#"[{"fs":"a","clients":[],"bogus":1}]"#).is_err()
+        );
+    }
+}

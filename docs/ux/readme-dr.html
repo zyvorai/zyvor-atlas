@@ -1,0 +1,59 @@
+<!doctype html>
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas: two-way DR</title>
+<!-- README card, 1600x400 at 2x. Build: ./docs/ux/build-readme-cards.sh -->
+<style>
+  :root { --acc:#2997ff; --sans:'SF Pro Display','Helvetica Neue',Helvetica,Arial,sans-serif; --mono:'SF Mono',Menlo,Consolas,monospace; }
+  * { box-sizing:border-box; } html,body { margin:0; padding:0; }
+  body { width:1600px; min-height:400px; overflow:hidden; background:#000; color:#f5f5f7; font-family:var(--sans); position:relative; }
+  .glow { position:absolute; inset:0; background:radial-gradient(800px 420px at 92% -10%, color-mix(in srgb, var(--acc) 34%, transparent), transparent 65%),
+    radial-gradient(700px 380px at -5% 115%, rgba(0,113,227,.22), transparent 60%); }
+  .rail { position:absolute; left:0; top:0; bottom:0; width:6px; background:linear-gradient(180deg, var(--acc), rgba(41,151,255,.2)); }
+  .wrap { position:relative; padding:40px 64px 28px; }
+  .top { display:flex; align-items:center; justify-content:space-between; }
+  .brand { display:flex; align-items:center; gap:12px; font-family:var(--mono); font-size:15px; letter-spacing:.18em; text-transform:uppercase; color:#a1a1a6; }
+  .brand b { color:#fff; }
+  .kicker { font-family:var(--mono); font-size:15px; letter-spacing:.18em; text-transform:uppercase; color:var(--acc); }
+  h1 { margin:18px 0 0; font-size:50px; line-height:1.05; font-weight:800; letter-spacing:-.03em; white-space:nowrap; }
+  h1 em { font-style:normal; color:var(--acc); }
+  .foot { margin-top:28px; display:flex; justify-content:space-between; align-items:center; font-family:var(--mono); font-size:16px; color:#8e8e93; padding-top:18px; border-top:1px solid rgba(255,255,255,.08); }
+  .foot b { color:#f5f5f7; font-size:17px; }
+  .card { border-radius:16px; background:linear-gradient(180deg, rgba(28,30,36,.92), rgba(14,15,19,.95)); border:1px solid rgba(255,255,255,.12); position:relative; overflow:hidden; }
+  .tag { display:inline-block; font-family:var(--mono); font-size:12px; font-weight:700; letter-spacing:.16em; text-transform:uppercase; padding:4px 10px; border-radius:10px; border:1px solid currentColor; }
+
+  .caps { margin-top:30px; display:grid; grid-template-columns:repeat(5,1fr); gap:20px; }
+  .cap { padding:22px 22px 16px; }
+  .cap::before { content:''; position:absolute; right:-60px; top:-60px; width:200px; height:200px; border-radius:50%; background:radial-gradient(circle, color-mix(in srgb, var(--c) 30%, transparent), transparent 70%); }
+  .cap h2 { margin:16px 0 14px; font-size:25px; font-weight:700; letter-spacing:-.02em; }
+  .cap ul { margin:0; padding:0; list-style:none; }
+  .cap li { position:relative; padding:9px 0 9px 20px; font-size:17px; line-height:1.3; color:#d1d1d6; border-bottom:1px solid rgba(255,255,255,.07); }
+  .cap li:last-child { border-bottom:0; }
+  .cap li::before { content:''; position:absolute; left:2px; top:17px; width:7px; height:7px; border-radius:50%; background:var(--c); box-shadow:0 0 8px var(--c); }
+  .strip { margin-top:22px; display:flex; align-items:center; gap:16px; padding:14px 20px; border-radius:14px; font-family:var(--mono); font-size:18px; color:#d1d1d6;
+    background:linear-gradient(90deg, rgba(0,113,227,.10), color-mix(in srgb, var(--acc) 20%, transparent), rgba(0,113,227,.10)); border:1px solid color-mix(in srgb, var(--acc) 50%, transparent); }
+  .strip b { color:var(--acc); letter-spacing:.08em; }
+  .strip .ok { color:#30d158; } .strip .no { color:#ff453a; }
+  .strip .r { margin-left:auto; color:#8e8e93; font-size:14px; letter-spacing:.06em; text-transform:uppercase; }
+  .flow { margin-top:30px; display:grid; grid-template-columns:repeat(5,1fr); gap:30px; }
+  .st { padding:20px 20px 18px; }
+  .st:not(:last-child)::after { content:''; position:absolute; }
+  .arrow { position:relative; }
+  .arrow:not(:last-child)::after { content:''; position:absolute; right:-24px; top:50%; margin-top:-9px; border-left:14px solid #6e6e73; border-top:9px solid transparent; border-bottom:9px solid transparent; }
+  .st .n { float:right; font-family:var(--mono); font-size:15px; font-weight:700; color:var(--c); }
+  .st h2 { margin:14px 0 8px; font-size:24px; font-weight:700; letter-spacing:-.02em; }
+  .st p { margin:0; font-size:17px; line-height:1.38; color:#c7c7cc; }
+  .st code { font-family:var(--mono); font-size:15px; color:#f5f5f7; }
+</style>
+</head>
+<body>
+<div class="glow"></div><div class="rail"></div>
+<div class="wrap">
+<div class="top"><div class="brand"><svg viewBox="0 0 64 64" width="30" height="30" aria-hidden="true"><defs><linearGradient id="zb" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff5a15"/><stop offset="1" stop-color="#cc420a"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#zb)"/><path d="M18.5,20.5 45.5,20.5 18.5,43.5 45.5,43.5" fill="none" stroke="#fff" stroke-width="8.3" stroke-linecap="round" stroke-linejoin="round"/></svg><b>Zyvor</b><span>&middot;</span><span>Atlas</span></div><div class="kicker">Cross-site DR</div></div><h1>Fail over. <em>Fail back cleanly.</em></h1><div class="flow"><div class="card st arrow" style="--c:#2997ff"><span class="tag" style="color:#2997ff">Mirror</span><span class="n">1</span><h2>Site A is primary</h2><p>Snapshot mirroring every minute; site B is <code>up+replaying</code>.</p></div><div class="card st arrow" style="--c:#ff9f0a"><span class="tag" style="color:#ff9f0a">Fail over</span><span class="n">2</span><h2>Demote A, promote B</h2><p>B reports <code>promote_ready</code> about 6 s after A's demote.</p></div><div class="card st arrow" style="--c:#64d2ff"><span class="tag" style="color:#64d2ff">Two-way</span><span class="n">3</span><h2>Writes flow back</h2><p>B's writes replay into A, so A is never left behind.</p></div><div class="card st arrow" style="--c:#30d158"><span class="tag" style="color:#30d158">Fail back</span><span class="n">4</span><h2>Demote B, promote A</h2><p>A holds every write B made. No split-brain on either side.</p></div><div class="card st arrow" style="--c:#bf5af2"><span class="tag" style="color:#bf5af2">Guarded</span><span class="n">5</span><h2>Unsafe promote refused</h2><p>A site that missed the peer's writes gets <code>409</code>, not data loss.</p></div></div><div class="strip"><b>GUARD</b><span>non-forced promote needs <span class="ok">up</span> + "remote image demoted"; otherwise <span class="no">409</span></span><span class="r">Live drill 2026-10-06 &middot; docs/DR.md</span></div><div class="foot"><b>github.com/zyvorai/zyvor-atlas</b><span>Ceph RBD mirroring &#183; two Rook clusters &#183; GET /dr/mirrors/{id}/status</span></div>
+</div>
+<script>document.body.setAttribute('data-h', Math.ceil(document.querySelector('.wrap').getBoundingClientRect().height));</script>
+</body>
+</html>

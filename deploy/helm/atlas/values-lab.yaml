@@ -1,0 +1,25 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Lab values: a side-by-side Helm install next to the raw-manifest gateway (deploy/k8s/atlas-gateway.yaml)
+# on a single k3s host, using the locally imported image. Own namespace, own NodePorts, so it does not
+# collide with the zyvor-system gateway (30510). Used by scripts/helm-lab-remote.sh; adjust NodePorts
+# if those are taken.
+#
+# NOTE disks.enabled: two privileged, disk-enabled gateways on one node both see the same physical
+# disks. Only let ONE of them own a pool at a time (destroy it in one console before formatting in the
+# other) — the second gateway's inventory does not know the first one's pools and will refuse to
+# destroy them.
+image:
+  repository: localhost/atlas-gateway
+  tag: dev
+  pullPolicy: Never
+
+namespace:
+  name: atlas-helm
+  create: false   # scripts/helm-lab-remote.sh installs with --create-namespace
+
+service:
+  httpNodePort: 30520
+
+disks:
+  enabled: true

@@ -1,0 +1,58 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Throwaway Dex OIDC provider — see dex-config.yaml for the caveats. Single replica, in-memory
+# storage: a pod restart loses all state (fine for a disposable test IdP, never do this for a
+# real deployment).
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: dex
+  namespace: zyvor-system
+  labels: { app: dex }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: dex }
+  template:
+    metadata:
+      labels: { app: dex }
+    spec:
+      containers:
+        - name: dex
+          # v2.41.1 (2024-08) predates "support groups and preferred_username for staticPasswords"
+          # (dexidp/dex#4456, merged 2026-01) — on that version, `groups:` in a staticPasswords
+          # entry parses without error but is silently dropped, so every login came back with an
+          # empty groups claim regardless of config. v2.45.1 is the first release after that fix.
+          image: dexidp/dex:v2.45.1
+          args: ["dex", "serve", "/etc/dex/config.yaml"]
+          ports:
+            - { name: http, containerPort: 5556 }
+          volumeMounts:
+            - { name: config, mountPath: /etc/dex }
+          # TCP, not an HTTP path probe: Dex 2.41's actual health-check paths didn't match what
+          # older Dex versions/docs use (`/healthz/ready`, `/healthz/live` both 404'd here even
+          # though the server logs confirmed it was up and serving on 5556) — a bare socket check
+          # is a fine substitute for a single-replica lab IdP with no real traffic to gate.
+          readinessProbe:
+            tcpSocket: { port: 5556 }
+            initialDelaySeconds: 3
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: 5556 }
+            initialDelaySeconds: 5
+            periodSeconds: 10
+      volumes:
+        - name: config
+          configMap: { name: dex-config }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: dex
+  namespace: zyvor-system
+  labels: { app: dex }
+spec:
+  type: NodePort
+  selector: { app: dex }
+  ports:
+    - { name: http, port: 5556, targetPort: 5556, nodePort: 30556 }

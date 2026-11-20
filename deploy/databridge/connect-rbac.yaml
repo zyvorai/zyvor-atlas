@@ -1,0 +1,29 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Kafka Connect (Strimzi) uses the KubernetesSecretConfigProvider to resolve `${secrets:ns/name:key}`
+# in connector configs (source + edge DB credentials). That runs as the Connect pod's ServiceAccount,
+# which Strimzi names dynamically per KafkaConnect (dbz-connect-<id>-connect). Grant every SA in the
+# DataBridge namespace read access to Secrets so any Connect cluster can resolve them.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: databridge-connect-secrets
+  namespace: zyvor-databridge
+rules:
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: databridge-connect-secrets
+  namespace: zyvor-databridge
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: databridge-connect-secrets
+subjects:
+  - kind: Group
+    name: system:serviceaccounts:zyvor-databridge
+    apiGroup: rbac.authorization.k8s.io

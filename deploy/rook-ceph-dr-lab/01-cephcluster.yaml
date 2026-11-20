@@ -1,0 +1,68 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph-dr
+  namespace: rook-ceph-dr
+spec:
+  cephVersion:
+    image: quay.io/ceph/ceph:v19.2.3
+  dataDirHostPath: /var/lib/rook-dr
+  mon:
+    count: 1
+    allowMultiplePerNode: true
+  mgr:
+    count: 1
+    modules:
+      - name: rbd_support
+        enabled: true
+  dashboard:
+    enabled: false
+  monitoring:
+    enabled: false
+  # The peer's rbd-mirror daemon dials these mons and OSDs from another host; pod IPs are not
+  # routable there.
+  network:
+    provider: host
+    connections:
+      # Something else on the lab host already listens on 6789.
+      requireMsgr2: true
+  cephConfig:
+    global:
+      osd_pool_default_size: "1"
+      mon_allow_pool_size_one: "true"
+      mon_warn_on_pool_no_redundancy: "false"
+      osd_memory_target: "1073741824"
+  crashCollector:
+    disable: true
+  storage:
+    useAllNodes: false
+    useAllDevices: false
+    nodes:
+      - name: nldw4-4-16-36
+        devices:
+          - name: loop30
+  resources:
+    mon:
+      limits: { memory: 1Gi }
+    mgr:
+      limits: { memory: 1Gi }
+    osd:
+      limits: { memory: 2Gi }
+---
+apiVersion: ceph.rook.io/v1
+kind: CephBlockPool
+metadata:
+  name: atlas-dr-mirror-test
+  namespace: rook-ceph-dr
+spec:
+  failureDomain: osd
+  replicated:
+    size: 1
+    requireSafeReplicaSize: false
+  mirroring:
+    enabled: true
+    mode: image
+    snapshotSchedules:
+      - interval: 1m

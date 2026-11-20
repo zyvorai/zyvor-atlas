@@ -1,0 +1,164 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SMB gateway (docs/NATIVE_SMB.md): one pod running atlas-native-smb, which mounts every shared
+# filesystem through FUSE and serves the mounts with Samba, behind a Service. Open files and locks
+# live in the one smbd, so the Deployment has a single replica and is recreated, not rolled.
+{{- if .Values.smb.enabled }}
+{{- if .Values.httpTls.requireClientCert }}
+{{- fail "smb.enabled does not support httpTls.requireClientCert yet" }}
+{{- end }}
+{{- if not .Values.smb.shares }}
+{{- fail "smb.enabled needs at least one entry in smb.shares" }}
+{{- end }}
+{{- if and (not .Values.smb.users.existingSecret) (not .Values.smb.users.list) }}
+{{- fail "smb.enabled needs smb.users.existingSecret or smb.users.list" }}
+{{- end }}
+{{- $full := include "atlas-native.fullname" . }}
+{{- $scheme := ternary "https" "http" .Values.httpTls.enabled }}
+{{- $endpoints := list }}
+{{- range $i := until (int .Values.replicas) }}
+{{- $endpoints = append $endpoints (printf "%s://%s:7480" $scheme (include "atlas-native.podHost" (list $ $i))) }}
+{{- end }}
+{{- $image := printf "%s:%s" .Values.smb.image.repository (.Values.smb.image.tag | default .Chart.AppVersion) }}
+{{- $usersSecret := .Values.smb.users.existingSecret | default (printf "%s-smb-users" $full) }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-smb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: smb
+data:
+  shares.json: {{ toJson .Values.smb.shares | quote }}
+{{- if not .Values.smb.users.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $usersSecret }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: smb
+type: Opaque
+stringData:
+  users.json: {{ toJson .Values.smb.users.list | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-smb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: smb
+spec:
+  replicas: 1
+  strategy: { type: Recreate }
+  selector:
+    matchLabels:
+      {{- include "atlas-native.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: smb
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-native.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: smb
+      annotations:
+        checksum/shares: {{ toJson .Values.smb.shares | sha256sum }}
+        {{- if not .Values.smb.users.existingSecret }}
+        checksum/users: {{ toJson .Values.smb.users.list | sha256sum }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.smb.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.smb.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # On SIGTERM the gateway stops smbd, then unmounts, which sends buffered writes.
+      terminationGracePeriodSeconds: 90
+      containers:
+        - name: smb
+          image: {{ $image }}
+          imagePullPolicy: {{ .Values.smb.image.pullPolicy }}
+          # FUSE mounts, and smbd switches to each user's uid.
+          securityContext: { privileged: true }
+          args:
+            - --endpoint={{ join "," $endpoints }}
+            - --token-file=/etc/atlas-native-smb/api/token
+            - --shares-file=/etc/atlas-native-smb/shares/shares.json
+            - --users-file=/etc/atlas-native-smb/users/users.json
+            - --encrypt={{ .Values.smb.encrypt }}
+            {{- if .Values.httpTls.enabled }}
+            - --mount-arg=--ca-file=/etc/atlas-native-smb/http-tls/ca.crt
+            {{- end }}
+            {{- range .Values.smb.mountArgs }}
+            - --mount-arg={{ . }}
+            {{- end }}
+          ports:
+            - { name: smb, containerPort: 445, protocol: TCP }
+          readinessProbe:
+            tcpSocket: { port: smb }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: smb }
+            initialDelaySeconds: 60
+            periodSeconds: 20
+          volumeMounts:
+            - { name: fuse, mountPath: /dev/fuse }
+            - { name: api-token, mountPath: /etc/atlas-native-smb/api, readOnly: true }
+            - { name: shares, mountPath: /etc/atlas-native-smb/shares, readOnly: true }
+            - { name: users, mountPath: /etc/atlas-native-smb/users, readOnly: true }
+            {{- if .Values.httpTls.enabled }}
+            - { name: http-ca, mountPath: /etc/atlas-native-smb/http-tls, readOnly: true }
+            {{- end }}
+          resources: {{- toYaml .Values.smb.resources | nindent 12 }}
+      volumes:
+        - name: fuse
+          hostPath: { path: /dev/fuse, type: CharDevice }
+        - name: api-token
+          secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+        - name: shares
+          configMap: { name: {{ $full }}-smb }
+        - name: users
+          secret:
+            secretName: {{ $usersSecret }}
+            items: [{ key: users.json, path: users.json }]
+        {{- if .Values.httpTls.enabled }}
+        - name: http-ca
+          secret:
+            secretName: {{ .Values.httpTls.existingSecret }}
+            items: [{ key: ca.crt, path: ca.crt }]
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-smb
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: smb
+  {{- with .Values.smb.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.smb.service.type }}
+  {{- with .Values.smb.service.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  {{- with .Values.smb.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+  selector:
+    {{- include "atlas-native.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: smb
+  ports:
+    - { name: smb, port: 445, targetPort: smb, protocol: TCP }
+{{- end }}

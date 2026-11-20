@@ -1,0 +1,32 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+rust:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "crates/**"
+          - "!crates/atlas-gateway/ui/**"
+
+ui:
+  - changed-files:
+      - any-glob-to-any-file: "crates/atlas-gateway/ui/**"
+
+docs:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "docs/**"
+          - "website/**"
+          - "**/*.md"
+
+deploy:
+  - changed-files:
+      - any-glob-to-any-file: "deploy/**"
+
+ci:
+  - changed-files:
+      - any-glob-to-any-file: ".github/**"
+
+dependencies:
+  - changed-files:
+      - any-glob-to-any-file:
+          - "**/Cargo.lock"
+          - "**/package-lock.json"

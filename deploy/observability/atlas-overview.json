@@ -1,0 +1,80 @@
+{
+  "title": "Atlas Storage Control Plane",
+  "uid": "atlas-overview",
+  "tags": ["atlas", "zyvor", "storage"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "refresh": "30s",
+  "time": { "from": "now-6h", "to": "now" },
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "panels": [
+    {
+      "id": 1, "type": "gauge", "title": "Capacity used",
+      "gridPos": { "h": 6, "w": 6, "x": 0, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "fieldConfig": { "defaults": { "unit": "percent", "min": 0, "max": 100,
+        "thresholds": { "mode": "absolute", "steps": [
+          { "color": "green", "value": null }, { "color": "yellow", "value": 75 }, { "color": "red", "value": 85 } ] } }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "100 * atlas_capacity_used_bytes / atlas_capacity_raw_bytes" } ]
+    },
+    {
+      "id": 2, "type": "stat", "title": "Volumes",
+      "gridPos": { "h": 6, "w": 3, "x": 6, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "targets": [ { "refId": "A", "expr": "atlas_volumes" } ]
+    },
+    {
+      "id": 3, "type": "stat", "title": "Snapshots",
+      "gridPos": { "h": 6, "w": 3, "x": 9, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "targets": [ { "refId": "A", "expr": "atlas_snapshots" } ]
+    },
+    {
+      "id": 4, "type": "stat", "title": "Buckets",
+      "gridPos": { "h": 6, "w": 3, "x": 12, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "targets": [ { "refId": "A", "expr": "atlas_buckets" } ]
+    },
+    {
+      "id": 5, "type": "stat", "title": "Backups",
+      "gridPos": { "h": 6, "w": 3, "x": 15, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "targets": [ { "refId": "A", "expr": "atlas_backups" } ]
+    },
+    {
+      "id": 6, "type": "stat", "title": "Open alerts",
+      "gridPos": { "h": 6, "w": 3, "x": 18, "y": 0 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "fieldConfig": { "defaults": { "thresholds": { "mode": "absolute", "steps": [
+        { "color": "green", "value": null }, { "color": "red", "value": 1 } ] } }, "overrides": [] },
+      "targets": [ { "refId": "A", "expr": "atlas_alerts_open" } ]
+    },
+    {
+      "id": 7, "type": "timeseries", "title": "Capacity used (bytes)",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "refId": "A", "expr": "atlas_capacity_used_bytes", "legendFormat": "used" },
+        { "refId": "B", "expr": "atlas_capacity_raw_bytes", "legendFormat": "raw" }
+      ]
+    },
+    {
+      "id": 8, "type": "timeseries", "title": "Jobs by state",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 6 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "targets": [ { "refId": "A", "expr": "atlas_jobs", "legendFormat": "{{state}}" } ]
+    },
+    {
+      "id": 9, "type": "timeseries", "title": "Ceph client IOPS",
+      "gridPos": { "h": 8, "w": 24, "x": 0, "y": 14 },
+      "datasource": { "type": "prometheus", "uid": "atlas-prom" },
+      "targets": [
+        { "refId": "A", "expr": "sum(rate(ceph_pool_rd[5m]))", "legendFormat": "read" },
+        { "refId": "B", "expr": "sum(rate(ceph_pool_wr[5m]))", "legendFormat": "write" }
+      ]
+    }
+  ]
+}

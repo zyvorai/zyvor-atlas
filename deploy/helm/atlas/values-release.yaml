@@ -1,0 +1,17 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Published GHCR images for Atlas 0.5.0. Lab installs keep values.yaml's
+# localhost/atlas-gateway:dev default. Do not use the floating :latest tag.
+#
+#   helm install atlas ./deploy/helm/atlas -f ./deploy/helm/atlas/values-release.yaml
+#
+# Real Ceph gateway (same chart, Ceph image):
+#   helm install atlas-ceph ./deploy/helm/atlas \
+#     -f ./deploy/helm/atlas/values-release.yaml \
+#     --set ceph.enabled=true \
+#     --set image.repository=ghcr.io/zyvorai/atlas-ceph \
+#     --set service.grpc.enabled=true
+image:
+  repository: ghcr.io/zyvorai/atlas
+  tag: "0.5.0"
+  pullPolicy: IfNotPresent

@@ -1,0 +1,79 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+name: go-client
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'clients/go/**'
+      - 'crates/atlas-gateway/src/routes/**'
+      - 'crates/atlas-api-types/**'
+      - '.github/workflows/go-client.yml'
+  pull_request:
+    paths:
+      - 'clients/go/**'
+      - 'crates/atlas-gateway/src/routes/**'
+      - 'crates/atlas-api-types/**'
+      - '.github/workflows/go-client.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: clients/go
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: clients/go/go.mod
+      - name: gofmt
+        run: test -z "$(gofmt -l .)"
+      - name: Stdlib only
+        run: test -z "$(go list -deps -f '{{if not .Standard}}{{.ImportPath}}{{end}}' ./... | grep -v '^github.com/zyvorai/atlas/clients/go$')"
+      - run: go vet ./...
+      - run: go test -race -count=1 ./...
+
+  # Drives a real atlas-gateway (fake drivers, SQLite) so the Go types and the
+  # Rust routes can't drift apart without failing here.
+  contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - name: Install protoc + cmake + libcurl
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: go-client-contract
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version-file: clients/go/go.mod
+      - name: Build atlas-gateway
+        run: cargo build -p atlas-gateway
+      - name: Start atlas-gateway (fake drivers)
+        run: |
+          ATLAS_DATABASE_URL="sqlite://$RUNNER_TEMP/atlas.db?mode=rwc" \
+            nohup target/debug/atlas-gateway > "$RUNNER_TEMP/gateway.log" 2>&1 &
+          for _ in $(seq 1 60); do
+            curl -fsS http://127.0.0.1:5110/health && exit 0
+            sleep 1
+          done
+          cat "$RUNNER_TEMP/gateway.log"
+          exit 1
+      - name: Contract test
+        working-directory: clients/go
+        env:
+          ATLAS_CONTRACT_URL: http://127.0.0.1:5110
+        run: go test -count=1 -run Contract -v ./...
+      - name: Gateway log
+        if: failure()
+        run: cat "$RUNNER_TEMP/gateway.log"

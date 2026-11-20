@@ -1,0 +1,196 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# Atlas I/O sensor (eBPF)
+
+Atlas stays a **storage control plane**. Block/FS/object observability is an
+optional node agent so the gateway never holds `CAP_BPF`.
+
+## Why a separate agent
+
+The gateway runs as uid `10001` in-cluster and talks to drivers over CLI/API.
+eBPF needs `CAP_BPF`/`CAP_PERFMON` and `/sys/fs/bpf`. Mixing those in
+`atlas-gateway` would punch a hole in the secret-isolation story. Netra already
+owns sockets; this agent owns **bio / NFS / ZFS / io_uring**.
+
+## What ships in this slice
+
+| Surface | Status |
+|---|---|
+| Fake event source + collector | implemented, unit-tested |
+| Device map `major:minor` → volume | implemented |
+| Log2-µs histograms, p50/p99 | implemented |
+| cgroup/pid workloads | implemented |
+| Read-only RCA | implemented |
+| Write-freeze leases, fail-open, 15m cap | implemented |
+| HTTP + Prometheus text | implemented (`:5111`) |
+| `atlasctl io …` | implemented (incl. `atlasctl io native`) |
+| DaemonSet manifest | implemented, fake mode (live settings in its header) |
+| Live block-layer attach (`aya`, CO-RE) | implemented behind the `bpf` feature; verified live (below) |
+| Scheduler queue time (`block_rq_insert`) | implemented; verified live (below) |
+| Atlas Native maps (`/io/native`, pinned under `/sys/fs/bpf/atlas/native`) | implemented; verified live against a real native cluster (below) |
+| NFS / ZFS / io_uring probes | scaffolding in `bpf/atlas_{nfs,zfs,uring}.bpf.c`, compiled into the same object as the block programs. Attach is best-effort behind the `bpf` feature: a missing tracepoint is logged and that family stays in `programs_missing`. Not yet verified on a host that has those tracepoints |
+| cgroup→volume map (`atlas_cgroup`) | `GET`/`PUT /io/cgroup`, `DELETE /io/cgroup/{id}`. The collector uses the userspace map when the device map has no volume. With `bpf`, the same binding is mirrored into the kernel hash (64-byte volume id) while the agent is attached |
+
+## Run
+
+```bash
+cargo run -p atlas-io --bin atlas-io-agent
+# http://127.0.0.1:5111/io/histograms
+cargo run -p atlasctl -- io rca --volume vol_vm_web01
+```
+
+## Live mode
+
+`cargo build -p atlas-io --features bpf` compiles `crates/atlas-io/bpf/atlas_bio.bpf.c` with clang
+(plus libbpf headers) and embeds it; `Dockerfile.io` builds that way. With `--mode live` the agent
+attaches it to `block/block_rq_issue` and `block/block_rq_complete`: issue records time, size, op and
+the issuing task's pid / comm / cgroup id under `(dev, sector)`; completion joins and pushes one event
+to a ring buffer, which the agent drains every second.
+
+A third program on `block/block_rq_insert` records when a request entered the I/O scheduler, so
+each event also carries the time it waited before issue. Histograms report it as `queued` /
+`queue_sum_us` (and `atlas_io_hist_queue_avg_us` in `/metrics`), separate from the issue→complete
+latency in the buckets. Requests that bypass the scheduler (`none` elevator — loop, rbd, most NVMe
+setups) are never inserted, so they count no queue time rather than a made-up one. If this program
+alone fails to attach the agent logs it and keeps going without queue time. Devices are named from `/sys/class/block`
+at startup (later ones show as `major:minor`); kernel-side drops (inflight map full, ring buffer
+full) are added to `events_dropped`.
+
+Needs a kernel with BTF (`/sys/kernel/btf/vmlinux`) and ring buffers (5.8+), and in a container:
+uid 0 with `CAP_BPF` + `CAP_PERFMON`, a seccomp profile that allows `perf_event_open` (podman's /
+containerd's default only allows it with `CAP_SYS_ADMIN`, so `Unconfined`), and the host tracefs at
+`/sys/kernel/tracing`. If attaching fails the agent logs why and keeps serving with the programs
+reported missing — it never fabricates events.
+
+### Atlas Native view
+
+The same object carries the Atlas Native maps (ABI in `bpf/atlas_native_io.bpf.c`). Every 5 s the
+agent scans `/proc/*/comm` for the native binaries (`--native-process` /
+`ATLAS_IO_NATIVE_PROCESSES`, default `atlas-native-node`, `-mount`, `-nfs`, `-smb`, `-s3`,
+`-replicate`) and syncs their tgids into `atlas_native_pids`. When a request issued by one of them
+completes, the kernel adds it to `atlas_native_stats` (ios, bytes, total and max latency, errors per
+`(device, op, cgroup)`; 4,096 keys, a full map counts a drop rather than growing) and, at 5 ms or
+more, pushes an extent event (sector, size, latency, error, pid, comm) to `atlas_native_slow`.
+
+`GET /io/native` (`atlasctl io native`) returns the tracked names and pids, the aggregates with
+device names, the last 256 slow requests, and `dropped`; `/metrics` adds
+`atlas_io_native_{tracked_pids,ios,bytes,errors,max_us,dropped}`. It answers 503 when the native
+maps are not loaded (fake builds without `bpf`, failed attach).
+
+The three maps are pinned under `--native-pin-dir` (`ATLAS_IO_NATIVE_PIN_DIR`, default
+`/sys/fs/bpf/atlas/native`; empty disables pinning) so `bpftool map dump pinned …` can read them,
+and unpinned when the agent stops (SIGTERM/SIGINT). Container runtimes' default AppArmor profiles
+refuse writes under `/sys/fs/bpf`, so mount the host bpffs elsewhere (`/host-bpf`) and point the
+pin dir there; a pin failure is logged and the view still works. Pids only match in the host pid
+namespace, so a containerised agent needs `hostPID: true` for this view.
+
+Attribution is the task that *issued* the request: plugged or writeback I/O shows as a `kworker`
+in cgroup 1, direct I/O as the application (`dd`, `qemu`, …) in its own cgroup.
+
+**Verified (2026-10-03, second lab host, Ubuntu 26.04, kernel 7.0):** both programs pass the
+verifier and attach (CO-RE relocated `trace_event_raw_block_rq{,_completion}` against the kernel
+BTF); a 64 MiB `oflag=direct` write showed up as `sda` write histograms (`/io/histograms`,
+`/metrics`) and as a `dd` workload with its pid and cgroup id, alongside the host's own `llama-server`
+and kworker traffic; ~5,000 events in a few seconds with no drops; the programs detach when the
+agent stops. The `Dockerfile.io` image does the same with only `CAP_BPF` + `CAP_PERFMON`,
+`seccomp=unconfined` and the tracefs mount; with the default seccomp profile it reports the
+programs missing (`perf_event_open … Operation not permitted`) and keeps serving.
+
+**Verified (2026-10-06, same host, kernel 7.0):** the `Dockerfile.io` image with `--pid=host`,
+`CAP_BPF` + `CAP_PERFMON`, `seccomp=unconfined`, tracefs and the host bpffs at `/host-bpf`. All
+three programs passed the verifier. A real six-process native cluster (three metadata, three data
+`atlas-native-node`s, `file` backend on the host's `sda`) started after the agent; the next rescan
+put all six tgids in `atlas_native_pids` (`bpftool map dump pinned` showed them). 32 × 1 MiB writes
+through the leader (read back byte-identical) showed up in `/io/native` as one `sda` / write /
+cgroup row: 231 I/Os, 236.5 MiB (three replicas plus the metadata log), avg 59.6 ms, max 309 ms, 0
+errors, `dropped` 0 — the host was busy (load ≈ 10), so every one of them also arrived as a slow
+event, with pid and the truncated comm `atlas-native-no`. `/metrics` carried the same numbers.
+Queue time showed up for the scheduler-backed disks (`sda` writes ≈ 13 µs, `sdb` reads ≈ 12 ms on
+the loaded disk) and stayed absent for `loop`/`rbd` devices. After the native processes exited the
+PID set emptied on the next rescan, and `podman stop` removed the three pins. Under
+`/sys/fs/bpf` itself the pin failed with `Permission denied` (AppArmor), which is why the pin dir
+is configurable.
+
+## NFS, ZFS and io_uring probes
+
+`bpf/atlas_nfs.bpf.c`, `bpf/atlas_zfs.bpf.c` and `bpf/atlas_uring.bpf.c` are included by
+`bpf/atlas_bio.bpf.c` and compiled with it (`bpf` feature, Linux, clang). Each program is an
+observe-only counter on a tracepoint. They do not read the tracepoint record, so a layout change in
+the kernel does not fail the verifier; attach still needs the tracepoint to exist.
+
+| Family | Tracepoints | When it stays missing |
+|---|---|---|
+| `atlas_nfs` | `nfs/nfs_initiate_read`, `nfs/nfs_initiate_write` | the host has no NFS client tracepoints |
+| `atlas_zfs` | `zfs/zfs_read`, `zfs/zfs_write` | OpenZFS probes are not registered (common) |
+| `atlas_uring` | `io_uring/io_uring_submit_req`, `io_uring/io_uring_complete` | kernel without those tracepoints |
+
+A family is `programs_loaded` when at least one of its programs attaches. Failure of these probes
+does not detach the block-layer programs. The catalogue of names lives in `crates/atlas-io/src/probes.rs`
+and is what the loader tries. This has not been verified against a live NFS client, a ZFS pool or an
+io_uring workload; the block-layer attach described above is unchanged.
+
+## cgroup → volume
+
+`PUT /io/cgroup` with `{"cgroup_id": <u64>, "volume_id": "<id>"}` records a binding.
+`GET /io/cgroup` lists them. `DELETE /io/cgroup/{id}` removes one. `volume_id` is 1 to 63 characters
+of letters, digits, `_`, `-`, `.` and `:`. `cgroup_id` must be non-zero.
+
+When an event is recorded, the device map's volume wins. If that device has no volume, the cgroup
+binding supplies `volume_id` on the workload row (including a row that was created before the
+binding, on the next event). The binding is in-process and is gone when the agent restarts.
+
+With the `bpf` feature the same pairs are written into the `atlas_cgroup` hash in the loaded object
+(key `cgroup_id`, value a 64-byte buffer). That mirror is for `bpftool` while the agent is attached.
+Attribution does not read it back; the userspace map is the one the collector uses. The map is not
+pinned.
+
+## Heatmap
+
+`GET /io/heatmap?minutes=15` (1–60) returns, per (device, op), one log2-µs bucket column per
+minute: when latency moved, not only the distribution since start. Columns are stamped with wall
+time at collection (device timestamps are monotonic), so a poll that lands late attributes its
+events to the minute it ran. Minutes with no I/O are absent. An in-memory hour ring per
+series, reset when the agent restarts, under the same cardinality cap as the histograms. Verified
+with the fake source.
+
+The gateway proxies it at `GET /api/atlas/v1/io/heatmap` (any signed-in role; `unavailable` when
+`ATLAS_IO_AGENT_URL` is unset or the agent cannot be reached, same idea as `GET /io/ai`). The
+console Observatory draws one row of cells per series from that response. Device names and
+operation names are whitelisted on the way through; the colour is the busiest bucket's latency.
+
+## Authentication and MCP
+
+- `ATLAS_IO_TOKEN` (environment only): when set, every route except `/health` and `/io/health`
+  requires `Authorization: Bearer <token>` (constant-time compare). Unset keeps the API open, which
+  is only acceptable on loopback; the agent logs a warning if it is bound elsewhere without a token.
+  `deploy/k8s/atlas-io-agent.yaml` (and the live-BPF variant `deploy/k8s/atlas-io-agent-live.yaml`, which
+  is what the lab runs) read it from the optional Secret `atlas-io-agent-auth`.
+- The gateway sends `ATLAS_IO_AGENT_TOKEN` (same value) when it fetches `/io/risk` for the Ops
+  Advisor and the `io_risk` MCP tool.
+- Built with `--features mcp` (`Dockerfile.io` does), the agent serves a read-only MCP endpoint at
+  `/mcp`: `io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `io_leases`, `io_heatmap`, `io_coverage`, `io_native`. It sits
+  behind the same token; there is no tool that grants a lease or changes anything.
+
+## Risk scoring
+
+`GET /io/ai` names a heuristic I/O **shape** per device from the histograms: `large_write`
+(checkpoint-like: at least 80% of bytes are writes averaging 1 MiB or more), `bulk_read` (the same
+for reads: dataset or model loading), `small_read` (reads averaging 64 KiB or less),
+`mixed`, or `unknown` below 20 requests. Each entry lists the numbers behind it and carries a
+`finding` only when the shape's own latency expectation is missed (p99 of 50 ms for large I/O, 2 ms
+for small reads). It cannot see periodicity, file names or which framework issued the I/O, so it
+never names a job and never triggers an action. The thresholds are heuristics, not measurements.
+The gateway shows it as `io_ai` in the Ops Advisor (informational, no effect on the score) and in
+the `io_ai` MCP tool.
+Through the gateway the same view is `GET /api/atlas/v1/io/ai` (operator; `unavailable` without a configured agent, never a healthy reading) and `atlasctl io-ai`; `atlasctl io ai` talks to the agent directly.
+
+`GET /io/risk` and the `atlas_io_risk_level` metric reduce the RCA (and an optional,
+caller-supplied capacity signal) to healthy / elevated / critical, and the gateway's Ops Advisor
+can include it as `io_risk`. See [IO_RISK.md](IO_RISK.md) and [AI_ADVISOR.md](AI_ADVISOR.md).
+
+## Non-goals
+
+- TC/XDP, DNS, L7 (Netra / PacketWolf)
+- KVM exits (Shukra / FluxVM)
+- Replacing CSI / `ceph` CLI
+- Standing default-deny on writes

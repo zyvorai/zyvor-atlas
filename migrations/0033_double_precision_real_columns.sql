@@ -1,0 +1,9 @@
+-- Copyright (c) 2026 ZyvorAI Labs Private Limited.
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- No-op on SQLite: this migration's Postgres counterpart
+-- (migrations-postgres/0033_double_precision_real_columns.sql) widens several REAL columns from
+-- Postgres-dialect REAL (4-byte float) to DOUBLE PRECISION (8-byte) — a bug that only ever existed
+-- on the Postgres side. SQLite's own REAL column type is already an 8-byte IEEE double regardless
+-- of the declared name, so there is nothing to widen here. This empty file exists only so
+-- scripts/check-migrations-parity.sh's migration-number lockstep check (both directories must
+-- define the same numbered migrations) stays satisfied.

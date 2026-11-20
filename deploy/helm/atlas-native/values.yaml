@@ -1,0 +1,341 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# atlas-native-node StatefulSet (docs/NATIVE_NODE.md). Every pod is a Raft metadata voter and a
+# data node serving its own PVC.
+
+image:
+  repository: ghcr.io/zyvorai/atlas-native-node
+  tag: ""          # defaults to .Chart.AppVersion
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+
+# Number of pods = data nodes = Raft metadata members. Use an odd number of voters (3 or 5).
+# Scaling a running cluster is a two-step procedure (README "Scaling"): new pods start as
+# non-voters and are promoted through `POST /v1/members`.
+replicas: 3
+
+membership:
+  # Initial Raft voters: pods 0..N-1. Empty: kept from the release's existing ConfigMap, else
+  # `replicas` on first install. Only consulted until the first membership change commits.
+  bootstrapReplicas: 0
+
+node:
+  # Copies of each extent, on distinct pods. At most `replicas`.
+  replicationFactor: 3
+  extentBytes: 4194304
+  maxRequestBytes: 16777216
+  tickMs: 50
+  proposalTimeoutMs: 5000
+  # Reed-Solomon scheme for extents of at least erasureMinBytes, e.g. "4+2" (needs at least 6
+  # pods). Empty: replicate every extent. Applies to extents written from then on.
+  erasure: ""
+  erasureMinBytes: 65536
+  # LZ4-compress new extents that shrink by at least 12.5% (docs/NATIVE_DATA_REDUCTION.md). Costs
+  # CPU on the write path; incompressible data is stored as is. Applies to extents written from
+  # then on; existing extents stay readable either way.
+  compression: false
+  # Store identical extents once (docs/NATIVE_DATA_REDUCTION.md). Turn on only after every pod runs
+  # a build that understands shared installs; costs a SHA-256 per extent written.
+  dedup: false
+  # Report content-defined fingerprints for a future cross-group index
+  # (docs/NATIVE_DATA_REDUCTION.md). Off: writes stay whole-extent and inside one metadata group.
+  # On: GET /v1/reduction sets cross_group_dedup. It does not share bytes across groups.
+  crossGroupDedup: false
+  # Time between the starts of two scrub passes; 0 disables scrub and rebuild.
+  repairIntervalSecs: 300
+  # How long a pod must fail every request before its extents are rebuilt on other pods.
+  rebuildDelaySecs: 60
+  # Rebuild and scrub traffic caps per metadata group (bytes/s); 0 is unlimited.
+  rebuildBytesPerSec: 268435456
+  scrubBytesPerSec: 67108864
+  gcIntervalSecs: 60
+  # Raft groups the metadata namespace is sharded across (1-64). May be raised on an existing
+  # cluster (objects stay in their group), never lowered.
+  metadataGroups: 1
+  # Placement capacity hint per data node (bytes); defaults to the PVC size.
+  freeBytes: 0
+  # Memory bounds per metadata group: unchanged inodes kept in memory (the rest are read from
+  # the catalog store when needed) and the catalog store's page cache. values-edge.yaml lowers
+  # both for small nodes.
+  cacheInodes: 262144
+  storeCacheBytes: 67108864
+  # glibc malloc arenas (MALLOC_ARENA_MAX); 0 leaves glibc's default (8 per core).
+  mallocArenaMax: 0
+
+# Move extents nobody has written or read for coldAfterSecs to object storage, freeing their
+# space on the data nodes (docs/NATIVE_NODE.md, "Tiering").
+tiering:
+  enabled: false
+  # Ceph RGW by default: the chart creates an ObjectBucketClaim of this StorageClass and reads
+  # the endpoint, bucket and credentials Rook publishes for it.
+  objectBucketClaim:
+    storageClassName: ""
+  # Any other S3-compatible store instead (all three set): endpoint URL, bucket, and a Secret
+  # with AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+  endpoint: ""
+  bucket: ""
+  existingSecret: ""
+  region: ""
+  prefix: "atlas-native/"
+  coldAfterSecs: 2592000
+  # 0: tier only on POST /v1/tier.
+  intervalSecs: 3600
+  bytesPerSec: 67108864
+  minExtentBytes: 1048576
+
+apiToken:
+  # Secret with key `token`. Empty: the chart creates "<fullname>-api" with a random token that is
+  # kept across upgrades.
+  existingSecret: ""
+
+# Mutual TLS for the Raft and data-node transports. Node ids are pod names, so the certificate
+# must carry every pod name ("<fullname>-0", "<fullname>-1", ...) as a DNS SAN.
+tls:
+  enabled: false
+  # Secret with ca.crt, tls.crt and tls.key (cert-manager layout).
+  existingSecret: ""
+  certManager:
+    # Render a cert-manager Certificate with the right SANs into "<fullname>-tls".
+    enabled: false
+    issuerRef: {}   # e.g. { name: atlas-ca, kind: ClusterIssuer }
+    duration: 2160h
+    renewBefore: 360h
+
+# TLS for the HTTP API.
+httpTls:
+  enabled: false
+  # Secret with tls.crt and tls.key (and ca.crt when requireClientCert).
+  existingSecret: ""
+  # Require a client certificate signed by the Secret's ca.crt on every /v1/* request.
+  # /healthz, /readyz and /metrics stay open for probes and scrapers.
+  requireClientCert: false
+
+persistence:
+  size: 5Gi
+  storageClass: ""   # cluster default when empty
+  accessModes: ["ReadWriteOnce"]
+
+service:
+  type: ClusterIP
+  port: 7480
+
+podDisruptionBudget:
+  maxUnavailable: 1
+
+# soft: prefer one pod per node; hard: require it (pods stay Pending without enough nodes).
+podAntiAffinity: soft
+
+resources:
+  requests: { cpu: 50m, memory: 64Mi }
+  limits: { memory: 512Mi }
+
+nodeSelector: {}
+tolerations: []
+podAnnotations: {}
+podLabels: {}
+
+serviceMonitor:
+  enabled: false
+  interval: 30s
+  labels: {}
+
+clusterDomain: cluster.local
+
+# CSI driver `native.atlas.zyvor.ai` (docs/NATIVE_CSI.md): PVCs become atlas-native filesystems,
+# VolumeSnapshots filesystem snapshots, and every pod mounts its volume through FUSE. All access
+# modes (RWO, ROX, RWX) are supported; block volumes and expansion are not.
+csi:
+  enabled: false
+  image:
+    repository: ghcr.io/zyvorai/atlas-native-csi
+    tag: ""          # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  # The node plugin mounts under the kubelet root; change it only for distributions that move it.
+  kubeletDir: /var/lib/kubelet
+  sidecars:
+    provisioner: registry.k8s.io/sig-storage/csi-provisioner:v5.2.0
+    snapshotter: registry.k8s.io/sig-storage/csi-snapshotter:v8.2.0
+    resizer: registry.k8s.io/sig-storage/csi-resizer:v1.13.2
+    registrar: registry.k8s.io/sig-storage/csi-node-driver-registrar:v2.13.0
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+  controller:
+    replicas: 1
+    resources:
+      requests: { cpu: 10m, memory: 32Mi }
+      limits: { memory: 128Mi }
+  node:
+    # Restarting a node plugin pod breaks the volumes mounted on that node until their pods
+    # restart, so upgrades don't roll it: drain a node, then delete its plugin pod. RollingUpdate
+    # rolls it on every chart upgrade that changes the pod.
+    updateStrategy: OnDelete
+    # Each published volume is one FUSE client process in this pod, with its own caches.
+    resources:
+      requests: { cpu: 50m, memory: 64Mi }
+      limits: { memory: 2Gi }
+    nodeSelector: {}
+    tolerations: []
+  storageClass:
+    create: true
+    name: atlas-native-fs
+    reclaimPolicy: Delete
+    # Extent grid of new filesystems in bytes; 0 uses node.extentBytes.
+    extentBytes: 0
+    # A PVC's size is its filesystem's byte quota (writes past it fail with EDQUOT; expanding
+    # the PVC raises it). false keeps filesystems thin: the size is reported, not enforced.
+    enforceCapacity: true
+    # atlas-native-mount options: ro, cache-leases, direct-reads, writeback-parallel=<n>, ...
+    mountOptions: []
+  snapshots:
+    # Needs the VolumeSnapshot CRDs and snapshot-controller installed in the cluster.
+    enabled: false
+    createClass: true
+    className: atlas-native-fs
+
+# NFS gateway (docs/NATIVE_NFS.md): NFS-Ganesha serving FUSE mounts of the listed filesystems,
+# NFSv4.1/4.2 on port 2049 behind one Service. One pod: NFSv4 state is not shared.
+nfs:
+  enabled: false
+  image:
+    repository: ghcr.io/zyvorai/atlas-native-nfs
+    tag: ""          # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  # Also serve NFSv3 with NLM locks (adds rpcbind on 111, mountd on 20048 and NLM on 32803).
+  v3: false
+  # Filesystems to export, by id (for a CSI volume, its PV's volumeHandle). Each needs `clients`
+  # (addresses, CIDRs, host names or wildcards); `pseudo` defaults to /<fs>, `access` to rw
+  # (or ro), `squash` to root (or none, all). `export_id` pins Ganesha's export id; by default it
+  # is derived from the filesystem id.
+  exports: []
+  #  - fs: team-share
+  #    clients: ["10.0.0.0/8"]
+  #    access: rw
+  #    squash: root
+  # atlas-native-mount options for every export's mount. Cache leases keep the gateway's
+  # attributes current when other clients change the filesystem.
+  mountArgs: ["--cache-leases"]
+  service:
+    type: ClusterIP
+    loadBalancerIP: ""
+    annotations: {}
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 2Gi }
+  nodeSelector: {}
+  tolerations: []
+
+# SMB gateway (docs/NATIVE_SMB.md): Samba serving FUSE mounts of the listed filesystems, SMB 2.1
+# and 3.x on port 445 behind one Service. One pod: open files and locks live in one smbd.
+smb:
+  enabled: false
+  image:
+    repository: ghcr.io/zyvorai/atlas-native-smb
+    tag: ""          # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  # Shares, by filesystem id (for a CSI volume, its PV's volumeHandle). `users` limits who may
+  # connect (default: every user), `read_only_users` who may only read, `clients` which addresses
+  # or CIDRs may connect (default: any). A filesystem may back several shares.
+  shares: []
+  #  - name: team
+  #    fs: team-share
+  #  - name: team-archive
+  #    fs: team-share
+  #    access: ro
+  #    users: [alice]
+  # Users: each becomes a Unix account in the gateway with this uid/gid, so SMB access is checked
+  # against mode bits (and POSIX ACLs with --acl mounts) like any other client. Prefer
+  # existingSecret: a Secret with `users.json`, a JSON list of {"user", "password", "uid", "gid"}.
+  # `list` takes the same list inline and renders it into a Secret (passwords end up in the release).
+  users:
+    existingSecret: ""
+    list: []
+  # SMB 3 encryption: desired, required or off.
+  encrypt: desired
+  # atlas-native-mount options for every share's mount.
+  mountArgs: ["--cache-leases"]
+  service:
+    type: ClusterIP
+    loadBalancerIP: ""
+    # Local keeps client addresses for `clients` checks behind a LoadBalancer or NodePort.
+    externalTrafficPolicy: ""
+    annotations: {}
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { memory: 2Gi }
+  nodeSelector: {}
+  tolerations: []
+
+# S3 gateway (docs/NATIVE_S3.md): the listed filesystems as S3 buckets on port 9000 (objects are
+# files, `/` in keys are directories). Stateless: scale with `replicas`. Unprivileged.
+s3:
+  enabled: false
+  image:
+    repository: ghcr.io/zyvorai/atlas-native-s3
+    tag: ""          # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  replicas: 1
+  # One bucket per filesystem (by id; for a CSI volume, its PV's volumeHandle). `snapshot` (a
+  # snapshot id) serves that snapshot read-only; `read_only` refuses writes to a live filesystem.
+  buckets: []
+  #  - bucket: team-share
+  #    fs: team-share
+  #  - bucket: team-share-monday
+  #    fs: team-share
+  #    snapshot: monday
+  # Access keys. Prefer existingSecret: a Secret with `credentials.json`, a JSON list of
+  # {"access_key", "secret_key", "buckets" (optional: all), "read_only" (optional)}. `keys` takes
+  # the same list inline and renders it into a Secret (the values end up in the release).
+  credentials:
+    existingSecret: ""
+    keys: []
+  # Owner of the files and directories S3 writes create. S3 keys bypass POSIX permissions.
+  uid: 0
+  gid: 0
+  # Secret with tls.crt and tls.key: serve HTTPS instead of HTTP.
+  tls:
+    existingSecret: ""
+  # Domains for virtual-hosted-style addressing (<bucket>.<domain>); path style always works.
+  domains: []
+  service:
+    type: ClusterIP
+    port: 9000
+    loadBalancerIP: ""
+    annotations: {}
+  resources:
+    requests: { cpu: 100m, memory: 128Mi }
+    limits: { memory: 1Gi }
+  nodeSelector: {}
+  tolerations: []
+
+# Asynchronous replication (docs/NATIVE_REPLICATION.md): each job snapshots a filesystem of this
+# cluster every intervalSecs and sends the changes to a read-only replica on another cluster.
+# Unprivileged; stateless (the replica records where to continue).
+replication:
+  enabled: false
+  image:
+    repository: ghcr.io/zyvorai/atlas-native-replicate
+    tag: ""          # defaults to .Chart.AppVersion
+    pullPolicy: IfNotPresent
+  # The other cluster: its metadata API endpoints, a Secret holding its API token and, for
+  # HTTPS with a private CA, a Secret holding that CA.
+  target:
+    endpoints: []
+    #  - https://dr-atlas-native-api.example.net:7480
+    tokenSecret: ""
+    tokenKey: token
+    caSecret: ""
+    caKey: ca.crt
+  intervalSecs: 300
+  # Replicated snapshots kept on the target (the latest is always kept).
+  keep: 24
+  # One replicator per filesystem; targetFs defaults to fs, intervalSecs and keep to the above.
+  jobs: []
+  #  - fs: team-share
+  #    targetFs: team-share
+  #    intervalSecs: 60
+  resources:
+    requests: { cpu: 50m, memory: 64Mi }
+    limits: { memory: 512Mi }
+  nodeSelector: {}
+  tolerations: []

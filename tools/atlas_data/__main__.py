@@ -1,0 +1,96 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+"""PYTHONPATH=tools python3 -m atlas_data --help"""
+import argparse
+import hashlib
+import json
+import os
+from pathlib import Path
+import sys
+
+from .acl_sync import sync as acl_sync
+from .api import serve
+from .client import Client
+from .core import DataError, Store
+from .integrations import DataReadyGate
+
+
+def main(argv=None):
+    p = argparse.ArgumentParser(description="Atlas AI data services: models, jobs, agents, KV, recovery, costs, Iceberg")
+    p.add_argument("--url", default="http://127.0.0.1:5120")
+    p.add_argument("--ca")
+    commands = p.add_subparsers(dest="command", required=True)
+    server = commands.add_parser("serve")
+    server.add_argument("--root", type=Path, required=True)
+    server.add_argument("--config", type=Path, required=True)
+    server.add_argument("--host", default="127.0.0.1")
+    server.add_argument("--port", type=int, default=5120)
+    server.add_argument("--cert")
+    server.add_argument("--key")
+    server.add_argument("--capacity-bytes", type=int, default=100 * 1024**3)
+    commands.add_parser("token-hash", help="hash ATLAS_DATA_TOKEN for the server credential registry")
+    call = commands.add_parser("call", help="call an explicit API action with JSON arguments")
+    call.add_argument("action")
+    call.add_argument("--json", type=Path, required=True)
+    ingest = commands.add_parser("ingest")
+    ingest.add_argument("kind", choices=("model", "dataset"))
+    ingest.add_argument("name")
+    ingest.add_argument("revision")
+    ingest.add_argument("directory", type=Path)
+    export = commands.add_parser("export")
+    export.add_argument("artifact")
+    export.add_argument("directory", type=Path)
+    acl = commands.add_parser("acl-sync", help="set an artifact's readers from a source directory's POSIX ACL (dry run unless --apply)")
+    acl.add_argument("artifact")
+    acl.add_argument("--getfacl", type=Path, required=True, help="output of `getfacl` for the source directory")
+    acl.add_argument("--map", type=Path, required=True, help="JSON mapping user:NAME / group:NAME to Atlas subjects")
+    acl.add_argument("--apply", action="store_true")
+    worker = commands.add_parser("stage")
+    worker.add_argument("job")
+    worker.add_argument("node")
+    worker.add_argument("cache", type=Path)
+    gate = commands.add_parser("gate-wait", help="block until a job's data is staged (Kubernetes init container)")
+    gate.add_argument("job")
+    gate.add_argument("--timeout", type=int, default=600)
+    gate.add_argument("--interval", type=int, default=5)
+    gate.add_argument("--out", type=Path, help="also write the node selection JSON here (for the workload to read)")
+    args = p.parse_args(argv)
+    try:
+        if args.command == "serve":
+            store = Store(args.root, capacity_bytes=args.capacity_bytes)
+            try:
+                serve(store, json.loads(args.config.read_text()), args.host, args.port, args.cert, args.key)
+            finally:
+                store.close()
+            return 0
+        token = os.environ.get("ATLAS_DATA_TOKEN", "")
+        if args.command == "token-hash":
+            if len(token) < 32:
+                raise DataError("ATLAS_DATA_TOKEN needs at least 32 characters")
+            result = {"token_sha256": hashlib.sha256(token.encode()).hexdigest()}
+        else:
+            client = Client(args.url, token, args.ca)
+            if args.command == "call":
+                result = client.call(args.action, **json.loads(args.json.read_text()))
+            elif args.command == "acl-sync":
+                result = acl_sync(client, args.artifact, args.getfacl.read_text(), args.map.read_text(), args.apply)
+            elif args.command == "ingest":
+                result = client.call("artifacts.publish", kind=args.kind, name=args.name,
+                                     revision=args.revision, files=client.upload(args.directory))
+            elif args.command == "export":
+                result = client.download(args.artifact, args.directory)
+            elif args.command == "gate-wait":
+                result = DataReadyGate(client).wait_ready(args.job, args.timeout, args.interval)
+                if args.out:
+                    args.out.write_text(json.dumps(result, indent=2))
+            else:
+                result = client.stage(args.job, args.node, args.cache)
+        print(json.dumps(result, indent=2))
+        return 0
+    except (DataError, OSError, ValueError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

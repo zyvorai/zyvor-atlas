@@ -1,0 +1,30 @@
+{
+  "version": 1,
+  "name": "orders",
+  "tenant_id": "acme",
+  "target_namespace": "atlas-drill-orders",
+  "rpo_seconds": 3600,
+  "rto_seconds": 600,
+  "capture_timeout_seconds": 120,
+  "components": [
+    {
+      "id": "database",
+      "quiesce_hook": "database-quiesce",
+      "resume_hook": "database-resume",
+      "start_hook": "database-start",
+      "verify_hook": "database-verify",
+      "stop_hook": "database-stop",
+      "volumes": [{"volume_id": "vol_REPLACE_DB", "snapshot_id": "snap_REPLACE_DB"}]
+    },
+    {
+      "id": "api",
+      "depends_on": ["database"],
+      "quiesce_hook": "api-quiesce",
+      "resume_hook": "api-resume",
+      "start_hook": "api-start",
+      "verify_hook": "api-verify",
+      "stop_hook": "api-stop",
+      "volumes": [{"volume_id": "vol_REPLACE_API", "snapshot_id": "snap_REPLACE_API"}]
+    }
+  ]
+}

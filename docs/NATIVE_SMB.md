@@ -1,0 +1,136 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# atlas-native SMB gateway
+
+The SMB gateway serves atlas-native filesystems ([`NATIVE_FS.md`](NATIVE_FS.md)) to SMB 2.1 and
+3.x clients (Windows, macOS, Linux `mount.cifs`, `smbclient`). It is a pod running
+[Samba](https://www.samba.org/)'s `smbd` over atlas-native FUSE mounts, the same design as the NFS
+gateway ([`NATIVE_NFS.md`](NATIVE_NFS.md)):
+
+| Process | Role |
+|---|---|
+| `atlas-native-smb` (`crates/atlas-native-fuse`, bin) | Supervisor: one `atlas-native-mount` per share under `/export/<share>`, writes `smb.conf`, creates a Unix account and Samba password per user, starts `smbd`, stops everything in order on `SIGTERM` |
+| `atlas-native-mount` | FUSE client per share, mounted with `--allow-other` (`--read-only` for `ro` shares) |
+| `smbd` | SMB server (standalone, local users in `tdbsam`) |
+
+Samba is GPL-3.0 and runs as a separate, unmodified process from Debian's packages; nothing in
+Atlas links it. The image is `Dockerfile.native-smb`.
+
+## Install
+
+Create the filesystems first (`POST /v1/fs`, `atlasctl create-volume --kind filesystem --backend
+bkd_native`, or a CSI PVC, whose PV `volumeHandle` is the filesystem id), and give their root an
+owner or group the SMB users belong to (a new filesystem's root is `root:root 0755`), for example
+`POST /v1/fs/<fs>/inodes/1/attr {"gid": 2000, "mode": 509}` (0775) or `chown` on any mount.
+
+Put the users in a Secret, then enable the gateway in the `atlas-native` chart:
+
+```sh
+cat > users.json <<'EOF'
+[
+  {"user": "alice", "password": "<...>", "uid": 2001, "gid": 2000},
+  {"user": "bob",   "password": "<...>", "uid": 2002, "gid": 2000}
+]
+EOF
+kubectl -n atlas-native create secret generic atlas-smb-users --from-file=users.json
+```
+
+```yaml
+smb:
+  enabled: true
+  users:
+    existingSecret: atlas-smb-users
+  shares:
+    - name: team                  # \\server\team
+      fs: team-share
+      read_only_users: [bob]      # optional: may connect, may not write
+    - name: team-archive
+      fs: team-share              # a filesystem may back several shares
+      access: ro
+      users: [alice]              # optional: default every user
+      clients: ["10.0.0.0/8"]     # optional: addresses or CIDRs, default any
+  encrypt: desired                # SMB 3 encryption: desired, required or off
+  service:
+    type: LoadBalancer
+```
+
+```
+mount -t cifs //<service-ip>/team /mnt/team -o username=alice,vers=3.1.1
+smbclient //<service-ip>/team -U alice
+```
+
+The chart adds a ConfigMap with the shares, the users Secret (or uses `existingSecret`), a
+single-replica Deployment (`Recreate`, privileged for `/dev/fuse` and for `smbd` to switch to each
+user's uid) and a Service on 445. The supervisor reaches the storage nodes with the release's API
+token; with `httpTls.enabled` the mounts trust the Secret's `ca.crt`. `httpTls.requireClientCert`
+is not supported yet. `smb.mountArgs` (default `--cache-leases`) is passed to every mount.
+`smb.users.list` takes the user list inline and renders it into a Secret, so the passwords end up
+in the Helm release; prefer `existingSecret`. Changing the shares replaces the pod.
+
+## Behaviour
+
+- **Identity and permissions:** every SMB user is a Unix account in the gateway with the
+  configured uid and gid, and `smbd` accesses files as that user. Files keep the same owners
+  through SMB, NFS, S3 and native mounts, and the FUSE mount enforces mode bits (and POSIX ACLs
+  with `--acl` in `smb.mountArgs`) for SMB users like for anyone else. New files are created with
+  mode 0664 and directories 0775 (`create mask`, `directory mask`), before the client's requested
+  permissions are applied.
+- **Share access:** `users` (Samba `valid users`), `read_only_users` (`read list`), `access: ro`
+  (a read-only share on a `--read-only` mount) and `clients` (`hosts allow`, everything else
+  denied). Guest and anonymous access are off (`map to guest = never`, `restrict anonymous = 2`).
+  SMB1 is refused (`server min protocol = SMB2_10`).
+- **Consistency with other clients:** oplocks and SMB2 leases are off, so SMB clients never cache
+  file data or handles that another client (a native mount, NFS, S3) may change. Changes made
+  through a native mount are visible to SMB at once, and the reverse.
+- **Locks:** SMB byte-range locks become locks on the gateway's FUSE mount (`posix locking`), so
+  they conflict with locks taken through native mounts in both directions. Locks are not kept
+  across a gateway restart.
+- **Hidden names:** names starting with `.atlas_` (the S3 gateway's temporary files and uploads)
+  are vetoed: SMB clients neither see nor create them.
+- **Logging:** `smbd` logs at level 1 to the pod's stdout. It also logs
+  `sys_path_to_bdev() failed for path [...]` when it probes quotas, which don't apply to FUSE
+  mounts; the message is harmless.
+
+## Requirements and limits
+
+- **One gateway pod.** Open files and locks live in the one `smbd`, so there is no active/active
+  gateway; when the pod is replaced, clients reconnect (no durable or persistent handles, no
+  Samba CTDB clustering).
+- **Local users only.** No Active Directory or Kerberos: users and passwords come from the users
+  file. A user's uid may not be 0 or collide with an account already in the image.
+- **No Windows ACLs.** Permissions are Unix mode bits (and POSIX ACLs), shown to Windows as Samba
+  maps them; NT ACLs and alternate data streams are not stored.
+- **`clients` checks** see the address the pod sees: behind a NodePort or LoadBalancer Service, set
+  `smb.service.externalTrafficPolicy: Local` so client addresses aren't replaced by a node's.
+- Throughput is bounded by the gateway pod's single FUSE mount per share.
+
+## Verification
+
+Unit tests (`crates/atlas-native-fuse/src/smb.rs`) cover the rendered configuration, refusal of
+share names, filesystem ids, user lists and client lists that could break out of it, and user
+checks that never echo a password.
+
+Verified on the lab k3s (single node, one data node on the host's shared HDD, Samba 4.17 from
+Debian bookworm) through the Helm chart, with `smbclient` and the Linux kernel client
+(`mount.cifs`, SMB 3.1.1):
+
+- **Files:** a 64 MiB file put and fetched with the same SHA-256 and read by another user;
+  directories, rename and delete; through the kernel client, a 64 MiB write, a directory tree, and
+  rename over an existing file.
+- **Access:** a `read_only_users` user reads but gets `NT_STATUS_ACCESS_DENIED` on write; a user
+  outside `users` is refused at connect; a read-only share serves the same files and refuses
+  writes; a wrong password gets `NT_STATUS_LOGON_FAILURE`; anonymous and SMB1 connections are
+  refused; an encrypted SMB 3 session works.
+- **Permissions:** files written over SMB are owned by the user's uid and gid (seen on a separate
+  native mount); a user is refused another user's 0700 directory, and a 0644 file owned by root,
+  until it is made writable.
+- **Consistency with a native mount** (a separate pod): writes, rewrites and deletes on either side
+  are seen by the other at once.
+- **Locks:** an exclusive `flock` held through the native mount blocks one through the kernel SMB
+  client, and the reverse; the lock is free again once released.
+
+Throughput on this lab is bound by its shared HDD and other tenants' load (load average around 25
+during the runs), so these numbers measure the host, not the gateway: a 64 MiB write through the
+kernel client with `fsync` took 2.2 s; cold 64 MiB reads ranged from 1.2 s to 20 s. One tree
+connect timed out (`NT_STATUS_IO_TIMEOUT`) at the height of that load and succeeded on retry.
+There are no NVMe numbers yet.

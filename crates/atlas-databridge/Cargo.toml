@@ -1,0 +1,68 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+[package]
+name = "atlas-databridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+atlas-common = { workspace = true }
+atlas-api-types = { workspace = true }
+atlas-inventory = { workspace = true }
+atlas-driver-k8s = { workspace = true }
+atlas-driver-rgw = { workspace = true }
+async-trait = { workspace = true }
+futures-util = { workspace = true }
+tokio = { workspace = true }
+tokio-postgres = "0.7"
+# MySQL/MariaDB discovery rides the workspace sqlx with the `mysql` protocol feature added on top.
+# `mysql-rsa`: without TLS, MySQL 8's default caching_sha2_password exchanges the password under
+# the server's RSA key, and sqlx 0.9 only builds that path behind this feature.
+sqlx = { workspace = true, features = ["mysql", "mysql-rsa"] }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+chrono = { workspace = true }
+
+# --- optional real connectors / lag, behind cargo features so a missing native lib never breaks the
+# default build. Fake mode (and Postgres/MySQL/MariaDB real) work without any of these. ---
+# SQL Server (pure-Rust TDS; needs a TLS backend). Enable with `--features sqlserver`.
+tiberius = { version = "0.13", default-features = false, features = ["tds73", "rustls", "chrono"], optional = true }
+tokio-util = { version = "0.7", features = ["compat"], optional = true }
+# Oracle (links the Oracle Instant Client / OCI). Enable with `--features oracle`.
+oracle = { version = "0.6", optional = true }
+# MongoDB (async pure-Rust driver + bson + TLS). Enable with `--features mongodb`.
+mongodb = { version = "3", optional = true }
+# Precise CDC offset-lag via an embedded Kafka AdminClient (vendored librdkafka via cmake).
+# Enable with `--features kafka-lag`.
+rdkafka = { version = "0.39", default-features = false, features = ["cmake-build", "tokio"], optional = true }
+# Native Azure Blob Storage object-migration source (Azure is not S3-compatible). Enable with
+# `--features azure-blob`. Pure-Rust Azure SDK + streaming sha256; no native system libraries.
+# Pinned to the 0.21 series deliberately: azure_storage/azure_storage_blobs haven't published a
+# release compatible with azure_core's newer 1.x line yet (checked 2026-09-28), so bumping
+# azure_core alone here would break this feature — not attempted as part of the otherwise
+# workspace-wide dependency upgrade this pass did. Not in the default feature set or any deployed
+# image's --features list today, so this doesn't block anything currently running.
+azure_core = { version = "0.21", optional = true }
+azure_storage = { version = "0.21", optional = true }
+azure_storage_blobs = { version = "0.21", optional = true }
+futures = { version = "0.3", optional = true }
+sha2 = { version = "0.11", optional = true }
+hex = { version = "0.4", optional = true }
+tokio-postgres-rustls = "0.14"
+rustls-native-certs = "0.8"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+
+[features]
+default = []
+sqlserver = ["dep:tiberius", "dep:tokio-util"]
+oracle = ["dep:oracle"]
+mongodb = ["dep:mongodb"]
+kafka-lag = ["dep:rdkafka"]
+azure-blob = ["dep:azure_core", "dep:azure_storage", "dep:azure_storage_blobs", "dep:futures", "dep:sha2", "dep:hex"]
+
+[dev-dependencies]
+tokio = { workspace = true }

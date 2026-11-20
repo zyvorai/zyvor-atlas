@@ -1,0 +1,36 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Headless: stable per-pod DNS. Not-ready pods must resolve too, or the voters could never reach
+# each other to elect the leader that readiness waits for.
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "atlas-native.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    {{- include "atlas-native.selectorLabels" . | nindent 4 }}
+  ports:
+    - { name: http, port: 7480, targetPort: http }
+    - { name: data, port: 7481, targetPort: data }
+    - { name: raft, port: 7482, targetPort: raft }
+---
+# Client entry point for the HTTP API: any pod answers reads; a mutation sent to a follower gets
+# 421 with the leader's node id (its pod name, reachable as <id>.<headless service>).
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "atlas-native.fullname" . }}-api
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+spec:
+  type: {{ .Values.service.type }}
+  selector:
+    {{- include "atlas-native.selectorLabels" . | nindent 4 }}
+  ports:
+    - { name: http, port: {{ .Values.service.port }}, targetPort: http }

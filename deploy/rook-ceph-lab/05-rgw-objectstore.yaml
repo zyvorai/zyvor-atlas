@@ -1,0 +1,58 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# RGW object store (S3-compatible) + an object-bucket StorageClass for backups/exports (PDF §2, §9.9).
+apiVersion: ceph.rook.io/v1
+kind: CephObjectStore
+metadata:
+  name: zyvor-rgw
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    failureDomain: host
+    replicated:
+      size: 3
+      requireSafeReplicaSize: false
+  dataPool:
+    failureDomain: host
+    replicated:
+      size: 3
+      requireSafeReplicaSize: false
+  preservePoolsOnDelete: false
+  gateway:
+    port: 80
+    instances: 1
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: zyvor-rgw-bucket
+  labels:
+    zyvor.dev/storage-backend: ceph
+    zyvor.dev/storage-kind: object
+provisioner: rook-ceph.ceph.rook.io/bucket
+reclaimPolicy: Delete
+parameters:
+  objectStoreName: zyvor-rgw
+  objectStoreNamespace: rook-ceph
+---
+# NodePort so browsers can reach RGW directly for presigned object upload/download.
+# Set the gateway's ATLAS_RGW_PUBLIC_ENDPOINT to http://<node-ip>:30800 to match.
+apiVersion: v1
+kind: Service
+metadata:
+  name: rook-ceph-rgw-zyvor-rgw-nodeport
+  namespace: rook-ceph
+  labels:
+    app: rook-ceph-rgw
+    rook_object_store: zyvor-rgw
+spec:
+  type: NodePort
+  selector:
+    app: rook-ceph-rgw
+    rook_object_store: zyvor-rgw
+  ports:
+    - name: s3
+      protocol: TCP
+      port: 80
+      targetPort: 8080
+      nodePort: 30800

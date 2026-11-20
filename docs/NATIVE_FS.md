@@ -1,0 +1,675 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# atlas-native filesystems
+
+An atlas-native cluster (`docs/NATIVE_NODE.md`) serves POSIX filesystems next to its block volumes.
+Files and directories live in the same replicated catalog as volumes, and file data uses the same
+copy-on-write extents (3 replicas) on a per-filesystem grid. Clients mount a filesystem through FUSE
+with `atlas-native-mount`; the Atlas gateway creates, snapshots and clones filesystems as
+`filesystem` volumes on backend `bkd_native`.
+
+## Model
+
+- A **filesystem** (`/v1/fs`) is an inode table inside the catalog: `id`, `name`, root inode 1,
+  and an optional `source_snapshot` for clones.
+- An **inode** is a directory (name → inode map), a regular file (offset → extent map plus size),
+  a symlink (target, at most 4096 bytes) or a special file (FIFO, socket, character or block
+  device, with `rdev`). Each has mode, uid, gid, nlink and atime/mtime/ctime in nanoseconds.
+  Names are 1–255 bytes, without `/` or NUL, and never `.` or `..`.
+- Every change is one Raft command (`MetaCommand::Fs`) applied identically on each replica.
+  Timestamps are chosen by the leader and travel in the command, so replicas stay deterministic.
+  Creates carry a client-chosen `op_id`: a retried create returns the inode it already made instead
+  of failing with "exists".
+- Hard links, `rename` (including over an existing entry, across directories, and refusing to move a
+  directory into itself), `setattr` (mode, owner, size, times) and `truncate` follow POSIX. Shrinking
+  a file drops the extents past the new end and trims the extent that straddles it.
+- File data is written through the extent path the volumes use, on the filesystem's own grid
+  (`extent_bytes`, chosen at create time): a write covering part of an extent rewrites that extent
+  with the old bytes merged in; never-written ranges are holes and read as
+  zeros; reads stop at end of file.
+- **Snapshots** copy a filesystem's inode table under a snapshot id and take a reference on every
+  extent it points to; no data is copied. A snapshot is read-only and addressed as `<fs>@<snapshot>`.
+  **Clones** start a new filesystem from a snapshot. Writes on either side allocate new extents, so a
+  filesystem, its snapshots and its clones never see each other's changes. Each survives deleting the
+  others; extents are freed by GC once nothing references them.
+
+## Node API
+
+All routes need the API token (and client certificate where configured), like the rest of `/v1/*`.
+
+| Method and path | Description |
+| --- | --- |
+| `GET /v1/fs` | `{"filesystems": [{id, name, inodes, bytes, source_snapshot, extent_bytes}]}`. |
+| `POST /v1/fs` | `{"name", "id"?, "extent_bytes"?}` → 201 `{"id"}`. Idempotent with the same `id` and name. `extent_bytes` (default 1 MiB, at most the cluster's `extent_bytes`) is the file extent grid; snapshots and clones keep it. |
+| `DELETE /v1/fs/{fs}` | 204. Snapshots and clones of it are unaffected. |
+| `GET /v1/fs/{fs}/statfs` | `{inodes, used_bytes, free_list_bytes, quota?}`. |
+| `GET /v1/fs/{fs}/quota` | `{max_bytes?, max_inodes?}` (`{}` without a quota; see "Quotas"). |
+| `PUT /v1/fs/{fs}/quota` | `{"max_bytes"?, "max_inodes"?}` replaces the quota; `{}` removes it. Unknown fields are refused. |
+| `GET /v1/fs/{fs}/locality?path=&max_inodes=` | Where a file or directory tree's data lives (see "Dataset locality"). `path` defaults to `/`, `max_inodes` to 100000. |
+| `POST /v1/fs/{fs}/locality/pin` | `{"hosts": [...], "path"?, "after"?, "max_extents"?, "max_inodes"?}` → `{examined, local, moved, bytes_moved, tiered, erasure_coded, deferred, next, truncated}`. Leader only. |
+| `POST /v1/fs/{fs}/rename` | `{parent, name, new_parent, new_name}` → 204. |
+| `POST /v1/fs/{fs}/snapshots` | `{"name", "id"?}` → 201 `{"id"}`. |
+| `GET /v1/fs-snapshots` | `{"snapshots": [{id, fs_id, name, created_ns, inodes}]}`. |
+| `DELETE /v1/fs-snapshots/{id}` | 204. |
+| `POST /v1/fs-snapshots/{id}/clone` | `{"name", "id"?}` → 201 `{"id"}` of the new filesystem. |
+| `GET /v1/fs/{fs}/inodes/{ino}` | Attributes: `{ino, kind, mode, uid, gid, nlink, size, blocks, rdev, atime_ns, mtime_ns, ctime_ns}`. |
+| `POST /v1/fs/{fs}/inodes/{ino}/attr` | Any of `{mode, uid, gid, size, atime_ns, mtime_ns}` → attributes. |
+| `GET /v1/fs/{fs}/inodes/{dir}/lookup?name=` | Attributes of the entry (`name` percent-encoded; `.` is the directory, `..` its parent). |
+| `GET /v1/fs/{fs}/inodes/{dir}/entries` | `{"entries": [{name, ino, kind}]}` in name order. `?limit=N` returns at most N; `?after=<name>` (percent-encoded) starts after that name. Without `limit`, the whole directory. |
+| `POST /v1/fs/{fs}/inodes/{dir}/entries` | `{name, op_id, kind, mode, uid, gid, target?, rdev?}` (`kind`: `file`, `dir`, `symlink`, `fifo`, `socket`, `char_device`, `block_device`) → 201 attributes. |
+| `POST /v1/fs/{fs}/inodes/{dir}/unlink`, `/rmdir` | `{name}` → 204. |
+| `POST /v1/fs/{fs}/inodes/{ino}/links` | `{parent, name}`: a hard link → attributes. |
+| `GET /v1/fs/{fs}/inodes/{ino}/target` | `{"target"}` of a symlink. |
+| `GET /v1/fs/{fs}/inodes/{ino}/xattrs` | `{"names": [...]}` of the extended attributes. |
+| `GET /v1/fs/{fs}/inodes/{ino}/xattrs/{name}` | Raw value (`name` percent-encoded); 404 `no_attr` if unset. |
+| `PUT /v1/fs/{fs}/inodes/{ino}/xattrs/{name}?mode=` | Raw body as the value → 204. `mode`: `set` (default), `create` (409 `exists` if set), `replace` (404 `no_attr` if unset). |
+| `DELETE /v1/fs/{fs}/inodes/{ino}/xattrs/{name}` | 204; 404 `no_attr` if unset. |
+| `GET /v1/fs/{fs}/inodes/{ino}/data?offset=N&len=M` | Raw bytes; short at end of file. |
+| `PUT /v1/fs/{fs}/inodes/{ino}/data?offset=N` | Raw body written at `offset` (extends the file) → attributes. |
+| `POST /v1/fs/{fs}/sessions` | `{"session", "ttl_ms", "cache"?}` (TTL 1000–300000): opens a client session, or renews it with a new TTL → `{session, ttl_ms, expires_ms}`. Session ids are client-chosen (the mount uses a UUID). `cache: true` if the session will hold cache leases. |
+| `GET /v1/fs/{fs}/sessions/{id}/recalls?wait_ms=` | `{"inos": [...]}`: cache leases the session must give back, waiting up to `wait_ms` (at most 25 s) for one. Leader only. |
+| `POST /v1/fs/{fs}/sessions/{id}/recalls/done` | `{"inos": [...]}`: the session dropped what it cached under these leases → 204. |
+| `POST /v1/fs/{fs}/sessions/{id}/renew` | → `{session, ttl_ms, expires_ms}`; 410 `no_session` once it expired or was closed. |
+| `DELETE /v1/fs/{fs}/sessions/{id}` | 204; releases every lock the session holds. |
+| `POST /v1/fs/{fs}/inodes/{ino}/locks` | `{session, owner, kind, start?, end?, pid?}` (`kind`: `read`, `write`, `unlock`; `end` inclusive, default end of file) → 204, or 409 `locked` on another owner's conflicting lock. POSIX `F_SETLK` semantics per `(session, owner)`; renews the session. Regular files only. |
+| `GET /v1/fs/{fs}/inodes/{ino}/locks?session=&owner=&kind=&start=&end=` | `{"conflict": {ino, session, owner, kind, start, end, pid} \| null}`: the first lock that would block the request (`F_GETLK`). |
+| `POST /v1/fs/{fs}/inodes/{ino}/locks/release` | `{session, owner}`: drops the owner's locks on the inode (a close) → 204. |
+| `GET /v1/fs/{fs}/locks` | `{"sessions": N, "locks": [...]}`: every lock held on the filesystem and the open sessions in its metadata group. |
+
+`{fs}` may be `<fs>@<snapshot>` for reads; any change to a snapshot gets 409 `read_only`.
+
+`?session=<id>` names the client session a request comes from. On `GET .../inodes/{ino}` and
+`GET .../lookup`, `&lease=1` also asks for a cache lease: the leader confirms its leadership (a
+read barrier), grants the session a lease on the inode (on a lookup, on the directory and the
+child) and adds `"lease_ms"` to the attributes; no `lease_ms` means none was granted (a change to
+the inode is in flight, a follower answered, or the tree is a snapshot).
+
+Errors are `{"error", "code", "leader"}`. `code` is stable and maps to an errno in the client:
+`not_found` (404, ENOENT), `exists` (EEXIST), `not_empty` (ENOTEMPTY), `not_dir` (ENOTDIR),
+`is_dir` (EISDIR), `invalid` (EINVAL), `read_only` (EROFS), `busy` (EBUSY), `no_attr` (404,
+ENODATA), `too_big` (E2BIG), `unsupported` (EOPNOTSUPP), `locked` (EAGAIN), `no_session` (410,
+ENOLCK) — all 409 except where noted — plus
+`not_leader` (421), `unavailable` (503) and `internal` (500).
+
+Reads are served by the leader once it has applied its log as of the request, so a client always
+sees its own writes. `?barrier=1` on a `GET` lets any replica answer after a read barrier (still
+linearizable, at the cost of one round trip to the leader), and `?stale=1` reads whatever the
+receiving replica has applied.
+Mutations go to the leader; followers answer 421 with the leader's id.
+
+## atlas-native-mount
+
+`crates/atlas-native-fuse` (bin `atlas-native-mount`, `fuse` cargo feature, Linux only):
+
+```
+atlas-native-mount --endpoint https://n1:7480,https://n2:7480,https://n3:7480 \
+  --token-file /etc/atlas-native/token --ca-file ca.pem --fs <id> /mnt/data
+atlas-native-mount ... --fs <id> --snapshot <snapshot-id> /mnt/data-at-snap   # read-only
+```
+
+Options: `--identity-file` (client certificate + key PEM), `--ttl-ms` (attribute and name cache,
+default 1000), `--writeback-bytes` (default 4 MiB), `--writeback-parallel` (full runs sent at once in
+the background, default 4; 0 sends them in the write call), `--readahead-bytes` (default 4 MiB, 0 disables),
+`--max-io-bytes` (largest request, default 8 MiB; keep at or below the nodes' `max_request_bytes`),
+`--retry-secs` (default 30), `--read-only`, `--allow-other`, `--fuse-threads` (kernel request
+workers, each with its own `/dev/fuse` fd, default 4), `--session-ttl-ms` (lease of the mount's
+session, default 15000), `--cache-leases` (see Consistency), `--acl` (see "POSIX ACLs"), `--direct-reads` and `--prefer-host` (below). It runs in the
+foreground until `fusermount3 -u`; the mount uses `default_permissions`, so the kernel checks
+modes and ownership.
+
+- **Failover**: every call goes to the last endpoint that answered and moves on through 421s,
+  503s and unreachable nodes until `--retry-secs` runs out. Creates reuse their `op_id` and writes
+  are absolute, so retrying after an ambiguous failure cannot apply twice; a remove that finds the
+  entry already gone after such a failure counts as done.
+- **Write-back**: sequential writes to an open file are buffered per inode and sent when the buffer
+  fills, on `fsync`/`flush`/close, and before a read, truncate or unlink of that file; `getattr`
+  already reports the buffered and in-flight size. Full runs go out in the background,
+  `--writeback-parallel` at a time, so a writer keeps filling the next run while earlier ones are
+  on the wire; runs of one file that overlap are sent in order. A full run is cut at a multiple
+  of `--writeback-bytes`, so a stream that started mid-extent is sent in aligned runs from then
+  on. A failed send fails the next write to that file and is reported once by
+  `fsync`/`flush`/close, as with NFS.
+- **Read-ahead**: a read that continues where the previous one ended fetches `--readahead-bytes`
+  and serves following reads from it; random reads fetch only what was asked.
+- **Unlink while open**: removing a file another handle in the same mount still has open renames it
+  to a hidden `.atlas_hidden_<ino>_<n>` entry (not listed by `readdir`) and removes it on the last
+  close, or at unmount.
+- **Directory listings**: each open directory reads 1024 entries per request (`?after=&limit=`)
+  and keeps its place between the kernel's `readdir` calls, so listing a directory of any size
+  costs one request per page. Seeking back restarts the listing.
+- **Direct reads** (`--direct-reads`): the leader only answers
+  `GET /v1/fs/<fs>/inodes/<ino>/layout?offset=&len=` (each extent's offset, length, SHA-256 and
+  replicas with their data-node addresses, in the order a read should try them); the client then
+  fetches the extents from the data nodes itself, in parallel, over the data-node protocol, and
+  verifies every checksum. An unreachable node, a checksum mismatch or a layout made stale by a
+  concurrent write falls back to reading through the leader. The client needs network access to
+  the data nodes; when they require mTLS, `--identity-file` must hold a certificate signed by the
+  cluster CA in `--ca-file`, and that identity is also accepted for writes by the data nodes, so
+  give it only to trusted clients. Direct reads take read traffic off the leader; on a single host
+  they cost an extra round trip (see the table below).
+  An erasure-coded extent's layout lists its shards in shard order with each shard's checksum; the
+  client reads and verifies the k data shards and joins them, and leaves decoding around a missing
+  shard to the leader.
+  Each replica in the layout carries its data node's `host`; `--prefer-host <host>` tries full
+  copies on that host first (use the host the mount runs on, after pinning the dataset there).
+
+## Dataset locality
+
+A training job reads its dataset fastest from data nodes on its own host. Two calls let a
+scheduler find and make that placement:
+
+- `GET /v1/fs/{fs}/locality?path=/datasets/imagenet` walks the file or directory tree (hard
+  links visited once, symlinks not followed) and returns `files`, `dirs`, `extents` (distinct: an
+  extent shared by hard links, clones or snapshots counts once), `bytes`, `tiered_bytes` and
+  `erasure_coded_bytes`, then `nodes` (every data node with its `host`, `rack`, `zone`, `up`,
+  `bytes` of full copies and `shard_bytes` of erasure-coded shards) and `hosts` (every host with
+  the `bytes` it holds a full copy of and `local_fraction`, that over all replicated bytes), most
+  bytes first. A scheduler places the job on the host with the highest `local_fraction`.
+  `truncated: true` means the walk stopped at `max_inodes` and the figures cover only part of the
+  tree. The walk holds the group's catalog read lock while it runs, delaying commits to that
+  group, so keep `max_inodes` proportionate.
+- `POST /v1/fs/{fs}/locality/pin {"path": "/datasets/imagenet", "hosts": ["gpu-node-3"]}` gives
+  every replicated extent of the tree a full copy on one of `hosts`: an extent without one gets a
+  copy written to an eligible node on those hosts (most free space first), and one of its
+  replicas is released, preferring one on the new node's rack, so the replica count and host
+  spread stay the same. It examines `max_extents` (default 256) extents per call, in id order
+  after `after`; call it again with the returned `next` until `next` is null. Calls are
+  idempotent: extents already local count as `local`. Tiered and erasure-coded extents are
+  skipped and counted (a shard on a host is not a local copy). `deferred` counts extents left
+  for another call: no readable copy, no eligible node on the hosts, or a concurrent change.
+
+Pinning moves existing data only. New writes are placed as usual, and repair may move a pinned
+copy off a host that fails, so pin again after the dataset changes or a host is replaced.
+Mount on the pinned host with `--direct-reads --prefer-host <host>` to read the local copies; the
+CSI driver doesn't pass `--prefer-host` yet, since it needs the data nodes' `host` to match the
+Kubernetes node names, which the chart doesn't configure.
+
+## POSIX ACLs
+
+Mount with `--acl` (CSI: the `acl` mount option) and `setfacl`/`getfacl` work as on a local
+filesystem: the kernel enforces the ACLs (`FUSE_POSIX_ACL`), and the cluster keeps them
+consistent, the same for every client:
+
+- `system.posix_acl_access` and `system.posix_acl_default` are validated (the Linux xattr
+  encoding: one owner, group and other entry, a mask with any named entry, sorted, no duplicates)
+  and refused with EINVAL otherwise. A default ACL is for directories only.
+- Setting an access ACL sets the mode's permission bits from it (owner, mask or else group, and
+  other); one that says no more than the mode is not stored. `chmod` rewrites the access ACL's
+  owner, mask (or group) and other entries.
+- A node created in a directory with a default ACL gets it as its access ACL, ANDed with the
+  requested mode, and the umask is not applied; a new directory also inherits the default ACL.
+  Symlinks have no ACLs. Without a default ACL the umask applies as usual.
+- Without `--acl` the kernel neither enforces nor exposes ACLs (`getfacl` shows the mode only),
+  but ACLs set by `--acl` mounts are still stored and inherited by the cluster.
+- Each mount's kernel caches an inode's ACL. A change made through another mount may be missed
+  until that kernel drops the inode from its cache, so treat ACL changes like other metadata
+  across mounts (`--ttl-ms`, close-to-open).
+- Not done: clearing setgid when a non-member of the group sets an ACL (the kernel's
+  `FUSE_SETXATTR_ACL_KILL_SGID`). NFSv4 ACLs are not supported.
+- Upgrades: ACL xattrs and the create mode sent for inheritance are new to the metadata
+  commands, so upgrade every metadata node before mounting with `--acl`.
+
+## Quotas
+
+`PUT /v1/fs/{fs}/quota {"max_bytes": 107374182400, "max_inodes": 1000000}` limits a filesystem;
+either limit may be left out, and `{}` removes the quota.
+
+- `max_bytes` caps `used_bytes`: the bytes of the file extents the filesystem references, so
+  holes and sparse truncates cost nothing and an extent shared with a snapshot or clone counts in
+  each filesystem that references it. A write is checked when its extents are committed, against
+  the net change: rewriting a range replaces its extents, so overwrites pass even at the limit,
+  and only growth is refused.
+- `max_inodes` caps the inode count, the root directory included. Hard links don't add inodes.
+- A refused change fails with code `quota` (HTTP 409); the FUSE client returns `EDQUOT`. With
+  write-back on (the default), a buffered write can be refused after the `write` call returned,
+  so the error comes from a later `write`, `fsync` or `close`, as with NFS. The data a refused
+  write already sent to the data nodes is released straight away.
+- Lowering a limit below current usage is allowed: nothing is removed, and growth stays refused
+  until deletes bring usage back under it. Removing, truncating and rewriting always work.
+- Snapshots keep the quota they were taken with and clones inherit it. Extents that only a
+  snapshot still holds don't count against the live filesystem.
+- FUSE `statfs` (`df`) reports the quota as the filesystem's size and the remaining quota as free
+  space and free inodes; without a quota it reports usage plus a large headroom, since capacity is
+  the cluster's.
+- Upgrades: the quota is a new metadata command, so upgrade every metadata node before setting
+  one; an older node cannot apply it.
+
+## Data path
+
+- A read fetches all the extents it covers in parallel (up to 8 at once), each from a replica
+  chosen from the extent id so the load spreads over every replica; any replica that fails or
+  doesn't verify falls back to the next.
+- A write that spans several extents writes their replicas in parallel (up to 4 extents at once,
+  each to 3 nodes) and installs them all with one metadata commit (`install_extents` /
+  `install_file_extents`), so a 4 MiB write costs one Raft round trip, not four. All placements of
+  one write draw from one copy of the free list, so concurrent placements never reuse the same
+  free range.
+- Each data-node client keeps up to 8 idle connections, so concurrent requests to one node don't
+  queue behind a single socket; payloads over 16 KiB are written straight from the caller's
+  buffer.
+- The node HTTP server sets `TCP_NODELAY` and sends small responses in one write. Before it did,
+  every small reply waited for the client's delayed ACK (40 ms on Linux), which capped random
+  reads at about 24/s and sequential writes at 18 MiB/s regardless of hardware.
+- Upgrades: the two batched commands are new log entries, so upgrade every metadata node before
+  clients write through an upgraded leader; an older node cannot apply them.
+
+## Direct I/O
+
+A file opened with `O_DIRECT` bypasses the kernel's page cache (the FUSE client answers the open
+with `FOPEN_DIRECT_IO`) and the mount's own caches:
+
+- A write goes to the cluster before it returns: anything the mount still buffers for the file
+  is sent first, then the write itself, and the call returns once its extents are committed. It
+  is visible to every other mount straight away, without a `close` or `fsync`.
+- A read fetches from the data nodes, skipping read-ahead, so it returns what other mounts have
+  committed, even if this mount cached older bytes for the file.
+- No alignment is required: any offset and length work, as on other FUSE and network
+  filesystems.
+- Several direct writes to one file run in parallel (`FOPEN_PARALLEL_DIRECT_WRITES`); concurrent
+  writers to the same range still see last-writer-wins.
+- `O_DIRECT` has to be given to `open`: turning it on later with `fcntl(F_SETFL)` doesn't reach
+  FUSE, and the handle keeps its open-time behaviour. Not tested: `mmap` of an `O_DIRECT` handle
+  (the kernel restricts shared mappings of direct-I/O FUSE files); map the file through a handle
+  opened without `O_DIRECT`.
+- `O_SYNC` and `O_DSYNC` without `O_DIRECT` keep write-back: the kernel follows each write with an
+  `fsync`, which sends the buffered data before the call returns.
+- Cost: every direct write is one round trip to the cluster and waits for its commit, so small
+  direct writes are latency-bound. On the lab k3s host (shared, spinning disks, one replica) a
+  direct write took about 70–160 ms whatever its size up to 1 MiB; batch writes, or leave
+  `O_DIRECT` off, where durability per call isn't needed. Not yet measured on NVMe.
+
+## Consistency
+
+- Within one mount, operations are linearizable: every call goes through the leader and returns
+  only after its command is committed and applied.
+- Across mounts it is **close-to-open**: data written on one client is visible to another after the
+  writer closes or fsyncs the file and the reader opens it after that; attributes and names may be
+  cached for up to `--ttl-ms` (set 0 for no caching). Unlocked concurrent writers to the same
+  file range see last-writer-wins at the extent level.
+- **Cache leases** (`--cache-leases`): attributes and names are cached for as long as the
+  cluster's lease on them lasts (5 s, re-taken on the next miss) instead of for `--ttl-ms`, and
+  never go stale: before any change to an inode commits, the leader recalls every other mount's
+  lease on it and waits until that mount has dropped its cache (its recall thread answers within
+  a round trip) or the lease ran out. A mount's own changes do not wait on its own leases. The
+  kernel gets a zero TTL, so every `stat` and lookup reaches the mount's cache. A new metadata
+  leader knows none of its predecessor's leases: while a caching session opened under an earlier
+  leader is open, it holds changes back for one lease period (5 s) after taking over. A mount
+  that stops answering recalls delays other mounts' changes to what it cached by up to 5 s. File
+  data is still close-to-open.
+- Unlink-while-open only protects handles in the same mount; a file removed by another client
+  disappears for everyone.
+- **Extended attributes** in the `user.`, `trusted.` and `security.` namespaces are stored on the
+  inode (replicated, copied by snapshots and clones): at most 64 KiB per value and 256 KiB per
+  inode. Of `system.*`, only the two POSIX ACLs are stored (see "POSIX ACLs"); the rest is
+  refused with EOPNOTSUPP.
+- **Locks**: `fcntl` byte-range locks and `flock` locks are held in the cluster, so every mount
+  of the filesystem sees them. A mount opens a session on its first lock and renews it every
+  third of `--session-ttl-ms`; the session holds its locks. Closing a file drops its process's
+  locks on it, unmounting closes the session, and a mount that dies (or loses the cluster for a
+  whole TTL) has its session expired by the metadata leader and its locks released. A mount whose
+  session expired under it logs the loss and starts a new session on its next lock. `flock`
+  reaches the cluster as a whole-file lock, as on Linux NFS, so it conflicts with `fcntl` locks
+  on the same file. `F_SETLKW` polls the leader (10–250 ms backoff) while it waits; at most
+  `--fuse-threads` − 1 waits run at once, more fail with ENOLCK, so waiters never take the
+  kernel worker an unlock needs. A snapshot mount grants every lock locally (nothing writes
+  there). Locks need every metadata node upgraded first: an older node cannot apply them.
+- `O_DIRECT` reads and writes skip the caches; see "Direct I/O".
+
+## Atlas gateway
+
+With the native backend enabled (`docs/NATIVE_NODE.md`, "Atlas gateway"):
+
+```
+atlasctl create-volume team-share --kind filesystem --backend bkd_native --tenant acme
+atlasctl snapshot-volume vol_native_fs_<id> --name before-upgrade
+atlasctl clone-snapshot snap_native_fs_<id> --name team-share-copy
+atlasctl restore-snapshot snap_native_fs_<id>
+```
+
+Filesystems appear as volumes `vol_native_fs_<id>` (kind `filesystem`, backend id `fs:<id>`) and
+their snapshots as `snap_native_fs_<id>`. A filesystem has no size limit: its `size_bytes` is the sum
+of its file sizes (0 when empty), expanding it is refused, and the requested size at create time is
+only used for tenant quota admission. Block data routes (`/volumes/{id}/data`) refuse filesystems;
+mount them with `atlas-native-mount` instead.
+
+`atlasctl checkpoint seal` snapshots and retention-locks a finished training checkpoint on a
+filesystem and prunes older ones (`docs/CHECKPOINTS.md`).
+
+## Agent workspaces
+
+An agent workspace is an instant, isolated, disposable copy of an atlas-native volume or filesystem
+(or of one of its snapshots) for one agent run. It is the snapshot and clone described above with a
+lifetime, an owner and a size limit around them: nothing is copied, the clone shares extents with its
+snapshot until it is written, and the source is never written.
+
+```
+POST   /api/atlas/v1/workspaces                {"source_volume_id": "vol_native_fs_<id>", "name": "run-42", "ttl_secs": 3600, "max_bytes": 0}
+GET    /api/atlas/v1/workspaces                 (tenant-scoped; admins see every tenant)
+GET    /api/atlas/v1/workspaces/{id}
+POST   /api/atlas/v1/workspaces/{id}/reset      roll back to the base snapshot
+DELETE /api/atlas/v1/workspaces/{id}            discard
+```
+
+Give `source_volume_id` (Atlas snapshots it now) or `source_snapshot_id` (an existing snapshot, which
+Atlas leaves alone when the workspace goes away). The result carries the workspace `id`, its own
+`volume_id` (a normal volume; mount it with `atlas-native-mount`, or use `/volumes/{id}/data` for a
+block source), `state`, `used_bytes`, `over_cap` and `remaining_secs`.
+
+- **Create, reset and discard** need the operator role and a source in the caller's tenant (another
+  tenant gets 404). Only atlas-native sources are accepted.
+- **Reset** deletes the clone and everything written to it and clones again from the same base
+  snapshot. The workspace keeps its id and its expiry (a reset does not extend it); its `volume_id`
+  changes. If the re-clone fails the workspace is `reset_failed` with no volume and `last_error` set;
+  reset again, or discard it.
+- **Discard** deletes the clone, then the snapshot Atlas took for it (kept, and reported as
+  `base_snapshot_retained`, if some other volume was cloned from it), then the record.
+- **TTL**: `ttl_secs` is 60 to `ATLAS_WORKSPACE_MAX_TTL_SECS` (default 7 days), default 3600. A
+  background worker discards expired workspaces and finishes half-done teardowns every
+  `ATLAS_WORKSPACE_GC_SECS` seconds (default 60, minimum 5, `0` turns it off). State changes are
+  compare-and-set, so several gateway replicas on Postgres can run it at once.
+- **Limits**: the clone goes through the normal clone path, so the tenant's byte and volume-count
+  quota applies and a refused create leaves nothing behind. `ATLAS_WORKSPACE_MAX_PER_TENANT`
+  (default 10, `0` = no limit) caps live workspaces per tenant. `max_bytes` (or
+  `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) refuses a source larger than that at create time. It is an
+  admission check, not a hard limit: a native filesystem has no size limit, so growth after creation
+  is only reported (`over_cap`), and the tenant byte quota is what bounds it. The per-tenant count
+  and a per-owner budget on the sum of `max_bytes` (token `workspace_bytes`,
+  `ATLAS_AGENT_WORKSPACE_BYTES`; see [MCP.md](MCP.md#agent-identity-and-guardrails)) are checked
+  twice: once up front (cheap, no side effects), and again after the create has inserted its own
+  workspace row in the `creating` state, which counts toward both figures. The second committer of two
+  racing creates always sees both rows, so the limits cannot be exceeded by a race; the cost is that
+  under contention both may see both and both be refused (retry). A refused create removes its own
+  row. The row becomes `active` when the clone exists; a `creating` row whose gateway died is
+  discarded by the GC after 15 minutes (and cannot be reset or discarded by hand until then). Across
+  gateway replicas this relies on Postgres read-committed visibility and is tested in one process on
+  SQLite only.
+- Create, reset, discard and expiry are audited (`workspace.create`, `workspace.reset`,
+  `workspace.discard`, `workspace.expire`).
+
+The same operations are MCP tools for agents (`list_workspaces`, `get_workspace`, and the guarded
+two-phase `create_workspace`, `reset_workspace`, `discard_workspace`); see [MCP.md](MCP.md). There is
+no `atlasctl` command for workspaces yet.
+
+Tested over the fixture driver through the gateway (`crates/atlas-gateway/tests/workspaces.rs`,
+`mcp_workspaces.rs`): create, write, reset and discard with the source untouched, TTL expiry GC,
+quota, size-cap and count refusals, concurrent creates against the byte budget and the count (in
+process, SQLite), stale `creating` rows, tenant isolation and roles. The fixture driver does not model
+files, so a filesystem workspace is not written through the gateway in these tests (a block source is,
+through `/volumes/{id}/data`); filesystem snapshot and clone themselves are tested against live
+in-process nodes in `crates/atlas-driver-native/tests/nodes.rs`. Not run against a lab cluster.
+
+## NFS
+
+The FUSE client supports kernel export (`FUSE_EXPORT_SUPPORT`; the node API resolves `.` and `..`
+in `GET /v1/fs/{fs}/inodes/{dir}/lookup`), so a mount can be re-exported over NFS. The chart's NFS
+gateway does this with NFS-Ganesha; see [`NATIVE_NFS.md`](NATIVE_NFS.md).
+
+## S3
+
+The chart's S3 gateway serves filesystems (and snapshots) as buckets whose objects are these same
+files: `a/b/c` is the file `c` in directory `a/b`. See [`NATIVE_S3.md`](NATIVE_S3.md).
+
+## SMB
+
+The chart's SMB gateway runs Samba over `--allow-other` FUSE mounts, one per share. SMB users are
+Unix accounts with configured uids and gids, so the mount's permission checks apply to them. See
+[`NATIVE_SMB.md`](NATIVE_SMB.md).
+
+## Replication
+
+`atlas-native-replicate` keeps a read-only replica of a filesystem on another cluster from
+snapshot increments that carry only changed grid cells, with promote and demote for failover and
+failback. See [`NATIVE_REPLICATION.md`](NATIVE_REPLICATION.md).
+
+## Limits and performance
+
+Each filesystem lives in one Raft group's catalog (`metadata.groups` spreads filesystems across
+groups; `docs/NATIVE_NODE.md`, "Metadata groups"). Commands apply in place: every
+command checks its inputs before it changes anything, so a rejected one leaves the catalog as it
+was (debug builds assert this on every apply), and the leader validates proposals against one
+running copy of the catalog plus its uncommitted entries. A create therefore costs the same at
+100k inodes as at 10k. Log compaction (every 1024 entries) checkpoints only the records changed
+since the last one to `catalog.redb` (`docs/NATIVE_METADATA.md`, "Catalog store"). Inodes and
+directory entries are paged from it, so memory holds what changed since the last checkpoint plus
+a bounded inode cache, not the namespace. The leader's applied and speculative catalogs share
+everything paged.
+
+Engine-level create rates without FUSE or HTTP (`crates/atlas-native/tests/metadata_bench.rs`, one
+host, tmpfs) are ~9k/s from one proposer and ~12k/s from eight on a 3-voter group at 20k files.
+The table below predates pipelined replication and the catalog store.
+
+Measured 2026-10-04, file creates through the node API with 16 concurrent clients on a 3-node
+cluster on one laptop (Apple SSD, release build, other load on the machine), all filesystems in
+one cluster counted:
+
+| Inodes | Creates/s | p50 ms | p99 ms | Catalog MiB | Leader RSS MiB |
+| --- | --- | --- | --- | --- | --- |
+| 10k | 126 | 123 | 296 | 2.2 | 168 |
+| 50k | 156 | 69 | 338 | 11.9 | 356 |
+| 80k | 263 | 55 | 166 | 19.0 | 367 |
+| 100k | 271 | 54 | 174 | 23.6 | 628 |
+
+No requests were retried or failed; the spread between rows is load from other processes on the
+laptop, not the inode count. Before commands applied in place, each create copied the catalog and
+throughput fell from 200/s at 10k inodes to 36/s at 60k. On the shared lab host, where fsync
+takes tens of milliseconds and other tenants keep I/O pressure around 15%, creates are bound by
+disk latency but stay flat with the inode count (same run shape, no retries):
+
+| Inodes | Creates/s | p50 ms | p99 ms | Catalog MiB | Leader RSS MiB |
+| --- | --- | --- | --- | --- | --- |
+| 5k | 40 | 362 | 1103 | 1.2 | 41 |
+| 15k | 47 | 321 | 811 | 3.4 | 99 |
+| 25k | 42 | 346 | 1214 | 5.8 | 112 |
+
+These runs predate the paged catalog, when leader memory grew about 6 KiB per inode. Memory now
+follows the inode cache rather than the inode count: `store::bench::memory_of_a_paged_catalog`
+(4096-inode cache, second lab host, 2026-10-05) peaks at ~76 MB for 400k files in one directory
+and ~78 MB spread over 1000, flat from 300k files on as redb's page cache fills (112–114 MB before
+directory entries were paged).
+
+Data path, FUSE mount, measured 2026-10-04: 3 nodes on one 12-core host (other tenants' load
+average around 25), node data on tmpfs so the shared HDDs don't mask software overhead, fio with
+one job and `psync` on a 256 MiB file, page cache dropped before each read test, release builds,
+two rounds each (ranges shown):
+
+| | Before | After | After, `--direct-reads` |
+| --- | --- | --- | --- |
+| 1 MiB sequential write | 18 MiB/s | 379 MiB/s | 348–350 MiB/s |
+| 1 MiB sequential read | 328–374 MiB/s | 369–405 MiB/s | 483–541 MiB/s |
+| 4 KiB random read | 23 IOPS | 588–606 IOPS | 510–519 IOPS |
+
+Most of the write and random-read gain is the `TCP_NODELAY` fix (see Data path); the rest is
+group commit and parallel extent I/O. A 4 KiB random read still fetches and checksums its whole
+extent (1 MiB by default). On the lab hosts' shared disks the same runs are bound by fsync latency
+and other tenants' I/O (pressure 50–80%), so they are not a fair measure of either build.
+`crates/atlas-native/tests/datapath_bench.rs` (`--ignored`) measures the engine alone over
+localhost data nodes.
+
+Checkpoint fast path (large sequential writes, e.g. a training checkpoint):
+
+- A write covering whole extents of the file's grid (`--writeback-bytes` a multiple of the
+  filesystem's `extent_bytes`, which the defaults are) reads nothing back to merge, so the
+  leader places its data on the data nodes without the engine's write lock; only the commit is
+  serialized. Partial-extent writes still read, merge and rewrite under the lock.
+- Every placement draws free space from one shared view (the applied free list minus the ranges
+  of placements not yet committed), so concurrent writers never share space; a commit whose
+  outcome is unknown (a timeout, a lost leadership) keeps its ranges out of use for 5 minutes.
+- File-backed data-node devices reserve append space under a lock, then write and sync outside
+  it, so concurrent appends share the device instead of queueing behind each other's fsync.
+
+### Direct writes (`atlas-native-mount --direct-writes`, off by default)
+
+Implemented and tested in-process only; **not yet run on the lab or measured**, so there is no
+throughput claim. With the flag, a mount sends whole extents to the data nodes itself and the
+metadata leader only allocates and commits:
+
+1. `POST /v1/fs/{fs}/inodes/{ino}/direct-write {offset, len}` (leader): `offset` and `len` are
+   multiples of the filesystem's `extent_bytes` (at most 64 extents). The leader picks the
+   replica targets as it would for its own write, holds their free space in an allocator lease
+   (`inflight`), and returns per extent `replicas + 1` targets (the extra one is a spare for a
+   replica that is down): the data node's address, the device and offset (or "append"), and a
+   write **grant**, together with the leader's term.
+2. The client writes each target with that grant and the term as the fence
+   (`RemoteDevice::write_at_granted` / `append_granted`).
+3. `POST .../direct-commit {lease, cells[{logical_offset, checksum, replicas[{node, device, offset,
+   receipt}]}], failed[]}` (leader): the leader checks every reported replica against the lease
+   (an append must carry the data node's receipt for its offset), requires the usual number of
+   replicas per extent, then commits through the same path as a leader-side write: the Raft
+   proposal is made in the lease's term, so a leader that was replaced cannot commit it. Quota,
+   file size, snapshots and cache-lease recall are unchanged. `POST .../direct-abort {lease}`
+   gives a lease up.
+
+The write credential is separate from read access. Set `grant_key_file` (a secret of at least 16
+bytes, the same file on every metadata and data node). A data node that has it refuses every write
+that lacks a valid HMAC-SHA256 grant from the leader for exactly that node, group, device, fence,
+offset (or append), length and an expiry (30 s by default); the leaders sign their own writes with
+the key. A client that can only read the data nodes (an address, or the cluster client certificate)
+cannot make a grant. Without `grant_key_file` the data nodes accept unauthenticated writes as
+before and the leader refuses to lease direct writes, so the mount keeps writing through the
+leader. Grants travel in the request header, so they are carried the same way over RDMA
+(see "RDMA to the data nodes" below).
+
+Failure handling:
+
+- Any failure of the direct path (no grant key, compression, deduplication or erasure coding
+  enabled, a refused or expired lease, a data node fault with no spare left, a fenced term, a
+  failed commit) is followed by writing that chunk through the leader. A refused lease pauses
+  direct writes for 60 s instead of asking for every run.
+- A client that dies after writing the data nodes but before committing leaves unreferenced
+  bytes and nothing visible. The lease expires; its ranges then stay out of the free list for a
+  grace period (30 s by default, `set_direct_write_timing`) because a write may still be in
+  flight, then the allocator hands them out again. A commit that arrives after expiry is refused.
+- A client holding a lease from an earlier term is refused by the data nodes (`Fenced`) once any
+  newer leader has written to them, and the new leader does not know its lease, so its commit is
+  refused. Leases live in the leader's memory; a failover loses them.
+- Appended (not reused) space that is never committed is not reclaimed, as with a failed
+  leader-side write.
+
+Known gaps: the extent checksum in the commit is the client's word (scrub checks replicas
+against it); direct commits record write volume in the per-minute activity windows but no
+entropy sample, so the ransomware assessment is blinder for them; grants and leases are
+wall-clock based, so leaders and data nodes need roughly synchronized clocks.
+
+Measured 2026-10-05 (release builds; the engine benchmark is `checkpoint_throughput` in
+`tests/datapath_bench.rs`, 1 MiB extents, 3 replicas, 8 MiB writes; the client one is
+`checkpoint_bench` in `atlas-native-fuse/tests/ops.rs`, one file in 128 KiB writes):
+
+| | Before | After |
+| --- | --- | --- |
+| Engine, 8 writers, laptop SSD (macOS) | 76 MiB/s | 150 MiB/s |
+| One file through the client, laptop SSD | 11 MiB/s | 17 MiB/s |
+| Engine, 8 writers, lab host, data on tmpfs | 820 MiB/s | 746 MiB/s |
+| One file through the client, lab host, tmpfs | 226 MiB/s | 233 MiB/s |
+| Engine, 8 writers, lab host's shared HDD | 6 MiB/s | 4 MiB/s |
+
+The gain shows where per-write latency (fsync, network) dominates and the device takes
+concurrent writes. On the lab host's tmpfs the runs are CPU-bound on a shared 12-core host and
+on its HDD (other tenants at 20–40% I/O pressure) the differences are within run-to-run noise;
+neither is a measure of the NVMe target, which still needs the benchmark lab.
+
+Known limits:
+
+- One filesystem never spans groups: its inodes all live in one group, behind one leader.
+- Filesystem snapshot trees are held in memory in full, and each is one record in the store.
+- A write that covers part of an extent reads, merges and rewrites the whole extent: up to the
+  filesystem's `extent_bytes` (1 MiB by default). With the cluster on its default 4 MiB grid,
+  random 4 KiB writes measured 24/s at a 4 MiB file grid, 28/s at 1 MiB, 35/s at 256 KiB and
+  42/s at 64 KiB (p50 40 → 22 ms); the remaining ~20 ms is the replicated commit. A smaller grid
+  means more extents in the in-memory catalog, so use 64–256 KiB only for random-write-heavy
+  filesystems.
+- The client reuses connections (one per concurrent request) but does not pipeline or batch
+  requests, so each metadata operation is one round trip to the leader.
+- A read verifies whole extents, so a small random read transfers and checksums a full extent.
+- Writes go through the leader unless the mount runs with `--direct-writes` (see Direct writes);
+  partial extents, compressed, deduplicated or erasure-coded extents and clusters without a
+  `grant_key_file` always do.
+- Unlink-while-open works only within one mount (see Consistency).
+
+### RDMA to the data nodes (`atlas-native-mount --rdma`, off by default)
+
+`--rdma` (with `--direct-reads` and/or `--direct-writes`) makes the mount's data-node clients ask
+each new connection to switch to RDMA, and keep the resulting connection in the same pool TCP
+connections use. It needs a build with `--features rdma` (Linux, libibverbs), data nodes built the
+same way and started with `ATLAS_NATIVE_RDMA=1`, and `--rdma-gid-index` if the port's GID is not
+index 1. The wire protocol is unchanged, so write grants, receipts and fences work over RDMA
+exactly as over TCP.
+
+- **Plaintext, so never with TLS.** RDMA here carries no encryption. Passing `--rdma` together with
+  a client certificate (`--ca-file` and `--identity-file`, which make the data-node connections
+  mTLS) is a configuration error at startup, as is `RemoteDevice::use_rdma` on a TLS client, and a
+  node never upgrades a TLS connection. Use TLS over TCP, or RDMA on a trusted storage network.
+- **Fallback to TCP.** If a node does not offer RDMA, the transport cannot connect, or a request
+  fails on an RDMA connection, that request or connection is retried over TCP, counted
+  (`RdmaSnapshot`: connects, connect failures, TCP fallback connects, mid-flight errors, requests
+  over RDMA, capped fallbacks, `ENOMEM` failures, live connections), and RDMA is not tried again on that node for 30 s (5 minutes if the node itself
+  declined). A mid-flight retry follows the same rule as a retry on a stale pooled TCP connection:
+  an append can leave an unreferenced copy behind.
+- **Locked memory.** Every RDMA connection pins about 1.06 MiB (17 x 64 KiB) on the client and on
+  the node, counted against `RLIMIT_MEMLOCK`; with a typical 8 MiB limit only a few fit and
+  registering more fails with `ENOMEM`. Raise the limit for the mount and the nodes (systemd
+  `LimitMEMLOCK=infinity`, `ulimit -l unlimited`, a container's `--ulimit memlock=-1:-1` and
+  `IPC_LOCK`; a rootless container cannot exceed its host hard limit; in Kubernetes set the
+  runtime default and add `IPC_LOCK`). As a safeguard the client keeps at most
+  `RdmaConfig::max_connections` RDMA connections alive across all its data-node clients, by default
+  half of the soft limit divided by 1.06 MiB (at least 1; 64 when unlimited). Beyond that, new
+  connections use TCP and are counted as `capped_fallbacks` in `RdmaSnapshot` (not a failure, no
+  back-off); `enomem_failures` counts setups that hit `ENOMEM` anyway, `live_connections` is the
+  current count, and `RdmaStats::diagnostics()` holds the explanations (logged once by the mount).
+  The mount and `atlas-native-node` warn at startup when the soft limit is under 64 MiB. Details
+  and what was verified: `docs/NATIVE_STORAGE.md`, "RDMA and `RLIMIT_MEMLOCK`".
+- **Idle connections.** A pooled RDMA connection may sit idle indefinitely: the node waits for the
+  next request (waking every 500 ms to notice shutdown) rather than closing after the stream's 30 s
+  read timeout. A request that starts and then stalls for 30 s still fails.
+- **One owner thread per RDMA connection.** The verbs objects borrow from one another, so each
+  client connection runs on a worker thread that owns them for the connection's lifetime
+  (`rdma_link::WorkerStream`); the pooled handle talks to it over channels.
+- Verified only on SoftRoCE over loopback on one dev host (`crates/atlas-native-fuse/tests/ops.rs`,
+  `real_rdma_*`, `--ignored`, `--features rdma`): direct reads and direct writes with the memlock
+  limit raised for the test process, and graceful degradation to TCP under the default 8 MiB limit.
+  No RDMA hardware, and no throughput or latency numbers. Those tests are not CI. SoftRoCE is
+  enough and an RDMA NIC is not required:
+
+  ```
+  rdma link add rxe0 type rxe netdev lo
+  # GID index is usually 1 on loopback; override with ATLAS_RDMA_GID_INDEX
+  cargo test -p atlas-native --features rdma -- --ignored
+  cargo test -p atlas-native-fuse --features rdma --test ops -- --ignored real_rdma
+  ```
+
+  A pass on `rxe0` shows the queue pairs connect and bytes match. It is not an RDMA NIC result
+  and not a throughput or latency number. The same note is on each `#[ignore]`.
+- Pipelined sends and registered-memory zero-copy are scaffolded in
+  `crates/atlas-native/src/rdma_pipeline.rs` and unit-tested with no device: a credit window
+  (`SendPipeline`, default depth 8) and a `RecordingZeroCopy` hook that checks a region and
+  returns pending-runtime. `ATLAS_NATIVE_RDMA_PIPELINE=1` is recorded and ignored.
+  `runtime_enabled()` is false, so `RdmaStream::write` still posts one send and copies into its
+  staging slot. Not built on that path: messages larger than the existing 64 KiB, and one-sided
+  RDMA READ/WRITE. Nothing here is a performance claim.
+
+## Verification
+
+- `crates/atlas-native/src/namespace.rs` unit tests (every command, idempotent replay, rename edge
+  cases, truncate refcounts, snapshot and clone isolation) and `crates/atlas-native/tests/fs.rs`
+  (engine: holes, EOF, truncate, GC, reopen, clones).
+- `crates/atlas-native/tests/node.rs`: the file API on a 3-node in-process cluster.
+- `crates/atlas-native-fuse/tests/ops.rs`: the FUSE operations layer against a live in-process
+  cluster, including a leader failure mid-workload, unlink-while-open, read-only snapshot mounts,
+  clone isolation, concurrent creates, direct reads (across extents, after a rewrite) and their
+  fallback to the leader; `crates/atlas-native-fuse/src/dirs.rs` unit tests page a 2500-entry
+  listing through small kernel buffers with one request per page, and rewind on a seek back.
+- `crates/atlas-native/tests/direct_writes.rs` and the `direct_writes_*` / `a_*` tests at the end of
+  `crates/atlas-native-fuse/tests/ops.rs`: direct writes against in-process data nodes that
+  require grants: grant scoping and expiry, a client dying between data and commit (space
+  reclaimed after expiry and quarantine), a stale-term client fenced (also across a real leader
+  failover), a down replica covered by the spare, forged commits, and fallback to the leader.
+- `crates/atlas-native/tests/allocator.rs`: one write's concurrent extent placements reuse
+  distinct free ranges (verified by reading back and scrubbing every replica).
+- `crates/atlas-driver-native/tests/nodes.rs` and `crates/atlas-gateway/tests/native_backend.rs`:
+  filesystem create, snapshot, clone, restore and delete through the driver and the gateway.
+- Lab (2026-10-04), a 3-node cluster on one host with a FUSE mount: pjdfstest `unlink`, `mkdir`,
+  `rmdir`, `rename`, `link`, `symlink`, `mknod`, `mkfifo`, `truncate`, `chmod`, `chown` and `open`
+  all pass (8565 tests); cp/mv/rm round trips; `git clone` + `git fsck --full --strict`; a snapshot
+  mount stayed identical (sha256) while the source was overwritten, truncated and extended, refused
+  writes with EROFS, and a clone of it took writes that neither the source nor the snapshot saw.
+  `atlasctl` created, snapshotted, cloned, restored and deleted a filesystem through a gateway in
+  real mode against a live cluster.

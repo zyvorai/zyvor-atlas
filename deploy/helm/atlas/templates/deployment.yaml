@@ -1,0 +1,438 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+{{- if and .Values.disks.enabled (gt (int .Values.replicaCount) 1) }}
+{{- fail "disks.enabled requires replicaCount: 1 (ZFS/raw disks are node-local; pin the pod with nodeSelector)" }}
+{{- end }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "atlas.fullname" . }}
+  namespace: {{ include "atlas.namespace" . }}
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  {{- if eq .Values.database.kind "postgres" }}
+  # RollingUpdate: with database.kind: postgres there's no local PVC to fight over, so a new pod
+  # can come up before the old one terminates — zero-downtime deploys.
+  strategy:
+    type: RollingUpdate
+  {{- else }}
+  # Recreate (not RollingUpdate): the SQLite PVC is ReadWriteOnce, so the old pod must release it
+  # before the new one mounts it. Set database.kind: postgres to switch to RollingUpdate.
+  strategy:
+    type: Recreate
+  {{- end }}
+  selector:
+    matchLabels:
+      app: {{ include "atlas.fullname" . }}
+  template:
+    metadata:
+      labels:
+        app: {{ include "atlas.fullname" . }}
+    spec:
+      serviceAccountName: {{ include "atlas.name" . }}-gateway
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+      {{- if .Values.ceph.enabled }}
+      initContainers:
+        - name: render-ceph-config
+          image: busybox:1.36
+          securityContext:
+            runAsUser: 0
+          command:
+            - sh
+            - -c
+            - |
+              set -e
+              mon_host=$(echo "$MON_ENDPOINTS" | tr ',' '\n' | sed 's/^[^=]*=//' | paste -sd, - 2>/dev/null || echo "${MON_ENDPOINTS#*=}")
+              cat > /etc/ceph/ceph.conf <<CONF
+              [global]
+              mon_host = $mon_host
+              [client.admin]
+              keyring = /etc/ceph/keyring
+              CONF
+              cat > /etc/ceph/keyring <<KR
+              [$CEPH_USER]
+              key = $CEPH_KEY
+              KR
+              chown -R 10001:10001 /etc/ceph
+              chmod 0644 /etc/ceph/ceph.conf
+              chmod 0600 /etc/ceph/keyring
+              echo "rendered /etc/ceph for mon_host=$mon_host user=$CEPH_USER (uid 10001)"
+          env:
+            - name: MON_ENDPOINTS
+              valueFrom:
+                configMapKeyRef:
+                  name: {{ .Values.ceph.monEndpointsConfigMap }}
+                  key: data
+            - name: CEPH_USER
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ceph.monSecretName }}
+                  key: ceph-username
+            - name: CEPH_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.ceph.monSecretName }}
+                  key: ceph-secret
+          volumeMounts:
+            - name: ceph-config
+              mountPath: /etc/ceph
+      {{- end }}
+      containers:
+        - name: atlas-gateway
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- if .Values.disks.enabled }}
+            # Raw-disk formatting needs the device cgroup opened (privileged) plus the file
+            # capabilities the image sets on wipefs/zpool/zfs — see docs/DISKS.md.
+            privileged: true
+            {{- else }}
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: ["ALL"]
+            {{- end }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          env:
+            - name: ATLAS_BIND_ADDR
+              value: "0.0.0.0:5110"
+            {{- if .Values.service.grpc.enabled }}
+            - name: ATLAS_GRPC_ADDR
+              value: "0.0.0.0:{{ .Values.service.grpc.port }}"
+            {{- end }}
+            {{- if eq .Values.database.kind "postgres" }}
+            - name: ATLAS_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.database.existingSecret }}
+                  key: {{ .Values.database.secretKey }}
+            {{- else }}
+            - name: ATLAS_DATABASE_URL
+              value: "sqlite:///var/lib/atlas/atlas.db?mode=rwc"
+            {{- end }}
+            - name: ATLAS_CEPH_DRIVER_MODE
+              value: {{ .Values.ceph.enabled | ternary "real" "fake" | quote }}
+            - name: ATLAS_AUTH_REQUIRED
+              value: {{ .Values.authRequired | ternary "1" "0" | quote }}
+            - name: ATLAS_JWT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "atlas.authSecretName" . }}
+                  key: jwt-secret
+            - name: ATLAS_BOOTSTRAP_ADMIN_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "atlas.authSecretName" . }}
+                  key: bootstrap-admin-token
+                  optional: true
+            - name: ATLAS_ADMIN_USERNAME
+              value: {{ .Values.auth.adminUsername | quote }}
+            - name: ATLAS_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "atlas.authSecretName" . }}
+                  key: admin-password
+            {{- if .Values.ceph.enabled }}
+            - name: ATLAS_CEPH_PROMETHEUS_URL
+              value: {{ .Values.ceph.prometheusUrl | quote }}
+            {{- end }}
+            - name: NODE_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.hostIP
+            {{- if .Values.stateBackup.enabled }}
+            - name: ATLAS_STATE_BACKUP_SECS
+              value: {{ .Values.stateBackup.intervalSecs | quote }}
+            - name: ATLAS_STATE_BACKUP_ENDPOINT
+              value: {{ include "atlas.stateBackupEndpoint" . | quote }}
+            - name: ATLAS_STATE_BACKUP_BUCKET
+              value: {{ .Values.stateBackup.bucket | quote }}
+            {{- if .Values.stateBackup.prefix }}
+            - name: ATLAS_STATE_BACKUP_PREFIX
+              value: {{ .Values.stateBackup.prefix | quote }}
+            {{- end }}
+            - name: ATLAS_STATE_BACKUP_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "atlas.authSecretName" . }}
+                  key: {{ .Values.stateBackup.accessKeySecretKey }}
+                  optional: true
+            - name: ATLAS_STATE_BACKUP_SECRET_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ include "atlas.authSecretName" . }}
+                  key: {{ .Values.stateBackup.secretKeySecretKey }}
+                  optional: true
+            {{- end }}
+            {{- if .Values.oidc.enabled }}
+            - name: ATLAS_OIDC_ISSUER_URL
+              value: {{ .Values.oidc.issuerUrl | quote }}
+            - name: ATLAS_OIDC_CLIENT_ID
+              value: {{ .Values.oidc.clientId | quote }}
+            - name: ATLAS_OIDC_CLIENT_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.oidc.clientSecretName }}
+                  key: {{ .Values.oidc.clientSecretKey }}
+                  optional: true
+            - name: ATLAS_OIDC_REDIRECT_URL
+              value: {{ .Values.oidc.redirectUrl | quote }}
+            - name: ATLAS_OIDC_ADMIN_GROUP
+              value: {{ .Values.oidc.adminGroup | quote }}
+            - name: ATLAS_OIDC_OPERATOR_GROUP
+              value: {{ .Values.oidc.operatorGroup | quote }}
+            {{- end }}
+            {{- if .Values.alerting.webhook.enabled }}
+            - name: ATLAS_ALERT_WEBHOOK_URL
+              value: {{ .Values.alerting.webhook.url | quote }}
+            {{- end }}
+            {{- if .Values.alerting.pagerduty.enabled }}
+            - name: ATLAS_PAGERDUTY_ROUTING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.alerting.pagerduty.existingSecret }}
+                  key: {{ .Values.alerting.pagerduty.routingKeySecretKey }}
+            {{- end }}
+            {{- if .Values.alerting.opsgenie.enabled }}
+            - name: ATLAS_OPSGENIE_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.alerting.opsgenie.existingSecret }}
+                  key: {{ .Values.alerting.opsgenie.apiKeySecretKey }}
+            - name: ATLAS_OPSGENIE_REGION
+              value: {{ .Values.alerting.opsgenie.region | quote }}
+            {{- end }}
+            {{- if .Values.alerting.slack.enabled }}
+            - name: ATLAS_SLACK_WEBHOOK_URL
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.alerting.slack.existingSecret }}
+                  key: {{ .Values.alerting.slack.webhookUrlSecretKey }}
+            {{- end }}
+            {{- if eq .Values.secretsBackend.kind "vault" }}
+            - name: ATLAS_SECRETS_BACKEND
+              value: "vault"
+            - name: ATLAS_VAULT_ADDR
+              value: {{ .Values.secretsBackend.vault.addr | quote }}
+            - name: ATLAS_VAULT_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.secretsBackend.vault.tokenSecretName }}
+                  key: {{ .Values.secretsBackend.vault.tokenSecretKey }}
+            - name: ATLAS_VAULT_SECRET_PATH
+              value: {{ .Values.secretsBackend.vault.secretPath | quote }}
+            {{- end }}
+            {{- if .Values.tracing.enabled }}
+            - name: ATLAS_OTEL_EXPORTER_ENDPOINT
+              value: {{ .Values.tracing.otlpEndpoint | quote }}
+            - name: ATLAS_OTEL_SAMPLE_RATIO
+              value: {{ .Values.tracing.sampleRatio | quote }}
+            {{- end }}
+            {{- if .Values.nfs.enabled }}
+            - name: ATLAS_NFS_ENABLE
+              value: "1"
+            - name: ATLAS_NFS_SERVER
+              value: {{ .Values.nfs.server | quote }}
+            - name: ATLAS_NFS_EXPORTS
+              value: {{ .Values.nfs.exports | quote }}
+            - name: ATLAS_NFS_DRIVER_MODE
+              value: {{ .Values.nfs.driverMode | default "fake" | quote }}
+            {{- end }}
+            {{- if .Values.native.enabled }}
+            - name: ATLAS_NATIVE_ENABLE
+              value: "1"
+            - name: ATLAS_NATIVE_DRIVER_MODE
+              value: {{ .Values.native.driverMode | default "fake" | quote }}
+            - name: ATLAS_NATIVE_ENDPOINTS
+              value: {{ .Values.native.endpoints | quote }}
+            {{- if .Values.native.tokenSecret }}
+            - name: ATLAS_NATIVE_TOKEN_FILE
+              value: /etc/atlas-native-token/token
+            {{- end }}
+            {{- if .Values.native.tlsSecret }}
+            - name: ATLAS_NATIVE_CA_CERT
+              value: /etc/atlas-native-tls/ca.crt
+            {{- if .Values.native.clientCert }}
+            - name: ATLAS_NATIVE_CLIENT_CERT
+              value: /etc/atlas-native-tls/tls.crt
+            - name: ATLAS_NATIVE_CLIENT_KEY
+              value: /etc/atlas-native-tls/tls.key
+            {{- end }}
+            {{- end }}
+            {{- end }}
+            {{- if or .Values.zfs.enabled .Values.disks.enabled }}
+            - name: ATLAS_ZFS_ENABLE
+              value: "1"
+            - name: ATLAS_ZFS_HOST
+              value: {{ .Values.disks.enabled | ternary "$(NODE_IP)" .Values.zfs.host | quote }}
+            - name: ATLAS_ZFS_POOLS
+              value: {{ .Values.zfs.pools | quote }}
+            - name: ATLAS_ZFS_DRIVER_MODE
+              value: {{ .Values.disks.enabled | ternary "real" (.Values.zfs.driverMode | default "fake") | quote }}
+            {{- end }}
+            {{- if .Values.disks.enabled }}
+            - name: ATLAS_HOST_MOUNTINFO_PATH
+              value: "/host-mountinfo"
+            - name: ATLAS_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: ATLAS_POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: ATLAS_DEPLOYMENT_NAME
+              value: {{ include "atlas.fullname" . | quote }}
+            - name: ATLAS_CONSOLE_NODE_PORT
+              value: {{ .Values.service.httpNodePort | quote }}
+            - name: ATLAS_SELF_IMAGE
+              value: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+            - name: ATLAS_SELF_IMAGE_PULL_POLICY
+              value: {{ .Values.image.pullPolicy | quote }}
+            {{- end }}
+            {{- if .Values.service.https.enabled }}
+            - name: ATLAS_HTTPS_ADDR
+              value: "0.0.0.0:{{ .Values.service.https.port }}"
+            - name: ATLAS_TLS_CERT
+              value: "/etc/atlas-tls/tls.crt"
+            - name: ATLAS_TLS_KEY
+              value: "/etc/atlas-tls/tls.key"
+            {{- end }}
+            {{- if .Values.s3.caSecretName }}
+            # Trust a bring-your-own S3 endpoint's TLS certificate that isn't from a CA already in
+            # the system trust store (a private CA, or a self-signed cert). Never disables
+            # verification; it only adds this one CA on top of the default roots.
+            - name: ATLAS_S3_CA_CERT
+              value: "/etc/atlas-s3-ca/tls.crt"
+            {{- end }}
+            - name: ATLAS_RATE_LIMIT_RPM
+              value: {{ .Values.rateLimitRpm | quote }}
+            - name: RUST_LOG
+              value: {{ .Values.logLevel | quote }}
+          ports:
+            - containerPort: 5110
+            {{- if .Values.service.grpc.enabled }}
+            - containerPort: {{ .Values.service.grpc.port }}
+            {{- end }}
+            {{- if .Values.service.https.enabled }}
+            - containerPort: {{ .Values.service.https.port }}
+            {{- end }}
+          livenessProbe:
+            httpGet:
+              path: /livez
+              port: 5110
+            initialDelaySeconds: 5
+            periodSeconds: 15
+            timeoutSeconds: 3
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 5110
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 6
+          volumeMounts:
+            {{- if .Values.ceph.enabled }}
+            - name: ceph-config
+              mountPath: /etc/ceph
+              readOnly: true
+            {{- end }}
+            {{- if ne .Values.database.kind "postgres" }}
+            - name: data
+              mountPath: /var/lib/atlas
+            {{- end }}
+            {{- if .Values.service.https.enabled }}
+            - name: tls
+              mountPath: /etc/atlas-tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.s3.caSecretName }}
+            - name: s3-ca
+              mountPath: /etc/atlas-s3-ca
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.native.enabled .Values.native.tokenSecret }}
+            - name: native-token
+              mountPath: /etc/atlas-native-token
+              readOnly: true
+            {{- end }}
+            {{- if and .Values.native.enabled .Values.native.tlsSecret }}
+            - name: native-tls
+              mountPath: /etc/atlas-native-tls
+              readOnly: true
+            {{- end }}
+            {{- if .Values.disks.enabled }}
+            - name: host-dev
+              mountPath: /dev
+            - name: host-run-udev
+              mountPath: /run/udev
+              readOnly: true
+            - name: host-mountinfo
+              mountPath: /host-mountinfo
+              readOnly: true
+            {{- end }}
+      volumes:
+        {{- if .Values.ceph.enabled }}
+        - name: ceph-config
+          emptyDir: {}
+        {{- end }}
+        {{- if ne .Values.database.kind "postgres" }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "atlas.fullname" . }}-data
+        {{- end }}
+        {{- if .Values.service.https.enabled }}
+        - name: tls
+          secret:
+            secretName: atlas-tls
+            optional: true
+        {{- end }}
+        {{- if .Values.s3.caSecretName }}
+        - name: s3-ca
+          secret:
+            secretName: {{ .Values.s3.caSecretName }}
+        {{- end }}
+        {{- if and .Values.native.enabled .Values.native.tokenSecret }}
+        - name: native-token
+          secret:
+            secretName: {{ .Values.native.tokenSecret }}
+        {{- end }}
+        {{- if and .Values.native.enabled .Values.native.tlsSecret }}
+        - name: native-tls
+          secret:
+            secretName: {{ .Values.native.tlsSecret }}
+        {{- end }}
+        {{- if .Values.disks.enabled }}
+        - name: host-dev
+          hostPath:
+            path: /dev
+            type: Directory
+        - name: host-run-udev
+          hostPath:
+            path: /run/udev
+            type: Directory
+        - name: host-mountinfo
+          hostPath:
+            path: /proc/1/mountinfo
+            type: File
+        {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}

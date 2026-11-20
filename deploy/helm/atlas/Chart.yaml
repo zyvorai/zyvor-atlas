@@ -1,0 +1,18 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+apiVersion: v2
+name: atlas
+description: Atlas storage control plane for the Zyvor product suite
+type: application
+version: 0.13.0
+appVersion: "0.13.0"
+home: https://github.com/zyvorai/atlas
+sources:
+  - https://github.com/zyvorai/atlas
+keywords:
+  - storage
+  - ceph
+  - zyvor
+maintainers:
+  - name: Zyvor
+    url: https://zyvor.dev

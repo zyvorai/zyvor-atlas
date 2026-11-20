@@ -1,0 +1,20 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Second bucket-provisioning StorageClass for the "Geo-Redundant Storage" tier in IronWolf's
+# object-storage wizard. A single-node lab has no second pool/DC to back real multi-site
+# replication, so this intentionally points at the same zyvor-rgw CephObjectStore as
+# single-node/rgw.yaml's zyvor-rgw-bucket class — it makes the redundancy-level -> StorageClass
+# selection functional end-to-end without claiming durability this lab can't provide.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: zyvor-rgw-bucket-geo
+  labels:
+    zyvor.dev/storage-backend: ceph
+    zyvor.dev/storage-kind: object
+    zyvor.dev/redundancy: geo
+provisioner: rook-ceph.ceph.rook.io/bucket
+reclaimPolicy: Delete
+parameters:
+  objectStoreName: zyvor-rgw
+  objectStoreNamespace: rook-ceph

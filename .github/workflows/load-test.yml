@@ -1,0 +1,77 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Load/perf testing (scripts/loadtest/) — nightly + on-demand, not on every PR (slower and
+# noisier than the rest of atlas-ci). See scripts/loadtest/README.md.
+name: Load test
+
+on:
+  schedule:
+    # 03:00 UTC daily — off-peak, and early enough that a regression is visible before business
+    # hours in every timezone this project's contributors are in.
+    - cron: "0 3 * * *"
+  workflow_dispatch:
+    inputs:
+      vus:
+        description: "Virtual users (concurrency) for the read-path scenario"
+        default: "20"
+        required: false
+
+permissions:
+  contents: read
+
+jobs:
+  load-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install k6
+        run: |
+          curl -fsSL https://dl.k6.io/key.gpg | gpg --dearmor | sudo tee /usr/share/keyrings/k6-archive-keyring.gpg >/dev/null
+          echo "deb [signed-by=/usr/share/keyrings/k6-archive-keyring.gpg] https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update && sudo apt-get install -y k6
+
+      - name: Build gateway (release)
+        run: cargo build --release -p atlas-gateway
+
+      - name: Start gateway (fake driver, no auth)
+        run: |
+          ATLAS_CEPH_DRIVER_MODE=fake ATLAS_BIND_ADDR=127.0.0.1:5110 \
+            ./target/release/atlas-gateway > gateway.log 2>&1 &
+          echo $! > gateway.pid
+          for _ in $(seq 1 30); do
+            curl -sf http://127.0.0.1:5110/health >/dev/null && exit 0
+            sleep 1
+          done
+          echo "gateway never became healthy"; cat gateway.log; exit 1
+
+      - name: Read-path load test
+        env:
+          ATLAS_BASE_URL: http://127.0.0.1:5110
+          ATLAS_LOAD_VUS: ${{ inputs.vus || '20' }}
+        run: k6 run --summary-export=read-path-summary.json scripts/loadtest/atlas-read-path.js
+
+      # Write-path only reaches `succeeded` (not `failed`) jobs with a live k8s cluster attached
+      # (see scripts/loadtest/README.md) — this runner has none, so this step just proves the
+      # accept/poll/cleanup path itself holds up under concurrent load, not full job completion.
+      - name: Write-path load test
+        env:
+          ATLAS_BASE_URL: http://127.0.0.1:5110
+        run: k6 run --summary-export=write-path-summary.json scripts/loadtest/atlas-write-path.js
+
+      - name: Stop gateway
+        if: always()
+        run: kill "$(cat gateway.pid)" 2>/dev/null || true
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: load-test-results
+          path: |
+            read-path-summary.json
+            write-path-summary.json
+            gateway.log
+          retention-days: 30

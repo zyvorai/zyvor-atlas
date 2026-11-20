@@ -1,0 +1,47 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Single-node CephFS filesystem (replica size 1, failure domain osd) + the zyvor-cephfs-shared
+# ReadWriteMany StorageClass (PDF §7.1). RWX shared volumes for ISO libraries, templates, and
+# multi-writer product data (GuestKit, Machina).
+apiVersion: ceph.rook.io/v1
+kind: CephFilesystem
+metadata:
+  name: zyvorfs
+  namespace: rook-ceph
+spec:
+  metadataPool:
+    replicated:
+      size: 1
+      requireSafeReplicaSize: false
+  dataPools:
+    - name: data0
+      failureDomain: osd
+      replicated:
+        size: 1
+        requireSafeReplicaSize: false
+  metadataServer:
+    activeCount: 1
+    activeStandby: false
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: zyvor-cephfs-shared
+  labels:
+    zyvor.dev/storage-backend: ceph
+    zyvor.dev/storage-kind: file
+    zyvor.dev/access-mode: rwx
+provisioner: rook-ceph.cephfs.csi.ceph.com
+parameters:
+  clusterID: rook-ceph
+  fsName: zyvorfs
+  pool: zyvorfs-data0
+  csi.storage.k8s.io/provisioner-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/provisioner-secret-namespace: rook-ceph
+  csi.storage.k8s.io/controller-expand-secret-name: rook-csi-cephfs-provisioner
+  csi.storage.k8s.io/controller-expand-secret-namespace: rook-ceph
+  csi.storage.k8s.io/node-stage-secret-name: rook-csi-cephfs-node
+  csi.storage.k8s.io/node-stage-secret-namespace: rook-ceph
+reclaimPolicy: Delete
+allowVolumeExpansion: true
+volumeBindingMode: Immediate

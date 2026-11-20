@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "name": "orders",
+  "tenant_id": "acme",
+  "target_namespace": "atlas-drill-orders",
+  "rpo_seconds": 3600,
+  "rto_seconds": 600,
+  "capture_timeout_seconds": 120,
+  "components": [
+    {
+      "id": "db",
+      "volumes": [
+        {
+          "volume_id": "vol_native_REPLACE_WITH_SOURCE_ID",
+          "snapshot_id": "snap_REPLACE_WITH_SNAPSHOT_ID",
+          "checks": [
+            {
+              "offset": 0,
+              "length": 20,
+              "sha256": "700789a0e6f9199f4e039117a96a72e9ec555cf1208318c1fb28bb833f5c717c"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}

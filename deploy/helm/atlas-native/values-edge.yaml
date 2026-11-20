@@ -1,0 +1,29 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Single-node, low-memory edge profile (docs/NATIVE_EDGE.md). Layer it over the defaults:
+#   helm install edge deploy/helm/atlas-native -f deploy/helm/atlas-native/values-edge.yaml
+# One pod is both the metadata voter and the data node and keeps one copy of each extent: the
+# disk under it is the only copy, so protect the site with replication to a second cluster
+# (replication.jobs, docs/NATIVE_REPLICATION.md) or snapshot export to S3 (tiering).
+replicas: 1
+
+node:
+  replicationFactor: 1
+  # Requests are buffered whole; smaller ones bound memory under concurrent writes.
+  maxRequestBytes: 8388608
+  # Memory bounds per metadata group (the defaults are 262144 inodes and 64 MiB).
+  cacheInodes: 16384
+  storeCacheBytes: 8388608
+  mallocArenaMax: 2
+  # One copy: a scrub finds corruption but has nothing to repair from, so run it daily and
+  # slowly instead of every five minutes.
+  repairIntervalSecs: 86400
+  scrubBytesPerSec: 8388608
+  metadataGroups: 1
+
+podDisruptionBudget:
+  maxUnavailable: 1
+
+resources:
+  requests: { cpu: 25m, memory: 48Mi }
+  limits: { memory: 256Mi }

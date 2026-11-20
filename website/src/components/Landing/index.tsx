@@ -1,0 +1,176 @@
+// Copyright (c) 2026 ZyvorAI Labs Private Limited.
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+import {useEffect, useState} from 'react';
+import type {ReactNode} from 'react';
+import clsx from 'clsx';
+import Link from '@docusaurus/Link';
+import useBaseUrl from '@docusaurus/useBaseUrl';
+import Heading from '@theme/Heading';
+import Reveal from '@site/src/components/Reveal';
+import {reducedMotion, useCountUp, useInView} from './hooks';
+import styles from './styles.module.css';
+
+const LINES = [
+  '$ atlasctl volume create db-data --size 200Gi --class fast',
+  '  ceph-rbd  ->  pool atlas-fast  ·  owner zorvia  ·  audit entry written',
+  '$ atlasctl dr status mirror-prod',
+  '  site A primary  ·  site B replaying  ·  promote would be CLEAN',
+  '$ atlasctl dr promote mirror-prod --site B',
+  '  refused until B has replayed A\'s demotion (use --force for a real disaster)',
+];
+
+export function TypedTerminal(): ReactNode {
+  const total = LINES.join('\n').length;
+  const [n, setN] = useState(total);
+  useEffect(() => {
+    if (reducedMotion()) return;
+    setN(0);
+    const id = setInterval(() => setN((v) => (v >= total + 40 ? 0 : v + 1)), 35);
+    return () => clearInterval(id);
+  }, [total]);
+  return (
+    <div className={styles.term} role="img" aria-label="Terminal showing atlasctl creating a volume and a guarded DR promote">
+      <div className={styles.termBar}><i /><i /><i /></div>
+      <pre>{LINES.join('\n').slice(0, n)}<span className={styles.caret} /></pre>
+    </div>
+  );
+}
+
+function Stat({n, suffix = '', label, run}: {n: number; suffix?: string; label: string; run: boolean}) {
+  const v = useCountUp(n, run);
+  return (
+    <div className={styles.stat}>
+      <b>{v}{suffix}</b>
+      <span>{label}</span>
+    </div>
+  );
+}
+
+export function StatsBand(): ReactNode {
+  const [ref, seen] = useInView<HTMLDivElement>();
+  return (
+    <div className={clsx('container', styles.stats)} ref={ref}>
+      <Stat n={4} suffix=" + Native" label="storage backends" run={seen} />
+      <Stat n={150} suffix="+" label="REST endpoints" run={seen} />
+      <Stat n={6} label="DataBridge DB engines" run={seen} />
+      <Stat n={2} suffix="-way" label="DR with clean failback" run={seen} />
+    </div>
+  );
+}
+
+const BLOCKS = [
+  {
+    tag: 'Control plane',
+    title: 'One API, every backend.',
+    body: 'Products state intent: volumes, snapshots, clones, CephFS RWX, S3 buckets. The StorageDriver trait maps it to Ceph, NFS, ZFS, Longhorn, macOS disks or Atlas Native. Real drivers never fabricate data, and every driver has a fake mode.',
+    items: ['REST, gRPC and SSE', 'Quotas, audit export, OIDC/SSO', 'DataBridge database migration'],
+    img: '/anim/control-plane.svg',
+    alt: 'Animated control plane routing intent to storage drivers',
+    to: '/docs/core-concepts/architecture',
+  },
+  {
+    tag: 'Atlas Native',
+    title: 'Run the filesystem yourself.',
+    body: 'Striped, checksummed extents, sharded Raft metadata, 3 replicas or Reed-Solomon k+m, cold extents tiered to S3, and NFS, SMB, S3 and CSI over the same files. Opt-in LZ4 compression and dedup with an honest savings report, and one small pod for edge sites.',
+    items: ['Erasure coding with a rebuild controller', 'POSIX ACLs and quotas', 'Single-node edge profile'],
+    img: '/anim/native-io.svg',
+    alt: 'Animated Atlas Native data path',
+    to: '/docs/',
+  },
+  {
+    tag: 'Data protection',
+    title: 'Tamper-proof by design.',
+    body: 'Lock a snapshot and nobody can delete or shorten it, admins included: the lock is enforced in the Raft catalog. S3 objects get compliance-mode retention. When the activity windows look like encrypt-and-delete, Atlas calls it likely ransomware, explains why, and can take a locked snapshot on its own. Checked live on a multi-process cluster: 27 of 27 checks, with a synthetic burst, not yet a real encrypting workload.',
+    items: ['Retention-locked block and filesystem snapshots', 'S3 compliance retention that refuses delete and overwrite', 'Read-only verdict with opt-in auto-protect'],
+    img: '/anim/tamper-proof.svg',
+    alt: 'A burst of high-entropy writes is flagged, a locked snapshot is taken, and deleting it is refused',
+    to: '/docs/atlas-native/worm',
+  },
+  {
+    tag: 'Agent-ready operations',
+    title: 'Let an agent look. Not leap.',
+    body: 'Atlas speaks the Model Context Protocol, so an AI agent can triage storage the way an operator does: the Ops Advisor, anomalies, eBPF I/O risk, DR status and jobs. It is read-only by default; the opt-in writes (a snapshot, alert acknowledgement and silencing, agent workspaces) each need a single-use confirmation token, and MCP can never call out to an external LLM.',
+    items: ['53 read-only gateway tools, 10 on the node agent', 'Same roles, tenant scoping and audit as the REST API', 'Opt-in guarded snapshot, alert and workspace writes; failover and delete never exposed'],
+    img: '/anim/agent-ops.svg',
+    alt: 'An AI agent calling Atlas over MCP: read-only tools and guarded writes',
+    to: '/docs/control-plane/mcp',
+  },
+  {
+    tag: 'Disaster recovery',
+    title: 'Fail over, fail back cleanly.',
+    body: 'Two-way RBD mirroring and native replication. A non-forced promote is refused until this site has replayed the peer\'s demotion, so a failback cannot silently lose writes. Force stays available for real disasters.',
+    items: ['Live mirror status per site', 'Promote guard', 'Native replication with read-only replicas', 'Automated application recovery drills'],
+    img: '/anim/dr-failover.svg',
+    alt: 'Animated cross-site failover and failback',
+    to: '/docs/',
+  },
+];
+
+export function AnimatedFeatures(): ReactNode {
+  return (
+    <section className={styles.features}>
+      <div className="container">
+        {BLOCKS.map((b, i) => (
+          <Reveal key={b.tag} className={clsx(styles.block, i % 2 === 1 && styles.flip)}>
+            <div className={styles.copy}>
+              <p className={styles.eyebrow}>{b.tag}</p>
+              <Heading as="h2" className={styles.h2}>{b.title}</Heading>
+              <p>{b.body}</p>
+              <ul>{b.items.map((t) => <li key={t}>{t}</li>)}</ul>
+              <Link to={b.to}>Read the docs →</Link>
+            </div>
+            <img className={styles.art} src={useBaseUrl(b.img)} alt={b.alt} loading="lazy" />
+          </Reveal>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+type Mode = 'journal' | 'snapshot';
+
+export function PromoteDemo(): ReactNode {
+  const [replayed, setReplayed] = useState(false);
+  const [force, setForce] = useState(false);
+  const [mode, setMode] = useState<Mode>('journal');
+  const allowed = replayed || force;
+  return (
+    <section className={styles.demo}>
+      <div className="container">
+        <Reveal>
+          <p className={styles.eyebrow}>Try it</p>
+          <Heading as="h2" className={styles.h2}>Would this promote be safe?</Heading>
+          <p className={styles.lede}>A model of the DR guard, not a live system. Toggle the state and try to promote site B.</p>
+          <div className={styles.demoGrid}>
+            <div className={styles.card}>
+              <div className={styles.seg}>
+                {(['journal', 'snapshot'] as Mode[]).map((m) => (
+                  <button key={m} className={mode === m ? styles.on : ''} onClick={() => setMode(m)}>{m} mode</button>
+                ))}
+              </div>
+              <label className={styles.check}>
+                <input type="checkbox" checked={replayed} onChange={(e) => setReplayed(e.target.checked)} />
+                Site B has replayed A's demotion
+              </label>
+              <label className={styles.check}>
+                <input type="checkbox" checked={force} onChange={(e) => setForce(e.target.checked)} />
+                Use ?force=1 (real disaster)
+              </label>
+            </div>
+            <div className={styles.card}>
+              <p className={styles.mono}>POST /dr/mirrors/prod/promote{force ? '?force=1' : ''}</p>
+              <p className={clsx(styles.verdict, allowed ? styles.ok : styles.refused)}>
+                {allowed
+                  ? force && !replayed
+                    ? 'Promoted by force. Writes since the last replay may be lost.'
+                    : 'Clean promote. No writes lost.'
+                  : 'Refused: the local rbd-mirror has not replayed the peer\'s demotion yet.'}
+              </p>
+              <p className={styles.note}>Mode: {mode}. Mirroring status is read live from rbd mirror image status.</p>
+            </div>
+          </div>
+        </Reveal>
+      </div>
+    </section>
+  );
+}

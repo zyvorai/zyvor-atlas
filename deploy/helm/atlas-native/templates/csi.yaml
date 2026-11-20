@@ -1,0 +1,315 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# CSI driver for atlas-native filesystems (docs/NATIVE_CSI.md): a controller Deployment with the
+# external-provisioner and external-resizer (and optionally external-snapshotter) sidecars, and a
+# node DaemonSet that publishes volumes through FUSE.
+{{- if .Values.csi.enabled }}
+{{- if .Values.httpTls.requireClientCert }}
+{{- fail "csi.enabled does not support httpTls.requireClientCert yet" }}
+{{- end }}
+{{- $full := include "atlas-native.fullname" . }}
+{{- $driver := "native.atlas.zyvor.ai" }}
+{{- $scheme := ternary "https" "http" .Values.httpTls.enabled }}
+{{- $endpoints := list }}
+{{- range $i := until (int .Values.replicas) }}
+{{- $endpoints = append $endpoints (printf "%s://%s:7480" $scheme (include "atlas-native.podHost" (list $ $i))) }}
+{{- end }}
+{{- $image := printf "%s:%s" .Values.csi.image.repository (.Values.csi.image.tag | default .Chart.AppVersion) }}
+{{- $kubelet := .Values.csi.kubeletDir }}
+apiVersion: storage.k8s.io/v1
+kind: CSIDriver
+metadata:
+  name: {{ $driver }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+spec:
+  attachRequired: false
+  podInfoOnMount: false
+  fsGroupPolicy: File
+  volumeLifecycleModes: [Persistent]
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ $full }}-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $full }}-csi-controller
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [persistentvolumes]
+    verbs: [get, list, watch, create, delete, patch]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, watch, update]
+  - apiGroups: [""]
+    resources: [persistentvolumeclaims/status]
+    verbs: [patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch]
+  - apiGroups: [""]
+    resources: [events]
+    verbs: [list, watch, create, update, patch]
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, watch]
+  - apiGroups: [storage.k8s.io]
+    resources: [storageclasses, csinodes, volumeattachments]
+    verbs: [get, list, watch]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshots]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshotcontents]
+    verbs: [get, list, watch, update, patch]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshotcontents/status]
+    verbs: [update, patch]
+  - apiGroups: [snapshot.storage.k8s.io]
+    resources: [volumesnapshotclasses]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $full }}-csi-controller
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $full }}-csi-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ $full }}-csi-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ $full }}-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [coordination.k8s.io]
+    resources: [leases]
+    verbs: [get, watch, list, delete, update, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ $full }}-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ $full }}-csi-controller
+subjects:
+  - kind: ServiceAccount
+    name: {{ $full }}-csi-controller
+    namespace: {{ .Release.Namespace }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-csi-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: csi-controller
+spec:
+  replicas: {{ .Values.csi.controller.replicas }}
+  selector:
+    matchLabels:
+      {{- include "atlas-native.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: csi-controller
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-native.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: csi-controller
+    spec:
+      serviceAccountName: {{ $full }}-csi-controller
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: csi-provisioner
+          image: {{ .Values.csi.sidecars.provisioner }}
+          args: [--csi-address=/csi/csi.sock, --leader-election, --timeout=30s, --extra-create-metadata]
+          volumeMounts: [{ name: socket-dir, mountPath: /csi }]
+          resources: {{- toYaml .Values.csi.sidecars.resources | nindent 12 }}
+        - name: csi-resizer
+          image: {{ .Values.csi.sidecars.resizer }}
+          args: [--csi-address=/csi/csi.sock, --leader-election, --timeout=30s]
+          volumeMounts: [{ name: socket-dir, mountPath: /csi }]
+          resources: {{- toYaml .Values.csi.sidecars.resources | nindent 12 }}
+        {{- if .Values.csi.snapshots.enabled }}
+        - name: csi-snapshotter
+          image: {{ .Values.csi.sidecars.snapshotter }}
+          args: [--csi-address=/csi/csi.sock, --leader-election, --timeout=30s]
+          volumeMounts: [{ name: socket-dir, mountPath: /csi }]
+          resources: {{- toYaml .Values.csi.sidecars.resources | nindent 12 }}
+        {{- end }}
+        - name: atlas-native-csi
+          image: {{ $image }}
+          imagePullPolicy: {{ .Values.csi.image.pullPolicy }}
+          args:
+            - --controller
+            - --csi-endpoint=unix:///csi/csi.sock
+            - --endpoint={{ join "," $endpoints }}
+            - --token-file=/etc/atlas-native-csi/api/token
+            {{- if .Values.httpTls.enabled }}
+            - --ca-file=/etc/atlas-native-csi/http-tls/ca.crt
+            {{- end }}
+          volumeMounts:
+            - { name: socket-dir, mountPath: /csi }
+            - { name: api-token, mountPath: /etc/atlas-native-csi/api, readOnly: true }
+            {{- if .Values.httpTls.enabled }}
+            - { name: http-ca, mountPath: /etc/atlas-native-csi/http-tls, readOnly: true }
+            {{- end }}
+          resources: {{- toYaml .Values.csi.controller.resources | nindent 12 }}
+      volumes:
+        - { name: socket-dir, emptyDir: {} }
+        - name: api-token
+          secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+        {{- if .Values.httpTls.enabled }}
+        - name: http-ca
+          secret:
+            secretName: {{ .Values.httpTls.existingSecret }}
+            items: [{ key: ca.crt, path: ca.crt }]
+        {{- end }}
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: {{ $full }}-csi-node
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: csi-node
+spec:
+  updateStrategy:
+    type: {{ .Values.csi.node.updateStrategy }}
+  selector:
+    matchLabels:
+      {{- include "atlas-native.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: csi-node
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-native.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: csi-node
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.csi.node.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.csi.node.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      containers:
+        - name: node-driver-registrar
+          image: {{ .Values.csi.sidecars.registrar }}
+          args:
+            - --csi-address=/csi/csi.sock
+            - --kubelet-registration-path={{ $kubelet }}/plugins/{{ $driver }}/csi.sock
+          volumeMounts:
+            - { name: plugin-dir, mountPath: /csi }
+            - { name: registration-dir, mountPath: /registration }
+          resources: {{- toYaml .Values.csi.sidecars.resources | nindent 12 }}
+        - name: atlas-native-csi
+          image: {{ $image }}
+          imagePullPolicy: {{ .Values.csi.image.pullPolicy }}
+          # FUSE mounts made here must propagate to the kubelet's view of the pod directories.
+          securityContext: { privileged: true }
+          args:
+            - --node
+            - --node-id=$(NODE_ID)
+            - --csi-endpoint=unix:///csi/csi.sock
+            - --endpoint={{ join "," $endpoints }}
+            - --token-file=/etc/atlas-native-csi/api/token
+            {{- if .Values.httpTls.enabled }}
+            - --ca-file=/etc/atlas-native-csi/http-tls/ca.crt
+            {{- end }}
+          env:
+            - name: NODE_ID
+              valueFrom: { fieldRef: { fieldPath: spec.nodeName } }
+          volumeMounts:
+            - { name: plugin-dir, mountPath: /csi }
+            - { name: kubelet-dir, mountPath: {{ $kubelet }}, mountPropagation: Bidirectional }
+            - { name: fuse, mountPath: /dev/fuse }
+            - { name: api-token, mountPath: /etc/atlas-native-csi/api, readOnly: true }
+            {{- if .Values.httpTls.enabled }}
+            - { name: http-ca, mountPath: /etc/atlas-native-csi/http-tls, readOnly: true }
+            {{- end }}
+          resources: {{- toYaml .Values.csi.node.resources | nindent 12 }}
+      volumes:
+        - name: plugin-dir
+          hostPath: { path: {{ $kubelet }}/plugins/{{ $driver }}, type: DirectoryOrCreate }
+        - name: registration-dir
+          hostPath: { path: {{ $kubelet }}/plugins_registry, type: Directory }
+        - name: kubelet-dir
+          hostPath: { path: {{ $kubelet }}, type: Directory }
+        - name: fuse
+          hostPath: { path: /dev/fuse, type: CharDevice }
+        - name: api-token
+          secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+        {{- if .Values.httpTls.enabled }}
+        - name: http-ca
+          secret:
+            secretName: {{ .Values.httpTls.existingSecret }}
+            items: [{ key: ca.crt, path: ca.crt }]
+        {{- end }}
+{{- if .Values.csi.storageClass.create }}
+---
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: {{ .Values.csi.storageClass.name }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+provisioner: {{ $driver }}
+reclaimPolicy: {{ .Values.csi.storageClass.reclaimPolicy }}
+volumeBindingMode: Immediate
+allowVolumeExpansion: true
+{{- /* StorageClass parameters are immutable: render only non-defaults, so upgrades still apply. */}}
+{{- $enforce := .Values.csi.storageClass.enforceCapacity }}
+{{- if or .Values.csi.storageClass.extentBytes (not $enforce) }}
+parameters:
+  {{- with .Values.csi.storageClass.extentBytes }}
+  extentBytes: {{ . | int64 | quote }}
+  {{- end }}
+  {{- if not $enforce }}
+  enforceCapacity: "false"
+  {{- end }}
+{{- end }}
+{{- with .Values.csi.storageClass.mountOptions }}
+mountOptions: {{- toYaml . | nindent 2 }}
+{{- end }}
+{{- end }}
+{{- if and .Values.csi.snapshots.enabled .Values.csi.snapshots.createClass }}
+---
+apiVersion: snapshot.storage.k8s.io/v1
+kind: VolumeSnapshotClass
+metadata:
+  name: {{ .Values.csi.snapshots.className }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+driver: {{ $driver }}
+deletionPolicy: Delete
+{{- end }}
+{{- end }}

@@ -1,0 +1,263 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Default values for the atlas chart. Mirrors deploy/k8s/atlas-gateway.yaml (fake/k8s driver) and
+# deploy/k8s/atlas-gateway-ceph.yaml (real Ceph driver) — see README.md for which values.yaml
+# fields switch between the two. `helm install atlas ./deploy/helm/atlas --create-namespace` is
+# the fake-driver quickstart; set `ceph.enabled: true` for the real-Ceph deployment shape.
+
+nameOverride: ""
+fullnameOverride: ""
+
+image:
+  # Lab/quickstart default: a locally imported image (see scripts/deploy-remote.sh).
+  # Tagged releases are published to ghcr.io/zyvorai/atlas and ghcr.io/zyvorai/atlas-ceph.
+  # Install those with `-f values-release.yaml` (immutable version tag, not `:latest`).
+  repository: localhost/atlas-gateway
+  tag: dev
+  pullPolicy: IfNotPresent
+
+replicaCount: 1
+# Only raise this above 1 when database.kind is "postgres" (see below) — with the default
+# database.kind: sqlite, the DB lives on a ReadWriteOnce PVC that only one pod can mount, and the
+# Recreate rollout strategy in templates/deployment.yaml assumes exactly one pod at a time.
+
+database:
+  # "sqlite" (default, single-replica — a local file on the PVC below) or "postgres" (multi-
+  # replica-capable — see docs/HA.md). The query layer itself runs identically on either backend
+  # (sqlx::AnyPool, chosen by ATLAS_DATABASE_URL's scheme); this only changes what gets deployed.
+  kind: sqlite
+  # Only used when kind: postgres — an existing Secret holding the full connection URL
+  # (postgres://user:pass@host:port/db) under `secretKey`. Never inline the URL here (see
+  # auth.createSecret's comment above for the same "store references, never values" convention).
+  # Point this at a real HA Postgres (RDS, CloudNativePG, Patroni-managed, etc.) — this chart does
+  # not stand up Postgres itself; see deploy/k8s/atlas-postgres.yaml for a CloudNativePG sketch and
+  # deploy/postgres-lab/ for a throwaway lab instance.
+  existingSecret: ""
+  secretKey: database-url
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 1000m
+    memory: 512Mi
+
+# Set true to render the real-Ceph deployment shape (rook-ceph namespace, ceph-config
+# initContainer, gRPC/HTTPS ports, NFS/ZFS demo backends). Leave false for the fake/k8s-driver
+# quickstart shape.
+ceph:
+  enabled: false
+  # Namespace Rook itself runs in — the real-Ceph gateway needs to live there to mount the mon
+  # endpoints ConfigMap + admin keyring Secret directly (see templates/deployment.yaml).
+  rookNamespace: rook-ceph
+  monEndpointsConfigMap: rook-ceph-mon-endpoints
+  monSecretName: rook-ceph-mon
+  storageClassName: zyvor-rbd-prod
+  prometheusUrl: "http://rook-ceph-mgr.rook-ceph.svc:9283/metrics"
+
+namespace:
+  # Namespace the fake/k8s-driver deployment runs in. Ignored when ceph.enabled (uses
+  # ceph.rookNamespace instead, matching deploy/k8s/atlas-gateway-ceph.yaml's placement).
+  name: zyvor-system
+  # Render the Namespace object. Set false when installing with `helm install -n <ns>
+  # --create-namespace` (Helm then owns namespace creation; rendering it here as well fails with an
+  # "exists and cannot be imported" ownership error).
+  create: true
+
+service:
+  type: NodePort
+  httpPort: 5110
+  httpNodePort: 30510
+  grpc:
+    enabled: false
+    port: 5111
+    nodePort: 30512
+  https:
+    enabled: false
+    port: 5443
+    nodePort: 30543
+
+ingress:
+  enabled: false
+  className: ""
+  annotations: {}
+  host: ""
+  tls: []
+
+# Envoy front door via the Kubernetes Gateway API (needs a Gateway API implementation such as
+# Envoy Gateway — see deploy/envoy-lab/). Mutually exclusive with `ingress`. Plain HTTP to the
+# gateway's `service.httpPort`; HTTP/2 gRPC and TLS-to-backend are not routed by this chart.
+envoy:
+  enabled: false
+  # The chart creates a Gateway (+ HTTPS/HTTP listeners) when true; when false it only attaches an
+  # HTTPRoute to the existing Gateway named below.
+  createGateway: true
+  gatewayClassName: eg
+  gatewayName: ""        # existing Gateway to attach to when createGateway=false (default: release fullname)
+  gatewayNamespace: ""   # existing Gateway's namespace (default: release namespace)
+  host: ""               # required: the hostname clients use
+  # Name of a kubernetes.io/tls Secret in the release namespace. Set = HTTPS listener on httpsPort plus an
+  # HTTP :80 listener that redirects to it. Empty = a plain HTTP :80 listener only.
+  tlsSecretName: ""
+  # Client-facing HTTPS listener port (deliberately not 443); the redirect sends browsers here.
+  httpsPort: 7443
+  # HTTPRoute request timeout. "0s" disables it, which the streamable-HTTP MCP endpoint
+  # (/api/atlas/v1/mcp) needs for long-lived sessions.
+  requestTimeout: "0s"
+
+persistence:
+  size: 1Gi
+  # Omit (null) to use the cluster's default StorageClass — matches deploy/k8s/atlas-gateway.yaml.
+  # Set to ceph.storageClassName's value (or your own) when ceph.enabled.
+  storageClassName: null
+
+auth:
+  # When true, the chart creates the atlas-gateway-auth Secret from the values below — convenient
+  # for a first `helm install`, but the generated values land in `helm get values`/Helm's release
+  # history. For anything beyond a quick lab spin-up, set this false and create the Secret
+  # yourself (see deploy/k8s/atlas-auth-secret.example.yaml or deploy/vault-lab/ for an
+  # externally-managed alternative) — this is exactly the "store references, never values"
+  # convention CONTRIBUTING.md asks for.
+  createSecret: false
+  existingSecret: atlas-gateway-auth
+  # Only used when createSecret is true. Leave blank to have the chart generate random values at
+  # install time (Helm's `randAlphaNum` — stable across upgrades since template functions run
+  # against the existing release state, not re-randomized every `helm upgrade`).
+  jwtSecret: ""
+  adminUsername: admin
+  adminPassword: ""
+  bootstrapAdminToken: ""
+
+# Per-actor requests/min (0 disables). Cluster-wide-aware automatically when database.kind:
+# postgres and replicaCount > 1 — see README.md's rate-limiting note.
+rateLimitRpm: 600
+logLevel: "info,atlas_gateway=debug"
+
+# Auth-required is on by default for any real deployment (a bare `make run` outside k8s is the
+# only supported open-dev path — see CLAUDE.md's "Run locally" section).
+authRequired: true
+
+# Self-state backup (periodic SQLite/pg_dump snapshot to any S3-compatible endpoint) — off by
+# default; set enabled true and fill in bucket/endpoint plus a Secret holding the access/secret
+# keys (accessKeySecretKey/secretKeySecretKey, in the main auth Secret). The bucket is created on
+# the first run if it does not exist.
+stateBackup:
+  enabled: false
+  intervalSecs: 3600
+  endpoint: ""
+  bucket: atlas-self-state
+  prefix: ""
+  accessKeySecretKey: state-backup-access-key
+  secretKeySecretKey: state-backup-secret-key
+
+# OIDC/SSO — off by default; the console's "Sign in with SSO" button only renders when this is
+# enabled (see crates/atlas-common/src/config.rs's oidc_from_env()).
+oidc:
+  enabled: false
+  issuerUrl: ""
+  clientId: ""
+  # References a key in an existing Secret (never a plaintext value) — see
+  # deploy/k8s/atlas-gateway.yaml's ATLAS_OIDC_CLIENT_SECRET comment.
+  clientSecretName: ""
+  clientSecretKey: client-secret
+  redirectUrl: ""
+  adminGroup: admin
+  operatorGroup: operator
+
+# Native alerting sinks (crates/atlas-monitor/src/notify.rs) — all off by default. Secrets are
+# referenced via existingSecret + key, never inlined here.
+alerting:
+  webhook:
+    enabled: false
+    url: ""
+  pagerduty:
+    enabled: false
+    existingSecret: ""
+    routingKeySecretKey: pagerduty-routing-key
+  opsgenie:
+    enabled: false
+    existingSecret: ""
+    apiKeySecretKey: opsgenie-api-key
+    region: us # us | eu
+  slack:
+    enabled: false
+    existingSecret: ""
+    webhookUrlSecretKey: slack-webhook-url
+
+# Secrets-manager backend for jwt_secret/admin_password/oidc client_secret at startup — "env"
+# (default, current behavior) or "vault". See docs/SECRETS.md.
+secretsBackend:
+  kind: env # env | vault
+  vault:
+    addr: ""
+    # References a Secret holding a Vault token — never inlined (see docs/SECRETS.md).
+    tokenSecretName: ""
+    tokenSecretKey: token
+    secretPath: "secret/data/atlas/gateway-auth"
+
+# Distributed tracing (OpenTelemetry OTLP/HTTP exporter) — off by default; see docs/TRACING.md.
+# Port 4318 (OTLP/HTTP), not 4317 (OTLP/gRPC, which this doesn't use) — just the collector's base
+# URL, Atlas appends /v1/traces itself.
+tracing:
+  enabled: false
+  otlpEndpoint: "http://otel-collector.zyvor-system.svc:4318"
+  sampleRatio: "1.0"
+
+nfs:
+  enabled: false
+  server: ""
+  exports: ""
+  # "fake" (default) reports deterministic capacity fixtures — safe with no real NFS server.
+  # "real" shells out to `showmount -e`/`df` against `server` — the gateway image needs NFS
+  # client tools (`nfs-common` on Debian/Ubuntu) on PATH. See docs/ROADMAP.md's NFS/ZFS entry.
+  driverMode: fake
+
+zfs:
+  enabled: false
+  host: ""
+  pools: ""
+  # "fake" (default) reports deterministic capacity fixtures. "real" shells out to `zpool`/`zfs`
+  # — locally, on whatever host the gateway pod itself runs on (ZFS has no remote query protocol;
+  # `host` above is cosmetic only in real mode). The gateway image needs `zfsutils-linux` (the
+  # default `Dockerfile` image has it). To let the console format raw disks, set `disks.enabled`
+  # below — that sets everything the pod needs (privileged, hostPath /dev, /run/udev and the
+  # host mount table) and forces real mode.
+  driverMode: fake
+
+# atlas-native cluster (deploy/helm/atlas-native) as backend `bkd_native`: discovery, plus
+# synchronous block volume / snapshot create and delete through POST /volumes with
+# `kubernetes.backend_id: bkd_native`. "fake" (default) keeps volumes in memory.
+native:
+  enabled: false
+  driverMode: fake
+  # Comma-separated node API base URLs, e.g.
+  # "https://atlas-native-0.atlas-native.atlas-native.svc.cluster.local:7480,...".
+  endpoints: ""
+  # Secret with key `token` (the atlas-native chart creates "<release>-api").
+  tokenSecret: ""
+  # Secret with `ca.crt` (private CA of the node API) and, when clientCert is true, the client
+  # `tls.crt`/`tls.key` for nodes running with httpTls.requireClientCert.
+  tlsSecret: ""
+  clientCert: false
+
+# Raw-disk provisioning from the console's Disks page: wipe + `zpool create` / `zpool destroy`
+# (ZFS) and the Ceph-OSD-via-Rook path. Renders a PRIVILEGED gateway pod with hostPath mounts of the
+# node's /dev, /run/udev (read-only) and /proc/1/mountinfo (read-only) — see docs/DISKS.md for why
+# each is needed (device cgroup, udev database, root/boot-disk detection). Forces the ZFS backend on
+# in `real` mode with ATLAS_ZFS_HOST set to the node's IP. ZFS is node-local: pin the pod to the
+# disk-owning node with `nodeSelector`, keep `replicaCount: 1`, and run only one disk-enabled
+# gateway per node. Needs the default (non-Ceph) gateway image, which bundles zfsutils-linux.
+disks:
+  enabled: false
+
+# Trust a bring-your-own S3 endpoint's TLS certificate when it isn't from a CA already in the
+# system trust store (a private CA, or a self-signed cert) — used by atlas-driver-rgw for any
+# S3-compatible backend (Ceph RGW, MinIO, Garage, AWS, ...). Never disables
+# verification; it only adds this one CA on top of the default roots.
+s3:
+  caSecretName: ""
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

@@ -1,0 +1,111 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="Atlas — One API for your storage. A filesystem of its own. One API in front of Ceph, NFS, ZFS and Longhorn, plus Atlas Native, a distributed filesystem with NFS, SMB and S3.">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="630" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#000000"/>
+      <stop offset="1" stop-color="#0b0b0f"/>
+    </linearGradient>
+    <radialGradient id="wash" cx="930" cy="300" r="520" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#2997ff" stop-opacity="0.20"/>
+      <stop offset="0.6" stop-color="#2997ff" stop-opacity="0.08"/>
+      <stop offset="1" stop-color="#2997ff" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="blue" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0a84ff"/>
+      <stop offset="1" stop-color="#5eb0ff"/>
+    </linearGradient>
+    <linearGradient id="blueText" x1="72" y1="0" x2="420" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#0a84ff"/>
+      <stop offset="1" stop-color="#5eb0ff"/>
+    </linearGradient>
+    <linearGradient id="wire" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#2997ff" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#2997ff" stop-opacity="0.35"/>
+    </linearGradient>
+    <filter id="shadow" x="-20%" y="-30%" width="140%" height="190%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="8"/>
+      <feOffset dy="7" result="b"/>
+      <feColorMatrix in="b" type="matrix" values="0 0 0 0 0  0 0 0 0 0  0 0 0 0 0  0 0 0 0.55 0" result="s"/>
+      <feMerge><feMergeNode in="s"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+    <filter id="glow" x="-30%" y="-40%" width="160%" height="200%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="13"/>
+      <feOffset dy="11" result="b"/>
+      <feColorMatrix in="b" type="matrix" values="0 0 0 0 0.0  0 0 0 0 0.35  0 0 0 0 0.9  0 0 0 0.30 0" result="s"/>
+      <feMerge><feMergeNode in="s"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1200" height="630" fill="url(#bg)"/>
+  <rect width="1200" height="630" fill="url(#wash)"/>
+
+  <!-- Zyvor mark (blue) -->
+  <rect x="72" y="56" width="56" height="56" rx="13" fill="url(#blue)"/>
+  <path d="M86.5 70 113.5 70 86.5 98 113.5 98" fill="none" stroke="#ffffff" stroke-width="7"
+        stroke-linecap="round" stroke-linejoin="round"/>
+
+  <!-- wordmark + tagline -->
+  <text x="68" y="262" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif" font-size="132" font-weight="700" letter-spacing="-4" fill="#f5f5f7">Atlas</text>
+  <text x="72" y="316" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif" font-size="42" font-weight="600" letter-spacing="-0.8" fill="url(#blueText)">One API for your storage.</text>
+  <text x="72" y="362" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif" font-size="42" font-weight="600" letter-spacing="-0.8" fill="url(#blueText)">A filesystem of its own.</text>
+
+  <!-- new: badge -->
+  <rect x="72" y="398" width="330" height="34" rx="17" fill="#2997ff" fill-opacity="0.20" stroke="#2997ff" stroke-opacity="0.4"/>
+  <text x="87" y="420" font-family="'Menlo','JetBrains Mono',monospace" font-size="15" font-weight="700" fill="#2997ff">NEW · two-way DR, clean failback</text>
+
+  <!-- verified stats -->
+  <g font-family="'Helvetica Neue',Helvetica,Arial,sans-serif">
+    <text x="72" y="498" font-size="38" font-weight="700" letter-spacing="-1" fill="#f5f5f7">4</text>
+    <text x="72" y="524" font-size="15" fill="#a1a1a6">storage backends</text>
+    <text x="234" y="498" font-size="38" font-weight="700" letter-spacing="-1" fill="#f5f5f7">5</text>
+    <text x="234" y="524" font-size="15" fill="#a1a1a6">native access paths</text>
+    <text x="396" y="498" font-size="38" font-weight="700" letter-spacing="-1" fill="#f5f5f7">6</text>
+    <text x="396" y="524" font-size="15" fill="#a1a1a6">database engines</text>
+    <text x="558" y="498" font-size="38" font-weight="700" letter-spacing="-1" fill="#f5f5f7">150+</text>
+    <text x="558" y="524" font-size="15" fill="#a1a1a6">REST endpoints</text>
+  </g>
+
+  <!-- one API fans out to five backends -->
+  <g fill="none" stroke="url(#wire)" stroke-width="2.5" stroke-linecap="round">
+    <path d="M872 315 C 900 315, 900 175, 924 175"/>
+    <path d="M872 315 C 900 315, 900 245, 924 245"/>
+    <path d="M872 315 C 900 315, 900 315, 924 315"/>
+    <path d="M872 315 C 900 315, 900 385, 924 385"/>
+    <path d="M872 315 C 900 315, 900 455, 924 455"/>
+  </g>
+  <g fill="#2997ff">
+    <circle cx="872" cy="315" r="5.5"/>
+        <circle cx="924" cy="175" r="4.5"/>
+    <circle cx="924" cy="245" r="4.5"/>
+    <circle cx="924" cy="315" r="4.5"/>
+    <circle cx="924" cy="385" r="4.5"/>
+    <circle cx="924" cy="455" r="4.5"/>
+  </g>
+  <rect x="706" y="258" width="166" height="114" rx="26" fill="url(#blue)" filter="url(#glow)"/>
+  <text x="789" y="308" text-anchor="middle" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif" font-size="27" font-weight="700" fill="#ffffff">Atlas API</text>
+  <text x="789" y="340" text-anchor="middle" font-family="'Menlo','JetBrains Mono',monospace" font-size="14" fill="#d6e9ff">REST · gRPC · SSE</text>
+  <g font-family="'Helvetica Neue',Helvetica,Arial,sans-serif">
+    <rect x="936" y="147" width="192" height="56" rx="15" fill="#1c1c1e" stroke="#2997ff" stroke-opacity="0.75" stroke-width="1.5" filter="url(#shadow)"/>
+      <text x="956" y="172" font-size="19" font-weight="700" fill="#f5f5f7">Ceph</text>
+      <text x="956" y="191" font-size="12.5" font-family="'Menlo','JetBrains Mono',monospace" fill="#a1a1a6">RBD · CephFS · RGW</text>
+    <circle cx="1108" cy="167" r="5" fill="#ff6a2a"/>
+    <rect x="936" y="217" width="192" height="56" rx="15" fill="#1c1c1e" stroke="#3a3a3c" filter="url(#shadow)"/>
+      <text x="956" y="242" font-size="19" font-weight="700" fill="#f5f5f7">NFS</text>
+      <text x="956" y="261" font-size="12.5" font-family="'Menlo','JetBrains Mono',monospace" fill="#a1a1a6">file shares</text>
+    <rect x="936" y="287" width="192" height="56" rx="15" fill="#1c1c1e" stroke="#3a3a3c" filter="url(#shadow)"/>
+      <text x="956" y="312" font-size="19" font-weight="700" fill="#f5f5f7">ZFS</text>
+      <text x="956" y="331" font-size="12.5" font-family="'Menlo','JetBrains Mono',monospace" fill="#a1a1a6">pools</text>
+    <rect x="936" y="357" width="192" height="56" rx="15" fill="#1c1c1e" stroke="#3a3a3c" filter="url(#shadow)"/>
+      <text x="956" y="382" font-size="19" font-weight="700" fill="#f5f5f7">Longhorn</text>
+      <text x="956" y="401" font-size="12.5" font-family="'Menlo','JetBrains Mono',monospace" fill="#a1a1a6">Kubernetes volumes</text>
+    <rect x="936" y="427" width="192" height="56" rx="15" fill="#1c1c1e" stroke="#3a3a3c" filter="url(#shadow)"/>
+      <text x="956" y="452" font-size="19" font-weight="700" fill="#f5f5f7">Native</text>
+      <text x="956" y="471" font-size="12.5" font-family="'Menlo','JetBrains Mono',monospace" fill="#a1a1a6">EC · NFS · SMB · S3</text>
+  </g>
+
+  <!-- footer -->
+  <line x1="72" y1="560" x2="1128" y2="560" stroke="#2c2c2e" stroke-width="1"/>
+  <text x="72" y="596" font-family="'Menlo','JetBrains Mono',monospace" font-size="16" fill="#a1a1a6">github.com/zyvorai/zyvor-atlas</text>
+  <text x="1128" y="596" text-anchor="end" font-family="'Helvetica Neue',Helvetica,Arial,sans-serif" font-size="16" fill="#a1a1a6">v0.5.0 · Zyvor Production License</text>
+</svg>

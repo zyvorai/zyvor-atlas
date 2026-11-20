@@ -1,0 +1,82 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Supply-chain gate: `cargo deny check` (CI job + `make audit`). Scoped to what's actionable in
+# this workspace's size — a large dependency graph naturally carries duplicate transitive versions
+# and a handful of unmaintained leaf crates that aren't worth blocking every PR over, so only
+# known-vulnerable advisories are a hard failure; everything else is visible but non-blocking.
+
+[graph]
+# Default features only — what's actually compiled into the deployed binary. The optional
+# DataBridge connectors (sqlserver/mongodb/oracle/azure-blob/kafka-lag) are compile-checked
+# separately in CI but intentionally excluded here: `tiberius` (sqlserver) currently pulls in an
+# unmaintained/vulnerable rustls 0.21-era chain (RUSTSEC-2025-0134, RUSTSEC-2026-0098/0099/0104)
+# that the default build never links — see docs/ROADMAP.md's known-limitations for the tracked fix.
+# Same story for `azure_core`/`azure_storage*` (azure-blob): pinned to the legacy 0.21.x line
+# (GHSA-cq8v-f236-94qc, `rand` 0.7.3 via `http-types`) — the only newer release is a 1.x beta
+# rewrite with a different API, not a drop-in bump. Re-checked 2026-09-15: still no non-breaking
+# upgrade path for either chain (`cargo info tiberius`/`azure_core` show no newer compatible
+# release); GitHub's own Dependabot alerts for these (independent of this gate, since it scans
+# Cargo.lock regardless of feature-gating) are dismissed with the same rationale.
+
+[advisories]
+version = 2
+# Known vulnerabilities in a dependency we actually build — the one thing this gate must never
+# silently miss. Every entry below has an upstream advisory that says "no safe upgrade available"
+# — re-check on each `cargo update` in case that's changed, don't just re-add them by rote.
+yanked = "deny"
+ignore = [
+    # rsa (Marvin Attack timing side-channel, RUSTSEC-2023-0071) via openidconnect (OIDC/SSO
+    # login) and sqlx-mysql (DataBridge's default MySQL/MariaDB connector). No patched rsa exists
+    # upstream as of this writing (RustCrypto/RSA#626 is still open). Timing side-channels need an
+    # attacker positioned to observe response-time variance; both call sites here talk to a
+    # server-configured IdP/DB endpoint, not an arbitrary untrusted peer.
+    "RUSTSEC-2023-0071",
+    # (RUSTSEC-2024-0384, `instant` unmaintained, is no longer ignored: the crate is still listed in
+    # Cargo.lock but nothing in the checked graph depends on it, so cargo-deny reported the ignore as
+    # unmatched. An ignore for a crate that is not built only hides a future regression; re-add it
+    # if the advisory starts matching again.)
+    # crypto-bigint 0.5.5 (RUSTSEC-2026-0387, timing variability in constant-time operations) via
+    # p256/p384 0.13 -> jsonwebtoken and openidconnect. It is fixed only in >=0.7.6, and that crate
+    # copy is pinned by elliptic-curve 0.13, so there is no in-place upgrade. Atlas signs its own
+    # tokens with HMAC secrets (EncodingKey::from_secret); the elliptic curves are used only to
+    # verify identity-provider tokens against public keys, where secret-dependent timing does not
+    # arise. The 0.7.x copy used by rsa/sqlx is updated to 0.7.9 in Cargo.lock. Re-check when
+    # jsonwebtoken or openidconnect move to elliptic-curve 0.14.
+    "RUSTSEC-2026-0387",
+    # libsqlite3-sys 0.37 (RUSTSEC-2026-0459 / CVE-2026-119375): WAL page-size mismatch can leak
+    # page-cache bytes. Patched only in libsqlite3-sys >=0.39 (SQLite 3.54), which needs Rust
+    # 1.88+ and rusqlite 0.41; sqlx 0.9 still pulls 0.37. Atlas opens only its own SQLite file
+    # (operator-controlled path), not untrusted DB+WAL pairs. Re-check when sqlx bumps the pin.
+    "RUSTSEC-2026-0459",
+]
+
+[licenses]
+version = 2
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Unicode-3.0",
+    "Zlib",
+    "Unlicense",
+    "BSL-1.0",
+    # webpki-root-certs (Mozilla's CA bundle as data, via rustls-platform-verifier) — a permissive data
+    # license, not a code license.
+    "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.8
+
+[bans]
+# A workspace this size will always carry duplicate transitive versions (syn, base64, windows-sys,
+# ...) as the dependency graph settles — that's dead weight, not a security issue, so it's surfaced
+# without failing the build.
+multiple-versions = "warn"
+wildcards = "warn"
+deny = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"

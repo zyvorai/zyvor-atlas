@@ -1,0 +1,51 @@
+Atlas gateway deployed as {{ include "atlas.fullname" . }} in namespace {{ include "atlas.namespace" . }}.
+
+{{- if .Values.auth.createSecret }}
+
+The chart generated a random admin password and JWT secret in the
+{{ include "atlas.authSecretName" . }} Secret. Fetch the admin password with:
+
+  kubectl -n {{ include "atlas.namespace" . }} get secret {{ include "atlas.authSecretName" . }} -o jsonpath='{.data.admin-password}' | base64 -d; echo
+{{- else }}
+
+Expecting an existing Secret named "{{ .Values.auth.existingSecret }}" with keys jwt-secret and
+admin-password — see deploy/k8s/atlas-auth-secret.example.yaml or deploy/vault-lab/ for how to
+create it.
+{{- end }}
+
+{{- if eq .Values.service.type "NodePort" }}
+
+Reach the console at http://<any-node-ip>:{{ .Values.service.httpNodePort }}
+{{- else }}
+
+Check `kubectl -n {{ include "atlas.namespace" . }} get svc {{ include "atlas.fullname" . }}` for
+the address.
+{{- end }}
+
+{{- if .Values.ceph.enabled }}
+
+Real-Ceph mode: this deployment expects to run in the Rook namespace ({{ .Values.ceph.rookNamespace }})
+with the mon endpoints ConfigMap ({{ .Values.ceph.monEndpointsConfigMap }}) and admin keyring
+Secret ({{ .Values.ceph.monSecretName }}) already present — see docs/DEPLOYMENT.md.
+{{- else }}
+
+Fake-driver mode: no real Ceph cluster is required. Set ceph.enabled=true (and see
+docs/DEPLOYMENT.md) to deploy against a real Rook Ceph cluster instead.
+{{- end }}
+
+{{- if eq .Values.database.kind "postgres" }}
+
+Database: Postgres ({{ .Values.database.existingSecret }}/{{ .Values.database.secretKey }}),
+{{ .Values.replicaCount }} replica(s), RollingUpdate.
+{{- else }}
+
+Database: SQLite on a ReadWriteOnce PVC, single replica, Recreate rollout. Set
+database.kind=postgres (see README.md) to run multiple replicas.
+{{- end }}
+
+{{- if .Values.disks.enabled }}
+
+WARNING: disks.enabled runs the gateway PRIVILEGED with hostPath /dev, /run/udev and /proc/1/mountinfo
+so the console can wipe and format raw disks. Pin it to the disk-owning node (nodeSelector), keep one
+disk-enabled gateway per node, and see docs/DISKS.md for the safety model.
+{{- end }}

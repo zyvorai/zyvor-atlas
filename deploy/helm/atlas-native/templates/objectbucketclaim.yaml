@@ -1,0 +1,17 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+{{- $t := .Values.tiering }}
+{{- if and $t.enabled (not (and $t.endpoint $t.bucket $t.existingSecret)) }}
+# Rook provisions the bucket and publishes its endpoint (ConfigMap) and credentials (Secret)
+# under this name.
+apiVersion: objectbucket.io/v1alpha1
+kind: ObjectBucketClaim
+metadata:
+  name: {{ include "atlas-native.fullname" . }}-tier
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+spec:
+  generateBucketName: {{ include "atlas-native.fullname" . }}-tier
+  storageClassName: {{ $t.objectBucketClaim.storageClassName }}
+{{- end }}

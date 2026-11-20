@@ -1,0 +1,10 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+blank_issues_enabled: false
+contact_links:
+  - name: Documentation
+    url: https://zyvorai.github.io/atlas/
+    about: Check the docs site before filing — your question may already be answered there.
+  - name: Commercial licensing
+    url: https://zyvor.dev
+    about: Production use and commercial licensing inquiries.

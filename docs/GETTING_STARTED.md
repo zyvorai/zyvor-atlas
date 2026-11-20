@@ -1,0 +1,116 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# Getting Started (local development)
+
+## Prerequisites
+
+- Rust (stable; the CI/Docker builds pin `1.88`, any recent stable works locally).
+- No database server needed — Atlas uses **SQLite** (file created automatically).
+- No Kubernetes/Ceph needed for the fake path.
+
+## Build
+
+```bash
+cargo build --workspace          # or: make build
+```
+
+## Run the gateway (fake Ceph driver — no cluster required)
+
+```bash
+make run
+# equivalent to:
+ATLAS_CEPH_DRIVER_MODE=fake ATLAS_BIND_ADDR=127.0.0.1:5110 \
+  cargo run -p atlas-gateway
+```
+
+On startup the gateway:
+1. opens/creates the SQLite DB and runs migrations,
+2. registers the Ceph backend (`bkd_ceph_lab`) + its driver,
+3. attaches the live Kubernetes driver **if** a cluster is reachable (else logs a warning),
+4. runs one discovery pass so inventory is populated immediately.
+
+## Talk to it with `atlasctl`
+
+```bash
+cargo run -p atlasctl -- health
+# or: make status
+#     make deploy-remote H=<host> U=sus
+#     make deploy-ceph H=<host> U=sus
+#     make help
+cargo run -p atlasctl -- discover
+cargo run -p atlasctl -- clusters
+cargo run -p atlasctl -- pools
+cargo run -p atlasctl -- volumes
+cargo run -p atlasctl -- metrics
+```
+
+Or with `curl`:
+
+```bash
+curl -s localhost:5110/health
+curl -s -X POST localhost:5110/api/atlas/v1/backends/bkd_ceph_lab/discover
+curl -s localhost:5110/api/atlas/v1/pools | jq
+```
+
+Expected fake inventory: 3 pools (`rbd-nvme-prod`, `cephfs-data0`, `.rgw.root`),
+2 volumes, 6 OSDs.
+
+## Point the live k8s driver at a cluster
+
+Set `KUBECONFIG` (or `ATLAS_KUBECONFIG`) and the `/storage-classes`, `/kubernetes/pvcs`,
+`/kubernetes/pvs` endpoints return **real** cluster objects:
+
+```bash
+KUBECONFIG=~/.kube/config make run
+cargo run -p atlasctl -- storage-classes
+```
+
+## Run the tests
+
+```bash
+cargo test --workspace          # or: make test
+```
+
+What's covered:
+- **Unit**: id helpers, Ceph pool-kind/health mapping, Ceph-provisioner detection.
+- **Integration** (`crates/atlas-gateway/tests/read_only.rs`): spins up the gateway with the
+  fake driver + a throwaway SQLite file and asserts discovery populates inventory, cluster
+  health/capabilities resolve, `/metrics/summary` aggregates, audit rows are written, unknown
+  volume → 404, and `/storage-classes` without a cluster → 502.
+
+## Lint & format
+
+```bash
+make lint         # cargo clippy --workspace --all-targets -- -D warnings  (enforced in CI)
+make fmt          # cargo fmt --all  (informational in CI — style is denser than rustfmt defaults)
+make features     # compile-check optional DataBridge connectors
+make ui           # React console production build (enforced in CI)
+make ci           # headers, clippy, tests, cargo-deny, DataBridge features, UI
+make help
+make status       # atlasctl health (ATLAS_BASE_URL, default http://127.0.0.1:5110)
+make deploy-remote H=<host> U=sus
+./scripts/test-all.sh   # full local gate incl. optional connector containers
+```
+
+CI (`.github/workflows/ci.yml`) also builds the Docker UI stages and the full `Dockerfile.ceph` image.
+
+## Common env vars
+
+See [.env.example](../.env.example) and the config table in
+[ARCHITECTURE.md](ARCHITECTURE.md#configuration). Copy `.env.example` to `.env` to have it
+loaded automatically (`dotenvy`).
+
+## Switching to the real Ceph driver locally
+
+`ATLAS_CEPH_DRIVER_MODE=real` makes the driver shell out to `ceph`/`rbd`. You need those CLIs
+installed and a reachable cluster with `/etc/ceph/ceph.conf` + keyring. To register a second,
+already-running cluster (monitor addresses and a keyring path, not a Rook install Atlas creates),
+see [CEPH_EXTERNAL.md](CEPH_EXTERNAL.md). For a full real setup (Rook Squid + CSI drivers + remote
+gateway script) see [DEPLOYMENT.md](DEPLOYMENT.md).
+
+Quick remote path once k3s is up:
+
+```bash
+cd deploy/rook-ceph-lab && ./up.sh --single-node          # or --cluster-only if operator exists
+./scripts/deploy-ceph-gateway-remote.sh <host> <user>     # NodePort 30511
+```

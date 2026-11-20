@@ -1,0 +1,90 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Grafana with the Atlas Prometheus datasource + the Atlas overview dashboard auto-provisioned.
+# The dashboard JSON ConfigMap (atlas-grafana-dashboard) is created by up.sh from atlas-overview.json.
+# Admin password comes from Secret `atlas-grafana-admin` (created by up.sh if missing) — never
+# hard-code a shared lab password in the Deployment.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atlas-grafana-provisioning
+  namespace: rook-ceph
+  labels: { app: atlas-grafana }
+data:
+  datasource.yaml: |
+    apiVersion: 1
+    datasources:
+      - name: Atlas Prometheus
+        type: prometheus
+        uid: atlas-prom
+        access: proxy
+        url: http://atlas-prometheus.rook-ceph.svc:9090
+        isDefault: true
+  dashboards.yaml: |
+    apiVersion: 1
+    providers:
+      - name: atlas
+        orgId: 1
+        folder: Atlas
+        type: file
+        disableDeletion: false
+        options:
+          path: /var/lib/grafana/dashboards
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: atlas-grafana
+  namespace: rook-ceph
+  labels: { app: atlas-grafana }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app: atlas-grafana }
+  template:
+    metadata:
+      labels: { app: atlas-grafana }
+    spec:
+      securityContext: { fsGroup: 472, runAsUser: 472 }
+      containers:
+        - name: grafana
+          image: grafana/grafana:11.2.0
+          env:
+            - name: GF_SECURITY_ADMIN_USER
+              value: admin
+            - name: GF_SECURITY_ADMIN_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: atlas-grafana-admin
+                  key: admin-password
+            - name: GF_USERS_ALLOW_SIGN_UP
+              value: "false"
+          ports:
+            - { name: web, containerPort: 3000 }
+          volumeMounts:
+            - { name: provisioning-ds, mountPath: /etc/grafana/provisioning/datasources }
+            - { name: provisioning-db, mountPath: /etc/grafana/provisioning/dashboards }
+            - { name: dashboards, mountPath: /var/lib/grafana/dashboards }
+      volumes:
+        - name: provisioning-ds
+          configMap:
+            name: atlas-grafana-provisioning
+            items: [ { key: datasource.yaml, path: datasource.yaml } ]
+        - name: provisioning-db
+          configMap:
+            name: atlas-grafana-provisioning
+            items: [ { key: dashboards.yaml, path: dashboards.yaml } ]
+        - name: dashboards
+          configMap: { name: atlas-grafana-dashboard }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-grafana
+  namespace: rook-ceph
+  labels: { app: atlas-grafana }
+spec:
+  type: NodePort
+  selector: { app: atlas-grafana }
+  ports:
+    - { name: web, port: 3000, targetPort: 3000, nodePort: 30515 }

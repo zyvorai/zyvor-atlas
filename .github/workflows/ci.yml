@@ -1,0 +1,271 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+name: atlas-ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+# None of these three jobs push, comment, or upload releases — read-only checkout is enough.
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: the migrations-immutability check diffs against the base commit.
+          fetch-depth: 0
+      # Pinned to match rust-toolchain.toml's `channel` — dtolnay/rust-toolchain resolves its
+      # version from the @rev of the action itself, not from rust-toolchain.toml, so the two
+      # must be bumped together or CI silently drifts back to a rolling "stable".
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+        with:
+          # llvm-tools-preview is needed by cargo-llvm-cov below, not just fmt/clippy.
+          components: rustfmt, clippy, llvm-tools-preview
+      # The gRPC crates compile .proto at build time, so protoc must be present (mirrors the
+      # deployment Dockerfile). Without it clippy/test/build fail before any Rust runs. libcurl
+      # headers are needed by the kafka-lag feature's vendored librdkafka cmake build, which
+      # probes for curl unconditionally even with -DWITH_CURL=0 (macOS runners never hit this —
+      # curl.h ships with the system SDK there).
+      - name: Install protoc + cmake + libcurl
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler cmake libcurl4-openssl-dev
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Application recovery scenario tests
+        run: PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_recovery/tests -v
+      - name: AI data services core and Iceberg scenarios
+        run: |
+          python3 -m pip install --require-hashes -r tools/atlas_data/requirements-iceberg.lock
+          PYTHONPATH=tools python3 -m unittest discover -s tools/atlas_data/tests -v
+          PYTHONPATH=tools python3 examples/data/end_to_end.py
+      - name: License headers
+        run: ./scripts/check-license-headers.sh
+      - name: Migrations parity (migrations/ vs migrations-postgres/)
+        run: ./scripts/check-migrations-parity.sh
+      - name: Migrations are immutable once committed (sqlx checksums)
+        run: ./scripts/check-migrations-immutable.sh "${{ github.event.pull_request.base.sha || github.event.before }}"
+      # Non-blocking: the committed style is denser than stable rustfmt's defaults (~280 files of
+      # drift). Clippy (-D warnings), tests, and build below are the enforced Rust gates; fmt is
+      # surfaced so drift is visible without failing every PR. Prefer `make fmt` on touched files.
+      - name: Format check (informational)
+        run: cargo fmt --all --check
+        continue-on-error: true
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      # cargo-llvm-cov wraps `cargo test` itself, so this both runs the suite (same pass/fail
+      # gate as plain `cargo test --workspace`) and produces a CI-artifact-only coverage report
+      # — no external service/token, downloadable per-run, not enforced as a gate.
+      # taiki-e/install-action's `@<tool-name>` shorthand can't be SHA-pinned (the tool name
+      # lives in the ref itself); the documented SHA-pinned form is @<version> + `with: tool:`.
+      - uses: taiki-e/install-action@cfdb7ed4ccc7c7dce37759eae89dc5674b469b39 # v2
+        with:
+          tool: cargo-llvm-cov
+      - name: Test + coverage
+        run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      - name: Application recovery against actual Native processes
+        run: |
+          cargo build --locked -p atlas-gateway -p atlas-native --bins
+          PYTHONPATH=tools python3 tools/atlas_recovery/tests/live_native.py
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rust-coverage
+          path: lcov.info
+          retention-days: 14
+      # Supply-chain gate: known-vulnerable/yanked advisories, disallowed licenses, unknown
+      # registries/git sources (deny.toml). Scoped to default features — what's actually shipped;
+      # see deny.toml's [graph] comment for why the optional DataBridge connectors are excluded.
+      # cargo-deny-action defaults its own `arguments` input to `--all-features`, which pulls in
+      # the optional DataBridge connectors (mongodb/tiberius) that deny.toml's [graph] comment
+      # above says are deliberately excluded from this gate — override it back to the default
+      # feature set the rest of this job (and the shipped binary) actually builds.
+      - name: Supply-chain audit (cargo-deny)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check advisories bans licenses sources
+          arguments: --locked
+      - name: Build
+        run: cargo build --workspace
+      # Optional DataBridge connectors / lag — compile-checked so feature gates don't rot.
+      # sqlserver/mongodb/azure-blob are pure-Rust (or rustls); kafka-lag needs cmake (installed
+      # above); oracle vendors ODPI-C and only needs Instant Client at *runtime*.
+      - name: Check optional DataBridge features
+        run: |
+          set -euo pipefail
+          for f in sqlserver mongodb azure-blob oracle kafka-lag; do
+            echo "=== --features $f ==="
+            cargo check -p atlas-databridge --features "$f"
+          done
+          echo "=== combined (no kafka-lag — long link) ==="
+          cargo check -p atlas-databridge --features sqlserver,mongodb,azure-blob,oracle
+      # Unlike the DataBridge connectors above, `rmcp` is pure-Rust with no native-lib gate, so its
+      # own test suite can run in CI, not just a compile check.
+      - name: Check MCP feature
+        run: |
+          set -euo pipefail
+          cargo clippy -p atlas-gateway --features mcp --all-targets -- -D warnings
+          cargo test -p atlas-gateway --features mcp --test mcp
+
+  # Runs the full atlas-gateway integration suite (~200 tests, unchanged from build-test's run —
+  # see crates/atlas-gateway/tests/common/mod.rs) a second time against a real Postgres instead of
+  # each test's default throwaway SQLite file, proving the sqlx::AnyPool query layer (docs/HA.md)
+  # actually works on both backends, not just that it compiles against both. This is exactly how a
+  # real schema-vs-Rust-type mismatch was found and fixed during that migration (Postgres's
+  # 4-byte REAL/INTEGER vs SQLite's always-8-byte REAL/INTEGER, and SUM(bigint) promoting to
+  # NUMERIC) — a regression here would look identical: green build-test, red postgres-test.
+  postgres-test:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: atlas
+          POSTGRES_PASSWORD: atlas
+          POSTGRES_DB: atlas
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      # ATLAS_TEST_DATABASE_URL: an *admin* connection — crates/atlas-gateway/tests/common/mod.rs
+      # CREATE DATABASEs a fresh, uniquely-named database per test off this connection for
+      # isolation (the same "one throwaway DB per test" guarantee the SQLite temp-file path
+      # already gives), then connects to that instead.
+      ATLAS_TEST_DATABASE_URL: postgres://atlas:atlas@localhost:5432/atlas
+      DATABASE_URL: postgres://atlas:atlas@localhost:5432/atlas
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: dtolnay/rust-toolchain@ce678459e9fc7500d337468f904b95f1b5c10b5e # 1.98.1
+      - name: Install protoc
+        run: sudo apt-get update && sudo apt-get install -y protobuf-compiler
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: postgres-test
+      - name: atlas-gateway integration suite against Postgres
+        run: cargo test -p atlas-gateway --features mcp
+      - name: atlas-inventory live-Postgres query-layer tests
+        run: cargo test -p atlas-inventory --test postgres_live -- --ignored --nocapture
+
+  ui:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: crates/atlas-gateway/ui
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: crates/atlas-gateway/ui/.nvmrc
+          cache: npm
+          cache-dependency-path: crates/atlas-gateway/ui/package-lock.json
+      - name: Install
+        run: npm ci
+      - name: Lint
+        run: npm run lint
+      # Runs the suite (same pass/fail gate as `npm run test`) and produces a CI-artifact-only
+      # coverage report — no external service/token, downloadable per-run.
+      - name: Test + coverage
+        run: npm run test:coverage
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: ui-coverage
+          path: crates/atlas-gateway/ui/coverage
+          retention-days: 14
+      # UI-side equivalent of the Rust cargo-deny gate above. High severity only — same bar as a
+      # blocking gate; lower-severity advisories are visible in the job log without failing CI.
+      - name: Supply-chain audit (npm audit)
+        run: npm audit --audit-level=high
+      - name: Typecheck + production build
+        run: npm run build
+      - name: Upload dist artifact
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: atlas-ui-dist
+          path: crates/atlas-gateway/ui/dist
+          retention-days: 7
+
+  website-audit:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: website/.nvmrc
+      # Same bar as the UI audit: the docs site's lockfile must not carry a known-vulnerable
+      # package (Dependabot only bumps direct deps weekly, so transitive ones need this gate).
+      # Fails on high and critical only: two moderate advisories have no patched release as of
+      # 2026-11-01 (deepmerge GHSA-gcqx-w48m-w2h4 via @svgr/webpack, minimatch GHSA-g3hv-75wg-m249 via
+      # serve-handler) and sit in build tooling. Lower this back to `low` once upstream ships fixes.
+      - name: Supply-chain audit (npm audit)
+        run: npm audit --audit-level=high --package-lock-only
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      # UI stage of both images — fast, catches broken node/npm/lockfile paths used by deploy.
+      - name: Build Dockerfile UI stage
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile
+          target: ui
+          push: false
+          tags: atlas-gateway:ui
+          cache-from: type=gha,scope=ui
+          cache-to: type=gha,mode=max,scope=ui
+      - name: Build Dockerfile.ceph UI stage
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.ceph
+          target: ui
+          push: false
+          tags: atlas-gateway-ceph:ui
+          cache-from: type=gha,scope=ui-ceph
+          cache-to: type=gha,mode=max,scope=ui-ceph
+      # Full Ceph deploy image (no Instant Client / optional features) — mirrors
+      # scripts/deploy-ceph-gateway-remote.sh. Uses GHA cache so subsequent PRs are faster.
+      - name: Build Dockerfile.ceph (full image)
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.ceph
+          push: false
+          tags: atlas-gateway:ceph
+          cache-from: type=gha,scope=ceph
+          cache-to: type=gha,mode=max,scope=ceph
+      # atlas-io-agent (crates/atlas-io, docs/IO_EBPF.md) — a separate, much smaller image with no
+      # UI/optional-feature stages of its own.
+      - name: Build Dockerfile.io
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.io
+          push: false
+          tags: atlas-io-agent:ci
+          cache-from: type=gha,scope=io
+          cache-to: type=gha,mode=max,scope=io
+      # atlas-data (tools/atlas_data, docs/AI_DATA_SERVICES.md) — Python service image, published
+      # on tags by docker-publish.yml.
+      - name: Build Dockerfile.data
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: Dockerfile.data
+          push: false
+          tags: atlas-data:ci
+          cache-from: type=gha,scope=data
+          cache-to: type=gha,mode=max,scope=data

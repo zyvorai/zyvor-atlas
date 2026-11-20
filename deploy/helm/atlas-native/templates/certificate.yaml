@@ -1,0 +1,24 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# One certificate for all pods: node ids are pod names and must each appear as a DNS SAN.
+{{- if and .Values.tls.enabled .Values.tls.certManager.enabled }}
+{{- $full := include "atlas-native.fullname" . }}
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: {{ $full }}-tls
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+spec:
+  secretName: {{ $full }}-tls
+  duration: {{ .Values.tls.certManager.duration }}
+  renewBefore: {{ .Values.tls.certManager.renewBefore }}
+  issuerRef:
+    {{- required "tls.certManager.issuerRef is required" .Values.tls.certManager.issuerRef | toYaml | nindent 4 }}
+  usages: ["server auth", "client auth"]
+  dnsNames:
+    {{- range $i := until (int .Values.replicas) }}
+    - {{ printf "%s-%d" $full $i }}
+    {{- end }}
+{{- end }}

@@ -1,0 +1,87 @@
+<!doctype html>
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Atlas social card</title>
+<!--
+  1600x900 (16:9) card for LinkedIn and X. Every claim on it is sourced in the README's
+  "Proof" section (docs/STATUS.md, docs/DR.md, docs/NATIVE_*.md).
+  Build:  ./docs/social/build-social-card.sh   ->  atlas-social-card.jpg
+-->
+<style>
+  :root { --ink:#1d1d1f; --soft:#6e6e73; --signal:#0071e3; --deep:#0058b0; --line:#d2d2d7; --warm:#f5f5f7;
+    --teal:#0f8a8a; --violet:#8944c9; --green:#1f7a4d;
+    --sans:'SF Pro Display','Helvetica Neue',Helvetica,Arial,sans-serif; --mono:'SF Mono',Menlo,Consolas,monospace; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; padding:0; }
+  body { width:1600px; height:900px; overflow:hidden; background:var(--warm); color:var(--ink); font-family:var(--sans); position:relative; }
+  .bar { position:absolute; left:0; top:0; bottom:0; width:14px; background:linear-gradient(180deg,var(--signal),#2997ff 60%,var(--violet)); }
+  .wrap { position:absolute; left:72px; right:64px; top:48px; bottom:40px; display:flex; flex-direction:column; }
+
+  .top { display:flex; align-items:center; gap:14px; font-family:var(--mono); font-size:20px; letter-spacing:.14em; text-transform:uppercase; color:var(--soft); }
+  .top b { color:var(--ink); letter-spacing:.1em; }
+  .top .r { margin-left:auto; letter-spacing:.08em; }
+
+  h1 { margin:26px 0 0; font-size:70px; line-height:1.06; letter-spacing:-.03em; font-weight:800; max-width:1460px; }
+  h1 em { font-style:normal; color:var(--signal); }
+  .sub { margin:16px 0 0; font-size:27px; line-height:1.36; color:#2c2c2e; max-width:1400px; }
+
+  .flow { margin-top:34px; display:grid; grid-template-columns:repeat(5,1fr); gap:34px; }
+  .step { position:relative; background:#fff; border:2.5px solid var(--c); border-radius:16px; padding:18px 20px 18px 24px; min-height:222px; }
+  .step::before { content:""; position:absolute; left:0; top:0; bottom:0; width:9px; background:var(--c); border-radius:13px 0 0 13px; }
+  .step:not(:last-child)::after { content:""; position:absolute; right:-31px; top:50%; width:0; height:0; margin-top:-11px;
+    border-left:16px solid var(--soft); border-top:11px solid transparent; border-bottom:11px solid transparent; }
+  .lane { display:inline-block; font-family:var(--mono); font-size:15px; font-weight:700; letter-spacing:.12em; color:#fff; background:var(--c); padding:3px 10px; border-radius:11px; }
+  .n { float:right; width:34px; height:34px; border-radius:50%; background:var(--c); color:#fff; font-weight:700; font-size:19px; line-height:34px; text-align:center; }
+  .step h3 { margin:14px 0 8px; font-size:27px; line-height:1.14; letter-spacing:-.01em; }
+  .step p { margin:0; font-size:20.5px; line-height:1.34; color:var(--soft); }
+  .s1 { --c:var(--signal); } .s2 { --c:var(--ink); } .s3 { --c:var(--violet); } .s4 { --c:var(--teal); } .s5 { --c:var(--green); }
+
+  .attr { margin-top:22px; display:flex; align-items:center; gap:16px; background:#1d1d1f; border:1px solid rgba(255,255,255,.08); color:#f5f5f7; border-radius:12px; padding:13px 22px; font-family:var(--mono); font-size:22px; white-space:nowrap; }
+  .attr .tag { color:#2997ff; font-weight:700; letter-spacing:.1em; font-size:16px; }
+  .attr .ok { color:#30d158; }
+  .attr .why { margin-left:auto; color:#a1a1a6; font-size:15px; letter-spacing:.06em; text-transform:uppercase; }
+
+  .chips { margin-top:auto; padding-top:22px; display:flex; flex-wrap:wrap; gap:10px; }
+  .chip { font-size:20px; font-weight:700; padding:5px 14px; border-radius:20px; background:var(--signal); color:#fff; letter-spacing:.02em; border:2px solid var(--signal); }
+  .chip.g { background:#fff; color:var(--deep); }
+
+  .foot { margin-top:18px; padding-top:14px; border-top:3px solid var(--ink); display:flex; align-items:center; font-family:var(--mono); font-size:22px; color:var(--soft); }
+  .foot b { color:var(--ink); }
+  .foot .r { margin-left:auto; }
+</style>
+</head>
+<body>
+<div class="bar"></div>
+<div class="wrap">
+  <div class="top"><svg viewBox="0 0 64 64" width="40" height="40" aria-hidden="true"><defs><linearGradient id="zb" x1="8" y1="8" x2="56" y2="56" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#ff5a15"/><stop offset="1" stop-color="#cc420a"/></linearGradient></defs><rect width="64" height="64" rx="15" fill="url(#zb)"/><path d="M18.5,20.5 45.5,20.5 18.5,43.5 45.5,43.5" fill="none" stroke="#fff" stroke-width="8.3" stroke-linecap="round" stroke-linejoin="round"/></svg><b>Zyvor</b><span>&middot;</span><span>Atlas</span><span class="r">Storage platform &middot; Zyvor Production License</span></div>
+
+  <h1>One API for the storage you have. <em>A filesystem</em> for the storage you need.</h1>
+  <p class="sub">Intent-based volumes, snapshots and buckets on Ceph, NFS, ZFS and Longhorn, plus Atlas Native, a distributed filesystem with its own data path.</p>
+
+  <div class="flow">
+    <div class="step s1"><span class="lane">ASK</span><span class="n">1</span>
+      <h3>Ask once</h3><p>A volume, snapshot, filesystem or bucket over REST, gRPC or <b>atlasctl</b>.</p></div>
+    <div class="step s2"><span class="lane">ROUTE</span><span class="n">2</span>
+      <h3>Atlas picks the driver</h3><p>Ceph, NFS, ZFS, Longhorn or Native, by policy and tenant quota.</p></div>
+    <div class="step s3"><span class="lane">PROTECT</span><span class="n">3</span>
+      <h3>Protect the data</h3><p>Erasure coding with rebuild, copy-on-write snapshots, cold extents tiered to S3.</p></div>
+    <div class="step s4"><span class="lane">REPLICATE</span><span class="n">4</span>
+      <h3>Copy to a second site</h3><p>RBD mirroring both ways, and native replication that sends only changed extents.</p></div>
+    <div class="step s5"><span class="lane">FAIL BACK</span><span class="n">5</span>
+      <h3>Fail back cleanly</h3><p>Promote is refused until the site has replayed the peer's demotion.</p></div>
+  </div>
+
+  <div class="attr"><span class="tag">GET /dr/mirrors/{id}/status</span><span>up+unknown&nbsp; "remote image demoted"&nbsp; <span class="ok">promote_ready: true</span></span><span class="why">From the 2026-10-06 lab drill</span></div>
+
+  <div class="chips">
+    <span class="chip">Ceph &middot; NFS &middot; ZFS &middot; Longhorn</span><span class="chip">Native: NFS &middot; SMB &middot; S3 &middot; FUSE &middot; CSI</span>
+    <span class="chip g">DataBridge DB migration</span><span class="chip g">Per-tenant quotas</span><span class="chip g">OIDC &amp; Vault</span><span class="chip g">Edge profile</span>
+  </div>
+
+  <div class="foot"><span><b>github.com/zyvorai/zyvor-atlas</b></span><span class="r">zyvor.dev &middot; Rust &middot; Kubernetes</span></div>
+</div>
+</body>
+</html>

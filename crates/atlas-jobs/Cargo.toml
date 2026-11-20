@@ -1,0 +1,35 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+[package]
+name = "atlas-jobs"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+atlas-api-types = { workspace = true }
+atlas-common = { workspace = true }
+atlas-inventory = { workspace = true }
+atlas-driver-k8s = { workspace = true }
+atlas-driver-rgw = { workspace = true }
+atlas-driver-ceph = { workspace = true }
+atlas-driver-zfs = { workspace = true }
+atlas-driver-core = { workspace = true }
+atlas-driver-macos = { workspace = true }
+atlas-discovery = { workspace = true }
+atlas-databridge = { workspace = true }
+atlas-policy = { workspace = true }
+sqlx = { workspace = true }
+chrono = { workspace = true }
+tokio = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+sha2 = "0.11"
+reqwest = { workspace = true }
+hex = "0.4"
+
+[dev-dependencies]
+async-trait = { workspace = true }

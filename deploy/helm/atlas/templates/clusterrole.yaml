@@ -1,0 +1,76 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Mirrors deploy/k8s/atlas-gateway.yaml's ClusterRole verbatim — see that file's comments for why
+# each resource/verb is needed (write path, DataBridge operator CRs, Rook CRD integration).
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ include "atlas.clusterRoleName" . }}
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+rules:
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["volumesnapshotclasses"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources: ["storageclasses"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["snapshot.storage.k8s.io"]
+    resources: ["volumesnapshots"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["objectbucket.io"]
+    resources: ["objectbucketclaims", "objectbuckets"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: [""]
+    resources: ["secrets", "configmaps"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["postgresql.cnpg.io"]
+    resources: ["clusters"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["pxc.percona.com"]
+    resources: ["perconaxtradbclusters"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["psmdb.percona.com"]
+    resources: ["perconaservermongodbs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["kafka.strimzi.io"]
+    resources: ["kafkaconnects", "kafkaconnectors"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephclusters"]
+    verbs: ["get", "list", "watch", "patch"]
+  - apiGroups: ["ceph.rook.io"]
+    resources: ["cephblockpools", "cephfilesystems", "cephobjectstores"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  # ATLAS_LONGHORN_ENABLE: read nodes and replicas; volume, snapshot and backup writes go
+  # through the CRDs. PVC provisioning still uses the persistentvolumeclaims rule above.
+  - apiGroups: ["longhorn.io"]
+    resources: ["nodes", "replicas", "backupvolumes"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["longhorn.io"]
+    resources: ["volumes", "snapshots", "backups", "backuptargets"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+  - apiGroups: [""]
+    resources: ["nodes"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ include "atlas.clusterRoleName" . }}
+  labels:
+    {{- include "atlas.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ include "atlas.clusterRoleName" . }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "atlas.name" . }}-gateway
+    namespace: {{ include "atlas.namespace" . }}

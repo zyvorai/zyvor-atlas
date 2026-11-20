@@ -1,0 +1,601 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# Changelog
+
+All notable changes to Atlas will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/). Versions
+before `0.2.0` were not tracked here — see `git log` for that history.
+
+## [Unreleased]
+
+### Added
+
+- `GET /doctor` (and `atlasctl doctor` / `AtlasClient::doctor`): unauthenticated operator one-pager with readiness, inventory counts, open alerts, jobs by state and backend breakdown. Always HTTP 200; inspect `ok` (use `/readyz` when kubelet needs 503).
+- Owner registry: wire ids `fabric`, `netra` and `kavira` alongside the existing five; `GET /owners/{id}/workflows` lists recent intent rows (`atlasctl owner-workflows`, `AtlasClient::list_owner_workflows`). Still local stubs — Atlas does not call those products (`docs/PRODUCTS.md`).
+- SAN and cloud_block backends: `atlas-driver-san` / `atlas-driver-cloudblock` (fake + real), live `POST /backends`, `ATLAS_SAN_*` / `ATLAS_CLOUDBLOCK_*` startup registration (`docs/STATUS.md`).
+- Longhorn native Volume/Snapshot CRD write path; WEKA filesystem create/delete (fake + REST).
+- RGW bucket object-lock create plumbing; WORM two-person unlock propose/confirm; Ops Advisor persisted findings + optional two-operator alert ack.
+- Image import `format=qcow2` and Ceph RBD `rbd:pool/image` byte I/O targets.
+- MCP OAuth scopes / IdP `scope` mapping / RFC 7662 introspection / lab `ATLAS_MCP_AS_ENABLE` client_credentials endpoint (no DCR).
+- atlas-io NFS/ZFS/io_uring probe scaffolding, cgroup→volume map API, Observatory heatmap UI.
+- Native joint add/remove voter path hardening, `ATLAS_NATIVE_DATA_AUTH`, TLS cert reload; `cufile` dlopen probe; gRPC `ListSchedules`; DataBridge Oracle TCPS DSN + rollback-drill read-only API/`atlasctl`.
+- Longhorn clone-from-snapshot, Backup/BackupTarget CRDs, disk/node selectors; replica discovery as OSDs.
+- External Ceph import: live `POST /backends` with `mon_host`/`conf_path` (or `ATLAS_CEPH_EXTERNAL_*`) activates `RealCephDriver` (`docs/CEPH_EXTERNAL.md`).
+- Native leader-lease metadata reads after ReadIndex; cuFile read/write wrappers; RDMA pipeline/registered-memory scaffold (runtime off).
+- Ops Advisor whitelist execute (`silence_alert` / `create_snapshot`) via propose/confirm; MCP lab AS DCR + PKCE; DataBridge Postgres reverse-copy rollback (`ATLAS_DATABRIDGE_ROLLBACK_COPY`); owner workflow intent records; macOS SMART/capacity metrics; native CDC chunker scaffolding + `cross_group_dedup` flag.
+
+### Fixed
+
+- Clippy `-D warnings` needless borrows in `snapshot_volume`; pin gateway test deps `p256` 0.13 / `rand` 0.8 so `mcp_idp` builds after the workspace p256 0.14 bump.
+- STATUS image-import table row broken by an unescaped `|` in `raw|qcow2`; README now matches qcow2 + RBD import.
+
+### Not verified
+
+- Live SAN iSCSI, AWS/GCP/Azure cloud disks, Longhorn/WEKA/RGW object-lock/RBD import/qcow2 on real clusters, SoftRoCE pooled RDMA, GDS I/O, NFS/ZFS/uring eBPF attach, MCP introspection against a real AS.
+- Live Longhorn clone/backup, external Ceph against a real cluster, cuFile with `libcufile` present, RDMA pipeline on verbs, advisor execute on lab, MCP DCR/PKCE with a real host, Postgres reverse-copy rollback, CDC/cross-group dedup on writes.
+
+## [0.13.0] — 2026-11-09
+
+### Added
+
+- MCP authorization: with `ATLAS_MCP_IDP_ISSUER` set, `/api/atlas/v1/mcp` also accepts JWT access tokens issued by that identity provider (RS256/ES256, signature from the issuer's JWKS, `iss`, `aud` = `<ATLAS_PUBLIC_URL>/api/atlas/v1/mcp`, `exp`, `nbf`, lifetime cap `ATLAS_MCP_IDP_MAX_LIFETIME_SECS`), and the RFC 9728 metadata for the MCP endpoint (plus the `/.well-known/mcp` card) lists the issuer under `authorization_servers`. Off by default; the gateway refuses to start with it enabled but no `ATLAS_PUBLIC_URL`. It applies to the MCP endpoint only (REST, gRPC and `/metrics` still take Atlas HS256 tokens only, and Atlas tokens keep working on `/mcp` unchanged). The role and tenant come from the same `ATLAS_OIDC_ADMIN_GROUP` / `ATLAS_OIDC_OPERATOR_GROUP` / `ATLAS_OIDC_TENANT_CLAIM` mapping as the console SSO login (now one shared `auth::role_for_groups`, and the settings are read even without the console OIDC variables); an IdP actor is unscoped and role-limited, with id `idp-<issuer hash>:<sub>`. Keys are fetched lazily (an IdP outage is a 401, never a startup failure), cached for an hour and refetched at most once per 30 s on an unknown `kid`. A token with no `jti` cannot be revoked in Atlas. Still not done: an authorization server (DCR, CIMD), OAuth scope strings, opaque access tokens. Tested only against an in-process fake JWKS server; never run against a real IdP or Dex (manual steps in `deploy/dex-lab/README.md`, `docs/MCP.md`). New dev-dependencies for the tests: `rsa`, `p256`, `rand` (already in `Cargo.lock`).
+- Snapshots report `locked_until` (unix seconds, omitted when the gateway never locked the snapshot) on `GET /snapshots`: the gateway now records the expiry in the existing `storage_snapshots.retention_until` column when it locks a snapshot (`POST /snapshots/{id}/lock`, ransomware protect), extend-only. No migration. Locks set directly on a native node are not reflected. `atlasctl checkpoint seal` reads it to skip the lock call when the snapshot is already locked for `--lock-days` from now, and `--dry-run` shows the lock state (`docs/WORM.md`, `docs/CHECKPOINTS.md`).
+- `POST /volumes/{id}/snapshots` accepts an optional `if_not_exists` (default `false`): when true and the volume already has a snapshot of that name, that snapshot is returned (HTTP 200, `"existing": true`) instead of making another. Best effort, no unique index; two racing requests can still both create (`docs/API.md`). `atlasctl checkpoint seal` uses it and deletes only its own newer duplicate afterwards.
+- MCP: a test (`tests/mcp_tool_counts.rs`) asserts the number of tools a session lists for each gate: 53 read-only, 59 with `ATLAS_MCP_WRITE_ENABLE`, 60 with `ATLAS_DATA_URL`, 70 with both.
+- MCP: write confirmation as an MRTR `input_required` round. For a client that negotiated protocol 2026-07-28 and declared the `elicitation` capability (an empty `elicitation: {}` counts as form mode), a guarded write tool's plan (`create_snapshot`, `ack_alert`, `silence_alert`, the workspace and `atlas_data` writes) is answered as `input_required` with one form elicitation (`confirm`, a boolean, with a summary of the plan) and the signed confirmation token as `requestState`; on retry, `accept` runs the tool through the existing checks (caller, tool, exact arguments, expiry, single use), and `decline`/`cancel` return a plain non-error result and consume nothing. Every other client (legacy `initialize`, no elicitation, URL mode only) keeps the `confirmation_token` flow unchanged. No tool signature changed. Each round spends the call budgets and writes its own `mcp.tool.call` audit row. Tested with the rmcp client only (`tests/mcp_mrtr.rs`); never tried with a real MCP host (`docs/MCP.md`).
+
+### Changed
+
+- gRPC: every call now checks the token against the revocation deny-list (as REST does; a database error fails open), and a non-admin caller is confined to its own tenant: `ListVolumes`, `GetVolume`, `ListVolumesByOwner`, `ListSnapshots`, `ListBuckets` and `ListTenants` return only that tenant's rows, `GetVolume`, `ExpandVolume` and `CreateSnapshot` answer `not_found` for another tenant's volume, and `CreateVolume` for another tenant is `permission_denied`. Behaviour change: a tenant-scoped gRPC client that used to see other tenants' data no longer does. Admins and auth-off are unchanged. Not changed: clusters, pools, alerts, metrics and jobs are not tenant-filtered (REST doesn't either). Tested in process on SQLite (`tests/grpc_tenant.rs`).
+- Agent workspaces: the per-tenant count and the per-owner byte budget are now checked after the create has inserted its own `creating` row, instead of only before the snapshot and clone, so two racing creates can no longer both pass a limit (the cost: under contention both may be refused). Behaviour change: a workspace in the new `creating` state is visible in `GET /workspaces` and counts toward both limits until it turns `active`; a stale one (gateway died mid-create) is discarded by the workspace GC after 15 minutes. No migration (`state` is free text). Tested in process on SQLite; the Postgres path runs in CI only (`docs/NATIVE_FS.md`).
+- Docs: the MCP tool counts in `docs/STATUS.md`, `docs/COMPARISON.md`, `docs/ROADMAP.md` and the website landing page were stale (27, 32 and 51); the real numbers are 53 read-only tools, 59 with writes enabled, and 60 or 70 with `atlas_data` configured (the `atlas-io` agent has 10).
+- MCP confirmation tokens are now portable and durably single-use (behaviour change for the existing `confirmation_token` flow): the signing key is derived from `ATLAS_JWT_SECRET` (domain-separated, so a confirmation token is never a valid login token) instead of a random per-process key, and redemption is recorded in a new table `mcp_confirm_used` (migration `0039`, SQLite and Postgres; a unique violation means already used, any other database error refuses the write). A token issued before a restart, or by another replica with the same secret, still works for its 5 minutes, exactly once; rotating `ATLAS_JWT_SECRET` invalidates outstanding tokens. Postgres is exercised by CI only.
+- MCP: the `mcp.tool.call` audit row for a write plan that was handed back for confirmation is now `proposed` instead of `error`.
+- MCP: `tools/list` on a 2026-07-28 session now reports `cacheScope: private` (was `public`): the list is filtered per caller by the token's tool allowlist, and the spec defines `public` as free of user-specific data.
+- Docs: `docs/MCP.md` said the workspace byte-budget check "is not atomic with the insert"; since the reserve-first change it is (a racing pair cannot both pass; under contention both may be refused).
+
+## [0.12.1] — 2026-11-08
+
+### Added
+
+- `docs/AI_STORAGE_RECIPES.md`: how to point LMCache's `fs`, `fs_native` and `s3` L2 adapters at an `atlas-native-mount` path or the native S3 gateway (the S3 adapter supports virtual-hosted addressing only, so the gateway needs `s3.domains` and wildcard DNS), and a snapshot matrix for pgvector, Qdrant, Lance and Milvus with `atlasctl snapshot-volume` / `lock-snapshot` recipes. Documentation only: none of those products has been run against Atlas. Sources and unconfirmed points are listed in the page.
+- `deploy/native/s3-pattern-probe.py` (standard library only, with offline tests in `deploy/native/test_s3_pattern_probe.py`): replays the request shapes of LMCache's S3 adapter against a gateway, path-style or virtual-hosted, reports how many concurrent `If-None-Match: *` PUTs succeed, and races `link()` calls on a mount. Measures no throughput and does not use LMCache or the AWS CRT client.
+- `atlasctl checkpoint seal`: seal a finished training checkpoint on an atlas-native filesystem. It checks a completion marker (`--marker FILE`, or `--preset dcp|megatron|orbax`) through a local mount (`--root`) or on the caller's word (`--assume-complete`), snapshots the filesystem under a deterministic `ckpt.<run>.<step>.<hash>` name, retention-locks the snapshot (`--lock-days`, default 7) and prunes older snapshots it made (`--keep-last`, never a locked one), with `--dry-run`. REST client only, no new endpoint; exit 3 when the checkpoint is not complete. Layouts read from PyTorch, Megatron-LM and Orbax source, not run against them or a real training job (`docs/CHECKPOINTS.md`).
+
+### Security
+
+- UI: `minimatch` is forced to `^11.0.1` through an npm `overrides` entry, closing Dependabot alert #48 (GHSA-g3hv-75wg-m249, pattern amplification in `firstPhasePreProcess`; every 10.x release is affected and `eslint`, `@eslint/config-array` and `@typescript-eslint/typescript-estree` still depend on `^10`, so the override is the only fix). Dependabot alert #44 (`deepmerge`, via `@svgr/webpack` in the docs site) still has no patched release (`deepmerge` 4.3.1 is the latest) and remains open.
+- Dockerfile and Dockerfile.ceph no longer run `npm install -g npm@12.0.2`: the digest-pinned `node:26-alpine` image already bundles npm 11, which is what the UI lockfile needs. This removes the unpinned download behind the Scorecard PinnedDependencies alerts #101 and #102.
+
+### Changed
+
+- MCP: the `atlas_data` tools now forward the call's `X-Atlas-Run-Id` to atlas_data as the same header (none is sent without a run id), so atlas_data's audit events carry the run id of the agent call that caused them. atlas_data already accepted and stored it; only the gateway did not send it. Tested against a fake atlas_data (gateway side) and the real Python service (service side) separately; never run against a deployed atlas_data.
+- Cargo: `cargo update` (arc-swap, educe, jiff), `axum-server` 0.8 to 0.9 (gateway, mac agent) and `atlasctl` moves from `reqwest` 0.12 to 0.13 (`rustls-no-provider` plus the `ring` provider installed in `main`, so it still cross-compiles without a C toolchain). `azure_*` 0.21 stays: the only newer release is the 1.x rewrite with a different API.
+- UI: `jsdom` 30 to 31 (needs Node 22.22.2 or later; `.nvmrc` stays `22`) plus in-range bumps (`vite`, `tailwindcss`, `@tanstack/react-query`, `lucide-react`, `zustand`, `axios`, and others). TypeScript stays on 6.x because `typescript-eslint` caps `<6.1.0`. Docs site: lockfile refresh (Babel and friends).
+- Python: `pyiceberg` 0.10 to 0.12 and the hashed lockfiles recompiled with `uv`. `psycopg` stays at 3.3.6 (LGPL-3.0, which the dependency-review license allow-list rejects whenever its version changes).
+- Container images: refreshed the digests of `node:26-alpine`, `rust:1.99-bookworm`, `debian:bookworm-slim` and `python:3.12-slim`.
+- GitHub Actions: `docker/login-action` 4.8.0, `sigstore/cosign-installer` 4.1.3, `amannn/action-semantic-pull-request` 6.1.2, `github/codeql-action` 4.39.3, `actions/upload-pages-artifact` 5.0.0, and the moving `v2`/`v3` pins of `taiki-e/install-action` and `softprops/action-gh-release`.
+- `docs/NATIVE_S3.md`: records that virtual-hosted-style requests (`Host: <bucket>.<domain>:<port>`, plain-process gateway with `--domain`) passed the probe on 2026-11-08 (Helm `s3.domains`, wildcard DNS, HTTPS and CRT/SDK clients still unverified), and that eight concurrent `If-None-Match: *` PUTs of one key all succeeded, so the condition is not usable as a lock.
+
+## [0.12.0] — 2026-11-08
+
+### Added
+
+- MCP: RFC 9728 OAuth Protected Resource Metadata at `/.well-known/oauth-protected-resource` and `/.well-known/oauth-protected-resource/api/atlas/v1/mcp`, and a `WWW-Authenticate: Bearer resource_metadata="..."` challenge on 401s from `/api/atlas/v1/mcp` (REST 401s unchanged); the `/.well-known/mcp` card links it. `ATLAS_PUBLIC_URL` sets the origin used (otherwise derived from `Host`). Atlas still has no OAuth authorization server, so the document lists no `authorization_servers`, and token audience is not enforced; see `docs/MCP.md`.
+- MCP agent guardrails: `X-Atlas-Run-Id` correlation id recorded on audit rows (migration `0038`, `atlasctl --run-id`), DB-backed per-token and per-tool MCP budgets (cross-replica on Postgres), a per-agent live-workspace byte budget, and resource scope (volume, snapshot, workspace, path) on token claims.
+- MCP: `atlas_data` tools — seven reads (`data_artifact_list`, `data_artifact_get`, `data_artifact_revisions`, `data_job_ready`, `data_workspace_review`, `data_cost_report`, `data_cost_estimate`) and four guarded writes (`data_workspace_change`, `data_workspace_publish`, `data_workspace_discard`, `data_job_release`). Unlisted unless `ATLAS_DATA_URL` is set; per-caller credentials via `ATLAS_DATA_TOKENS` / `ATLAS_DATA_TOKENS_FILE`. The gateway does not yet forward the run id to `atlas_data`.
+- Agent workspaces on native filesystem clones: REST routes and MCP tools (`create_workspace`, `reset_workspace`, `discard_workspace`, `list_workspaces`, `get_workspace`) with TTL, quota and GC (migration `0037`).
+- `atlas-native`: direct client writes (leader lease, HMAC write grants, term-fenced commit), a pooled RDMA client with TCP fallback, and a GPU/GDS capability probe reporting `gds | compat | none` from files (no CUDA dependency; the `cufile` feature is a placeholder).
+- `atlas_data`: `HttpGryvia` adapter against Gryvia's REST gateway and a Gryvia job controller. Only exercised against a fake gateway.
+- `deploy/native/bench.sh` benchmark harness and `docs/NATIVE_PERF.md`, `docs/NATIVE_GPU.md`.
+
+### Fixed
+
+- `atlas-native`: RDMA connections no longer fail opaquely under a low `RLIMIT_MEMLOCK` (8 MiB allows about 7 pooled connections): the pool is capped from the limit, `ENOMEM` is reported clearly, and idle pooled connections survive the 30 s stream timeout and shut down cleanly.
+
+### Security
+
+- Dependency pins and upgrades across the Cargo, npm, Python and container images (#344, #346); Dependabot alert #44 (`deepmerge`) has no upstream patch and remains open.
+
+### Not verified
+
+- No real GPU, GPUDirect Storage, RDMA hardware or NVMe was available: RDMA was exercised over SoftRoCE on loopback only, direct writes in-process, and there are no throughput numbers.
+- Migrations `0037` and `0038` and the new MCP budgets ran on SQLite locally; CI ran them on Postgres.
+
+## [0.11.0] — 2026-11-03
+
+### Added
+
+- MCP: `chargeback` read tool (per-tenant usage and estimated cost). A tenant-bound token sees only its own tenant's row; admins see all.
+- MCP: `get_volume` and `volume_protection` read tools (operator, tenant-checked like the REST routes).
+- MCP: six read-only tools — `list_buckets`, `list_backups`, `list_schedules`, `list_osds`, `databridge_validations`, `databridge_cutovers`. Operator role, tenant-filtered where rows carry a tenant; `list_osds` is cluster-wide. No download URLs or secrets are returned.
+- MCP: `ATLAS_MCP_TOOL_CALLS_PER_MIN`, a per-token budget for each tool, next to the per-token `ATLAS_MCP_CALLS_PER_MIN`. Refusals are audited as `mcp.tool.rate_limited`.
+- MCP: guarded `silence_alert` (two-phase like `ack_alert`; 60 s to 24 h, default 1 h) behind `ATLAS_MCP_WRITE_ENABLE=1`.
+- `atlas-io` agent MCP: `io_native`, `io_heatmap` and `io_coverage` read tools. `io_native` says `unavailable` when the native maps are not loaded.
+
+### Security
+
+- `pulldown-cmark` 0.13.5 → 0.13.6 (RUSTSEC-2026-0433, quadratic parsing with `ENABLE_WIKILINKS`). It is a build-time dependency via `prost-build`; Atlas does not use that option.
+
+## [0.10.1] — 2026-11-01
+
+### Added
+
+- `deploy/helm/atlas-native/values-cache.yaml`: three pods, one copy of each extent, for recomputable data such as an inference KV-cache tier. The lab KV-cache smoke test passed 9/9 on it (`RF=1` selects it in `scripts/lab-kvcache-remote.sh`); node loss, space and speed were not measured.
+- `atlas_data acl-sync`: set an artifact's readers from a source directory's POSIX ACL (`getfacl` text) and an operator-written principal map. Dry run unless `--apply`; unmapped principals are dropped, `other::` is never expanded, the ACL mask is honoured. Unit tested only; no live file server.
+- `Dockerfile.data` (the `atlas_data` service, CLI and data-ready `gate-wait` as one non-root image), `deploy/k8s/atlas-data.yaml` and `deploy/k8s/atlas-data-gate-example.yaml`, and `deploy/data/gate-smoke.sh`. On the lab the image builds and `gate-wait` fails while data is unstaged and passes once staged; manifests pass a server-side dry run. Image not published; no pod has run on a cluster.
+- `atlas_data`: optional Postgres catalog (`ATLAS_DATA_DATABASE_URL`) so several service replicas can share metadata; write transactions are serialised by an advisory lock. SQLite stays the default. Whole test suite passed on a lab Postgres 16, plus a two-replica reservation race test. Chunk bytes still need a shared volume.
+- MCP read tools `policy_drift`, `orphan_backups` (tenant-filtered) and `list_events` (admin or unscoped only; a tenant-scoped token is refused because the feed has no tenant). `GET /policy-drift` rows now carry `tenant_id`.
+- `ATLAS_MCP_CALLS_PER_MIN`: a per-token budget of MCP tool calls per minute. Calls over it are refused and audited as `mcp.tool.rate_limited`; off by default, per gateway pod.
+- MCP read tools `osd_ok_to_stop`, `ceph_health_rollup`, `metrics_forecast`, `upgrade_preflight` and `protection_status`, wrapping the existing routes with the same role and tenant checks.
+- Every MCP tool call now leaves an `mcp.tool.call` audit row with the caller, tool, outcome, token `jti` and role, written off the request path. `ATLAS_MCP_AUDIT_CALLS=0` turns it off. Before this only denials and guarded writes were audited.
+- `docs/AI_INFERENCE.md`, `deploy/native/kvcache-smoke.sh`, `deploy/native/lab-kvcache.sh` and `scripts/lab-kvcache-remote.sh`: how to use the atlas-native mount, NFS and S3 interfaces as an inference KV-cache tier, and a smoke test of that I/O pattern (direct-I/O block files, rename publish, concurrent byte-exact reads, S3 put/get/range). Passed 9/9 on a lab three-node cluster; no inference engine was run and no performance is claimed.
+- MCP read tools `native_reduction` and `volume_ransomware`, so an agent can read atlas-native savings and a filesystem volume's ransomware verdict. Operator role, tenant-scoped, read-only: protecting a volume stays an admin REST call.
+
+### Changed
+
+- `Dockerfile.data` is built by CI's `docker` job and, on a `v*` tag, published, signed and scanned as `ghcr.io/zyvorai/atlas-data` with the other images.
+- MLPerf Storage harness now targets `mlcommons/storage` `v3.0`. The `v3.0` CLI rejects `h100` (accelerator types are `b200`/`mi355`), takes `--max-accelerators` for `datasize`, needs a system name and an initialised results directory, and uses a different directory flag per workload; `mlperf-run.sh` handles those (`MLPERF_SYSTEMNAME`, `MLPERF_ORG`, `--cache-dir` for kvcache, `--checkpoint-folder` for checkpointing). The image builds on the lab and `datasize` runs in it; no benchmark has run on a mount and there is no result.
+- `rusty-s3` 0.10 → 0.11. Object listings report the size as optional now, so `atlas-driver-rgw` treats a listing entry without a size as 0 bytes.
+- Kubernetes manifests pin `atlas-io-agent` to the 0.10.0 image instead of 0.9.0.
+
+### Fixed
+
+- A job could run twice: `enqueue` inserted the job as `pending` and then unconditionally set it `queued`, so if the startup recovery or the poller claimed it in between, that write turned the running job back into a claimable one. The queue step now only moves `pending` jobs. Found through a flaky `dedup.estimate` test (about 1 failure in 10 under CPU load; 0 in 150 after the fix).
+
+## [0.10.0] — 2026-10-30
+
+### Added
+
+- `atlasctl issue-token --tool NAME` (repeatable): mint a tool-scoped agent token from the CLI.
+- `atlas-native` (`rdma` feature): `RemoteDevice::with_rdma(gid, |session| ...)` opens a connection, upgrades it to RDMA and gives
+  the closure a typed `append`/`read` session. It reports `Unsupported` when the node has RDMA off, so callers can use TCP. SoftRoCE-verified only.
+
+- `atlasctl io-ai`: the gateway's `GET /api/atlas/v1/io/ai` (heuristic I/O shapes) from the CLI.
+- `atlas_data`: `prefix_digests(token_ids, block_size)` (chained per-block prefix digests) and
+  `KVAdapter.put_blocks` / `longest_prefix` for engine-side prefix caching over the KV cache. Engine-neutral;
+  unit tested with a fake client, not run against an inference engine.
+- `atlas-native` data node: with the `rdma` feature and `ATLAS_NATIVE_RDMA=1`, a client can send `RdmaUpgrade { gid_index }`
+  on an ordinary connection; the node answers `RdmaReady` and serves the same request protocol over an RDMA queue pair
+  (server side only; the client pool still uses TCP). Off by default; refused with an error otherwise. Verified on
+  SoftRoCE only (append + read back, 200 kB), no RDMA NIC and no throughput numbers. `with_stream` now waits for a
+  ready barrier on the control channel and uses a longer ACK timeout, because the first send could otherwise reach a peer
+  queue pair that was not up yet.
+- MLPerf Storage harness for atlas-native (`Dockerfile.mlperf`, `deploy/mlperf/mlperf-run.sh`, `docs/MLPERF.md`). Written
+  but not yet built or run; no result and no submission.
+
+- Scoped agent tokens: `POST /auth/tokens` accepts `tools`, minting a token valid only on the MCP edge and only for
+  those tools (the role still applies; refused on REST, gRPC and `/metrics`). Denied calls are audited as
+  `mcp.tool.denied`. Agent-safety scenario tests in `tests/mcp_agent.rs`.
+
+- Console page **Fast storage** (NVMe wear, host sizing, OSD object store and version mix, I/O shapes) and
+  `GET /io/ai` (operator) returning the atlas-io agent's heuristic I/O shapes, `unavailable` without an agent.
+
+- `atlas-native` feature `rdma` (off by default, Linux): `rdma::device_names()` and a self-connected reliable-connection
+  round trip over `libibverbs`, plus `rdma::with_stream`: a `Read`/`Write` byte stream over a reliable-connection queue pair
+  between two endpoints (queue-pair endpoints exchanged as JSON over a TCP side channel). Foundation for an RDMA data-node
+  transport, which does not exist yet; the data path is still TCP/TLS. Verified on SoftRoCE only.
+- `atlas_data`: `DataReadyGate.wait_ready()` and `python3 -m atlas_data gate-wait JOB` block until a job's data is
+  staged (Kubernetes init-container use); only "not ready" is retried and a timeout exits non-zero.
+- `POST /ceph/nvmeof/namespaces` (admin, `confirm`) and `atlasctl ceph-nvmeof-create`: provision a new NVMe-oF namespace as a
+  PVC from an `nvmeof.csi.ceph.com` StorageClass, as the ordinary `volume.create` job. REST and CLI only; not yet run on a
+  live Rook cluster.
+- Ceph NVMe (`docs/NVME.md`): read-only `GET /ceph/nvme`, `/ceph/osd-objectstore`, `/ceph/sizing`, `/ceph/nvmeof`
+  with `atlasctl` commands and MCP tools; Ops Advisor rules for worn NVMe drives and undersized NVMe hosts; device
+  class in the Disks picker; `POST /ceph/devices` accepts `db_device`, `db_size_mb`, `wal_size_mb`, `osds_per_device`.
+  Not yet run against a live Rook cluster.
+- `GET /osds/ok-to-stop?ids=0,1`: whether stopping the given OSDs together keeps every placement group available
+  (`ceph osd ok-to-stop`), for checking a node before maintenance. Read-only.
+- `GET /ceph/devices`: the drives Ceph tracks with their failure predictions, and a summary of those expected to
+  fail within 90 days (`ceph device ls`). Read-only; predictions need Ceph's device-health module.
+- `POST /volumes/{id}/import` and the `image.import` job: stream a raw disk image over HTTP(S) into an
+  atlas-native volume, skipping all-zero blocks, resuming from recorded progress, and verifying the volume by
+  reading it back against a caller-supplied SHA-256. Off until `ATLAS_IMPORT_ALLOWED_HOSTS` lists the hosts it
+  may fetch from. Raw images and atlas-native volumes only; see `docs/IMAGE_IMPORT.md`. Imports run beside the
+  job worker (`ATLAS_IMPORT_CONCURRENCY`, default 2) so a long import never holds up other jobs.
+- `ATLAS_DATABRIDGE_PG_CA_FILE`: an extra PEM bundle of CA certificates to trust for `verify-*` Postgres sources.
+
+### Security
+
+- A data node no longer upgrades a TLS connection to RDMA, and `with_rdma` refuses a TLS client: RDMA traffic is not encrypted, so
+  the upgrade would have silently dropped the configured TLS. (The RDMA server upgrade is off by default and needs `ATLAS_NATIVE_RDMA=1`.) The refusal itself has no automated test yet.
+
+### Fixed
+
+- DataBridge Postgres discovery ignored a source's `tls_mode` and always connected in plaintext
+  (`sslmode=disable`), even for the default `require`. It now honours `disable`, `prefer`, `require`,
+  `verify-ca` and `verify-full`; an unrecognised value is treated as `require`, never plaintext. Credentials are
+  now passed as typed connection fields rather than interpolated into a connection string.
+
+## [0.9.0] — 2026-10-19
+
+### Added
+
+- macOS lifecycle on a remote Mac through its agent: `?backend=bkd_macos_<name>` on the `/macos/*` routes, agent
+  write endpoints behind `ATLAS_MAC_ALLOW_WRITES=1` (token required), refusals re-run on the Mac. Tested against an
+  in-process agent with fake ops and, on a real Mac, against a throwaway disk image.
+- macOS local snapshots of the Mac as a whole (`/macos/snapshots`, via `tmutil`; macOS cannot snapshot one volume).
+- macOS container resize (`POST /macos/containers/{container}/resize`, agent `resize-container`) and a Mac section on the
+  console Disks page (erase, add volume, resize, eject).
+
+### Fixed
+
+- `ATLAS_MAC_ALLOW_DISK_IMAGES=1` (and the new `ATLAS_MAC_ALLOW_WRITES=1`) were rejected by the agent's flag parser;
+  they now accept `1`/`true`/`yes`.
+
+## [0.8.0] — 2026-10-19
+
+### Security
+
+- `rustls` 0.23.46 (RUSTSEC-2026-0346: `Debug` for client session values exposed TLS secrets).
+
+### Added
+
+- **Retention locks and ransomware assessment** (`docs/WORM.md`): Raft-enforced, extend-only retention locks on
+  atlas-native block and filesystem snapshots (`POST /snapshots/{id}/lock`, `atlasctl lock-snapshot`); compliance-mode
+  object retention on the native S3 gateway; per-minute filesystem activity windows behind
+  `GET /volumes/{id}/ransomware` and admin `POST …/ransomware/protect`; opt-in `ATLAS_RANSOMWARE_AUTOPROTECT=1`
+  for `likely_ransomware` only. Snapshot locks are verified on the lab; activity, protect and S3 retention are
+  unit/integration tested only.
+- **Native data reduction** (`docs/NATIVE_DATA_REDUCTION.md`): opt-in LZ4 compression and extent deduplication, the
+  node's `GET /v1/reduction`, the gateway's `GET /native/reduction` and `atlasctl native-reduction`. Not yet run on
+  the lab; no throughput or CPU numbers.
+- `atlas-client` crate: typed Rust client for products (`create_volume`, `list_volumes`, `get_job`, `wait_for_job`).
+- `GET /io/heatmap` on the I/O sensor: per-minute latency columns per device and operation (fake source only).
+- Experimental AI data services companion (`tools/atlas_data`, `docs/AI_DATA_SERVICES.md`): not part of the Rust
+  gateway, its own auth and storage.
+- Docs site pages for WORM, data reduction, AI data services and IO500.
+- `docs/RELEASING.md` (tag, ghcr images, archives, visibility); macOS rows in STATUS, ROADMAP, ARCHITECTURE and COMPARISON.
+
+### Fixed
+
+- The `atlas-native-csi` node test no longer fails on macOS (it reads `/proc` mountinfo, so it runs on Linux only).
+
+## [0.7.0] — 2026-10-17
+
+### Fixed
+
+- Job recovery at start-up no longer fails a job the same process already claimed. It ran on a spawned task and could
+  race a job enqueued right after start (the `tests/disks.rs` flake that stopped full workspace runs).
+
+### Added
+
+- `docs/MACOS_CLIENT.md`: using Atlas storage from a Mac (NFS, SMB, `atlasctl`) and why the native FUSE mount
+  is not available on macOS yet. The mount commands are documented, not yet run against a live gateway.
+- Mac fleet: `atlas-mac-agent` (read-only HTTP agent per Mac, bearer token, TLS required off loopback,
+  launchd installer, macOS release archives) and `RemoteMacosDriver`; the gateway registers each agent from
+  `ATLAS_MACOS_AGENTS` as its own backend. See `docs/MACOS.md`.
+- macOS volume lifecycle (`/macos/*`): erase an external disk, add/delete APFS volumes, eject. Admin only, typed
+  confirmation, jobs and audit. Hard refusals (internal disks, the running system, system volumes, disk images,
+  odd mounts) are checked in the route and again in the job; fake mode runs them against fixtures. See `docs/MACOS.md`.
+- macOS backend (`atlas-driver-macos`, `ATLAS_MACOS_ENABLE`): APFS containers as pools, APFS volumes and other
+  filesystem partitions as volumes, capacity/quota/mount and SMART health from `diskutil`; internal and external
+  drives, read-only, fake/real modes, rescanned on the monitor interval. See `docs/MACOS.md`.
+
+### Security
+
+- Website: `postcss-selector-parser` forced to >= 7.1.6 (Dependabot #26); synced docs pages updated to 0.6.0.
+
+## [0.6.0] — 2026-10-16
+
+### Security
+
+- `hickory-resolver` 0.26.3 (GHSA-5j98-2g5x-46v6, -6w6g-hm98-mhgm, -6f2x-v7q7-m7m5); website lockfile refreshed
+  and `tinypool` forced to >= 2.1.2 (prototype-pollution RCE); `POST /volume-groups` takes at most 256 volumes.
+
+### Added
+
+- MCP `ack_alert` (guarded, behind `ATLAS_MCP_WRITE_ENABLE`): same two-phase, single-use, audited flow as
+  `create_snapshot`, which now shares one gate with it.
+- Optional LLM narratives for `GET /ai/anomalies` and `POST /ai/what-if` via `?mode=auto|llm` (default
+  `local`, nothing sent). MCP tools stay local-only. The three narrative paths share one provider helper.
+- MCP prompts and resources on the gateway (`triage`, `capacity_review`, `dr_readiness`; `atlas://docs/*`,
+  `atlas://skill/ops`) and on the `atlas-io` agent (`io_triage`; I/O docs). Prompt arguments are validated;
+  resources are embedded text only. `GET /.well-known/mcp` is a public, static discovery card.
+- MCP read tools: `ceph_status`, `ceph_df`, `ceph_osd_tree` (summarised), `databridge_plans`,
+  `databridge_cdc_streams`, `list_policies`, `list_audit`. Operator-gated where the REST route has no
+  check, tenant-filtered where rows carry a tenant, output capped; audit entries omit request/result bodies.
+- `docs/MCP.md` and `examples/agent/` (operator-token mint script, Hermes/Claude client configs,
+  ops skill) for MCP-connected agents.
+- MCP: opt-in (`ATLAS_MCP_WRITE_ENABLE=1`) guarded `create_snapshot` tool with a two-phase,
+  single-use confirmation token and audit trail; no destructive tools (`docs/API.md`).
+
+
+- `atlas-io-agent`: optional bearer token (`ATLAS_IO_TOKEN`) and, with the `mcp` feature, a read-only
+  MCP endpoint at `/mcp`; the gateway sends `ATLAS_IO_AGENT_TOKEN` when fetching `/io/risk`.
+
+- MCP: read-only `io_risk`, `dr_status`, `dr_preflight`, `list_dr_mirrors`, `dr_mirror_status`,
+  `list_volume_groups`, `list_snapshots`, `list_jobs`, `get_job` tools (`docs/API.md`).
+
+
+- Helm: optional Envoy front door via the Gateway API (`envoy.*` values, `Gateway` + `HTTPRoute`,
+  HTTP→HTTPS redirect, no request timeout for MCP) and `deploy/envoy-lab/up.sh` (Envoy Gateway v1.9.2);
+  `docs/ENVOY.md`.
+
+- Ops Advisor: optional read-only `io_risk` block from `atlas-io-agent` (`ATLAS_IO_AGENT_URL`),
+  informational and fail-open (`docs/AI_ADVISOR.md`).
+
+- `atlas-io`: deterministic `risk` scorer (`score`, `RiskLevel`, `CapacitySignal`) combining RCA
+  verdicts and queue-cause notes with an optional capacity signal; served at `GET /io/risk` and as `atlas_io_risk_level` (`docs/IO_RISK.md`).
+- Application recovery operator tool (`PYTHONPATH=tools python3 -m atlas_recovery`):
+  dependency-ordered snapshot capture and restore drills, trusted bounded application hooks,
+  Native block-range checksum verification, RPO/RTO objectives, atomic private reports,
+  conservative cleanup, latest-snapshot selection, and daily systemd examples.
+- Recovery contract scenarios and actual gateway/Native-process smoke checks in CI.
+
+### Changed
+
+- Helm: the Envoy HTTPS listener moves from 443 to `envoy.httpsPort` (default `7443`); the HTTP→HTTPS
+  redirect names the port. Set `envoy.httpsPort=443` to keep the old behaviour.
+- `deploy/k8s/atlas-io-agent-live.yaml`: the live block-layer BPF variant of the agent DaemonSet
+  (BPF/PERFMON, tracefs), matching what the lab runs; `atlas-io-agent.yaml` stays fake by default.
+- I/O RCA distinguishes scheduler queue pressure from issue-to-complete service latency,
+  handles insufficient or inconsistent queue evidence, and restricts hottest-issuer attribution
+  to the known volume while preserving the existing response schema.
+
+### Fixed
+
+- MCP `list_snapshots` returned every tenant's snapshots to any operator; it is now limited to the caller's
+  tenant unless admin.
+- MCP: remote clients were rejected by the transport's loopback-only `Host` check; it is now
+  lifted when auth is required, with `ATLAS_MCP_ALLOWED_HOSTS` to override.
+
+### Documentation
+
+- AI and agents are now visible: README section, website homepage (feature band, block, comparison row,
+  footer link), `llms.txt`, and `docs/MCP_LISTING.md` (directory listing drafts, nothing submitted). Stale
+  "advisory only / no write tools" wording corrected in ROADMAP, STATUS, API and ARCHITECTURE; COMPARISON
+  gains the MCP row and a neutral note on other storage MCP servers.
+- The website now copies `docs/ux/anim` into `static/anim`, which the homepage artwork already referenced
+  but the repo never supplied.
+
+## [0.5.0] — 2026-10-09
+
+Documentation: a rewritten README with animated graphics, an animated landing page, and the full docs set published on the website.
+
+### Added
+
+- **Observe-first storage I/O sensor** (`crates/atlas-io`, binary `atlas-io-agent`):
+  in-process bio pipeline (log2-µs histograms, cgroup/pid attribution, device→volume
+  map, deterministic RCA, time-limited write-freeze leases that fail open). Default
+  `ATLAS_IO_MODE=fake` so CI never needs `CAP_BPF`. Contract C sources live in
+  `crates/atlas-io/bpf/`. `atlasctl io health|summary|histograms|workloads|rca|coverage|leases`.
+  Optional DaemonSet: `deploy/k8s/atlas-io-agent.yaml`. See [docs/IO_EBPF.md](docs/IO_EBPF.md).
+- **Live eBPF attach for `atlas-io`** (`bpf` feature, aya/CO-RE): block-layer tracepoints with
+  queue time and error codes, plus the Atlas Native eBPF maps (per-process stats and a slow-I/O ring
+  buffer), `GET /io/native`, `atlas_io_native_*` metrics and `atlasctl io native`. NFS, ZFS,
+  io_uring and per-cgroup programs are still reported missing. Verified on a lab host (kernel 7.0).
+- **Journal-mode and pool-mode RBD mirroring**: `mode=journal` enables and
+  `GET`/`PUT /dr/pools/{pool}/mirroring`. A non-forced journal-mode promote needs
+  `peer_replayed=1`, backed by `journal_peers_replayed` on the demoted site. Verified on the
+  two-site Rook lab (`docs/DR.md`).
+- **RBD consistency groups** (`/volume-groups`): crash-consistent group snapshots and a
+  confirm-gated rollback job; migration `0035`. Local to one cluster; no released Ceph mirrors
+  `rbd group`s across sites.
+
+### Removed
+- First-party **RustFS** product integration: `atlas-driver-rustfs`, Storage → RustFS console,
+  `/rustfs/*` admin proxy, drive/instance jobs, vendored Helm subchart, and `deploy/rustfs-lab`.
+  Object storage now defaults to Ceph RGW (`bkd_ceph_lab`). Bring-your-own S3 remains via
+  `atlas-driver-rgw`. See `docs/RUSTFS.md`.
+- Remaining RustFS leftovers: the ignored `ATLAS_RUSTFS_*` configuration and its startup warning,
+  the `POST /backends/{id}/selftest` route (it could only ever answer "unsupported"), the
+  `RUSTFS_ACCESS_KEY`/`RUSTFS_SECRET_KEY` credential-alias shim, the dead `/rustfs/*` console hooks and
+  types, and the `ATLAS_RUSTFS_*` block in `.env.example`. Kept on purpose so existing data still
+  loads: the `BackendType::Rustfs` value and the retired `bucket.*.rustfs` / `rustfs.*` job variants
+  (they are rejected with a clear error), plus the rejection of the `bkd_rustfs_lab` backend id.
+
+### Fixed
+- `POST /dr/mirrors/{id}/promote?force=1` was rejected with a 400 even though the docs and the
+  guard's error message say to use it. `force` and `peer_replayed` now accept `0`, `1`, `false`
+  and `true`.
+- DataBridge docs and the console's engine table still called MySQL CDC-only and SQL Server and
+  Oracle discovery-only; all six engines were verified through cutover on 2026-10-04.
+- The Helm chart's `s3.caSecretName` (trust a private CA for a bring-your-own S3 endpoint) set
+  `ATLAS_S3_CA_CERT`, but the code only read the legacy `ATLAS_RUSTFS_CA_CERT`, so the setting had no
+  effect. The code now reads `ATLAS_S3_CA_CERT`. **If you set `ATLAS_RUSTFS_CA_CERT` directly, rename it.**
+
+### Changed
+- Relicensed from the Zyvor Production License v1.0 to the **Apache License, Version 2.0**
+  ([LICENSE](LICENSE), SPDX `Apache-2.0`): use, modification and redistribution — including production,
+  SaaS and managed services — are permitted under the license's terms; there is no longer a commercial
+  license requirement. Source headers, Cargo/npm metadata, `NOTICE`, `docs/LICENSING.md`, the README and the
+  website were updated; `LICENSES/Apache-2.0.txt` replaces the old license text. Releases already published
+  under an earlier license keep the terms they were published with (see `docs/LICENSING.md`). The CLA/DCO now
+  refer to Apache-2.0; the CLA's grant wording should be reviewed by counsel.
+- README restyled as a landing page (blue/white hero with light/dark variants, capability tiles, Day/Night console overview).
+
+## [0.4.0] — 2026-09-21
+
+### Upgrade and migration notes
+
+- No database migration is required from 0.3.0 to 0.4.0. Starting a 0.4.0 gateway applies the same `migrations/` or `migrations-postgres/` tree it already applied on `main`; this release does not add a schema revision of its own.
+- Artifacts tagged `v0.3.0` stay under AGPL-3.0 plus the Atlas Commercial License. Artifacts tagged `v0.4.0` use `LicenseRef-Zyvor-Production-1.0`. The current [`LICENSE`](LICENSE) is the Apache License 2.0; the terms of older tags are those published at the tag.
+- Helm lab installs keep the `localhost/atlas-gateway:dev` default. Published images are `ghcr.io/zyvorai/atlas:0.4.0` and `ghcr.io/zyvorai/atlas-ceph:0.4.0`, selected with [`deploy/helm/atlas/values-release.yaml`](deploy/helm/atlas/values-release.yaml). Do not deploy the floating `:latest` tag. A lab `scripts/deploy-remote.sh` roll-out of this tree reported `GET /version` as `0.4.0` (`/health`, discovery, and live StorageClasses also succeeded). That image is the local `:dev` import, not the GHCR tag, which is published only when `v0.4.0` is pushed.
+
+### Changed — Zyvor Production License v1.0
+
+- Replaced the AGPL-3.0 + Atlas Commercial License dual license with the [Zyvor Production License v1.0](LICENSE). Non-production use is free. Production, SaaS, managed services, OEM, and redistribution require a separate paid commercial license. Published SKU prices are withdrawn; commercial terms are issued separately ([https://zyvor.dev](https://zyvor.dev)). Source headers use `LicenseRef-Zyvor-Production-1.0`. There is still no runtime license key. The v0.3.0 AGPL text is [`LICENSES/AGPL-3.0-only-v0.3.0.txt`](https://github.com/zyvorai/atlas/blob/v0.3.0/LICENSES/AGPL-3.0-only-v0.3.0.txt) (archived license texts were later removed from `main`, see [`docs/LICENSING.md`](docs/LICENSING.md)); the v0.3.0 commercial summary is [`LICENSES/LicenseRef-Atlas-Commercial-v0.3.0.md`](https://github.com/zyvorai/atlas/blob/v0.3.0/LICENSES/LicenseRef-Atlas-Commercial-v0.3.0.md).
+
+### Added — operator Make targets
+
+- `make help` lists targets. `make status` runs `atlasctl health`. `make deploy-remote H=<host> U=sus` deploys the gateway; `make deploy-ceph` deploys the real-Ceph gateway. `make ci` is unchanged.
+
+### Added — NFS/ZFS real driver mode
+
+- Added `RealNfsDriver`/`RealZfsDriver` alongside the existing fixture-only drivers, selected per
+  backend via `ATLAS_NFS_DRIVER_MODE`/`ATLAS_ZFS_DRIVER_MODE` (`fake`, unchanged default, or
+  `real`) — mirrors the existing `ATLAS_CEPH_DRIVER_MODE` Fake/Real split.
+- Real NFS runs `showmount -e` to confirm the server is reachable and get its real export list; a
+  configured export the server doesn't have is dropped, never fabricated. Per-export capacity comes
+  from `df` when the export is already locally mounted, `None` otherwise.
+- Real ZFS runs `zpool list -Hp`/`zfs list -Hp` locally on the gateway's own host (no remote/SSH
+  support yet); a zpool that isn't actually locally importable is dropped, never fabricated.
+- Both real drivers propagate a real error, never a silent fake-data fallback, when the target is
+  unreachable. Helm chart gained `nfs.driverMode`/`zfs.driverMode` (default `fake`).
+
+### Added — Cross-replica rate limiting
+
+- `RateLimiter::allow()` stays synchronous and database-free (still safe to call from the gRPC
+  path's `tonic::Interceptor`); cluster awareness now comes from a separate periodic background
+  task (`ATLAS_RATE_LIMIT_SYNC_SECS`, default 2s) that syncs each replica's per-window count
+  through a new `rate_limit_counters` table. An actor already over budget cluster-wide is denied on
+  the next local check, even if that replica's own count hasn't hit the limit yet — eventually
+  consistent within one sync interval. No effect on a single-replica SQLite deployment.
+
+### Added — Atlas Ops Advisor
+
+- Added `POST /api/atlas/v1/ai/advisor`: explainable risk scoring and prioritized, read-only
+  runbooks from Atlas capacity, forecasts, recovery telemetry, alerts, and recent job failures.
+- Added an optional OpenAI-compatible summary provider with HTTPS enforcement, bounded context and
+  output, prompt-injection resistance, deterministic fallback, operator RBAC, and audit logging.
+- Added local/provider mode documentation and unit plus REST/RBAC regression coverage.
+- Added a Storage Center **Ops Advisor** page with question presets, explicit local/auto/LLM
+  controls, risk visualization, evidence cards, and a prioritized non-executing runbook.
+- Added `GET /ai/incidents` to correlate related alerts and recent failures into explainable
+  incident families with bounded confidence and visible source signals.
+- Added `POST /ai/what-if` plus console controls to compare baseline risk with capacity, growth,
+  alert-resolution, and recovery-completion scenarios without changing live inventory.
+- Added `GET /ai/anomalies` with model-free median/MAD detection for capacity, I/O, job, and alert
+  surges; the console exposes explainable scores and adjustable sensitivity.
+- `GET /ai/anomalies` now reports `telemetry_status` (`fresh`/`stale`/`unavailable`) and
+  `latest_sample_age_minutes`, pausing detection with a warning when the latest sample is over
+  15 minutes old or missing/invalid — an old spike is never presented as a current incident.
+- Added `list_incidents`, `detect_anomalies`, and `what_if_capacity` MCP tools alongside
+  `ops_advisor`, sharing one code path with their REST counterparts so the MCP edge can't drift;
+  `GET /ai/incidents` also gained an opt-in `?mode=` narrative (local by default) reusing the
+  advisor's existing OpenAI-compatible provider.
+
+## [0.3.0] — 2026-09-14
+
+### Changed — Dual license (AGPL-3.0 + ACL); remove trial JWT gate
+
+- Open-source under [AGPL-3.0](https://github.com/zyvorai/atlas/blob/v0.3.0/LICENSE)
+  ; commercial track via
+  [Atlas Commercial License (ACL)](https://github.com/zyvorai/atlas/blob/v0.3.0/COMMERCIAL_LICENSE.md).
+  The license notes that applied to this tag are [docs/LICENSING.md at v0.3.0](https://github.com/zyvorai/atlas/blob/v0.3.0/docs/LICENSING.md), not the current license document.
+- Removed Ed25519 JWT trial stack: `atlas-license`, `atlas-license-tool`, gateway
+  `license_middleware` / `GET /license/status`, `LicenseBanner`, deploy Secret wiring, and
+  `ATLAS_LICENSE_ENFORCE`. AGPL self-host is ungated (same model as Aurora).
+- Per-file `SPDX-License-Identifier: AGPL-3.0-only OR LicenseRef-Atlas-Commercial` headers;
+  [`LICENSES/` at v0.3.0](https://github.com/zyvorai/atlas/tree/v0.3.0/LICENSES), [`NOTICE`](https://github.com/zyvorai/atlas/blob/v0.3.0/NOTICE), [`CLA.md`](https://github.com/zyvorai/atlas/blob/v0.3.0/CLA.md), [`DCO.md`](https://github.com/zyvorai/atlas/blob/v0.3.0/DCO.md);
+  `make headers` / CI license-header lint.
+
+### Added — Relay product ownership
+
+- Document `relay` as an Atlas product consumer in `docs/PRODUCTS.md` (`owner.product=relay`,
+  `resource_type=database`, `role=data_disk`). Relay keeps its Postgres ledger; Atlas provisions
+  the data PVC and optional RGW backups. Implementation lives in the Relay repo
+  (`docs/ATLAS_STORAGE.md`, `scripts/atlas-provision-relay-storage.sh`).
+
+### Added — Apple.com-style console redesign
+
+- Redesigned the React console (side rail, top nav, all 32 routes across 5 page templates) to a
+  light/dark Apple product-page aesthetic, layered on top of the existing "Soundings"
+  bathymetric UI identity. Verified live against the real-Ceph gateway.
+
+### Added — GitHub-native CI/CD and supply-chain hardening
+
+- Dependabot (cargo/npm ×2/github-actions/docker), CODEOWNERS, issue/PR templates, `SECURITY.md`.
+- CodeQL (JavaScript/TypeScript + Rust), `dependency-review` on PRs, OSSF Scorecard, PR-title
+  and PR-labeler checks.
+- `cargo-llvm-cov` / `vitest --coverage` as CI-artifact-only coverage (no external service).
+- `rust-toolchain.toml` + `.nvmrc` pin the Rust and Node versions CI already resolves to.
+- Every GitHub Action pinned to a commit SHA; every Docker base image pinned to a `sha256`
+  digest; `npm install -g npm@<exact>` in both Dockerfiles.
+- `docker-publish.yml` (GHCR push + keyless cosign signing + CycloneDX SBOM + Trivy scan) and
+  `release.yml` (CHANGELOG-driven GitHub Releases + cross-platform `atlasctl` binaries + UI dist
+  bundle), both gated on `v*` tags.
+- Branch protection on `main`: required status checks, admin bypass preserved.
+
+### Fixed — Security hardening
+
+- Legacy `sha256$...` password hashes now upgrade to Argon2 transparently on successful login.
+- Audit-log export refuses plaintext HTTP (loopback exempted for tests) — compliance-sensitive
+  data no longer leaves the process over an unencrypted connection even if misconfigured.
+- `cargo-deny` was silently scoped to `--all-features` by its GitHub Action's own default,
+  defeating `deny.toml`'s documented default-features-only intent; corrected.
+- Dependency bumps for known advisories surfaced once the above was fixed: `chacha20`, `h2`,
+  `rustls` (RUSTSEC-2026-0285, published mid-development — TLS 1.3 handshake messages accepted
+  across encryption level boundaries).
+
+### Changed — README, docs site, social card
+
+- Rewrote `README.md`: tech-stack badges, architecture diagram, "Why Atlas" comparison, Star
+  History chart, new hero social card (`docs/social/atlas-share-card.svg`/`.png`, hand-authored
+  from the project's own design tokens).
+- Removed `Co-Authored-By` trailers from the full git history.
+
+## [0.2.0] — 2026-08-25
+
+### Added — Trial/licensing (Ed25519-signed JWT)
+
+- Same design as sibling Zyvor products Veyron (`trial.rs`) and Aurora
+  (`gtm_api.middleware.license`): a signed token carries who it was issued to and when it
+  expires, verified against an embedded public key — no server-side clock, so deleting local
+  state can't extend a trial. New `atlas-license` crate (verify/status, product tag
+  `atlas-trial`) and `atlas-license-tool` (sales-only `keygen`/`issue` CLI).
+- Gateway wiring: `license_middleware` gates the bearer-protected API with `402` once a trial
+  expires; `GET /license/status` stays reachable alongside `/auth/login` and `/auth/oidc/*`
+  so an expired install can still show *why*. `LicenseBanner.tsx` in the console UI.
+  `Config::license_enforce` defaults to enforced (matching Aurora); local dev
+  (`make run`/`make run-databridge`) and both `deploy/k8s/atlas-gateway*.yaml` manifests
+  explicitly opt out until a real customer token exists. See `docs/LICENSING.md`.
+- `Config::validate_for_start()` now warns (non-fatally) at boot if enforcement is on with no
+  locatable token, instead of silently 402ing every protected route with no signal.
+
+### Fixed — Cross-tenant write vulnerability across volumes, buckets, and direct RBD
+
+A real, exploitable pre-existing gap: the tenant-scoping refactor (`require_tenant`/
+`tenant_scope` in `auth.rs`) was applied to read handlers but never propagated to write
+handlers. A tenant-scoped operator could create a volume or RBD image attributed to (and
+quota-charged against) a *different* tenant, or expand/snapshot/clone/restore/resize/migrate/
+flatten any tenant's volume or RBD image by id, or delete/prune/download any tenant's bucket,
+backup, or bucket object — including minting a presigned S3 download URL for another tenant's
+backup data. Fixed at every affected call site in `volumes.rs`, `object_store.rs`, and
+`rbd.rs`; centralized in `object_store.rs`'s shared `bucket_s3_target()` helper so every object
+operation is covered by one check. Admin-only operations are unchanged (admin is deliberately
+global everywhere else in this codebase). New regression test
+`operator_cannot_write_across_tenants` in `tenant_isolation.rs`.
+
+### Added — UI lint, component tests, and CI gates
+
+- `eslint.config.js` (flat config) for the gateway console — previously had none. CI now runs
+  `npm run lint` + `npm run test` + `npm audit --audit-level=high` (previously only
+  `npm run build`); the audit gate found and fixed 2 pre-existing high-severity advisories
+  (nanoid, react-router) via a non-breaking patch bump.
+- First component tests (`@testing-library/react` + jsdom) — `LicenseBanner.test.tsx`, guarding
+  the licensed/expired/days-remaining states after that component shipped with zero tests and
+  one real bug (see below) caught only by manual live verification.
+
+### Fixed — License status couldn't distinguish "expired" from "never had a token"
+
+Caught during live verification of the trial/licensing feature above, before it shipped:
+`GET /license/status` reported an expired-but-authentically-signed token identically to no
+token being present at all (`trial_expired: false` either way), because `jsonwebtoken`'s
+built-in `validate_exp` rejected the token before its claims could be inspected. Since
+`LicenseBanner.tsx`'s render logic branches on `trial_expired`, this would have silently kept
+the "your trial has ended" message from ever appearing. Fixed by deferring expiry checking to
+`atlas-license::status()` (which has the real `exp` claim to work from) instead of
+`jsonwebtoken`'s decode-time rejection; regression-tested on both the Rust and TypeScript sides.
+
+### Fixed — Real MySQL DataBridge CDC, unrunnable end-to-end before this pass
+
+Live-verified `discover → full-load → cdc/start → validate` against a real Percona edge and a
+real Kafka/Strimzi/Debezium stack for the first time; the code path had never been run against
+live infra. Found and fixed 8 real bugs: `mysql_operator.rs`'s PXC CR builder never set
+`allowUnsafeConfigurations` (blocks a single-node edge from ever reporting `ready`); `loader.rs`'s
+`mysqldump` pipeline was missing `CREATE DATABASE` (target db doesn't exist yet), `--no-tablespaces`
+(source creds lack `PROCESS`), `--skip-add-locks` (PXC's `pxc_strict_mode` rejects `LOCK TABLES`),
+and `--set-gtid-purged=OFF` (conflicts with the edge's own GTID set); `streaming.rs`'s
+`connect_spec()` used Strimzi's ~90s-to-kill default probe, too tight for a Debezium+JDBC Connect
+image to boot; `streaming.rs`'s Debezium source config was missing `time.precision.mode: connect`;
+`deploy/databridge/connect/Dockerfile` pinned Debezium 3.0.8.Final against a Kafka 4.3.0 base
+image whose client library removed a method 3.0.8's schema-history recovery depends on
+(`NoSuchMethodError`) — bumped to 3.3.0.Final. See `docs/DATABRIDGE.md` for two further
+non-code operational findings surfaced getting a row to actually land on the edge: a failed
+sink message permanently poisons its Kafka consumer offset (a task restart alone never skips
+past it), and Debezium unconditionally encodes MySQL `TIMESTAMP` columns (not `DATETIME`) as
+ISO-8601 strings the JDBC sink can't bind — a genuine open gap for any real schema using
+`TIMESTAMP`, not yet fixed.

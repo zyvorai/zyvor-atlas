@@ -1,0 +1,12 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Apply on both sites: each site's rbd-mirror pulls the images the other site is primary for.
+apiVersion: ceph.rook.io/v1
+kind: CephRBDMirror
+metadata:
+  name: atlas-dr-mirror
+  namespace: rook-ceph-dr
+spec:
+  count: 1
+  resources:
+    limits: { memory: 1Gi }

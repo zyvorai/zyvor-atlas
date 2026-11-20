@@ -1,0 +1,226 @@
+<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"/><title>Getting Started — Atlas</title>
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<style>
+@page{size:A4;margin:15mm 16mm}*{margin:0;padding:0;box-sizing:border-box}
+html{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+body{font-family:'Segoe UI',system-ui,sans-serif;color:#1f2937;line-height:1.58;font-size:10.5pt}
+.cover{height:262mm;margin:-15mm -16mm 0;background:linear-gradient(135deg,#0a1628,#0e7490,#0d1b2a);color:#fff;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center;page-break-after:always;position:relative}
+.cover .kicker{letter-spacing:5px;text-transform:uppercase;opacity:.72;margin-bottom:1.4em}
+.cover h1{font-size:3.2em;font-weight:800;letter-spacing:-2px}
+.cover h1 span{color:#38bdf8}
+.cover .sub{font-size:1.3em;font-weight:300;opacity:.93;margin:1em 0;max-width:24em}
+.cover .badge{display:inline-block;background:rgba(96,165,250,.2);border:1px solid #38bdf8;padding:8px 22px;border-radius:20px;margin-top:2em}
+.cover .foot{position:absolute;bottom:34px;font-size:.82em;opacity:.6}
+h2{page-break-before:always;margin:0 0 .35em;font-size:1.55em;font-weight:750;color:#12203a;border-bottom:2px solid #e5edfb;padding-bottom:.28em}
+h2:first-of-type{page-break-before:avoid}
+h3{margin:1.1em 0 .4em;font-size:1.12em;font-weight:700}
+p,li{margin:.4em 0}ul,ol{margin:.5em 0 .9em 1.4em}
+a{color:#2563eb;text-decoration:none}
+code{background:#eef2f7;padding:1px 6px;border-radius:4px;font-size:.86em;font-family:ui-monospace,Menlo,monospace}
+pre{background:#0f172a;color:#e2e8f0;padding:12px 15px;border-radius:9px;overflow-x:auto;margin:.8em 0}
+table{width:100%;border-collapse:collapse;margin:.8em 0 1.1em;font-size:9.5pt}
+th,td{border:1px solid #e5e7eb;padding:6px 8px;text-align:left;vertical-align:top}th{background:#f1f5f9}
+hr{border:none;border-top:1px solid #e5e7eb;margin:1.2em 0}
+</style></head><body>
+<section class="cover"><div class="kicker">ZyvorAI Labs · Customer Documentation</div>
+<h1>At<span>las</span></h1>
+<div class="sub">Getting Started</div>
+<div class="badge">2026-09-01</div>
+<div class="foot">zyvor.dev · Confidential — for licensed customers</div></section>
+<main><h2>What you need</h2>
+<table>
+<thead>
+<tr>
+<th>Requirement</th>
+<th>Notes</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Atlas gateway</td>
+<td>Default bind <strong><code>:5110</code></strong> (REST + Storage Center UI)</td>
+</tr>
+<tr>
+<td>Optional gRPC</td>
+<td><strong><code>:5111</code></strong></td>
+</tr>
+<tr>
+<td>Backend</td>
+<td>Ceph via Rook/driver, or lab fake driver</td>
+</tr>
+<tr>
+<td>Auth</td>
+<td>Lab often open (<code>ATLAS_AUTH_REQUIRED=0</code>); cluster uses JWT</td>
+</tr>
+</tbody></table>
+<h2>1. Open Storage Center</h2>
+<ul>
+<li>Console: <code>http://&lt;host&gt;:5110/</code></li>
+<li>Cluster NodePort (common): <code>http://&lt;host&gt;:30511/</code> (HTTPS may be <strong><code>:30543</code></strong>)</li>
+<li>Health: <code>curl http://&lt;host&gt;:5110/health</code></li>
+</ul>
+<h2>2. Sign in</h2>
+<table>
+<thead>
+<tr>
+<th>Mode</th>
+<th>What you do</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Open (lab)</td>
+<td>No token when <code>ATLAS_AUTH_REQUIRED=0</code></td>
+</tr>
+<tr>
+<td>JWT</td>
+<td>Paste bearer token from the top-bar <strong>Account</strong> menu, or <code>POST /api/atlas/v1/auth/tokens</code></td>
+</tr>
+<tr>
+<td>Local user</td>
+<td><strong>GOVERNANCE → Access</strong> → Create user, then sign in on the login page</td>
+</tr>
+<tr>
+<td>CLI</td>
+<td><code>atlasctl --token …</code> or <code>ATLAS_TOKEN</code></td>
+</tr>
+</tbody></table>
+<h2>3. Orient yourself (UX)</h2>
+<ol>
+<li><strong>Command Deck</strong> (<code>/</code>) — capacity sounding, pool tiles, protection gaps.</li>
+<li>Left sidebar: six section groups with <strong>collapsible headers</strong> (chevron) and a <strong>Filter navigation…</strong>
+field at the top; collapse the whole rail to icons from the toggle at the bottom. Top bar:
+Spotlight (<strong>⌘K</strong>), Look &amp; feel (Carbon / Apple Lite), running-jobs indicator, Alerts bell,
+health, and Account (clock, auth token, sign-out). <strong>H</strong> jumps to Command Deck.</li>
+<li>Sidebar groups: <strong>STORAGE</strong> (always open), <strong>DATA PROTECTION</strong>, <strong>DATABRIDGE</strong>, <strong>OBSERVABILITY</strong>, <strong>GOVERNANCE</strong>, <strong>INFRASTRUCTURE</strong>. Admin/operator-only pages hide for lower roles.</li>
+<li>Every mutation is a durable job (<code>202</code> + id) — watch <strong>Jobs</strong>.</li>
+</ol>
+<h2>4. First workflows</h2>
+<h3>A. Discover inventory</h3>
+<pre><code class="language-bash">atlasctl health
+atlasctl discover
+atlasctl pools
+atlasctl volumes
+</code></pre>
+<h3>B. Provision from the console</h3>
+<ol>
+<li><strong>Volumes</strong> → <strong>Create volume</strong> (policy/intent) → watch <strong>Jobs</strong>.</li>
+<li>Optional: Snapshot / Schedule from the volume SlideOver.</li>
+</ol>
+<h3>C. Protect a volume</h3>
+<p><strong>Snapshots</strong> / <strong>Schedules</strong> / <strong>Backups</strong> (needs a <strong>Bucket</strong>) — confirm job completion. Check <strong>Protection Status</strong>.</p>
+<h3>D. Check backend health</h3>
+<p><strong>Backends</strong> → <strong>Ceph</strong> for day-2 OSD/pool/RGW signals. Investigate warn/crit before large provisions.</p>
+<h2>Next steps</h2>
+<ul>
+<li><a href="using-the-dashboard.md">Using the Dashboard</a></li>
+<li><a href="admin-basics.md">Admin basics</a></li>
+<li><a href="pages/README.md">Page guides</a></li>
+<li><a href="workflows.md">Common workflows</a></li>
+</ul>
+<hr>
+<p>Storage Center is the Atlas operator console on the gateway (<code>http://&lt;host&gt;:5110/</code>).</p>
+<h2>Shell chrome</h2>
+<p>Navigation lives in a persistent <strong>left sidebar</strong>, grouped by six sections. Each section
+(except <strong>Storage</strong>) can be collapsed with the chevron on its header; the section containing
+your current page stays open. Use <strong>Filter navigation…</strong> at the top of the sidebar to narrow
+the list. Collapse the whole sidebar to an icon-only rail from the toggle at its base (state
+remembered per browser). Below ~900px the sidebar hides and the hamburger opens the same
+nav in a drawer — no duplicate shortcut list.</p>
+<p><strong>Role-aware nav:</strong> Viewer, Operator, and Admin sessions see different sidebar entries (governance
+and destructive ops require higher roles). Direct URLs to gated pages show an access message.</p>
+<p>The top bar carries everything else:</p>
+<table>
+<thead>
+<tr>
+<th>Control</th>
+<th>What it does</th>
+</tr>
+</thead>
+<tbody><tr>
+<td>Sidebar</td>
+<td>STORAGE · DATA PROTECTION · DATABRIDGE · OBSERVABILITY · GOVERNANCE · INFRASTRUCTURE — filter, section collapse, icon rail</td>
+</tr>
+<tr>
+<td>Brand</td>
+<td>Zyvor mark + <strong>Atlas</strong> — click to jump to <strong>Command Deck</strong></td>
+</tr>
+<tr>
+<td>Spotlight</td>
+<td><strong>⌘K</strong> / <strong>Ctrl+K</strong> — pools, volumes, modules (role-filtered)</td>
+</tr>
+<tr>
+<td>Look &amp; feel</td>
+<td>Carbon (dark shop, default) or Apple Lite (light shop)</td>
+</tr>
+<tr>
+<td>Jobs spinner</td>
+<td>Shows while jobs are running → <code>/jobs</code></td>
+</tr>
+<tr>
+<td>Alerts bell</td>
+<td>Open alert count → <code>/alerts</code> (also under OBSERVABILITY → Alerts)</td>
+</tr>
+<tr>
+<td>Pause</td>
+<td>Freeze auto-refresh</td>
+</tr>
+<tr>
+<td>Health pill</td>
+<td>Ceph/Atlas rollup (HEALTH_OK, DEGRADED, …)</td>
+</tr>
+<tr>
+<td>Account menu</td>
+<td>Clock, paste/clear JWT, sign out</td>
+</tr>
+</tbody></table>
+<p><strong>Keyboard:</strong> <strong>H</strong> jumps to Command Deck. <strong>?</strong> opens shortcut help.</p>
+<p><strong>Detail pages</strong> (pool drill-down, migration plan detail) show breadcrumbs above the page title.</p>
+<h2>Page grammar</h2>
+<p>Most screens share: <strong>PageHead</strong> (eyebrow + title + live state + ≤2 actions) → table/canvas → SlideOver or FormModal for mutations.</p>
+<p>Empty states name the next action (Create volume, Create bucket, Register source, …) — follow those CTAs rather than shrugging.</p>
+<h2>Operate tips</h2>
+<ol>
+<li>After any <strong>Create</strong> / <strong>Backup</strong> / <strong>Failover</strong>, open <strong>Jobs</strong> until <code>succeeded</code>.</li>
+<li>Prefer console actions for day-2; use <code>atlasctl</code> for scripts and CI.</li>
+<li>DataBridge: register <strong>Cloud Databases</strong> → <strong>Migration Plans</strong> → Plan Detail (CDC / cutover) → <strong>Validation</strong>.</li>
+<li>Never paste lab IPs into runbooks — use <code>&lt;host&gt;</code>.</li>
+</ol>
+<h2>Related</h2>
+<ul>
+<li><a href="getting-started.md">Getting Started</a></li>
+<li><a href="PAGE_INDEX.md">Page index</a></li>
+<li><a href="workflows.md">Workflows</a></li>
+</ul>
+<hr>
+<h2>Provision and snapshot a volume</h2>
+<ol>
+<li><a href="pages/storage/home.md">Command Deck</a> — confirm health</li>
+<li><a href="pages/storage/volumes.md">Volumes</a> — <strong>Create volume</strong> from intent/policy</li>
+<li><a href="pages/observability/jobs.md">Jobs</a> — wait for success</li>
+<li>Volume SlideOver → <strong>Snapshot</strong>, or <a href="pages/storage/snapshots.md">Snapshots</a> / <a href="pages/storage/schedules.md">Schedules</a></li>
+</ol>
+<h2>Protect with backups</h2>
+<ol>
+<li><a href="pages/data-protection/buckets.md">Buckets</a> — <strong>Create bucket</strong></li>
+<li><a href="pages/data-protection/backups.md">Backups</a> — <strong>Backup</strong> a volume</li>
+<li>Confirm under <a href="pages/data-protection/protection.md">Protection Status</a> and <a href="pages/observability/jobs.md">Jobs</a></li>
+</ol>
+<h2>Run a DataBridge migration</h2>
+<ol>
+<li><a href="pages/databridge/databridge-sources.md">Cloud Databases</a> — <strong>Register</strong> source</li>
+<li><a href="pages/databridge/databridge-plans.md">Migration Plans</a> — <strong>Create</strong> plan</li>
+<li><a href="pages/databridge/databridge-plans-id.md">Plan Detail</a> — stages, CDC start/stop, cutover confirms</li>
+<li><a href="pages/databridge/databridge-validation.md">Validation</a> / <a href="pages/databridge/databridge-replication.md">Replication</a> / <a href="pages/databridge/databridge-edge-clusters.md">Edge DB Clusters</a></li>
+</ol>
+<h2>Day-2 Ceph / DR</h2>
+<ol>
+<li><a href="pages/infrastructure/backends.md">Backends</a> / <a href="pages/infrastructure/ceph.md">Ceph</a></li>
+<li><a href="pages/infrastructure/maintenance.md">Maintenance</a> — pause jobs or cordon before risky work</li>
+<li><a href="pages/infrastructure/dr.md">Disaster Recovery</a> — peers, mirrors, promote/failover (confirm-gated)</li>
+</ol>
+<h2>Related</h2>
+<ul>
+<li><a href="getting-started.md">Getting Started</a></li>
+<li><a href="using-the-dashboard.md">Using the Dashboard</a></li>
+</ul>
+</main></body></html>

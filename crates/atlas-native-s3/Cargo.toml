@@ -1,0 +1,39 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+[package]
+name = "atlas-native-s3"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "atlas-native-s3"
+path = "src/bin/atlas-native-s3.rs"
+
+[dependencies]
+atlas-native.workspace = true
+atlas-native-fuse = { path = "../atlas-native-fuse" }
+async-trait.workspace = true
+bytes = "1"
+clap.workspace = true
+futures-util.workspace = true
+http.workspace = true
+hyper-util = { version = "0.1", features = ["server", "server-auto", "server-graceful", "tokio", "http1", "http2"] }
+libc = "0.2"
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+s3s = "0.17"
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+time = "0.3"
+tokio.workspace = true
+tokio-rustls = { version = "0.26", default-features = false, features = ["ring", "tls12"] }
+tracing.workspace = true
+tracing-subscriber.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+atlas-driver-rgw.workspace = true
+reqwest.workspace = true
+tempfile.workspace = true

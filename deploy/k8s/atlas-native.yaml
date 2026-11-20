@@ -1,0 +1,183 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# atlas-native-node as a 3-replica StatefulSet (docs/NATIVE_NODE.md). Every pod runs both roles:
+# a data node serving its PVC and a metadata (Raft) voter. Pods find each other through the
+# headless Service's stable DNS names; addresses are re-resolved on every reconnect, so a
+# rescheduled pod with a new IP is picked up again.
+#
+# The /v1 API needs the bearer token in Secret atlas-native-api (key `token`); deploy
+# scripts/deploy-native-remote.sh creates it if missing. The HTTP endpoint is plain HTTP and only
+# exposed inside the cluster (ClusterIP); internal Raft/data transports are plaintext here; set
+# "tls" in the config (and mount the certs) to enable mutual TLS.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: atlas-native
+  labels:
+    app.kubernetes.io/part-of: atlas
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: atlas-native-config
+  namespace: atlas-native
+data:
+  # ${POD_NAME} is expanded from the environment by atlas-native-node at startup.
+  node.json: |
+    {
+      "node_id": "${POD_NAME}",
+      "data_dir": "/var/lib/atlas-native/state",
+      "http_listen": "0.0.0.0:7480",
+      "api_token_file": "/etc/atlas-native/api/token",
+      "max_request_bytes": 16777216,
+      "data_node": { "listen": "0.0.0.0:7481" },
+      "metadata": {
+        "listen": "0.0.0.0:7482",
+        "peers": {
+          "atlas-native-0": "atlas-native-0.atlas-native.atlas-native.svc.cluster.local:7482",
+          "atlas-native-1": "atlas-native-1.atlas-native.atlas-native.svc.cluster.local:7482",
+          "atlas-native-2": "atlas-native-2.atlas-native.atlas-native.svc.cluster.local:7482"
+        },
+        "data_nodes": [
+          { "id": "atlas-native-0", "addr": "atlas-native-0.atlas-native.atlas-native.svc.cluster.local:7481" },
+          { "id": "atlas-native-1", "addr": "atlas-native-1.atlas-native.atlas-native.svc.cluster.local:7481" },
+          { "id": "atlas-native-2", "addr": "atlas-native-2.atlas-native.atlas-native.svc.cluster.local:7481" }
+        ],
+        "replicas": 3,
+        "extent_bytes": 4194304,
+        "tick_ms": 50,
+        "repair_interval_secs": 300,
+        "gc_interval_secs": 60
+      }
+    }
+---
+# Headless: stable per-pod DNS. Not-ready pods must resolve too, or the voters could never reach
+# each other to elect the leader that readiness waits for.
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-native
+  namespace: atlas-native
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app.kubernetes.io/name: atlas-native
+  ports:
+    - { name: http, port: 7480, targetPort: http }
+    - { name: data, port: 7481, targetPort: data }
+    - { name: raft, port: 7482, targetPort: raft }
+---
+# In-cluster entry point for the HTTP API (any pod answers reads; mutations on a follower get 421
+# with the leader's id, i.e. its pod name).
+apiVersion: v1
+kind: Service
+metadata:
+  name: atlas-native-api
+  namespace: atlas-native
+spec:
+  selector:
+    app.kubernetes.io/name: atlas-native
+  ports:
+    - { name: http, port: 7480, targetPort: http }
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: atlas-native
+  namespace: atlas-native
+spec:
+  maxUnavailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlas-native
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: atlas-native
+  namespace: atlas-native
+  labels:
+    app.kubernetes.io/name: atlas-native
+    app.kubernetes.io/part-of: atlas
+spec:
+  serviceName: atlas-native
+  replicas: 3
+  # All voters must start together to elect a leader; ordered startup would wait on readiness
+  # (which needs a leader) forever.
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: atlas-native
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: atlas-native
+      annotations:
+        # Set by deploy-native-remote.sh to a hash of this manifest so a ConfigMap change rolls
+        # the pods (subPath mounts never see ConfigMap updates).
+        atlas.zyvor.ai/manifest-sha: "unset"
+    spec:
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    app.kubernetes.io/name: atlas-native
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: node
+          image: localhost/atlas-native-node:dev
+          imagePullPolicy: Never   # imported into k3s containerd by deploy-native-remote.sh
+          args: ["--config", "/etc/atlas-native/node.json"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+          ports:
+            - { name: http, containerPort: 7480 }
+            - { name: data, containerPort: 7481 }
+            - { name: raft, containerPort: 7482 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 5
+          resources:
+            requests: { cpu: 50m, memory: 64Mi }
+            limits: { memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/atlas-native }
+            - { name: config, mountPath: /etc/atlas-native/node.json, subPath: node.json, readOnly: true }
+            - { name: api-token, mountPath: /etc/atlas-native/api, readOnly: true }
+      volumes:
+        - name: config
+          configMap: { name: atlas-native-config }
+        - name: api-token
+          secret: { secretName: atlas-native-api }
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 5Gi

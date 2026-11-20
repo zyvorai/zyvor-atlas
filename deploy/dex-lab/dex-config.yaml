@@ -1,0 +1,54 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Throwaway Dex OIDC provider for testing Atlas's OIDC/SSO login (crates/atlas-gateway/src/routes/oidc.rs).
+# Plain HTTP, in-memory storage, static test users — lab-only, not for production. Mirrors the
+# self-signed-cert-free, no-ingress posture of the rest of deploy/ (see deploy/rook-ceph-lab/README.md's
+# "lab, not production" caveat) by skipping TLS entirely rather than fighting a self-signed CA trust
+# chain for a disposable identity provider.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: dex-config
+  namespace: zyvor-system
+  labels: { app: dex }
+data:
+  config.yaml: |
+    issuer: http://DEX_ISSUER_HOST:30556
+
+    storage:
+      type: memory
+
+    web:
+      http: 0.0.0.0:5556
+
+    oauth2:
+      skipApprovalScreen: true
+      responseTypes: ["code"]
+
+    staticClients:
+      - id: atlas-console
+        secret: DEX_CLIENT_SECRET
+        name: 'Atlas Storage Center'
+        redirectURIs:
+          - http://DEX_ISSUER_HOST:30510/api/atlas/v1/auth/oidc/callback
+
+    enablePasswordDB: true
+    staticPasswords:
+      # Password: AlicePass123!  (bcrypt, cost 10)
+      - email: "alice@zyvor.lab"
+        hash: "$2a$10$VF6zCpg20xeR5jgqfH5AxOSxPAJ.n68MzRQkLugjCq5OfRwHuZXOC"
+        username: "alice"
+        userID: "alice-uid"
+        groups: ["admin"]
+      # Password: BobPass123!
+      - email: "bob@zyvor.lab"
+        hash: "$2a$10$.nAxcY7lA4nA5O3Pm8M1wugQN1Z.f191O1owQIKwnf0IYZEQ6rATS"
+        username: "bob"
+        userID: "bob-uid"
+        groups: ["operator"]
+      # Password: CarolPass123!  (no group -> Atlas defaults her to viewer)
+      - email: "carol@zyvor.lab"
+        hash: "$2a$10$2E3hUcZmcC97blOfod8Fwu0OGxj9lttd3pvTDj.PyMvChWoJuql2W"
+        username: "carol"
+        userID: "carol-uid"
+        groups: []

@@ -1,0 +1,179 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# S3 gateway (docs/NATIVE_S3.md): atlas-native-s3 serving the listed filesystems as buckets over
+# the cluster's HTTP API, behind a Service. Every request's state lives in the filesystem (multipart
+# uploads included), so the Deployment scales out and rolls.
+{{- if .Values.s3.enabled }}
+{{- if .Values.httpTls.requireClientCert }}
+{{- fail "s3.enabled does not support httpTls.requireClientCert yet" }}
+{{- end }}
+{{- if not .Values.s3.buckets }}
+{{- fail "s3.enabled needs at least one entry in s3.buckets" }}
+{{- end }}
+{{- if and (not .Values.s3.credentials.existingSecret) (not .Values.s3.credentials.keys) }}
+{{- fail "s3.enabled needs s3.credentials.existingSecret or s3.credentials.keys" }}
+{{- end }}
+{{- $full := include "atlas-native.fullname" . }}
+{{- $scheme := ternary "https" "http" .Values.httpTls.enabled }}
+{{- $endpoints := list }}
+{{- range $i := until (int .Values.replicas) }}
+{{- $endpoints = append $endpoints (printf "%s://%s:7480" $scheme (include "atlas-native.podHost" (list $ $i))) }}
+{{- end }}
+{{- $image := printf "%s:%s" .Values.s3.image.repository (.Values.s3.image.tag | default .Chart.AppVersion) }}
+{{- $credSecret := .Values.s3.credentials.existingSecret | default (printf "%s-s3-credentials" $full) }}
+{{- $tlsSecret := .Values.s3.tls.existingSecret }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $full }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3
+data:
+  buckets.json: {{ toJson .Values.s3.buckets | quote }}
+{{- if not .Values.s3.credentials.existingSecret }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $credSecret }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3
+type: Opaque
+stringData:
+  credentials.json: {{ toJson .Values.s3.credentials.keys | quote }}
+{{- end }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $full }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3
+spec:
+  replicas: {{ .Values.s3.replicas }}
+  selector:
+    matchLabels:
+      {{- include "atlas-native.selectorLabels" . | nindent 6 }}
+      app.kubernetes.io/component: s3
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-native.selectorLabels" . | nindent 8 }}
+        app.kubernetes.io/component: s3
+      annotations:
+        checksum/buckets: {{ toJson .Values.s3.buckets | sha256sum }}
+        {{- if not .Values.s3.credentials.existingSecret }}
+        checksum/credentials: {{ toJson .Values.s3.credentials.keys | sha256sum }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.s3.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.s3.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      # On SIGTERM the gateway finishes in-flight requests (up to 30 s), then closes its sessions.
+      terminationGracePeriodSeconds: 45
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+      containers:
+        - name: s3
+          image: {{ $image }}
+          imagePullPolicy: {{ .Values.s3.image.pullPolicy }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          args:
+            - --endpoint={{ join "," $endpoints }}
+            - --token-file=/etc/atlas-native-s3/api/token
+            - --buckets-file=/etc/atlas-native-s3/buckets/buckets.json
+            - --credentials-file=/etc/atlas-native-s3/credentials/credentials.json
+            - --listen=0.0.0.0:9000
+            - --uid={{ .Values.s3.uid }}
+            - --gid={{ .Values.s3.gid }}
+            {{- if .Values.httpTls.enabled }}
+            - --ca-file=/etc/atlas-native-s3/http-tls/ca.crt
+            {{- end }}
+            {{- if $tlsSecret }}
+            - --tls-cert=/etc/atlas-native-s3/tls/tls.crt
+            - --tls-key=/etc/atlas-native-s3/tls/tls.key
+            {{- end }}
+            {{- range .Values.s3.domains }}
+            - --domain={{ . }}
+            {{- end }}
+          ports:
+            - { name: s3, containerPort: 9000, protocol: TCP }
+          readinessProbe:
+            tcpSocket: { port: s3 }
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket: { port: s3 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          volumeMounts:
+            - { name: api-token, mountPath: /etc/atlas-native-s3/api, readOnly: true }
+            - { name: buckets, mountPath: /etc/atlas-native-s3/buckets, readOnly: true }
+            - { name: credentials, mountPath: /etc/atlas-native-s3/credentials, readOnly: true }
+            {{- if .Values.httpTls.enabled }}
+            - { name: http-ca, mountPath: /etc/atlas-native-s3/http-tls, readOnly: true }
+            {{- end }}
+            {{- if $tlsSecret }}
+            - { name: tls, mountPath: /etc/atlas-native-s3/tls, readOnly: true }
+            {{- end }}
+          resources: {{- toYaml .Values.s3.resources | nindent 12 }}
+      volumes:
+        - name: api-token
+          secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+        - name: buckets
+          configMap: { name: {{ $full }}-s3 }
+        - name: credentials
+          secret:
+            secretName: {{ $credSecret }}
+            items: [{ key: credentials.json, path: credentials.json }]
+        {{- if .Values.httpTls.enabled }}
+        - name: http-ca
+          secret:
+            secretName: {{ .Values.httpTls.existingSecret }}
+            items: [{ key: ca.crt, path: ca.crt }]
+        {{- end }}
+        {{- if $tlsSecret }}
+        - name: tls
+          secret:
+            secretName: {{ $tlsSecret }}
+            items: [{ key: tls.crt, path: tls.crt }, { key: tls.key, path: tls.key }]
+        {{- end }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ $full }}-s3
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+    app.kubernetes.io/component: s3
+  {{- with .Values.s3.service.annotations }}
+  annotations: {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.s3.service.type }}
+  {{- with .Values.s3.service.loadBalancerIP }}
+  loadBalancerIP: {{ . }}
+  {{- end }}
+  selector:
+    {{- include "atlas-native.selectorLabels" . | nindent 4 }}
+    app.kubernetes.io/component: s3
+  ports:
+    - { name: s3, port: {{ .Values.s3.service.port }}, targetPort: s3, protocol: TCP }
+{{- end }}

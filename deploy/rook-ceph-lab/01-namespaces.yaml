@@ -1,0 +1,15 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: rook-ceph
+  labels:
+    zyvor.dev/component: storage
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: zyvor-system
+  labels:
+    zyvor.dev/component: control-plane

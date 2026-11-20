@@ -1,0 +1,40 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Single-node CephCluster override for a one-node k3s lab (1 mon, 1 mgr, one OSD on /dev/sdb).
+# NOT for production — the canonical 3-node profile is in ../02-cephcluster.yaml.
+apiVersion: ceph.rook.io/v1
+kind: CephCluster
+metadata:
+  name: rook-ceph
+  namespace: rook-ceph
+spec:
+  cephVersion:
+    # Rook >=1.20 (hypercluster Helm default) requires Squid 19.2+
+    image: quay.io/ceph/ceph:v19.2.3
+    allowUnsupported: false
+  dataDirHostPath: /var/lib/rook
+  mon:
+    count: 1
+    allowMultiplePerNode: true
+  mgr:
+    count: 1
+    modules:
+      - name: prometheus
+        enabled: true
+  dashboard:
+    enabled: false
+  monitoring:
+    enabled: false
+  network:
+    connections:
+      encryption:
+        enabled: false
+  storage:
+    useAllNodes: false
+    useAllDevices: false
+    nodes:
+      - name: nldw3-4-32-26        # single control-plane node
+        devices:
+          - name: sdb              # the empty 931 GB disk
+  disruptionManagement:
+    managePodBudgets: false

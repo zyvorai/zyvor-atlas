@@ -1,0 +1,48 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# Lab acceptance (PDF §19.1): a KubeVirt VM booting from a Ceph-backed PVC.
+# The DataVolume imports a cloud image onto zyvor-rbd-prod; the VM boots from it.
+apiVersion: cdi.kubevirt.io/v1beta1
+kind: DataVolume
+metadata:
+  name: ubuntu-prod-01-root
+  namespace: default
+  labels:
+    zyvor.dev/owner-product: veyron
+spec:
+  source:
+    http:
+      url: https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img
+  storage:
+    accessModes:
+      - ReadWriteOnce
+    resources:
+      requests:
+        storage: 10Gi
+    storageClassName: zyvor-rbd-prod
+---
+apiVersion: kubevirt.io/v1
+kind: VirtualMachine
+metadata:
+  name: ubuntu-prod-01
+  namespace: default
+  labels:
+    zyvor.dev/owner-product: veyron
+    zyvor.dev/storage-policy: production-vm
+spec:
+  running: true
+  template:
+    spec:
+      domain:
+        resources:
+          requests:
+            memory: 1Gi
+        devices:
+          disks:
+            - name: rootdisk
+              disk:
+                bus: virtio
+      volumes:
+        - name: rootdisk
+          persistentVolumeClaim:
+            claimName: ubuntu-prod-01-root

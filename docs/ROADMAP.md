@@ -1,0 +1,742 @@
+<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+# Roadmap
+
+Atlas follows the phased plan in `Zyvor_Ceph_Integration_Developer_Implementation_Plan.pdf`
+(§18 execution plan). This file tracks what's built vs. what's next. Maturity — implemented,
+lab-verified, production-supported, experimental, or planned — is the short matrix in
+[STATUS.md](STATUS.md). This file is history; when the two disagree, STATUS.md wins.
+
+## 🟡 Slice — observe-first storage I/O (this tree)
+
+- `atlas-io` crate + `atlas-io-agent`: fake bio pipeline, device map, histograms,
+  workloads, RCA, leased write-freeze (fail open), `/metrics`.
+- BPF C contracts under `crates/atlas-io/bpf/` — not compiled in CI.
+- Next: CO-RE loader, real `block_rq_*` attach, Observatory UI, gateway proxy.
+
+## ✅ Slice 1 — MVP foundation (done, verified)
+
+Read-only control plane + real Ceph lab.
+
+- `atlas-*` Cargo workspace; axum 0.8 gateway; SQLite inventory.
+- `StorageDriver` trait; real + fake Ceph drivers; live Kubernetes driver.
+- Read-only REST API (backends, discover, clusters, nodes, osds, pools, volumes,
+  storage-classes, metrics, alerts/jobs stubs).
+- Discovery worker → normalized inventory; audit logging.
+- Rook Ceph lab manifests (`deploy/rook-ceph-lab/`) + single-node overlay.
+- k3s deployment (`scripts/deploy-remote.sh`, `deploy/k8s/`), fake + real (ceph) images.
+- **Verified end-to-end** on real k3s + Rook Ceph: live k8s StorageClass/PV discovery, real RBD
+  PVC provisioning, and Atlas real-driver discovery of the live cluster.
+
+## ✅ Slice 2 — Write path & job engine (done, verified)
+
+- **Async job engine** (`atlas-jobs`) — in-process tokio worker backed by `storage_jobs`, PDF §10.5
+  state machine (`pending→queued→running→verifying→succeeded|failed`). SQLite-only (no Redis/NATS).
+- `POST /volumes` → creates a Ceph-backed PVC; `202 Accepted` + job id.
+- `DELETE /volumes/{id}`, `POST /volumes/{id}/expand`, `POST /volumes/{id}/snapshots`,
+  `DELETE /snapshots/{id}` — all async jobs.
+- Real `GET /jobs`, `GET /jobs/{id}`, `GET /snapshots`, `GET /policies`.
+- `atlas-policy` — intent (`production|database|development|shared|ai`) → StorageClass + access/volume
+  mode (PDF §12.3).
+- `atlas-driver-k8s` write ops — create/get/delete/expand PVC + VolumeSnapshot (via DynamicObject).
+- **Idempotency keys** on create (PDF §17.4); ownership recorded in `product_bindings`.
+- `atlasctl create-volume|snapshot-volume|delete-volume|jobs|snapshots|policies`.
+- **Verified end-to-end** on real k3s + Ceph: `POST /volumes` → PVC Bound on `zyvor-rbd-prod` →
+  snapshot → VolumeSnapshot `readyToUse=true`, all driven through the job engine.
+
+### Slice 2 follow-ups
+- ✅ **Snapshot clone/restore** (`POST /snapshots/{id}/clone|restore`) — provision a new PVC from a
+  VolumeSnapshot (`dataSource`), with parent/child dependency tracking
+  (`storage_volumes.source_snapshot_id`) and a safe-delete guard (409 unless `?force=true`).
+  Verified on real Ceph.
+- ✅ **Safe-by-default** deletes for production *volumes*: `DELETE /volumes/{id}?confirm=true`
+  required for prod/database StorageClasses (PDF §14 Rule 2; `force=true` accepted as alias).
+  (Snapshot delete already guards on dependents; volume delete now requires confirmation.)
+- ⏭ WebSocket/SSE job progress for the UI.
+- ✅ **Direct RBD create path (bypassing CSI)** for non-Kubernetes consumers (machina/libvirt, bare
+  VMs): `POST /rbd-images {name, size_bytes, pool?}` runs `rbd create` and records a volume row
+  (native id `rbd:pool/image`, no PVC); `GET /rbd-images?pool=` lists from Ceph; `DELETE
+  /rbd-images/{pool}/{image}` runs `rbd rm`. `atlasctl create-rbd-image`. Verified live: image
+  created (`rbd info` 1 GiB), listed, and removed on real Ceph.
+- ✅ **Direct RBD clone (golden image)**: `POST /rbd-images/{pool}/{image}/clone {name, snap?}`
+  snapshots + protects the base and `rbd clone`s a COW copy — the machina/libvirt base-image →
+  per-VM workflow. Verified live: clone's `rbd info` shows `parent: <pool>/golden-base@v1`.
+- ✅ **Real usage stats**: `POST /rbd-usage/refresh` recomputes each volume's `used_bytes` via
+  `rbd du` (resolving the image from the `rbd:` id or the PVC→PV for CSI volumes). Verified live:
+  a fresh volume's image resolved and `used_bytes` written. `atlasctl refresh-usage`.
+- ✅ **RBD resize + flatten**: `POST /rbd-images/{pool}/{image}/resize {size_bytes}` grows an image
+  (updates inventory size); `.../flatten` detaches a COW clone from its parent snapshot. Verified
+  live: base 1→3 GiB, clone flattened to independent. `atlasctl resize-rbd-image/flatten-rbd-image`.
+- ✅ **Volume list filters**: `GET /volumes?state=&tenant=`. Verified live.
+- ✅ **Raw-RBD snapshots**: `GET`/`POST /rbd-images/{pool}/{image}/snapshots`, `POST .../rollback`
+  (point-in-time restore, admin). Verified live (create → list `[pit1]` → rollback).
+- ✅ **Object-storage observability**: `GET /buckets/{id}/stats` (`radosgw-admin bucket stats` —
+  object count, size, quota) and `GET /buckets/{id}/objects[?prefix=]` (S3 `ListObjectsV2`). Verified.
+  `/stats` now has a Fake-mode branch (returns a zeroed-but-`available` stub) instead of crashing
+  on deployments without a `radosgw-admin` binary; the underlying `radosgw-admin` call is bounded
+  to 12s so a slow/unresponsive RGW soft-fails (`available: false`) rather than hanging.
+- ✅ **Randomized-testing validation fixes** — found via a randomized battery of valid/boundary/
+  invalid API probes: `POST /buckets` now rejects names under 3 characters (`400
+  VALIDATION_ERROR`) matching the S3 bucket-naming rules the console already advertises, instead
+  of silently accepting them (harmless in practice since Rook's OBC always generates a
+  UUID-suffixed real bucket name regardless, but the gap let a caller's mistake through
+  unflagged). `atlas_policy::resolve` now rejects an unrecognized `policy` intent with `400
+  VALIDATION_ERROR` instead of silently falling back to the request kind's default placement — a
+  typo in `policy` used to provision storage silently rather than failing loudly; a
+  tenant-specific policy override (`PUT /tenants/{id}/policies/{intent}`, not restricted to the
+  built-in catalog) still resolves correctly.
+
+## ✅ Web dashboard — Storage Center (Zeus OS-style React console)
+
+A full **React 19 + Vite + Tailwind + TanStack Query + zustand** SPA at `crates/atlas-gateway/ui`,
+built to match the **Zeus OS (v9s)** look-and-feel — vendored HSL design tokens + `tahoe/zeus`
+glass/pill/badge/table classes, the **mac-desktop shell** (glassy menu bar with cluster-health badge,
+clock, spotlight ⌘K, live running-jobs indicator, and a Bearer-token control; grouped "Center"
+sidebar; app dock), Inter type, Lucide icons, recharts. Built by a `node:22` Docker stage and
+**embedded into the gateway binary** via `rust-embed`, served at **`/`** with an SPA fallback (open
+`http://<node>:30511/`). Local dev: `make ui` (bundle) / `make ui-dev` (Vite proxy).
+
+Every Atlas capability is wired: **Overview** (capacity gauge, health, client-I/O sparkline,
+recovery, pools/OSDs, open alerts); **Volumes** (filters, create/expand/snapshot/schedule/delete +
+detail drawer with labels & product bindings); **RBD Images** (create/clone/resize/flatten/delete,
+snapshots list/create/rollback, usage refresh); **Snapshots**, **Schedules**, **Backups**
+(create/restore/download/delete), **Buckets** (create/stats/object-browser/delete), **Alerts**
+(state filter + evaluate), **Metrics** (Ceph, prefix filter), **Jobs** (live SSE progress),
+**Audit** (filters), **Tenants** (quota + policy CRUD), **Access** (mint service-account JWTs),
+**Policies**, **Backends**, **Kubernetes**, **Cluster**. Write actions thread `202 → SSE watch →
+toast → refetch`. Replaces the earlier vanilla-JS `ui.html`. This standalone console sidesteps the
+Zeus OS `atlas`/`ZeusStorageCenter.tsx` collisions; Zeus OS can later embed it or call the same API.
+
+**UX polish**: a **branded login gate** (Zyvor hexagon mark, animated gradient orbs, optional
+service-account token, live gateway health/version) with a session gate + sign-out; a **theme toggle**
+(dark ↔ **Aurora** neon variant); confirm dialogs on destructive actions; loading/empty states with
+CTAs; a running-jobs popover; ⌘K spotlight with arrow-nav; copy-to-clipboard IDs; a capacity radial +
+per-pool utilization bars on the Command Deck; per-page titles, hexagon favicon, responsive sidebar.
+
+- ✅ **Nav overflow-menu fix** — the "More sections"/"More shortcuts" fold-menus in the top nav (shown
+  when the rail is too narrow to fit every section/shortcut) opened but rendered invisible: they used
+  `position: absolute` inside `.at-rail-nav`/`.at-controls`, both `overflow: hidden`, so the panel was
+  clipped before it painted. Fixed by portaling both to `document.body` with `position: fixed` +
+  `getBoundingClientRect()`-computed coordinates, matching the pattern the section flyouts already used.
+- ✅ **Two-shell Apple shop redesign** — **Carbon** (dark shop: black canvas + Apple Blue) and
+  **Apple Lite** (light shop: `#F5F5F7` + Apple Blue). Elevated rounded boxes, SF system type,
+  selection tiles, and swipe rails. Cosmic Orange reserved for the brand mark only. See
+  `docs/ATLAS_UI_CONTRACT.md`. Preceded by an earlier Zeus two-shell port and sidebar chrome work;
+  cascade-layer fixes for shell overrides remain in place.
+
+**HTTPS**: an optional TLS listener (`ATLAS_HTTPS_ADDR` + `ATLAS_TLS_CERT`/`ATLAS_TLS_KEY` PEM), served
+alongside HTTP via `axum-server` + rustls (ring provider — no cmake in the build). The ceph deployment
+mounts a self-signed `atlas-tls` Secret and exposes NodePort **30543** (`https://<node>:30543/`; a real
+cert/ingress gives trusted TLS).
+- ✅ **`ATLAS_DISABLE_HTTP`**: found via the bank production-readiness audit — the plain HTTP
+  listener always ran even when HTTPS was configured, so TLS could be bypassed entirely by
+  hitting the HTTP port directly. This env var skips binding it; `validate_for_start()` refuses
+  to boot with it set unless `ATLAS_HTTPS_ADDR`/`ATLAS_TLS_CERT`/`ATLAS_TLS_KEY` are all also
+  configured (otherwise there'd be no REST listener at all). Left unset in the shipped manifests
+  for now — flipping it on for a real deployment is a decision to make once HTTPS-only access is
+  confirmed working end-to-end for every client, not an automatic default.
+- ✅ **gRPC TLS**: the gRPC edge previously had no TLS option at all — plaintext regardless of how
+  REST was configured. It now reuses the same cert/key as the REST HTTPS listener automatically
+  (`tonic`'s `tls` feature, `Identity::from_pem` + `ServerTlsConfig`) whenever both are configured;
+  stays plaintext otherwise (unchanged default). Verified live on the real-Ceph gateway (which
+  already carries a real self-signed cert/key pair): `atlas-gateway gRPC (TLS) listening on
+  0.0.0.0:5111` alongside REST HTTP/HTTPS, all three healthy. This same deploy pass also caught
+  and fixed a real self-state-backup misconfiguration on that gateway (wrong RGW endpoint port —
+  it was pointed at the presigned-URL-only service instead of the plain RGW NodePort, so uploads
+  400'd); it now uploads successfully there too.
+- ✅ **Durable gateway DB** — the SQLite file is now backed by a `ReadWriteOnce` PVC (`Recreate`
+  strategy). The real-mode gateway dogfoods `zyvor-rbd-prod` (Ceph); the fake-mode gateway uses the
+  cluster default StorageClass so it still deploys without Ceph. Verified: inventory survives a pod
+  restart. (For multi-replica HA, move to Postgres — the sqlx layer already abstracts this.)
+
+## ✅ Slice 3 (part 1) — RGW object storage + backups (done, verified)
+
+- `atlas-driver-rgw` — minimal S3 client for RGW (`rusty-s3` SigV4 signing + `reqwest`).
+- Buckets via **ObjectBucketClaim**: `POST /buckets` (async job) creates an OBC; Rook provisions the
+  bucket + Secret + ConfigMap; Atlas records the endpoint + a **secret reference** (never the keys).
+  `GET /buckets`, `GET /buckets/{id}`.
+- Backups: `POST /backup-jobs` snapshots the volume, writes a **backup manifest** (PDF §16.2) to the
+  RGW bucket over S3, reads it back to **verify** (sha256 checksum). `GET /backups`, `GET /backups/{id}`.
+- Credentials are read from the OBC Secret **in-cluster** by the job and never logged.
+- migration 0003 (`storage_buckets`, `storage_backups`); single-node RGW object store + bucket SC.
+- **Verified** on real Ceph RGW: bucket bound, manifest object written + verified, independently
+  confirmed via `radosgw-admin bucket list`.
+
+### RGW/backup follow-ups
+- ✅ Full **data** backup (`POST /backup-jobs {"mode":"data"}`) — resolves the PVC's real RBD image
+  (PV csi attributes), `rbd snap create` + `rbd export-diff` (capped 512 MiB), uploads the diff to
+  RGW alongside the manifest. Verified on real Ceph (data object present, checksum recorded).
+- ✅ **Restore-from-data** (`POST /restore-jobs {"mode":"data"}`) — creates an empty PVC, resolves its
+  RBD image, downloads the diff from S3 (checksum-verified), and `rbd import-diff`s it into the new
+  image. **Verified byte-for-byte on real Ceph**: wrote a file to volume A → data backup → restore to
+  a new volume B → mounted B → the file read back identical.
+- ✅ **Multipart streaming** — data backup/restore no longer buffer the whole image. Backup streams
+  `rbd export-diff` straight into an **S3 multipart upload** (16 MiB parts); restore streams the S3
+  object into `rbd import-diff` stdin. sha256 is computed over the stream, so there is no in-memory
+  size cap. Verified live: a 20 MiB random file → ~23 MiB diff (**2 parts**) → restore byte-identical
+  (`data_verified: true`, source/restored sha256 match).
+- ✅ `POST /restore-jobs` — reads + checksum-verifies the backup manifest from RGW, then provisions
+  a new PVC from the backup's VolumeSnapshot (PDF §16, DR-2). Verified on real Ceph.
+- ✅ **Backup delete** (`DELETE /backups/{id}`) — removes the S3 manifest + `.rbd-diff` data objects
+  (idempotent) and the RBD snapshot (best-effort), then the row. Verified live (RGW objects → 0, row 404).
+- ✅ **Retention (count)** — `ATLAS_BACKUP_KEEP` (0=unlimited) + per-request `keep`; on backup create,
+  prunes backups beyond the keep count (most-recent-first) via delete jobs. Verified live (3 → keep=2 → 2).
+- ✅ **Retention (age)** — `ATLAS_BACKUP_MAX_AGE_SECS` (0=disabled) + per-request/CLI `max_age_secs`; on
+  backup create, prunes completed backups for the volume older than the cutoff via delete jobs.
+  `GET /backups?volume_id=` filters by volume. Verified live (backup aged past a 3s cutoff → pruned).
+- ✅ **Bucket delete** (`DELETE /buckets/{id}`) — deletes the OBC (Rook releases the bucket) + row;
+  blocked with `409` if backups still reference the bucket, unless `?force=true`. Verified live
+  (OBC NotFound, row 404).
+- ✅ **Presigned download** (`GET /backups/{id}/download?what=data|manifest`) — returns a time-limited
+  SigV4 URL signed with the bucket's in-cluster credentials (never exposed), so a client pulls the
+  object straight from RGW. Verified live (credential-free download → 200, real `rbd diff v1` bytes).
+- ✅ **Off-cluster downloads** — `ATLAS_RGW_PUBLIC_ENDPOINT` makes the gateway sign presigned URLs
+  against a public RGW host (exposed via the `atlas-rgw-public` NodePort, 30513) so they resolve
+  outside the cluster. Verified live (URL host = node:30513, credential-free GET → 200, `rbd diff v1`).
+- ✅ **Bucket quotas** — `POST /buckets` accepts `max_objects`/`max_size`; the job sets the OBC
+  `additionalConfig` and enforces the RGW per-bucket quota directly via `radosgw-admin`
+  (`quota set`+`enable`). Verified live (`enabled: true, max_objects: 100, max_size: 1 GiB`).
+- Bucket lifecycle policies; time-based backup retention; external RGW ingress for downloads.
+
+## ✅ gRPC edge (done, verified)
+
+- `tonic` 0.12 service `atlas.v1.AtlasStorage` served alongside REST on `ATLAS_GRPC_ADDR` (default
+  `:5111`): `Health`, `ListClusters/Pools/Volumes`, `GetVolume`, `CreateVolume` (→ job), `GetJob`,
+  `ListAlerts`. Server **reflection** enabled (grpcurl works without the proto).
+- proto at `crates/atlas-gateway/proto/atlas.proto`; built with system `protoc` (installed in the
+  Docker builders). Integration test drives the server with the generated client.
+- **Verified** on the cluster with `grpcurl` (NodePort 30512): `ListPools` returned the real Ceph
+  pools over gRPC via reflection.
+- ✅ **JWT auth** — a tonic interceptor gated by `ATLAS_AUTH_REQUIRED` verifies an HS256 Bearer token
+  in the `authorization` metadata with the shared secret (mirrors REST) and injects the actor.
+  Verified live: no token → `Unauthenticated`, valid token → OK.
+- ✅ **RBAC** — role hierarchy `viewer < operator < admin` (PDF §14.2; `product.service.*` = operator).
+  Enforced on both edges (only when `auth_required`): writes need operator; delete-volume /
+  create-backend / force-snapshot-delete need admin. Verified live (401/403/202/admin-gated).
+- ✅ **WatchJob** server-streaming RPC — emits the job on each state change until terminal (verified
+  live: `CreateVolume` → `WatchJob` streamed to `succeeded`).
+- ✅ **REST SSE** parity: `GET /jobs/{id}/watch` streams `text/event-stream` job frames until terminal
+  (verified live: running → succeeded).
+- ✅ **Product-integration surface**: `CreateVolume` takes an `Owner {product, resource_type,
+  resource_id, role}` recorded in `product_bindings`; `ListVolumesByOwner(product, resource_id?)`
+  lets a product enumerate only the volumes it owns; `CreateSnapshot` (operator) and `DeleteVolume`
+  (admin) return job replies. Verified live over gRPC reflection (Veyron flow: create-owned →
+  list-by-owner scoped correctly → snapshot → delete, all jobs `succeeded`).
+- ✅ **GetMetricsSummary** + **ListBuckets** — capacity/I/O/recovery rollup and RGW bucket inventory
+  for product consoles (see `docs/PRODUCTS.md`).
+- Follow-ups: generated gRPC client stubs vendored into each product (Veyron, Transiva, …).
+
+## ✅ DataBridge — cloud-to-edge database mobility (six source engines)
+
+A migration control plane layered on Atlas (`atlas-databridge`): migrate managed cloud databases
+to open engines at the edge on Ceph-backed storage.
+
+- Pipeline as async jobs + a reconciler: **discover → assess → provision → full-load → CDC → validate →
+  cutover → rollback**. Admin-guarded cutover (validated + validation passed + CDC lag threshold); rollback window.
+- **Six source engines**: Postgres, MySQL, MariaDB (homogeneous → CNPG/Percona) + Oracle, SQL Server
+  (heterogeneous → Postgres edge, seeded by Debezium's initial snapshot) + MongoDB (homogeneous
+  document → Percona Server for MongoDB, Mongo Kafka sink), all on Ceph-backed storage.
+- Real connectors: Postgres/MySQL/MariaDB default; SQL Server (`tiberius`) / Oracle (OCI) / MongoDB
+  behind cargo features; precise Kafka CDC lag behind the `kafka-lag` feature.
+- CDC: **Debezium** on Strimzi/Kafka → JDBC sink to the edge DB (Postgres path).
+- `migrations/0011_databridge.sql`; `/api/atlas/v1/databridge/*`; **DataBridge** console section;
+  `deploy/databridge/` operator bundle + Connect image. Gateway image bundles the OCI Instant Client
+  and builds the `oracle` feature.
+- **Postgres verified end-to-end** on two independent live Rook Ceph clusters (`<ephemeral-ip>`,
+  `<ephemeral-ip>`) including real CDC replication, driven through the deployed gateway.
+- **All six engines' real-connector discovery verified live** — MySQL 8.4, MariaDB 11.x, MongoDB 7.0
+  (replica set), SQL Server 2022, Postgres, Oracle 23ai/26ai Free — through the deployed k3s gateway
+  (binlog ROW / replica-set change streams / `is_cdc_enabled` / supplemental-log-min → `cdc_capable`,
+  real db + table/collection names, PKs, counts).
+- **MySQL, MariaDB, MongoDB verified through provision → real full-load (data physically copied
+  source→edge) → validate** (row/document-count parity) against a lightweight edge.
+- **MariaDB + MongoDB CDC + cutover verified live** (2026-09-01) on the Rook Ceph lab with
+  Strimzi/Debezium; MySQL (incl. `TIMESTAMP` columns), SQL Server and Oracle followed on
+  2026-10-04 (`docs/DATABRIDGE.md`).
+- Fake-first: the entire pipeline runs with no cloud/k8s (`make run-databridge`), CI-locked by
+  `tests/databridge_pipeline.rs`.
+- Follow-ups: TLS for cloud SSL sources; a rollback drill for the heterogeneous engines.
+
+See [DATABRIDGE.md](DATABRIDGE.md).
+
+## ✅ Day-2 operations (done, fake-first tested)
+
+Atlas is operable, not just observe-and-provision. See [DAY2.md](DAY2.md) for the full operator
+runbook; summary:
+
+- **Control-plane durability**: job recovery on boot, graceful shutdown, deep `/readyz` (DB +
+  driver + worker heartbeats), optional self-state SQLite→S3 backup.
+- **Job cancellation**: `POST /jobs/{id}/cancel` (admin) — the single-worker queue's escape hatch
+  for a job wedged inside a hung `ceph`/`rbd` call; `kill_on_drop` on every subprocess spawn
+  actually kills the child, not just the Rust future. Verified live: cancelled a genuinely stuck
+  `rbd snap unprotect`/`rbd.snap_delete` job mid-run on real Ceph. Also verified live: a
+  `bucket.create` quota-set step stuck `running` indefinitely (unbounded `radosgw-admin` call)
+  blocking the whole queue — cancel freed it immediately; every `radosgw-admin` call is now
+  additionally bounded to 12s at the driver layer so this specific case self-resolves instead of
+  needing manual intervention.
+- **Alerting maturity**: ack/silence(`?secs=`)/resolve lifecycle; rules for jobs-failing, CDC
+  replication error, and tenant-quota-approaching added to the original cluster/pool/OSD set.
+  Verified live against a real open alert (ack → silence honored → resolve).
+- **Cluster ops & maintenance**: backend cordon/uncordon, `POST/GET /maintenance {paused}` worker
+  pause, OSD out/in/reweight, dynamic backend registration (`POST /backends
+  {backend_type:"nfs"|"zfs"}` — instantiates a live driver + discovers immediately; verified live
+  that an unreachable server still registers/discovers cleanly since NFS/ZFS are fixture-only).
+- **Governance**: token revocation (`POST /auth/tokens/{jti}/revoke`), per-minute rate limiting,
+  audit CSV export + retention pruning, chargeback.
+- **Volume lifecycle**: orphan-backup GC (`GET /maintenance/orphans`), per-image QoS
+  (iops/bps), safe resize-down (`allow_shrink` guard).
+- **DataBridge self-heal**: `POST /databridge/plans/{id}/cdc/restart` + reconciler auto-restart
+  (bounded, 3×) for a stalled CDC stream.
+- **Upgrade pre-flight + rollback**: `GET /upgrade/preflight` gates `deploy-remote.sh`/
+  `deploy-ceph-gateway-remote.sh`; `--rollback` reverts via `kubectl rollout undo`.
+- **Cross-cluster DR scaffolding**: peers/mirrors catalog, enable/disable/promote/demote (role
+  guards + `force`), preflight checklist, one-click failover runbook (`confirm`/`force`), RPO
+  recording. Verified live (control-plane guards + preflight blockers + forced override) against
+  the real lab; the underlying `rbd mirror` data-plane still needs a second Ceph cluster to be
+  production-verified — see [DR.md](DR.md).
+
+## ✅ AI Ops Advisor — explainable analysis, incident correlation, MCP tools
+
+Deterministic analysis layered on existing inventory/telemetry (the advisor response stays
+`can_execute: false`; `silence_alert` and `create_snapshot` are a separate two-person execute) —
+no model required for the default path. See [AI_ADVISOR.md](AI_ADVISOR.md).
+
+- **Ops Advisor** (`POST /ai/advisor`): bounded risk score + level, evidence (capacity, 14-day
+  forecast, recovery counters, open alerts, recent failures), and a prioritized read-only runbook.
+  `local`/`auto`/`llm` modes — an optional OpenAI-compatible provider (`ATLAS_AI_BASE_URL`) may
+  rewrite only the executive summary; Atlas always computes and retains the score/evidence/actions.
+- **Incident correlation** (`GET /ai/incidents`): groups related open alerts + recent job failures
+  into families (data safety, capacity, Ceph recovery, replication, job engine, availability,
+  unclassified) with a bounded confidence score and a likely-cause explanation; optional
+  LLM-narrated root-cause summary (`mode`, still `local` by default) on top of the same
+  deterministic grouping.
+- **What-if capacity planning** (`POST /ai/what-if`): projects risk/utilization/days-to-full under
+  hypothetical added capacity, growth rate, and alert/recovery-resolved assumptions, without
+  mutating inventory.
+- **Explainable anomaly detection** (`GET /ai/anomalies`): median/MAD-based detector over capacity
+  growth, read/write byte/op deltas, concurrent jobs, and open alerts — resistant to older spikes
+  contaminating the baseline. ✅ **Pauses itself rather than scoring on bad telemetry**: returns
+  `telemetry_status: "stale"` (>15 min old) or `"unavailable"` (missing/invalid/future-dated
+  timestamp, or no samples at all) with `anomalies: []` and an explanatory warning instead of
+  presenting a stale spike as a current incident.
+- **MCP tool exposure** (`crates/atlas-gateway/src/mcp.rs`, `mcp` feature): 53 read-only tools (inventory,
+  `ops_advisor`, `list_incidents`, `detect_anomalies`, `what_if_capacity`, `io_risk`, DR, jobs, snapshots) plus
+  six opt-in guarded writes (`create_snapshot`, `ack_alert`, `silence_alert` and the three workspace tools;
+  two-phase confirmation token, audited; off unless `ATLAS_MCP_WRITE_ENABLE=1`), and an authenticated `/mcp` on the `atlas-io` agent (10 read-only tools). Failover, delete, restore
+  and disk operations are deliberately not exposed. See [MCP.md](MCP.md) and
+  [API.md](API.md#mcp-model-context-protocol).
+
+## ✅ Ceph NVMe — observe-first, BlueStore DB/WAL (fake-first tested, not yet live)
+
+See [NVME.md](NVME.md). Prompted by Red Hat's NVMe/Crimson work; Crimson itself is unsupported
+upstream, so Atlas only observes it.
+
+- Read-only: `GET /ceph/nvme` (wear, spare, media errors; feeds the Ops Advisor),
+  `/ceph/osd-objectstore`, `/ceph/sizing` (configurable CPU/RAM heuristic), `/ceph/nvmeof`
+  (Rook `CephNVMeOFGateway` CRs, pods, StorageClasses); each has an `atlasctl` command and an MCP tool.
+- Disks picker tags devices `nvme|ssd|hdd`; `POST /ceph/devices` takes `db_device`, `db_size_mb`,
+  `wal_size_mb`, `osds_per_device`.
+- `POST /ceph/nvmeof/namespaces` provisions a new NVMe-oF namespace as a PVC (admin, `confirm`).
+- Not done: live verification on Rook with real NVMe; exporting an existing RBD volume over NVMe-oF
+  (no supported way); reading back the subsystem NQN; anything Crimson-specific.
+
+## ⏭ Slice 3+ — Enterprise & product integration
+- Product integrations: Veyron (VM datastores), Transiva (direct-to-RBD migration; owner id `hyper2kvm`), GuestKit
+  (read-only snapshot inspection), PacketWolf (VM→OSD network/storage RCA), Ragnarok (AI storage
+  facts), Aether (intent YAML), Machina (RGW/CephFS artifacts), HyperSDK (install/onboard CLI).
+- ✅ **Monitor worker** (`atlas-monitor`): periodic discovery + alert rules (cluster unhealthy,
+  pool near-full 75/85%, OSD down) → real `GET /alerts?state=`, `POST /alerts/evaluate`. Deterministic
+  alert ids upsert on recurrence and resolve when conditions clear. Verified on real Ceph
+  (`HEALTH_WARN` → one open cluster alert).
+- ✅ **Ceph mgr Prometheus scrape**: each tick scrapes `rook-ceph-mgr:9283/metrics`, keeps a curated
+  whitelist (capacity, OSD up/in/latency, pool usage, pg, health) into `storage_metrics`, and raises a
+  high-OSD-latency alert (100ms warn / 1000ms critical). `GET /metrics/ceph?prefix=`. Verified on real
+  Ceph (44 metrics incl. real capacity + `osd.0` apply latency).
+- ✅ **Client I/O + recovery metrics/alerts**: the scrape also keeps per-pool client I/O counters
+  (`ceph_pool_rd/wr[_bytes]` — rate them for IOPS/throughput) and recovery/backfill health
+  (`ceph_pg_recovering/backfilling/*_wait`, `ceph_num_objects_degraded/misplaced/unfound`). A
+  recovery alert warns while PGs recover/backfill and escalates to critical on unfound objects,
+  clearing when done. Verified live: client counters populated; recovery alert stays clear on an idle
+  cluster (no false positive).
+- ✅ **Rook CRD read integration**: `atlas-driver-k8s::rook` reads Rook's own `ceph.rook.io/v1`
+  CRs (`CephCluster`, `CephBlockPool`, `CephFilesystem`, `CephObjectStore`) as a second, precise
+  source of truth alongside the existing `ceph`/`rbd` CLI path — additive, nothing CLI-based was
+  removed. Pool `kind` classification (previously a pure name heuristic) is now overridden with an
+  exact Rook-CR-derived kind during discovery when a k8s driver is attached
+  (`atlas_driver_k8s::rook::known_rook_pool_kinds`, wired through `atlas-discovery::run_discovery`'s
+  new `rook_pool_kinds` parameter, mirroring the existing `RbdOwners` enrichment). `GET
+  /ceph/health-rollup` cross-checks the CLI-derived severity against `CephCluster.status.ceph.health`
+  and surfaces a `rook_disagreement` when they differ, falling back to a coarser Rook-CRD-only
+  rollup if the `ceph` CLI path itself fails but Rook is reachable. New additive `GET
+  /ceph/rook-status` exposes the raw CephCluster/CephBlockPool/CephFilesystem/CephObjectStore CR
+  view. `ATLAS_ROOK_NAMESPACE`/`ATLAS_ROOK_CLUSTER_NAME` (both default `rook-ceph`) configure it.
+  **Verified live** against the real single-node Rook lab (`<ephemeral-ip>`, redeployed via
+  `scripts/deploy-remote.sh`): `GET /ceph/rook-status` returned the real `CephCluster` (`phase:
+  Ready, health: HEALTH_WARN`) plus the real `rbd-nvme-prod`/`zyvorfs`/`zyvor-rgw` CRs all
+  `Ready`; `GET /ceph/health-rollup` showed `sources: ["cli","rook-crd"]` with no
+  `rook_disagreement` (the CLI and Rook's own health agreed). This pass also caught and fixed a
+  real RBAC gap: the `atlas-gateway` ServiceAccount's ClusterRole had no `ceph.rook.io` grant at
+  all, so the very first live call 403'd (`cephclusters.ceph.rook.io is forbidden`) — the
+  ClusterRole in `deploy/k8s/atlas-gateway.yaml` now grants `get/list/watch` on `cephclusters` and
+  full CRUD on `cephblockpools`/`cephfilesystems`/`cephobjectstores`, plus `create`/`update`/
+  `delete` on `storageclasses` (previously read-only) for the lifecycle-automation jobs below.
+- ✅ **Rook lifecycle automation**: create/list/delete Ceph pools/filesystems/object stores through
+  Rook CRs from the API instead of hand-edited YAML manifests, following the same async-job pattern
+  `bucket.create` already uses (CR apply → poll `status.phase == "Ready"` → done). `POST`/`GET
+  /ceph/pools` applies a `CephBlockPool` (replicated pools only — erasure coding isn't modeled) + a
+  matching `zyvor.dev`-labelled StorageClass; `POST`/`GET /ceph/filesystems` applies a
+  `CephFilesystem` + RWX CephFS StorageClass; `POST`/`GET /ceph/object-stores` applies a
+  `CephObjectStore` + RGW bucket StorageClass. `DELETE /ceph/{pools,filesystems,object-stores}/
+  {name}` removes the CR + StorageClass, guarded `409` while a volume/bucket still references it
+  (`?force=true` to override) — `storage_buckets` gained a `storage_class` column (migration 0029)
+  so the object-store guard can find dependent buckets, mirroring
+  `storage_volumes.storage_class_name`'s existing role for pools/filesystems. `atlasctl
+  {ceph-pools,create-ceph-pool,delete-ceph-pool}` (and the filesystem/object-store equivalents).
+  CephCluster-level changes (OSD/mon topology) are explicitly out of scope — left as a documented
+  follow-up, not built.
+  **Verified live** against the real single-node Rook lab (`<ephemeral-ip>`): `POST /ceph/pools`
+  created a real `CephBlockPool` (`replicated_size: 1, failure_domain: "osd"`, matching this
+  cluster's actual 1-OSD capacity) that reached `phase: Ready`; a real PVC (`storageClassName:
+  zyvor-atlas-test-pool-3`) bound against the StorageClass the job created
+  (`kubectl get pvc` → `Bound`); `DELETE` removed the StorageClass and the PVC was cleaned up.
+  Two real gaps found and fixed along the way: (1) the pool/filesystem/object-store `replicated`
+  spec hard-coded `requireSafeReplicaSize: <size >= 3>`, an invented heuristic that doesn't match
+  any static manifest in this repo — every one of `deploy/rook-ceph-lab/*.yaml` sets it `false`
+  unconditionally (the lab never has enough failure domains for Ceph's "safe" check to pass);
+  `crates/atlas-jobs/src/dispatch/rook.rs` now always passes `false`, like the manifests. (2) the
+  gateway's ClusterRole had no RBAC for `ceph.rook.io` at all (see the read-integration entry
+  above) — fixed in the same pass. **Known follow-up, not a bug in this code**: a real Ceph
+  cluster defaults `mon_allow_pool_delete=false` (confirmed via Rook's own reconcile error,
+  `Error EPERM: pool deletion is disabled`) — `DELETE /ceph/pools/{name}` correctly deletes the
+  k8s-level CR + StorageClass, but Rook's *own* finalizer can't complete the underlying Ceph pool
+  purge until an operator sets that mon config explicitly; until then the CR sits `Terminating`
+  indefinitely (harmless — StorageClass is already gone, so nothing new can provision against it).
+  A future pass could have the delete job set/restore that mon config around the delete the same
+  way this verification did manually, or document it as an explicit day-2 prerequisite.
+- ✅ **CephFS shared volumes (RWX)**: `POST /volumes {"policy":"shared"}` provisions a
+  **ReadWriteMany** CephFS volume (`zyvor-cephfs-shared`) that multiple pods mount at once — for ISO
+  libraries, templates, and multi-writer product data (GuestKit, Machina). Single-node CephFS
+  filesystem + StorageClass manifest at `deploy/rook-ceph-lab/single-node/cephfs-sc.yaml`. Verified
+  live on real Ceph: two pods mounted the same volume concurrently and saw each other's writes.
+  The `shared` policy now also correctly tags the volume `kind: "filesystem"` in inventory
+  (previously it silently defaulted to `kind: "block"` since the request's `kind` field is
+  optional and policy resolution didn't correct it) — a mistagged CephFS volume looked exactly
+  like a deleted RBD image to the real driver's RBD-only discovery and got silently pruned from
+  inventory on the very next discovery pass, even though the PVC kept existing and consuming
+  capacity, invisibly to Atlas. Verified live: created a `shared` volume, ran a discovery pass, it
+  now survives (previously vanished from `GET /volumes` and returned `404`, requiring manual
+  `kubectl delete pvc` to clean up the now-orphaned real resource).
+- **Zeus OS UI** — Storage Center. This collision is unresolved (see [STATUS.md](STATUS.md)):
+  - `atlas` is already a Zeus OS module codename ("Machine Finder") in `v9s`.
+  - A `ZeusStorageCenter.tsx` + `web/src/routes/storage.rs` already ship — decide whether Atlas's
+    Storage Center *absorbs*, *replaces*, or *sits beside* them.
+- Additional drivers behind the same trait: NFS, ZFS, SAN, cloud block. External Ceph import is in (`docs/CEPH_EXTERNAL.md`).
+- ✅ **Scheduled snapshots (protection schedules)**: `POST /volumes/{id}/schedule {interval_secs, keep}`
+  registers a schedule (`snapshot_schedules`); a background worker (`ATLAS_SNAPSHOT_TICK_SECS`) snapshots
+  the volume on cadence and prunes its scheduler-created snapshots to `keep`. `GET /schedules`,
+  `DELETE /schedules/{id}`, `atlasctl schedule-snapshots`. Verified live: snapshots appear on interval
+  and retention holds steady at `keep` (delivers the policy catalog's "hourly snapshots").
+- ✅ **Scheduled backups**: the same schedule with `kind:"backup"` (+ `bucket_id`, `mode`) runs
+  periodic backups to RGW and prunes them to `keep` (delivers the "daily backup" half). Verified live:
+  backups created on cadence, retention never exceeds `keep`. `atlasctl schedule-backups`.
+- ✅ **Multi-tenancy quotas**: per-tenant `max_bytes` + `max_volumes` (`storage_tenant_quotas`,
+  0 = unlimited). `PUT /tenants/{id}/quota` (admin) sets them; `GET` returns limits + live usage.
+  `POST /volumes` (REST + gRPC `CreateVolume`) rejects an over-quota create (409 / `resource_exhausted`)
+  before enqueueing. `atlasctl quota|set-quota`. Verified live: byte + count limits both enforced,
+  raising the limit admits the create, usage tracked from live volume rows.
+- ✅ **Service-account tokens**: `POST /auth/tokens` (admin) mints a scoped HS256 JWT
+  (`sub`/`role`/`exp`) for a product/service account — the shared secret never leaves Atlas. TTL is
+  clamped to `[60s, 90d]` and issuance is audited. `atlasctl issue-token`. Verified: minted operator
+  token creates volumes, viewer is `403`, no token `401`, and a non-admin cannot mint (test); live
+  the endpoint returns a valid JWT with the expected claims.
+- ✅ **OIDC/SSO login**: `GET /auth/oidc/{status,login,callback}` (optional — auto-disabled unless
+  `ATLAS_OIDC_ISSUER_URL`/`_CLIENT_ID`/`_REDIRECT_URL` are set) is a second way to *obtain* a
+  console session — a successful OIDC round-trip mints the exact same kind of Atlas JWT
+  `/auth/login` does, so it sits alongside local username/password login, not in place of it. PKCE
+  + CSRF state + nonce; the `groups` ID-token claim maps to a role via
+  `ATLAS_OIDC_ADMIN_GROUP`/`_OPERATOR_GROUP` (no match → `viewer`). Verified live end-to-end
+  against a throwaway Dex instance (`deploy/dex-lab/`): three static test users in different Dex
+  groups each landed with the correct Atlas role (admin/operator/viewer-by-default) after the full
+  browser redirect → login → callback → session round-trip.
+- ✅ **Tenant-scoped reads**: found via a production-readiness audit ahead of a prospective
+  multi-tenant bank deployment — JWTs carried no `tenant_id`, so `GET /volumes`, `/volumes.csv`,
+  `/volumes/{id}`, `/buckets`, and `/buckets/{id}` returned every tenant's data to any
+  authenticated `viewer`, not just their own. `Claims`/`Actor` now carry `tenant_id` (set at mint
+  time for local login, `POST /auth/tokens`, and OIDC login — the latter via a configurable
+  `ATLAS_OIDC_TENANT_CLAIM` ID-token claim, defaulting to `"global"` when unset so existing
+  single-tenant deployments are unaffected); `auth::tenant_scope`/`require_tenant` enforce it on
+  those five routes, with `admin` staying cross-tenant by design. `crates/atlas-gateway/tests/
+  tenant_isolation.rs` is the regression guard. Console users (`POST /auth/users`) and issued
+  tokens can now be created with an explicit `tenant_id` (default `"global"`).
+- ✅ **Secrets-manager integration (Vault + External Secrets Operator)**: `deploy/vault-lab/` —
+  a throwaway Vault (dev mode) + ESO demonstrate the real pattern a bank deployment would use:
+  secrets live in Vault, ESO syncs them into an ordinary K8s `Secret` via Vault's Kubernetes auth
+  method, and Atlas's Deployment references that `Secret` through the exact same `secretKeyRef` it
+  already uses for `atlas-gateway-auth` — no Atlas-side code or config shape changes needed.
+  Verified live end-to-end against a dedicated demo secret (not the live `atlas-gateway-auth`,
+  deliberately, to avoid disrupting the running gateways): Vault → K8s-Secret sync confirmed
+  byte-for-byte identical, and a live rotation in Vault propagated to the K8s Secret automatically
+  within the 30s refresh interval, with no `kubectl`/redeploy on the Atlas side. Adopting this for
+  the real `atlas-gateway-auth` Secret is a two-field YAML change once a real Vault is available
+  (see the README's "Adopting this for real").
+- ✅ **JWT secret rotation**: previously a single static `ATLAS_JWT_SECRET` with no rotation path —
+  changing it instantly invalidated every outstanding session/service-account token with no grace
+  period. `ATLAS_JWT_SECRET_PREVIOUS` (optional) is still accepted for *validating* tokens (never
+  for minting new ones) during a rotation window: set it to the outgoing secret when rotating to a
+  new `ATLAS_JWT_SECRET`, deploy, then remove it once confident no outstanding token still uses it
+  (bounded by each token's own TTL, capped at 90 days). `auth::decode_token` is the shared
+  fallback-decode helper — both the REST `auth_middleware` and the gRPC interceptor use it, so the
+  two edges can't drift on this behavior.
+- ✅ **Audit-log export before pruning**: `ATLAS_AUDIT_EXPORT_URL` (optional, alongside the
+  existing `ATLAS_AUDIT_RETENTION_DAYS`) batches rows due for retention pruning into one JSON POST
+  to an external sink — SIEM webhook, Splunk HEC, Elastic/Fluent Bit HTTP input, anything that
+  accepts JSON — and only deletes the rows that were actually exported
+  (`atlas_monitor::audit_export::export_and_prune`); a failed export leaves rows in place for
+  retry on the next 6h tick rather than silently dropping them, closing the "audit data just
+  disappears with no external record" gap a compliance review would flag first. Straight-line
+  `prune()` (no export) remains available when `ATLAS_AUDIT_EXPORT_URL` is unset.
+- ✅ **SIEM-export network path verified against real infra**: `deploy/siem-lab/` stands up a
+  minimal HTTP receiver in the lab (stdlib-only Python, no deps) standing in for a SIEM's
+  ingestion endpoint (Splunk HEC, Elastic/Fluent Bit HTTP input, a generic webhook collector). A
+  new opt-in live test (`crates/atlas-gateway/tests/audit_export.rs`'s
+  `live_export_against_siem_lab_receiver`, `#[ignore]`d — run with `cargo test --test
+  audit_export -- --ignored`) exercises the real `export_and_prune` HTTP client against it over
+  the actual lab network, confirmed via the receiver's own logs receiving the exact expected
+  payload — proof against an independently-implemented server, not just the existing tests'
+  in-process axum mock agreeing with itself. Deliberately doesn't touch the live gateway's
+  `ATLAS_AUDIT_EXPORT_URL`/`ATLAS_AUDIT_RETENTION_DAYS` — turning those on for real is a standing
+  retention-policy change for the platform team to make deliberately, not a side effect of this.
+- ✅ **Postgres HA scaffolding verified against real infra**: `deploy/postgres-lab/` stands up a
+  throwaway Postgres in the lab; a new opt-in live test
+  (`crates/atlas-inventory/tests/postgres_live.rs`'s `connect_and_migrate_against_real_postgres`,
+  `#[ignore]`d, `--features postgres`) proves `connect_postgres()`/`migrate_postgres()` actually
+  open a connection and apply `migrations-postgres/` against a real server — not just a compile
+  check behind the feature flag. Also caught and fixed a real gap: `migrations-postgres/` had
+  drifted 3 migrations behind `migrations/` (missing `rbd_snapshots`, the native-id unique index,
+  and — critically — this session's own `console_users.tenant_id` tenant-isolation column), now
+  back in file-for-file parity and re-verified idempotent (migrate-twice is a no-op, matching what
+  a rolling pod restart does). This proves the connection/schema half of Phase-1 HA; the
+  SQLite-only query layer (`SqlitePool` used throughout `atlas-inventory`) is unchanged and still
+  the explicitly out-of-scope larger effort — see `deploy/postgres-lab/README.md` and the
+  known-limitations note below.
+- ✅ **Query layer ported off SQLite-only `SqlitePool`/`?` onto `sqlx::AnyPool`/`$N`** — closes the
+  gap the bullet above deliberately left open. Resolves `docs/HA.md`'s previously-open "dual query
+  modules vs `sqlx::Any`" architecture question in favor of `sqlx::Any`, made viable by first
+  eliminating every genuinely SQLite-specific construct across all ~250 `sqlx::query` call sites in
+  `atlas-inventory`/`atlas-jobs`/`atlas-monitor`/`atlas-gateway`/`atlas-databridge`: `?` →
+  `$N` placeholders (verified live that `sqlx::Any` does zero placeholder rewriting itself, so both
+  backends' concrete drivers now receive identical query text); `strftime('now', ...)` (~80 sites)
+  → a Rust-bound `chrono` timestamp; `INSERT OR IGNORE` → `ON CONFLICT DO NOTHING`; `COLLATE
+  NOCASE` → `lower(x) = lower($N)` (with a new expression index in both migration directories);
+  and a real portability bug caught along the way — SQLite's 2-argument scalar `MAX(a, b)` (used in
+  the job engine's `mark_running`/`try_claim`/`reclaim_stale_running`) has no Postgres equivalent
+  (`MAX()` there is aggregate-only) — rewritten to `CASE WHEN a > b THEN a ELSE b END`. The
+  `atlas-inventory` `postgres` Cargo feature is gone; Postgres support is unconditional.
+  `crates/atlas-inventory/tests/postgres_live.rs` now proves the query layer itself on a real
+  Postgres — not just connect+migrate — exercising the job-claim/reclaim/retry state machine (where
+  the `MAX(a,b)` bug was actually found) and the `COLLATE NOCASE` rewrite's case-insensitive
+  username lookup. `scripts/check-migrations-parity.sh` (new CI gate) prevents `migrations-postgres/`
+  drifting behind `migrations/` again, the way it silently did twice before. See `docs/HA.md`,
+  which this closes most of — remaining at the time: a dual-backend CI job (closed by the next
+  bullet) and DB-backed rate limiting (found to be blocked on a real constraint — the gRPC
+  `tonic::Interceptor` closure is synchronous — not just unstarted work; see `docs/HA.md`'s
+  detail).
+- ✅ **Dual-backend CI proves the query layer, not just the connection** — new `postgres-test` job
+  in `.github/workflows/ci.yml` runs the full ~200-test `atlas-gateway` integration suite a second
+  time against a real `postgres:16` service container (plus `atlas-inventory`'s `postgres_live.rs`
+  tests), via a new `crates/atlas-gateway/tests/common/mod.rs` shared helper: every test's
+  database setup goes through one `fresh_database_url()` call that's a throwaway SQLite temp file
+  by default (unchanged from before) or, when `ATLAS_TEST_DATABASE_URL` is set, a freshly
+  `CREATE DATABASE`'d Postgres database per test — same per-test isolation guarantee, different
+  backend, zero changes to any of the ~200 existing test bodies/assertions. This is exactly the
+  "run the existing suite against both backends" idea `docs/HA.md` had flagged as still open, and
+  it did its job immediately: running it for the first time surfaced four real, previously
+  undiscovered Postgres schema/query bugs, none of them caught by "does it compile" or by SQLite
+  alone —
+  (1) several byte-capacity columns declared Postgres `INTEGER` (4 bytes, ~2.1GB max) instead of
+  `BIGINT`, since SQLite's own `INTEGER` is *always* 8 bytes regardless of the declared name
+  (fixed in migration `0032`);
+  (2) `SUM(bigint)` returns Postgres `NUMERIC`, which `sqlx::Any` can't decode at all, requiring an
+  explicit `CAST(... AS BIGINT)` at three call sites;
+  (3) the equivalent gap for floats — `REAL` columns bound to Rust `f64` needed widening to
+  `DOUBLE PRECISION` (migration `0033`);
+  (4) SQLite's JSON1 functions (`json_extract`/`json_set`) have no Postgres equivalent whose query
+  *text* is identical on both backends, so the three call sites using them were rewritten to pull
+  raw JSON text and do the read/merge in Rust instead, matching this migration's established
+  date-math pattern. All four are now covered by the live suite going forward. See `docs/HA.md`'s
+  "Landed" table for the full detail.
+- ✅ **Helm chart: Postgres-backed multi-replica deployment** — `deploy/helm/atlas/values.yaml`'s
+  new `database.kind: sqlite|postgres` (+ `database.existingSecret`/`secretKey`, never an inlined
+  URL) switches `templates/deployment.yaml`/`pvc.yaml` between the existing single-replica shape
+  (local `ReadWriteOnce` PVC, `Recreate` rollout) and a Postgres-backed one (`ATLAS_DATABASE_URL`
+  from a Secret, no PVC rendered at all, `RollingUpdate`, `replicaCount` free to raise above `1`).
+  Both render paths verified with `helm lint` + `helm template`/`helm install --dry-run`. See
+  `deploy/helm/atlas/README.md`'s "Multi-replica (Postgres-backed) deployment".
+- ✅ **Supply-chain audit gate**: `cargo deny check` (CI job + `make audit`, `deny.toml`) — known-
+  vulnerable/yanked advisories, disallowed licenses, unknown registries/git sources. Scoped to
+  default features (what's actually shipped); the optional DataBridge connectors are compile-
+  checked separately and excluded here since `tiberius` (SQL Server) currently pulls in an
+  unmaintained/vulnerable rustls 0.21-era chain not worth blocking the default build over. Found
+  and fixed a real memory-exhaustion DoS (RUSTSEC-2026-0195) by bumping `rusty-s3` 0.5→0.10 (zero
+  code changes needed — it also dropped the vulnerable `quick-xml` dependency entirely). The
+  handful of remaining "unmaintained, no safe upgrade available" advisories (`rsa`'s Marvin Attack
+  timing side-channel; a small family of unmaintained-but-not-vulnerable crates transitive via
+  `kube-runtime` 0.95) are explicitly `ignore`d with justification, re-checked whenever deps update.
+- ✅ **Console password hashing**: switched from plain SHA-256 to Argon2id (`crates/atlas-gateway/
+  src/auth.rs`'s `hash_password`/`verify_password_hash`) — a leaked `console_users` table can no
+  longer be brute-forced offline at GPU/ASIC speed. Backward-compatible: existing `sha256$...`
+  hashes still verify, so no forced password reset on upgrade; every newly hashed/changed password
+  gets the new Argon2id format.
+- ✅ **No plaintext secrets in committed manifests**: `ATLAS_ADMIN_PASSWORD` and
+  `ATLAS_OIDC_CLIENT_SECRET` moved from a literal `value:` in `deploy/k8s/atlas-gateway*.yaml` to
+  `secretKeyRef` (`scripts/ensure-atlas-auth-secret.sh` now also generates a strong
+  `admin-password`; the OIDC secret points at the same `dex-oidc-client` Secret `deploy/dex-lab/
+  up.sh` already creates, rather than duplicating the value). `Config::validate_for_start()` now
+  also refuses to boot with `ATLAS_AUTH_REQUIRED=1` and a weak/default admin password, mirroring
+  the existing JWT-secret guard.
+- ✅ **Audit-log query API**: `GET /audit` (operator) returns the compliance trail newest-first with
+  `actor`/`action`/`resource_type`/`resource_id` filters + bounded `limit`. Verified live.
+- ✅ **Enriched `/metrics/summary`**: capacity-used %, snapshot/bucket/backup counts, client-I/O
+  rollups (`ceph_pool_rd/wr[_bytes]`) and recovery status. Verified live.
+- ✅ **gRPC parity**: `ExpandVolume` + `ListSnapshots` added to the edge (verified via grpcurl).
+- ✅ **Volume ownership + labels**: `GET /volumes/{id}/bindings` lists product ownership;
+  `GET`/`PUT /volumes/{id}/labels` reads/merges user labels into volume metadata. Verified live.
+- ✅ **`GET /tenants`**: overview of every tenant with volumes/quota (usage + limits). Verified live.
+- ✅ **Per-tenant policies**: `PUT /tenants/{id}/policies/{intent}` (admin) remaps an intent to a
+  specific StorageClass + access/volume mode for one tenant; `create_volume` applies it (precedence:
+  request-pinned SC › tenant override › built-in catalog). `GET`/`DELETE` too; `atlasctl
+  set-tenant-policy`. Verified live: `acme/database` → CephFS RWX while `globex/database` stayed on
+  RBD RWO, and deleting the override reverted `acme` to the catalog.
+- Multi-tenancy: **complete** (quotas + service accounts + per-tenant policies, PDF §14).
+- DR: RBD mirroring, secondary-cluster restore, one-click failover runbook (PDF §16.3).
+- ✅ **Two new pluggable backends: RustFS (S3-compatible object storage) and Longhorn.**
+  `atlas-driver-rustfs`/`atlas-driver-longhorn` follow the same fake/real, never-fabricate
+  convention every other driver already has. RustFS discovery (`ListBuckets`/health) is anonymous
+  and unsigned for now; Longhorn discovery is read-only over its Kubernetes v1beta2 CRDs
+  (`nodes`/`volumes`), with PVC provisioning going through the existing Kubernetes StorageClass
+  path rather than this driver. Both are wired through the same `BackendType`/capability-catalog/
+  dynamic-registration machinery NFS/ZFS already use — see `docs/RUSTFS.md`, `docs/LONGHORN.md`.
+- ✅ **Raw disk provisioning**: `POST /zfs/pools/from-device` runs defense-in-depth safety checks
+  (`lsblk`/`findmnt`/`wipefs`/`zpool status`, dynamic root/boot-disk detection — never the
+  static-heuristic allow-list alone) before `zpool create` (never `-f`); `POST /ceph/devices`
+  patches the `CephCluster` CR's device list via a scoped merge-patch, cross-checked against
+  Rook's own device-discovery ConfigMap (fails closed if that's unavailable), then polls to
+  completion through the job engine's existing retry/backoff machinery rather than blocking its
+  single worker — Rook's reconciliation can take several minutes. Manual device-path entry only
+  in this slice (no auto-discovered device list). See `docs/DISKS.md`.
+- ✅ **RustFS is now the primary object backend** — `POST /buckets` defaults to it (a direct,
+  synchronous, signed S3 `CreateBucket`, no Kubernetes operator involved) instead of Ceph RGW;
+  `"backend_id": "bkd_ceph_lab"` keeps the original Rook `ObjectBucketClaim` path working
+  unchanged. `atlas_driver_rgw::S3Target` (already generic S3, not RGW-specific despite the name)
+  gained `create_bucket`/`delete_bucket`/`bucket_exists`; credentials resolve via
+  `StorageBackend.connection_ref` → a Kubernetes Secret. DataBridge's object-migration leg and
+  Atlas's own self-state backup were already backend-agnostic at the code level (both already
+  built on the same generic `S3Target`) — repointing either to RustFS is a config/deploy-manifest
+  change, not a code change, and neither has actually been repointed in the lab yet (no real
+  RustFS cluster to point at). See `docs/RUSTFS.md`'s known-unverified-risks list (`CreateBucket`
+  body, presigned URLs, multipart — none tested against a real RustFS server yet).
+
+## ✅ macOS storage (0.7.0)
+
+- ✅ `atlas-driver-macos`: APFS containers, volumes and other partitions via `diskutil` plists, read-only by default.
+- ✅ Guarded external-disk lifecycle (`/macos/*`): erase, add/delete volume, eject; admin, typed confirmation, jobs, audit;
+  internal disks, the running system and system volumes are refused twice (route and job).
+- ✅ Fleet: `atlas-mac-agent` per Mac plus `RemoteMacosDriver` (`ATLAS_MACOS_AGENTS`); launchd installer; release archives.
+- ✅ Mac as client: NFS/SMB/`atlasctl` documented (`docs/MACOS_CLIENT.md`); native FUSE mount on macOS is a documented no-go.
+- ⏭ Disks page UI, container resize, local snapshots, remote writes. SMART and capacity alerts are
+  parser metrics (`macos_smart_status`, `macos_capacity_used_ratio`, `macos_alert`) plus the agent's
+  `GET /v1/alerts`; they are fixture-tested and best-effort on a real `diskutil`. Real-hardware write
+  commands are unverified; see [STATUS.md](STATUS.md). macFUSE remains a no-go.
+
+## Known limitations (current)
+
+- **DR data plane verified on a lab, not per deployment**: the real `rbd mirror` paths, including
+  two-way mirroring and clean failback, were drilled between two Rook clusters on 2026-10-04 and
+  2026-10-06. `dataplane_verified` stays a per-deployment flag (`ATLAS_DR_DATAPLANE_VERIFIED`) that
+  an operator sets after drilling their own sites. Journal-mode and pool-mode mirroring followed
+  on 2026-10-06. Consistency groups (`/volume-groups`) snapshot and roll back locally only: no
+  released Ceph mirrors `rbd group`s across sites. See [DR.md](DR.md).
+- **RustFS removed**: Atlas's first-party RustFS integration (driver, admin proxy, Helm chart,
+  console pages, drive/instance install jobs) was later discarded in favor of Ceph RGW as the
+  default object backend, with any S3-compatible endpoint usable as a bring-your-own backend via
+  `atlas-driver-rgw`. See `docs/RUSTFS.md` and `CHANGELOG.md`.
+- **Raw disk provisioning unverified against real hardware/a real Rook cluster**: the ZFS
+  device-safety checks and the Ceph/Rook device-claim path (`docs/DISKS.md`) are fake-mode and
+  unit-tested only. The Ceph path's entire safety design further depends on the target Rook
+  install running its device-discovery DaemonSet (`ROOK_ENABLE_DISCOVERY_DAEMON`) — unconfirmed
+  for the lab's Rook install as of this writing.
+- **arm64 container images: not shipped, tested and rejected for now.** A real timing probe
+  (`.github/workflows/ci.yml`'s `docker` job, temporarily, on a throwaway branch/PR) built the
+  full `Dockerfile` (heaviest image — all DataBridge features: librdkafka/cmake, ODPI-C, tiberius)
+  for `linux/arm64` via QEMU emulation on the standard `ubuntu-latest` runner: it was cancelled
+  after 70+ minutes still running, vs. ~10.5 minutes for a native amd64 build of the lighter
+  `Dockerfile.ceph` in the same run — 6.7x+ and still climbing, not a one-off fluke. QEMU
+  full-emulation is the wrong approach for this workspace's dependency weight; a real fix would
+  need native cross-compilation (a proper `aarch64-unknown-linux-gnu` toolchain + cross-linked C
+  deps) rather than `platforms: linux/amd64,linux/arm64` on the existing `docker/build-push-action`
+  step, which is a materially larger effort than the one-line change this looked like at first.
+- **Bank-grade hardening gaps** (found via a production-readiness audit; tenant-scoped reads,
+  plaintext-secret-in-manifest, weak password hashing, missing supply-chain scanning,
+  destructive-audit-pruning-with-no-export, and rate-limiting/self-state-backup-off-by-default
+  from that audit are already fixed above — both `deploy/k8s/atlas-gateway*.yaml` now ship
+  `ATLAS_RATE_LIMIT_RPM=600` and a working `ATLAS_STATE_BACKUP_*` block against a dedicated RGW
+  user/bucket): the default deployment is still single-replica SQLite with a `Recreate` rollout.
+  That is a deployment choice, not a missing query layer. Postgres, Helm `database.kind`, and
+  DB-backed cross-replica rate limiting are implemented and lab-verified (see the checkmarks
+  below and `docs/HA.md`). What remains before production support is deploying a real HA
+  Postgres and an enterprise IdP (OIDC/SSO is only verified against a throwaway Dex instance).
+  The audit-log SIEM export and secrets-manager integration *patterns* are now both verified
+  against real (lab) infra (`deploy/siem-lab/`, `deploy/vault-lab/` — see below); a real deployment
+  still needs the bank's actual SIEM/Vault swapped in for the lab ones. None of these block a
+  non-production pilot; all are gates before a production go-live.
+- ✅ **Non-Postgres DataBridge streaming CDC + cutover**: all six source engines are verified live
+  through cutover (`docs/DATABRIDGE.md`). MySQL `TIMESTAMP` columns work since the edges moved to
+  the Debezium JDBC sink (2026-10-03); MySQL, SQL Server and Oracle cutover were driven in-cluster
+  on the Rook Ceph lab on 2026-10-04. Heterogeneous (SQL Server / Oracle) validate stays advisory.
+- ✅ **NFS/ZFS drivers now have a real mode, not just fixtures**: `ATLAS_NFS_DRIVER_MODE`/
+  `ATLAS_ZFS_DRIVER_MODE` (`fake`, the default — unchanged demo/test behavior — or `real`; Helm
+  chart: `nfs.driverMode`/`zfs.driverMode`) select `RealNfsDriver`/`RealZfsDriver`
+  (`atlas-driver-nfs`/`atlas-driver-zfs`), mirroring `CephDriverMode`'s existing Fake/Real split.
+  Real NFS runs `showmount -e <server>` (an RPC, no mount performed) to prove the server is
+  actually reachable and get its real export list — a configured export the server doesn't have
+  is dropped, never fabricated; per-export capacity comes from `df` on the export's mount point
+  *when it happens to already be locally mounted* (checked via `/proc/mounts`), `None` otherwise
+  (NFS has no standard remote capacity-without-mounting RPC — reporting "unknown" beats reporting
+  a wrong number). Real ZFS runs `zpool list -Hp`/`zfs list -Hp` **locally**, on whatever host the
+  gateway process itself runs on — ZFS has no remote query protocol the way Ceph's `ceph`/`rbd`
+  CLI does, so a genuinely remote ZFS host (SSH, a vendor API) isn't supported yet; a configured
+  zpool that isn't actually locally importable is dropped, never fabricated. Both real drivers
+  propagate a real error (never a silent fake-data fallback) when the target is unreachable —
+  proven by new tests asserting exactly that. Both gateway images need the respective client
+  tools on `PATH` (`nfs-common`/`showmount` for NFS, `zfsutils-linux`/`zpool`+`zfs` for ZFS) —
+  neither is bundled by default; the Fake drivers remain the zero-dependency default for
+  demos/tests/CI.
+- ✅ **Cross-replica rate limiting — resolves the gRPC-interceptor-is-synchronous blocker that had
+  this scoped as its own follow-up, not a mechanical fix.** `RateLimiter::allow()`
+  (`crates/atlas-gateway/src/state.rs`) stays exactly as synchronous and database-free as before —
+  still safe to call from the gRPC path's synchronous `tonic::Interceptor`, no risk of blocking the
+  Tokio runtime — because the DB awareness moved entirely into a *separate* periodic background
+  task, `spawn_rate_limit_sync` (`ATLAS_RATE_LIMIT_SYNC_SECS`, default `2`s), the only thing that
+  ever touches the new `rate_limit_counters` table (migration `0034`,
+  `atlas_inventory::rate_limit`). Each replica writes its own current-window count and reads back
+  every actor's cluster-wide total; an actor already over budget cluster-wide is flagged and denied
+  on the *next* local `allow()` call immediately, even if that replica's own local count hasn't hit
+  `rpm` yet — eventually consistent within one sync interval, the standard, documented tradeoff for
+  a governance/abuse-prevention control rather than a hard security boundary. `window_minute`/
+  `count` were deliberately kept plain `INTEGER` (not `BIGINT`, unlike this session's earlier
+  capacity-column fixes) since both are guaranteed small, which also sidesteps the `SUM(bigint)`→
+  `NUMERIC`-decode issue entirely — live-verified against real Postgres, not just reasoned about.
+  The actual `allow()`/cluster-flag interaction is covered by fast, deterministic unit tests (no
+  timing-based multi-process simulation needed); harmless on a single SQLite replica (the sync task
+  runs, finds only its own counts, confirms what the local check already knew). Helm's
+  `rateLimitRpm` picks this up automatically once `database.kind: postgres` — no new chart value.
+- Pool `kind` is name-heuristic when no k8s driver/Rook CRs are available (non-Rook Ceph). On a
+  Rook-managed cluster it's now overridden with an exact classification read from live
+  `CephBlockPool`/`CephFilesystem`/`CephObjectStore` CRs (see the Rook CRD read integration entry
+  above) — implemented and unit-tested, pending a live-cluster verification pass.
+- Single-node Ceph reports `HEALTH_WARN` (expected: 1 OSD < default size 3).
+- Per-product integrations beyond the gRPC surface (Veyron VM datastores, Transiva direct-to-RBD
+  migration, GuestKit, etc.) are not yet built — see the per-product rows above.
+- `scripts/test-connectors.sh` (container-backed DataBridge connector tests) needs podman/docker;
+  the `kafka-lag` feature needs `cmake` to build `rdkafka` — both are opt-in and skipped where that
+  tooling isn't present.

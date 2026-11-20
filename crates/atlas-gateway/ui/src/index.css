@@ -1,0 +1,932 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+ *
+ * Design foundation vendored from Zeus OS (v9s) — tokens + tahoe/zeus component classes.
+ */
+
+@import './zyvor-premium-login.css' layer(base);
+@import './atlas-soundings.css' layer(base);
+
+@import 'tailwindcss';
+/* Tailwind v4 is CSS-first by default and won't read tailwind.config.js on its own — this
+ * bridges to it so the existing JS-based theme (colors, fonts, radii) keeps working unchanged
+ * rather than needing every token rewritten into @theme syntax right now. */
+@config '../tailwind.config.js';
+
+@layer base {
+  :root {
+    /* Apple Store type — same as h2kvm- Store login */
+    --store-font-text: "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --store-font-display: "SF Pro Display", "SF Pro Text", -apple-system, BlinkMacSystemFont, "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --font-display: var(--store-font-display);
+    --font-text: var(--store-font-text);
+    --ease-apple: cubic-bezier(0.28, 0.11, 0.32, 1);
+    --at-face: var(--store-font-text);
+    --at-display: var(--store-font-display);
+
+    --background: 222 47% 5%;
+    --foreground: 210 40% 98%;
+    --card: 222 47% 8%;
+    --card-foreground: 210 40% 98%;
+    --popover: 222 47% 8%;
+    --popover-foreground: 210 40% 98%;
+    --primary: 24 95% 53%;
+    --primary-foreground: 210 40% 98%;
+    --secondary: 217 33% 17%;
+    --secondary-foreground: 210 40% 98%;
+    --muted: 217 28% 14%;
+    --muted-foreground: 215 20% 78%;
+    --accent: 217 33% 17%;
+    --accent-foreground: 210 40% 98%;
+    --destructive: 0 63% 31%;
+    --destructive-foreground: 210 40% 98%;
+    --success: 158 64% 52%;
+    --success-foreground: 158 64% 90%;
+    --warning: 43 96% 56%;
+    --warning-foreground: 43 96% 90%;
+    --info: 199 89% 55%;
+    --info-foreground: 199 89% 92%;
+    --danger: 0 72% 51%;
+    --danger-foreground: 0 72% 90%;
+    --border: 217 33% 17%;
+    --input: 217 33% 17%;
+    --ring: 199 89% 55%;
+    --radius: 0.75rem;
+  }
+
+  /* Night — deep graphite product shell. */
+  :root[data-ui-shell="night"] {
+    --background: 240 10% 4%;
+    --foreground: 240 4% 96%;
+    --card: 240 12% 10%;
+    --card-foreground: 240 4% 96%;
+    --popover: 240 12% 10%;
+    --popover-foreground: 240 4% 96%;
+    --primary: 211 100% 52%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 10% 14%;
+    --secondary-foreground: 240 4% 96%;
+    --muted: 240 10% 12%;
+    --muted-foreground: 240 4% 64%;
+    --accent: 240 12% 16%;
+    --accent-foreground: 240 4% 96%;
+    --border: 240 10% 18%;
+    --input: 240 10% 18%;
+    --ring: 211 100% 52%;
+    --info: 211 100% 52%;
+    --accent-info: 211 100% 52%;
+
+    --at-void: #0b0b0f;
+    --at-abyss: #121218;
+    --at-shelf: #1c1c24;
+    --at-ridge: #262632;
+    --at-crest: #343445;
+    --at-line: rgba(245, 245, 247, 0.1);
+    --at-line-2: rgba(245, 245, 247, 0.16);
+    --at-line-3: rgba(245, 245, 247, 0.26);
+    --at-ink: #f5f5f7;
+    --at-ink-2: #d2d2d7;
+    --at-ink-3: #a1a1a6;
+    --at-ink-4: #6e6e73;
+    --at-cyan: #0a84ff;
+    --at-cyan-2: #64b5ff;
+    --at-cyan-wash: rgba(10, 132, 255, 0.16);
+    --at-cyan-glow: rgba(10, 132, 255, 0.4);
+    --at-violet-wash: rgba(167, 139, 250, 0.14);
+    --at-brand: #f97316;
+    --at-box-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+    --d1: #34d399;
+    --d2: #60a5fa;
+    --d3: #fbbf24;
+    --d4: #a78bfa;
+    --d5: #f87171;
+    --at-ok: #34d399;
+    --at-warn: #fbbf24;
+    --at-err: #f87171;
+    --at-glass-bg: rgba(28, 28, 32, 0.6);
+  }
+
+  /* Day — clean light product shell. */
+  :root[data-ui-shell="day"] {
+    color-scheme: light;
+    --background: 240 5% 96%;
+    --foreground: 0 0% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 0 0% 11%;
+    --popover: 0 0% 100%;
+    --popover-foreground: 0 0% 11%;
+    --primary: 211 100% 45%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 5% 96%;
+    --secondary-foreground: 0 0% 11%;
+    --muted: 240 5% 94%;
+    --muted-foreground: 240 3% 45%;
+    --accent: 240 5% 94%;
+    --accent-foreground: 0 0% 11%;
+    --destructive: 4 76% 40%;
+    --destructive-foreground: 0 0% 100%;
+    --success: 145 42% 36%;
+    --success-foreground: 0 0% 100%;
+    --warning: 24 95% 50%;
+    --warning-foreground: 0 0% 100%;
+    --danger: 4 76% 40%;
+    --danger-foreground: 0 0% 100%;
+    --border: 240 5% 88%;
+    --input: 240 5% 88%;
+    --ring: 211 100% 45%;
+    --info: 211 100% 45%;
+    --info-foreground: 0 0% 100%;
+    --accent-info: 211 100% 45%;
+    --accent-live: 145 48% 40%;
+    --accent-alt: 211 100% 45%;
+
+    --at-void: #f5f5f7;
+    --at-abyss: #fafafa;
+    --at-shelf: #ffffff;
+    --at-ridge: #f0f0f2;
+    --at-crest: #e8e8ed;
+    --at-line: rgba(0, 0, 0, 0.08);
+    --at-line-2: rgba(0, 0, 0, 0.12);
+    --at-line-3: rgba(0, 0, 0, 0.2);
+    --at-ink: #1d1d1f;
+    --at-ink-2: #424245;
+    --at-ink-3: #6e6e73;
+    --at-ink-4: #86868b;
+    --at-cyan: #0071e3;
+    --at-cyan-2: #0077ed;
+    --at-cyan-wash: rgba(0, 113, 227, 0.1);
+    --at-cyan-glow: rgba(0, 113, 227, 0.28);
+    --at-violet-wash: rgba(94, 92, 230, 0.1);
+    --at-brand: #f97316;
+    --at-box-shadow: 0 4px 24px rgba(0, 0, 0, 0.06);
+    --d1: #30d158;
+    --d2: #0071e3;
+    --d3: #ff9f0a;
+    --d4: #bf5af2;
+    --d5: #ff453a;
+    --at-ok: #30d158;
+    --at-warn: #bf4800;
+    --at-err: #ff453a;
+    --at-fail: #ff453a;
+    --at-risk: #bf4800;
+    --at-glass-bg: rgba(255, 255, 255, 0.72);
+  }
+
+  * {
+    border-color: hsl(var(--border));
+  }
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+  body {
+    background: var(--at-void, hsl(var(--background)));
+    color: var(--at-ink, hsl(var(--foreground)));
+    font-family: var(--at-face, -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif);
+    font-size: 14px;
+    line-height: 1.45;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  ::-webkit-scrollbar {
+    width: 10px;
+    height: 10px;
+  }
+  ::-webkit-scrollbar-thumb {
+    background: rgba(255, 255, 255, 0.09);
+    border-radius: 8px;
+    border: 2px solid transparent;
+    background-clip: padding-box;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(255, 255, 255, 0.16);
+    background-clip: padding-box;
+  }
+  :root[data-ui-shell="day"] ::-webkit-scrollbar-thumb {
+    background: rgba(16, 20, 28, 0.18);
+    background-clip: padding-box;
+  }
+  :root[data-ui-shell="day"] ::-webkit-scrollbar-thumb:hover {
+    background: rgba(16, 20, 28, 0.28);
+    background-clip: padding-box;
+  }
+}
+
+@layer components {
+  /* ── App canvas ── */
+  .tahoe-canvas {
+    background:
+      radial-gradient(ellipse 90% 55% at 50% -8%, rgba(56, 189, 248, 0.07), transparent 58%),
+      radial-gradient(ellipse 60% 40% at 100% 20%, rgba(167, 139, 250, 0.05), transparent 50%),
+      hsl(var(--background));
+  }
+  /* Night/Day shell-chrome overrides live outside this layer — see the unlayered block below
+   * `@layer components` closes. Their target selectors (.at-rail, .at-brand-logo, .at-panel,
+   * etc.) are defined unlayered in atlas-soundings.css, and CSS cascade layers make ANY
+   * unlayered rule beat EVERY layered rule regardless of specificity — so a per-shell override
+   * placed in this layer would be silently inert no matter how specific its selector. */
+
+  /* ── Glass surfaces ── */
+  .glass {
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    backdrop-filter: blur(18px) saturate(140%);
+    -webkit-backdrop-filter: blur(18px) saturate(140%);
+  }
+  .glass-card {
+    background: linear-gradient(145deg, hsl(var(--card)) 0%, hsl(222 47% 6%) 100%);
+    border: 1px solid hsl(var(--border) / 0.6);
+    border-radius: 1rem;
+    box-shadow: 0 12px 40px -18px rgba(0, 0, 0, 0.6);
+  }
+  .glass-card.hoverable:hover {
+    box-shadow: 0 0 32px -8px rgba(56, 189, 248, 0.35);
+    border-color: rgba(56, 189, 248, 0.35);
+  }
+  .section-label {
+    font-size: 0.6875rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: hsl(var(--muted-foreground) / 0.75);
+  }
+
+  /* ── Buttons — Apple Shop pills (same grammar as .at-btn) ── */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.4rem;
+    min-height: 44px;
+    height: auto;
+    padding: 0 1.25rem;
+    border-radius: 980px;
+    font-family: var(--at-face, "SF Pro Text", -apple-system, BlinkMacSystemFont, sans-serif);
+    font-weight: 500;
+    font-size: 15px;
+    letter-spacing: -0.01em;
+    transition:
+      background 0.22s var(--ease-apple, cubic-bezier(0.28, 0.11, 0.32, 1)),
+      color 0.22s var(--ease-apple, cubic-bezier(0.28, 0.11, 0.32, 1)),
+      border-color 0.22s var(--ease-apple, cubic-bezier(0.28, 0.11, 0.32, 1)),
+      transform 0.18s var(--ease-apple, cubic-bezier(0.28, 0.11, 0.32, 1));
+    white-space: nowrap;
+    cursor: pointer;
+    user-select: none;
+  }
+  .btn:disabled {
+    opacity: 0.45;
+    cursor: not-allowed;
+  }
+  .btn-sm {
+    min-height: 32px;
+    padding: 0 0.85rem;
+    font-size: 13px;
+  }
+  .btn-primary {
+    color: #ffffff;
+    background: var(--at-cyan, #0071e3);
+    border: 1px solid var(--at-cyan, #0071e3);
+    font-weight: 600;
+    box-shadow: none;
+  }
+  .btn-primary:hover:not(:disabled) {
+    background: var(--at-cyan-2, #2997ff);
+    border-color: var(--at-cyan-2, #2997ff);
+  }
+  .btn-secondary {
+    color: var(--at-ink-2, rgba(255, 255, 255, 0.85));
+    background: color-mix(in srgb, var(--at-ink, #fff) 6%, transparent);
+    border: 1px solid var(--at-line-2, rgba(255, 255, 255, 0.18));
+    font-weight: 500;
+  }
+  .btn-secondary:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--at-ink, #fff) 10%, transparent);
+    color: var(--at-ink, #fff);
+  }
+  .btn-ghost {
+    color: var(--at-ink-3, rgba(255, 255, 255, 0.66));
+    background: transparent;
+    border: 1px solid transparent;
+    font-weight: 500;
+  }
+  .btn-ghost:hover:not(:disabled) {
+    background: color-mix(in srgb, var(--at-ink, #fff) 8%, transparent);
+    color: var(--at-ink, #fff);
+  }
+  .btn-danger {
+    color: #ffffff;
+    background: var(--at-fail, #f87171);
+    border: 1px solid var(--at-fail, #f87171);
+    font-weight: 600;
+    box-shadow: none;
+  }
+  .btn-danger:hover:not(:disabled) {
+    filter: brightness(1.06);
+  }
+
+  /* ── Badges (pill, tinted) ── */
+  .badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.3rem;
+    border-radius: 9999px;
+    border: 1px solid;
+    font-size: 0.7rem;
+    font-weight: 600;
+    letter-spacing: 0.02em;
+    padding: 0.1rem 0.55rem;
+    text-transform: capitalize;
+  }
+  .badge .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 9999px;
+    background: currentColor;
+  }
+  .badge-success {
+    color: hsl(var(--success-foreground));
+    background: hsl(var(--success) / 0.14);
+    border-color: hsl(var(--success) / 0.32);
+  }
+  .badge-warning {
+    color: hsl(var(--warning-foreground));
+    background: hsl(var(--warning) / 0.14);
+    border-color: hsl(var(--warning) / 0.32);
+  }
+  .badge-danger {
+    color: hsl(var(--danger-foreground));
+    background: hsl(var(--danger) / 0.16);
+    border-color: hsl(var(--danger) / 0.34);
+  }
+  .badge-info {
+    color: rgb(125, 211, 252);
+    background: rgba(14, 165, 233, 0.14);
+    border-color: rgba(14, 165, 233, 0.3);
+  }
+  .badge-neutral {
+    color: hsl(var(--muted-foreground));
+    background: rgba(255, 255, 255, 0.05);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
+  /* ── Inputs ── */
+  .field {
+    width: 100%;
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid hsl(var(--border));
+    color: hsl(var(--foreground));
+    border-radius: 0.6rem;
+    padding: 0.5rem 0.7rem;
+    font-size: 0.85rem;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+  .field:focus {
+    outline: none;
+    border-color: rgba(56, 189, 248, 0.6);
+    box-shadow: 0 0 0 3px rgba(56, 189, 248, 0.15);
+  }
+  .field::placeholder {
+    color: hsl(var(--muted-foreground) / 0.6);
+  }
+
+  /* ── Tables (Finder-style) ── */
+  .ztable {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.8125rem;
+  }
+  .ztable th {
+    text-align: left;
+    padding: 0.55rem 0.85rem;
+    font-size: 0.65rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: hsl(var(--muted-foreground) / 0.8);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    white-space: nowrap;
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    background: linear-gradient(180deg, hsl(var(--card)), hsl(var(--card) / 0.85));
+    backdrop-filter: blur(6px);
+  }
+  .ztable td {
+    padding: 0.55rem 0.85rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    white-space: nowrap;
+  }
+  .ztable tbody tr {
+    transition: background 0.12s ease;
+  }
+  .ztable tbody tr:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+  .ztable tbody tr.selected {
+    background: rgba(56, 189, 248, 0.1);
+  }
+  .mono {
+    font-family: var(--at-mono);
+    font-size: 0.76rem;
+  }
+}
+
+/* Night/Day shell-chrome overrides — deliberately unlayered (see the note left in their old spot
+ * inside `@layer components` above) so they can actually beat the unlayered
+ * .at-rail/.at-brand-logo/.at-panel/etc. base rules defined in atlas-soundings.css. */
+/* Night shell — dark Apple shop. */
+:root[data-ui-shell="night"] .tahoe-canvas {
+  background: #000000;
+}
+:root[data-ui-shell="night"] .btn-primary {
+  background: #2997ff;
+  color: #ffffff;
+  border: 1px solid #2997ff;
+  box-shadow: none;
+}
+:root[data-ui-shell="night"] .at-rail {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 50%),
+    rgba(29, 29, 31, 0.82);
+  border-bottom-color: rgba(245, 245, 247, 0.12);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.08),
+    inset 0 -1px 0 rgba(0, 0, 0, 0.35);
+  -webkit-backdrop-filter: saturate(1.15) blur(18px);
+  backdrop-filter: saturate(1.15) blur(18px);
+}
+:root[data-ui-shell="night"] .at-rail-brand {
+  background: linear-gradient(90deg, rgba(29, 29, 31, 0.92) 70%, rgba(29, 29, 31, 0));
+}
+:root[data-ui-shell="night"] .at-brand-logo {
+  color: #f97316; /* brand mark only */
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+:root[data-ui-shell="night"] .at-brand-name {
+  color: #f5f5f7;
+}
+:root[data-ui-shell="night"] .at-iconbtn {
+  color: #d2d2d7;
+  border-color: rgba(245, 245, 247, 0.12);
+  background: rgba(42, 42, 44, 0.55);
+  box-shadow: none;
+}
+:root[data-ui-shell="night"] .at-iconbtn:hover {
+  color: #f5f5f7;
+  border-color: rgba(245, 245, 247, 0.2);
+  background: rgba(255, 255, 255, 0.08);
+}
+:root[data-ui-shell="night"] .at-quick-link.on,
+:root[data-ui-shell="night"] .at-control.on,
+:root[data-ui-shell="night"] .at-control.on {
+  background: rgba(41, 151, 255, 0.14);
+  border-color: rgba(41, 151, 255, 0.4);
+  color: #f5f5f7;
+}
+:root[data-ui-shell="night"] .at-quick-link.on::after {
+  background: linear-gradient(90deg, transparent, #2997ff, transparent);
+}
+:root[data-ui-shell="night"] .at-theme-menu,
+:root[data-ui-shell="night"] .at-drawer,
+:root[data-ui-shell="night"] .at-drawer {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.06) 0%, transparent 40%),
+    rgba(29, 29, 31, 0.94);
+  border-color: rgba(245, 245, 247, 0.12);
+  box-shadow: 0 18px 48px rgba(0, 0, 0, 0.55);
+  -webkit-backdrop-filter: saturate(1.2) blur(24px);
+  backdrop-filter: saturate(1.2) blur(24px);
+}
+:root[data-ui-shell="night"] .at-panel {
+  background: var(--at-shelf);
+  border: 1px solid var(--at-line);
+  border-radius: var(--r-panel);
+  box-shadow: var(--at-box-shadow);
+  overflow: hidden;
+}
+:root[data-ui-shell="night"] .at-choice.on {
+  border-color: #2997ff;
+  background: rgba(41, 151, 255, 0.14);
+}
+
+/* Day shell — classic light Apple shop. */
+:root[data-ui-shell="day"] .tahoe-canvas {
+  background: #f5f5f7;
+}
+:root[data-ui-shell="day"] .btn-primary {
+  background: #0071e3;
+  color: #ffffff;
+  border: 1px solid #0071e3;
+  box-shadow: none;
+}
+:root[data-ui-shell="day"] .glass-card.hoverable:hover {
+  box-shadow: var(--at-box-shadow);
+  border-color: rgba(0, 113, 227, 0.32);
+}
+:root[data-ui-shell="day"] .at-rail {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.7) 0%, rgba(255, 255, 255, 0.35) 60%, transparent 100%),
+    rgba(247, 248, 250, 0.85);
+  border-bottom-color: rgba(16, 20, 28, 0.1);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.6),
+    inset 0 -1px 0 rgba(16, 20, 28, 0.06),
+    0 10px 24px rgba(16, 20, 28, 0.08);
+  -webkit-backdrop-filter: saturate(1.2) blur(20px);
+  backdrop-filter: saturate(1.2) blur(20px);
+}
+:root[data-ui-shell="day"] .at-rail-brand {
+  background: linear-gradient(90deg, rgba(247, 248, 250, 0.92) 70%, rgba(247, 248, 250, 0));
+}
+:root[data-ui-shell="day"] .at-brand-logo {
+  color: #f97316; /* brand mark only */
+  background: transparent;
+  border: none;
+  box-shadow: none;
+}
+:root[data-ui-shell="day"] .at-brand-name {
+  color: #1d1d1f;
+}
+:root[data-ui-shell="day"] .at-search {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9), rgba(247, 248, 250, 0.7));
+  border-color: rgba(16, 20, 28, 0.1);
+  color: #3c444f;
+  border-radius: 999px;
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+}
+:root[data-ui-shell="day"] .at-search:hover {
+  border-color: rgba(16, 20, 28, 0.18);
+  color: #14181f;
+}
+:root[data-ui-shell="day"] .at-kbd {
+  background: rgba(16, 20, 28, 0.06);
+  color: #5e6674;
+}
+:root[data-ui-shell="day"] .at-iconbtn {
+  color: #3c444f;
+  border-color: rgba(16, 20, 28, 0.1);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(247, 248, 250, 0.6) 100%);
+}
+:root[data-ui-shell="day"] .at-iconbtn:hover {
+  color: #14181f;
+  border-color: rgba(16, 20, 28, 0.18);
+  background: rgba(16, 20, 28, 0.05);
+}
+:root[data-ui-shell="day"] .at-quick-link.on,
+:root[data-ui-shell="day"] .at-control.on,
+:root[data-ui-shell="day"] .at-control.on {
+  background: rgba(0, 113, 227, 0.1);
+  border-color: rgba(0, 113, 227, 0.28);
+  color: #1d1d1f;
+}
+:root[data-ui-shell="day"] .at-quick-link.on::after {
+  background: linear-gradient(90deg, transparent, #0071e3, #2997ff, transparent);
+}
+:root[data-ui-shell="day"] .at-theme-menu,
+:root[data-ui-shell="day"] .at-drawer,
+:root[data-ui-shell="day"] .at-drawer {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.92) 0%, rgba(255, 255, 255, 0.98) 100%);
+  border-color: rgba(16, 20, 28, 0.1);
+  box-shadow: 0 12px 32px rgba(16, 20, 28, 0.12), 0 2px 6px rgba(16, 20, 28, 0.06);
+  -webkit-backdrop-filter: saturate(1.15) blur(24px);
+  backdrop-filter: saturate(1.15) blur(24px);
+}
+/* Content panels — elevated shop boxes. */
+:root[data-ui-shell="day"] .at-panel {
+  background: var(--at-shelf);
+  border: 1px solid var(--at-line);
+  border-radius: var(--r-panel);
+  box-shadow: var(--at-box-shadow);
+  overflow: hidden;
+}
+:root[data-ui-shell="day"] .at-choice {
+  border-color: rgba(0, 0, 0, 0.08);
+  background: #ffffff;
+  color: #424245;
+  box-shadow: var(--at-box-shadow);
+  border-radius: var(--r-panel);
+}
+:root[data-ui-shell="day"] .at-choice:hover {
+  border-color: rgba(0, 0, 0, 0.16);
+  color: #1d1d1f;
+  background: #fafafa;
+}
+:root[data-ui-shell="day"] .at-choice.on {
+  border-color: #0071e3;
+  background: rgba(0, 113, 227, 0.08);
+  color: #1d1d1f;
+}
+:root[data-ui-shell="day"] .at-choice .at-choice-hint {
+  color: #6e6e73;
+}
+:root[data-ui-shell="day"] .at-btn,
+:root[data-ui-shell="day"] .at-tbl .at-act,
+:root[data-ui-shell="day"] .at-tbl .at-row-actions .btn,
+:root[data-ui-shell="day"] .at-tbl .at-act,
+:root[data-ui-shell="day"] .at-tbl .at-row-actions .btn {
+  border-color: rgba(16, 20, 28, 0.12);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(247, 248, 250, 0.7) 100%);
+  color: #3c444f;
+  box-shadow: 0 1px 2px rgba(16, 20, 28, 0.06);
+}
+:root[data-ui-shell="day"] .at-btn:hover,
+:root[data-ui-shell="day"] .at-tbl .at-act:hover,
+:root[data-ui-shell="day"] .at-tbl .at-row-actions .btn:hover,
+:root[data-ui-shell="day"] .at-tbl .at-act:hover,
+:root[data-ui-shell="day"] .at-tbl .at-row-actions .btn:hover {
+  color: #14181f;
+  border-color: rgba(16, 20, 28, 0.2);
+  background: rgba(16, 20, 28, 0.05);
+}
+:root[data-ui-shell="day"] .at-app .field {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(247, 248, 250, 0.7) 100%);
+  border-color: rgba(16, 20, 28, 0.14);
+  box-shadow: inset 0 1px 2px rgba(16, 20, 28, 0.04);
+}
+:root[data-ui-shell="day"] .at-slideover {
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.95) 0%, rgba(255, 255, 255, 0.98) 24%, #ffffff 50%);
+  border-left-color: rgba(16, 20, 28, 0.1);
+  box-shadow:
+    inset 1px 0 0 rgba(255, 255, 255, 0.6),
+    -18px 0 48px rgba(16, 20, 28, 0.12);
+}
+:root[data-ui-shell="day"] .at-slideover-bar {
+  border-bottom-color: rgba(16, 20, 28, 0.08);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.9) 0%, rgba(247, 248, 250, 0.7) 100%);
+}
+
+/* Day — Apple.com light chrome for new shell pieces */
+:root[data-ui-shell="day"] .at-top-link {
+  color: #424245;
+}
+:root[data-ui-shell="day"] .at-top-link:hover {
+  color: #1d1d1f;
+  background: rgba(0, 0, 0, 0.05);
+}
+:root[data-ui-shell="day"] .at-top-link.on {
+  color: #ffffff;
+  background: #0071e3;
+}
+:root[data-ui-shell="day"] .at-top-menu-panel {
+  background: rgba(255, 255, 255, 0.96);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.16);
+}
+:root[data-ui-shell="day"] .at-top-menu-item {
+  color: #424245;
+}
+:root[data-ui-shell="day"] .at-top-menu-item:hover {
+  color: #1d1d1f;
+  background: rgba(0, 113, 227, 0.1);
+}
+:root[data-ui-shell="day"] .at-top-menu-item.on {
+  color: #0071e3;
+  background: rgba(0, 113, 227, 0.12);
+}
+:root[data-ui-shell="day"] .at-chip {
+  background: #ffffff;
+  border-color: rgba(0, 0, 0, 0.12);
+  color: #424245;
+}
+:root[data-ui-shell="day"] .at-chip:hover {
+  color: #1d1d1f;
+  border-color: rgba(0, 0, 0, 0.2);
+  background: rgba(0, 0, 0, 0.04);
+}
+:root[data-ui-shell="day"] .at-chip.on {
+  color: #ffffff;
+  background: #0071e3;
+  border-color: #0071e3;
+}
+:root[data-ui-shell="day"] .at-caption,
+:root[data-ui-shell="day"] .at-sub,
+:root[data-ui-shell="day"] .at-unit,
+:root[data-ui-shell="day"] .at-delta,
+:root[data-ui-shell="day"] .at-fill-hint,
+:root[data-ui-shell="day"] .at-modtitle,
+:root[data-ui-shell="day"] .at-modnote,
+:root[data-ui-shell="day"] .at-state {
+  color: #6e6e73;
+}
+:root[data-ui-shell="day"] .at-title {
+  color: #1d1d1f;
+}
+:root[data-ui-shell="day"] .at-badge {
+  color: #ffffff;
+  border-color: #ffffff;
+}
+:root[data-ui-shell="day"] .text-muted-foreground {
+  color: #6e6e73 !important;
+}
+:root[data-ui-shell="day"] .ztable th {
+  color: #6e6e73;
+  border-bottom-color: rgba(0, 0, 0, 0.08);
+  background: #f5f5f7;
+}
+:root[data-ui-shell="day"] .ztable td {
+  border-bottom-color: rgba(0, 0, 0, 0.06);
+  color: #424245;
+}
+:root[data-ui-shell="day"] .ztable tbody tr:hover {
+  background: rgba(0, 0, 0, 0.03);
+}
+:root[data-ui-shell="day"] .obsv-isofocus {
+  background: rgba(255, 255, 255, 0.92);
+  border-color: rgba(0, 0, 0, 0.12);
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+}
+:root[data-ui-shell="day"] .obsv-isofocus .fmeta {
+  color: #6e6e73;
+}
+:root[data-ui-shell="day"] .obsv-tile .nm {
+  color: #1d1d1f;
+  text-shadow: none;
+}
+:root[data-ui-shell="day"] .obsv-tile .meta {
+  color: #6e6e73;
+  text-shadow: none;
+}
+:root[data-ui-shell="day"] .at-chart-floor {
+  opacity: 0.35;
+}
+:root[data-ui-shell="day"] .at-chart-floor .grid {
+  stroke: rgba(0, 0, 0, 0.06);
+}
+:root[data-ui-shell="day"] .at-chart-floor .iso {
+  stroke: rgba(0, 0, 0, 0.08);
+}
+
+/* Login uses h2kvm-/Zeus PremiumLoginShell (zyvor-premium-login.css). */
+
+/* ── Compact density ── */
+:root[data-density="compact"] {
+  --rail-h: 48px;
+  --page-inset: 12px;
+  --at-row-pad-y: 7px;
+  --at-row-pad-x: 10px;
+  --at-stack-gap: 10px;
+  --at-ctrl-h: 26px;
+}
+:root[data-density="compact"] .ztable td,
+:root[data-density="compact"] .at-tbl td {
+  padding: var(--at-row-pad-y) var(--at-row-pad-x);
+  font-size: 12.5px;
+}
+:root[data-density="compact"] .ztable th,
+:root[data-density="compact"] .at-tbl th {
+  padding: 6px var(--at-row-pad-x);
+  font-size: 10px;
+}
+:root[data-density="compact"] .glass-card {
+  border-radius: 0.7rem;
+}
+:root[data-density="compact"] main .p-6,
+:root[data-density="compact"] .at-main-scroll {
+  --page-inset: 12px;
+}
+:root[data-density="compact"] .at-stack,
+:root[data-density="compact"] .at-mod,
+:root[data-density="compact"] .at-form-grid,
+:root[data-density="compact"] .at-settings-body {
+  gap: var(--at-stack-gap);
+}
+:root[data-density="compact"] .at-panel-bar {
+  padding-top: 8px;
+  padding-bottom: 8px;
+  min-height: 36px;
+}
+:root[data-density="compact"] .at-page-head,
+:root[data-density="compact"] .at-head {
+  padding-top: 10px;
+  padding-bottom: 10px;
+  gap: 8px;
+}
+:root[data-density="compact"] .at-btn,
+:root[data-density="compact"] .btn {
+  height: var(--at-ctrl-h);
+  padding: 0 11px;
+  font-size: 12.5px;
+}
+:root[data-density="compact"] .btn-sm,
+:root[data-density="compact"] .at-act {
+  height: 24px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+:root[data-density="compact"] .at-iconbtn,
+:root[data-density="compact"] .at-quick-link {
+  width: 28px;
+  height: 28px;
+}
+:root[data-density="compact"] .at-control {
+  height: 24px;
+  width: 26px;
+  min-width: 26px;
+}
+:root[data-density="compact"] .at-control-ico {
+  width: 13px;
+  height: 13px;
+}
+:root[data-density="compact"] input.at-field,
+:root[data-density="compact"] .at-field,
+:root[data-density="compact"] select.at-field,
+:root[data-density="compact"] .field,
+:root[data-density="compact"] input.field,
+:root[data-density="compact"] select.field {
+  height: var(--at-ctrl-h);
+  padding-top: 0;
+  padding-bottom: 0;
+  font-size: 12.5px;
+}
+:root[data-density="compact"] .at-chip,
+:root[data-density="compact"] .at-badge-pill,
+:root[data-density="compact"] .badge {
+  font-size: 11px;
+  padding: 1px 7px;
+}
+:root[data-density="compact"] .at-list-row {
+  padding-top: 8px;
+  padding-bottom: 8px;
+}
+:root[data-density="compact"] .at-slideover-body,
+:root[data-density="compact"] .at-choice {
+  padding: 10px 12px;
+}
+:root[data-density="compact"] .at-choice-grid {
+  gap: 8px;
+}
+:root[data-density="compact"] .at-caption {
+  font-size: 10px;
+}
+:root[data-density="compact"] .at-val.xl {
+  font-size: 1.65rem;
+}
+:root[data-density="compact"] .at-val.lg {
+  font-size: 1.2rem;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.4s cubic-bezier(0.22, 1, 0.36, 1);
+}
+@keyframes fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---- Observatory visualizations ---- */
+@keyframes obsv-blink { 50% { opacity: 0 } }
+@keyframes obsv-flick { 0%,100% { opacity:.5 } 47% { opacity:.7 } 48% { opacity:.35 } 49% { opacity:.6 } }
+@keyframes obsv-beat { 0%,100% { opacity:1 } 50% { opacity:.35 } }
+
+/* CRT terminal */
+.obsv-crt { padding:22px 26px; overflow:hidden;
+  background:radial-gradient(120% 130% at 50% 50%, #04160d 60%, #02110a 100%);
+  font-family:var(--at-mono); color:#43f39a; }
+.obsv-crt .obsv-scan { position:absolute; inset:0; pointer-events:none; z-index:3;
+  background:repeating-linear-gradient(0deg, rgba(0,0,0,0) 0 2px, rgba(0,0,0,.18) 2px 3px); mix-blend-mode:multiply; }
+.obsv-screen { position:relative; z-index:2; height:100%; overflow:auto; text-shadow:0 0 6px rgba(67,243,154,.4); }
+.obsv-log { margin:0; font-size:13px; line-height:1.6; }
+.obsv-ln { display:flex; align-items:baseline; white-space:pre; min-height:1.6em; }
+.obsv-ln .lead { color:#1f8a57 } .obsv-ln .msg { color:#43f39a } .obsv-ln .dots { color:#0e4029; flex:1; overflow:hidden }
+.obsv-ln .tag { opacity:0; transition:opacity .12s; padding-left:6px }
+.obsv-ln .tag.show { opacity:1 }
+.obsv-ln .tag.ok,.obsv-ln .tag.rdy { color:#43f39a } .obsv-ln .tag.warn { color:#ffcf6b; text-shadow:0 0 8px rgba(255,207,107,.5) } .obsv-ln .tag.info { color:#5bd8ff }
+.obsv-hud { margin-top:16px; padding-top:14px; border-top:1px solid #0e4029 }
+.obsv-status { font-size:14px; color:#43f39a; letter-spacing:.05em; margin-bottom:13px; display:flex; align-items:center; gap:10px }
+.obsv-status .beat { animation:obsv-beat 1.6s infinite } .obsv-status small { color:#1f8a57; letter-spacing:.02em }
+.obsv-gauge { font-size:13px; margin-bottom:12px; word-break:break-all }
+.obsv-gauge .bar { color:#43f39a } .obsv-gauge .empty { color:#0e4029 } .obsv-gauge .cap { color:#5bd8ff }
+.obsv-io { font-size:12.5px; line-height:1.7; color:#1f8a57 } .obsv-io b { color:#43f39a; font-variant-numeric:tabular-nums }
+.obsv-prompt { margin-top:14px; font-size:13px; color:#43f39a }
+.obsv-cur { display:inline-block; width:9px; height:15px; background:#43f39a; margin-left:2px; vertical-align:-2px; box-shadow:0 0 8px rgba(67,243,154,.7); animation:obsv-blink 1.05s steps(1) infinite }
+
+/* treemap */
+.obsv-map { }
+.obsv-tile { position:absolute; border-radius:7px; overflow:hidden; border:1px solid rgba(0,0,0,.35);
+  transition:transform .5s cubic-bezier(.2,.7,.2,1), opacity .5s; transform-origin:center }
+.obsv-tile .fillbg { position:absolute; inset:0; opacity:.16 }
+.obsv-tile .used { position:absolute; left:0; right:0; bottom:0; opacity:.5 }
+.obsv-tile .lab { position:absolute; inset:0; padding:8px 9px; display:flex; flex-direction:column; justify-content:space-between }
+.obsv-tile .nm { font-family:var(--at-mono); font-size:11px; color:#eaf3ff; text-shadow:0 1px 3px rgba(0,0,0,.6); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.obsv-tile .meta { font-family:var(--at-mono); font-size:10px; color:rgba(234,243,255,.82); text-shadow:0 1px 3px rgba(0,0,0,.7); font-variant-numeric:tabular-nums }
+.obsv-tile.sm .meta { display:none } .obsv-tile.sm .nm { font-size:9.5px }
+.obsv-tile:hover { outline:1.5px solid rgba(234,243,255,.8); outline-offset:-1px; z-index:5 }
+
+/* iso focus panel */
+.obsv-isofocus { position:absolute; left:18px; bottom:16px; min-width:220px; background:rgba(13,20,34,.72);
+  border:1px solid #1C2A40; border-radius:11px; padding:11px 14px; backdrop-filter:blur(10px);
+  font-family:var(--at-mono); transition:opacity .2s; pointer-events:none;
+  box-shadow:0 12px 40px rgba(0,0,0,.45) }
+.obsv-isofocus .fnm { font-size:12.5px; margin-bottom:4px }
+.obsv-isofocus .fmeta { font-size:10.5px; color:#8AA0BD; font-variant-numeric:tabular-nums }

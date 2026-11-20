@@ -1,0 +1,105 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+#
+# Publishes container images on a tagged release. Every push/PR already build-tests both
+# Dockerfiles in ci.yml's `docker` job (push: false) — this workflow only fires on `v*` tags
+# (or manual dispatch) and is the one place images actually get pushed, signed, and scanned.
+name: Publish container images
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # anchore/sbom-action attaches the SBOM to the tag's GitHub Release
+      packages: write
+      id-token: write # keyless cosign signing
+      security-events: write # Trivy SARIF upload
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - dockerfile: Dockerfile
+            image: ghcr.io/zyvorai/atlas
+            name: atlas
+          - dockerfile: Dockerfile.ceph
+            image: ghcr.io/zyvorai/atlas-ceph
+            name: atlas-ceph
+          - dockerfile: Dockerfile.io
+            image: ghcr.io/zyvorai/atlas-io-agent
+            name: atlas-io-agent
+          - dockerfile: Dockerfile.data
+            image: ghcr.io/zyvorai/atlas-data
+            name: atlas-data
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Resolve version
+        id: ver
+        run: echo "version=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          push: true
+          tags: |
+            ${{ matrix.image }}:${{ steps.ver.outputs.version }}
+            ${{ matrix.image }}:latest
+          cache-from: type=gha,scope=${{ matrix.dockerfile }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.dockerfile }}
+
+      - uses: sigstore/cosign-installer@756fe2d284c7292c4e9b62c8a28f1e5629c59532 # v4.1.3
+
+      # Keyless signing via this run's own OIDC token — no signing key/secret to manage.
+      - name: Sign image (keyless)
+        run: cosign sign --yes "${{ matrix.image }}@${{ steps.build.outputs.digest }}"
+
+      - name: Generate SBOM
+        uses: anchore/sbom-action@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
+        with:
+          image: "${{ matrix.image }}:${{ steps.ver.outputs.version }}"
+          format: cyclonedx-json
+          output-file: "sbom-${{ matrix.name }}.cdx.json"
+
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: sbom-${{ matrix.name }}
+          path: "sbom-*.cdx.json"
+          retention-days: 90
+
+      # Informational until a baseline is established, same posture as ci.yml's fmt check.
+      # if: always() so an unrelated earlier-step failure (e.g. the SBOM upload) can't silently
+      # skip this and leave the next step uploading a SARIF file that was never produced.
+      - name: Scan image (Trivy)
+        if: always()
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        continue-on-error: true
+        with:
+          image-ref: "${{ matrix.image }}:${{ steps.ver.outputs.version }}"
+          format: sarif
+          output: trivy-results.sarif
+
+      - uses: github/codeql-action/upload-sarif@33d7b85da1a04171e211befe2c739303b9a4c066 # v4.39.3
+        if: always()
+        continue-on-error: true
+        with:
+          sarif_file: trivy-results.sarif
+          category: "trivy-${{ matrix.dockerfile }}"

@@ -1,0 +1,102 @@
+{
+  "database-start": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/database",
+      "start"
+    ],
+    "phases": [
+      "start"
+    ],
+    "timeout_seconds": 30
+  },
+  "database-verify": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/database",
+      "verify"
+    ],
+    "phases": [
+      "verify"
+    ],
+    "timeout_seconds": 30
+  },
+  "database-stop": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/database",
+      "stop"
+    ],
+    "phases": [
+      "stop"
+    ],
+    "timeout_seconds": 30
+  },
+  "database-quiesce": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/database",
+      "quiesce"
+    ],
+    "phases": [
+      "quiesce"
+    ],
+    "timeout_seconds": 30
+  },
+  "database-resume": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/database",
+      "resume"
+    ],
+    "phases": [
+      "resume"
+    ],
+    "timeout_seconds": 30
+  },
+  "api-start": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/api",
+      "start"
+    ],
+    "phases": [
+      "start"
+    ],
+    "timeout_seconds": 30
+  },
+  "api-verify": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/api",
+      "verify"
+    ],
+    "phases": [
+      "verify"
+    ],
+    "timeout_seconds": 30
+  },
+  "api-stop": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/api",
+      "stop"
+    ],
+    "phases": [
+      "stop"
+    ],
+    "timeout_seconds": 30
+  },
+  "api-quiesce": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/api",
+      "quiesce"
+    ],
+    "phases": [
+      "quiesce"
+    ],
+    "timeout_seconds": 30
+  },
+  "api-resume": {
+    "argv": [
+      "/usr/local/libexec/atlas-recovery/api",
+      "resume"
+    ],
+    "phases": [
+      "resume"
+    ],
+    "timeout_seconds": 30
+  }
+}

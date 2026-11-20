@@ -1,0 +1,128 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+[workspace]
+members = [
+    "crates/atlas-common",
+    "crates/atlas-api-types",
+    "crates/atlas-driver-core",
+    "crates/atlas-driver-ceph",
+    "crates/atlas-driver-nfs",
+    "crates/atlas-driver-san",
+    "crates/atlas-driver-cloudblock",
+    "crates/atlas-driver-native",
+    "crates/atlas-driver-zfs",
+    "crates/atlas-driver-longhorn",
+    "crates/atlas-driver-weka",
+    "crates/atlas-driver-macos",
+    "crates/atlas-mac-agent",
+    "crates/atlas-driver-k8s",
+    "crates/atlas-driver-rgw",
+    "crates/atlas-databridge",
+    "crates/atlas-policy",
+    "crates/atlas-inventory",
+    "crates/atlas-discovery",
+    "crates/atlas-monitor",
+    "crates/atlas-jobs",
+    "crates/atlas-gateway",
+    "crates/atlas-io",
+    "crates/atlas-native",
+    "crates/atlas-native-fuse",
+    "crates/atlas-native-csi",
+    "crates/atlas-native-s3",
+    "crates/atlasctl",
+    "crates/atlas-client",
+]
+resolver = "2"
+
+[workspace.package]
+version = "0.13.0"
+edition = "2021"
+license = "LicenseRef-Zyvor-Production-1.0"
+authors = ["ZyvorAI Labs Private Limited"]
+
+[workspace.dependencies]
+# Internal crates
+atlas-common = { path = "crates/atlas-common" }
+atlas-api-types = { path = "crates/atlas-api-types" }
+atlas-client = { path = "crates/atlas-client" }
+atlas-driver-core = { path = "crates/atlas-driver-core" }
+atlas-driver-ceph = { path = "crates/atlas-driver-ceph" }
+atlas-driver-nfs = { path = "crates/atlas-driver-nfs" }
+atlas-driver-san = { path = "crates/atlas-driver-san" }
+atlas-driver-cloudblock = { path = "crates/atlas-driver-cloudblock" }
+atlas-driver-native = { path = "crates/atlas-driver-native" }
+atlas-driver-zfs = { path = "crates/atlas-driver-zfs" }
+atlas-driver-longhorn = { path = "crates/atlas-driver-longhorn" }
+atlas-driver-weka = { path = "crates/atlas-driver-weka" }
+atlas-driver-macos = { path = "crates/atlas-driver-macos" }
+atlas-mac-agent = { path = "crates/atlas-mac-agent" }
+atlas-driver-k8s = { path = "crates/atlas-driver-k8s" }
+atlas-driver-rgw = { path = "crates/atlas-driver-rgw" }
+atlas-databridge = { path = "crates/atlas-databridge" }
+atlas-policy = { path = "crates/atlas-policy" }
+atlas-inventory = { path = "crates/atlas-inventory" }
+atlas-discovery = { path = "crates/atlas-discovery" }
+atlas-monitor = { path = "crates/atlas-monitor" }
+atlas-io = { path = "crates/atlas-io" }
+atlas-native = { path = "crates/atlas-native" }
+atlas-jobs = { path = "crates/atlas-jobs" }
+
+# Async / runtime
+tokio = { version = "1", features = ["full"] }
+async-trait = "0.1"
+futures-util = "0.3"
+
+# Web
+axum = { version = "0.8", features = ["ws"] }
+tower = "0.5"
+tower-http = { version = "0.7", features = ["cors", "trace"] }
+http = "1"
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml = "0.9"
+
+# Storage
+sqlx = { version = "0.9", features = ["runtime-tokio", "any", "sqlite", "postgres", "chrono", "json", "migrate"] }
+
+# Kubernetes
+kube = { version = "5.0", features = ["runtime", "derive"] }
+k8s-openapi = { version = "0.29", features = ["v1_33"] }
+
+# Errors / logging
+anyhow = "1"
+thiserror = "2.0"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+# Auth / util
+jsonwebtoken = { version = "11", default-features = false, features = ["rust_crypto"] }
+# Console password hashing (memory-hard KDF, replaces plain SHA-256).
+argon2 = "0.6"
+# OIDC/SSO login. default-features off + explicit "reqwest" feature keeps it on the workspace's
+# existing rustls-based reqwest instead of pulling openidconnect's own bundled HTTP stack.
+openidconnect = { version = "4", default-features = false, features = ["reqwest"] }
+base64 = "0.23"
+ring = "0.17"
+chrono = { version = "0.4", features = ["serde"] }
+clap = { version = "4", features = ["derive", "env"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+tempfile = "3"
+reqwest = { version = "0.13", features = ["json", "stream"] }
+dotenvy = "0.15"
+# Same version reqwest's rustls backend already resolves to (Cargo.lock); used to eagerly validate a
+# PEM CA cert (reqwest's own Certificate::from_pem defers parsing to build()-time and can silently
+# accept garbage input, see atlas-driver-core/src/tls.rs).
+rustls-pki-types = "1"
+# Same version rusty-s3 already resolves to (Cargo.lock); used directly to sign a generic bucket
+# subresource request (versioning/lifecycle/policy/tagging/cors/object-lock/encryption) that has
+# no dedicated rusty-s3 action type, see atlas-driver-rgw/src/lib.rs.
+jiff = "0.2"
+# eBPF loader for atlas-io's live block-layer source (`bpf` feature, Linux only).
+aya = "0.16"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true

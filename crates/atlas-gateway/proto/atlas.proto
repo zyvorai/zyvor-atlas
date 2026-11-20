@@ -1,0 +1,211 @@
+// Copyright (c) 2026 ZyvorAI Labs Private Limited.
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// Atlas storage control-plane gRPC edge (PDF §5.3: typed internal contracts for products).
+syntax = "proto3";
+
+package atlas.v1;
+
+service AtlasStorage {
+  rpc Health(HealthRequest) returns (HealthReply);
+  rpc ListClusters(Empty) returns (ListClustersReply);
+  rpc ListPools(Empty) returns (ListPoolsReply);
+  rpc ListVolumes(Empty) returns (ListVolumesReply);
+  rpc GetVolume(GetVolumeRequest) returns (Volume);
+  rpc CreateVolume(CreateVolumeRequest) returns (CreateVolumeReply);
+  rpc DeleteVolume(DeleteVolumeRequest) returns (JobReply);
+  rpc ExpandVolume(ExpandVolumeRequest) returns (JobReply);
+  rpc CreateSnapshot(CreateSnapshotRequest) returns (JobReply);
+  rpc ListSnapshots(ListSnapshotsRequest) returns (ListSnapshotsReply);
+  // Product-scoped: list only the volumes a product owns (via product_bindings).
+  rpc ListVolumesByOwner(ListVolumesByOwnerRequest) returns (ListVolumesReply);
+  rpc GetJob(GetJobRequest) returns (Job);
+  // Server-streaming: emit the job on each state change until it reaches a terminal state.
+  rpc WatchJob(GetJobRequest) returns (stream Job);
+  rpc ListJobs(ListJobsRequest) returns (ListJobsReply);
+  rpc ListAlerts(ListAlertsRequest) returns (ListAlertsReply);
+  // Capacity + client I/O + recovery rollup (mirrors REST /metrics/summary).
+  rpc GetMetricsSummary(Empty) returns (MetricsSummary);
+  // Object buckets (RGW) — product-facing inventory read.
+  rpc ListBuckets(Empty) returns (ListBucketsReply);
+  // Tenants with volumes or quotas (mirrors REST GET /tenants overview).
+  rpc ListTenants(Empty) returns (ListTenantsReply);
+  // Protection schedules (mirrors REST GET /schedules). Optional volume_id filter.
+  rpc ListSchedules(ListSchedulesRequest) returns (ListSchedulesReply);
+}
+
+message Empty {}
+
+message HealthRequest {}
+message HealthReply {
+  string status = 1;
+  string version = 2;
+}
+
+message Cluster {
+  string id = 1;
+  string name = 2;
+  string health = 3;
+  int64 raw_capacity_bytes = 4;
+  int64 used_capacity_bytes = 5;
+  int64 available_capacity_bytes = 6;
+}
+message ListClustersReply { repeated Cluster clusters = 1; }
+
+message Pool {
+  string id = 1;
+  string name = 2;
+  string kind = 3;
+  int64 used_bytes = 4;
+  int64 max_bytes = 5;
+  string health = 6;
+}
+message ListPoolsReply { repeated Pool pools = 1; }
+
+message Volume {
+  string id = 1;
+  string name = 2;
+  string kind = 3;
+  int64 size_bytes = 4;
+  string state = 5;
+  string pvc_name = 6;
+  string storage_class = 7;
+  string namespace = 8;
+}
+message ListVolumesReply { repeated Volume volumes = 1; }
+message GetVolumeRequest { string id = 1; }
+
+// Product ownership recorded in product_bindings so a product can later enumerate/guard its volumes.
+message Owner {
+  string product = 1;        // e.g. "veyron", "hyper2kvm"
+  string resource_type = 2;  // e.g. "vm", "datastore"
+  string resource_id = 3;    // the product-side resource id
+  string role = 4;           // e.g. "owner", "consumer" (defaults to "owner")
+}
+
+message CreateVolumeRequest {
+  string tenant_id = 1;
+  string name = 2;
+  int64 size_bytes = 3;
+  string policy = 4;
+  string namespace = 5;
+  Owner owner = 6;
+}
+message CreateVolumeReply {
+  string job_id = 1;
+  string volume_id = 2;
+  string state = 3;
+}
+
+// Generic job-accepted reply for async operations (delete/snapshot).
+message JobReply {
+  string job_id = 1;
+  string state = 2;
+}
+
+message DeleteVolumeRequest {
+  string id = 1;
+  // Required for production / protected StorageClasses (PDF §14 Rule 2).
+  bool confirm = 2;
+}
+message ExpandVolumeRequest {
+  string id = 1;
+  int64 new_size_bytes = 2;
+}
+
+message CreateSnapshotRequest {
+  string volume_id = 1;
+  string name = 2;  // optional; defaults to snap-<suffix>
+}
+
+message Snapshot {
+  string id = 1;
+  string volume_id = 2;
+  string name = 3;
+  string state = 4;
+  bool protected = 5;
+  string created_at = 6;
+}
+message ListSnapshotsRequest { string volume_id = 1; }  // empty = all
+message ListSnapshotsReply { repeated Snapshot snapshots = 1; }
+
+message ListVolumesByOwnerRequest {
+  string product = 1;
+  string resource_id = 2;  // optional; empty = all of the product's volumes
+}
+
+message GetJobRequest { string id = 1; }
+message Job {
+  string id = 1;
+  string job_type = 2;
+  string state = 3;
+  int64 progress_percent = 4;
+  string error = 5;
+}
+message ListJobsRequest {
+  string state = 1;  // optional; empty = all states
+  int32 limit = 2;   // optional; 0 / unset → default 50
+}
+message ListJobsReply { repeated Job jobs = 1; }
+
+// Tenant identity from inventory overview (tenant_id is the only name-like key today).
+message Tenant {
+  string id = 1;
+  string name = 2;
+}
+message ListTenantsReply { repeated Tenant tenants = 1; }
+
+message ListSchedulesRequest {
+  string volume_id = 1;  // optional; empty = all
+}
+message Schedule {
+  string id = 1;
+  string tenant_id = 2;
+  string volume_id = 3;
+  string kind = 4;
+  string mode = 5;
+  int64 interval_secs = 6;
+  int64 keep = 7;
+  bool enabled = 8;
+  string next_run_at = 9;
+}
+message ListSchedulesReply { repeated Schedule schedules = 1; }
+
+message Alert {
+  string id = 1;
+  string severity = 2;
+  string title = 3;
+  string description = 4;
+  string state = 5;
+  string resource_id = 6;
+}
+message ListAlertsRequest { string state = 1; }
+message ListAlertsReply { repeated Alert alerts = 1; }
+
+message MetricsSummary {
+  int64 raw_capacity_bytes = 1;
+  int64 used_capacity_bytes = 2;
+  int64 available_capacity_bytes = 3;
+  double used_capacity_percent = 4;
+  int64 clusters = 5;
+  int64 pools = 6;
+  int64 volumes = 7;
+  int64 snapshots = 8;
+  int64 buckets = 9;
+  int64 backups = 10;
+  double read_ops_total = 11;
+  double write_ops_total = 12;
+  int64 pg_recovering = 13;
+  int64 pg_backfilling = 14;
+  int64 objects_degraded = 15;
+}
+
+message Bucket {
+  string id = 1;
+  string name = 2;
+  string bucket_name = 3;
+  string state = 4;
+  string tenant_id = 5;
+  string namespace = 6;
+  string endpoint = 7;
+}
+message ListBucketsReply { repeated Bucket buckets = 1; }

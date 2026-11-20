@@ -1,0 +1,150 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+{{- $full := include "atlas-native.fullname" . }}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ $full }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ $full }}
+  replicas: {{ .Values.replicas }}
+  # All voters must start together to elect a leader; ordered startup would wait on readiness
+  # (which needs a leader) forever.
+  podManagementPolicy: Parallel
+  selector:
+    matchLabels:
+      {{- include "atlas-native.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "atlas-native.labels" . | nindent 8 }}
+        {{- with .Values.podLabels }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+      annotations:
+        # The config is mounted with subPath, which never sees ConfigMap updates: roll on change.
+        checksum/config: {{ include "atlas-native.config" . | sha256sum }}
+        {{- with .Values.podAnnotations }}
+        {{- toYaml . | nindent 8 }}
+        {{- end }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        seccompProfile: { type: RuntimeDefault }
+      {{- if ne .Values.podAntiAffinity "none" }}
+      affinity:
+        podAntiAffinity:
+          {{- if eq .Values.podAntiAffinity "hard" }}
+          requiredDuringSchedulingIgnoredDuringExecution:
+            - topologyKey: kubernetes.io/hostname
+              labelSelector:
+                matchLabels:
+                  {{- include "atlas-native.selectorLabels" . | nindent 18 }}
+          {{- else }}
+          preferredDuringSchedulingIgnoredDuringExecution:
+            - weight: 100
+              podAffinityTerm:
+                topologyKey: kubernetes.io/hostname
+                labelSelector:
+                  matchLabels:
+                    {{- include "atlas-native.selectorLabels" . | nindent 20 }}
+          {{- end }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: node
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args: ["--config", "/etc/atlas-native/node.json"]
+          env:
+            - name: POD_NAME
+              valueFrom:
+                fieldRef: { fieldPath: metadata.name }
+            {{- with .Values.node.mallocArenaMax }}
+            - { name: MALLOC_ARENA_MAX, value: {{ . | quote }} }
+            {{- end }}
+          {{- if and .Values.tiering.enabled (eq (include "atlas-native.tierSecret" .) (printf "%s-tier" $full)) }}
+          # BUCKET_HOST, BUCKET_PORT, BUCKET_NAME of the ObjectBucketClaim.
+          envFrom:
+            - configMapRef: { name: {{ $full }}-tier }
+          {{- end }}
+          ports:
+            - { name: http, containerPort: 7480 }
+            - { name: data, containerPort: 7481 }
+            - { name: raft, containerPort: 7482 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http, scheme: {{ include "atlas-native.probeScheme" . }} }
+            periodSeconds: 2
+            failureThreshold: 30
+          livenessProbe:
+            httpGet: { path: /healthz, port: http, scheme: {{ include "atlas-native.probeScheme" . }} }
+            periodSeconds: 10
+          readinessProbe:
+            httpGet: { path: /readyz, port: http, scheme: {{ include "atlas-native.probeScheme" . }} }
+            periodSeconds: 5
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: ["ALL"] }
+          volumeMounts:
+            - { name: state, mountPath: /var/lib/atlas-native }
+            - { name: config, mountPath: /etc/atlas-native/node.json, subPath: node.json, readOnly: true }
+            - { name: api-token, mountPath: /etc/atlas-native/api, readOnly: true }
+            {{- if .Values.tls.enabled }}
+            - { name: tls, mountPath: /etc/atlas-native/tls, readOnly: true }
+            {{- end }}
+            {{- if .Values.httpTls.enabled }}
+            - { name: http-tls, mountPath: /etc/atlas-native/http-tls, readOnly: true }
+            {{- end }}
+            {{- if .Values.tiering.enabled }}
+            - { name: s3, mountPath: /etc/atlas-native/s3, readOnly: true }
+            {{- end }}
+      volumes:
+        - name: config
+          configMap: { name: {{ $full }}-config }
+        - name: api-token
+          secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+        {{- if .Values.tls.enabled }}
+        - name: tls
+          secret: { secretName: {{ include "atlas-native.tlsSecret" . }} }
+        {{- end }}
+        {{- if .Values.httpTls.enabled }}
+        - name: http-tls
+          secret: { secretName: {{ required "httpTls.existingSecret is required when httpTls.enabled" .Values.httpTls.existingSecret }} }
+        {{- end }}
+        {{- if .Values.tiering.enabled }}
+        - name: s3
+          secret: { secretName: {{ include "atlas-native.tierSecret" . }} }
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes:
+          {{- toYaml .Values.persistence.accessModes | nindent 10 }}
+        {{- with .Values.persistence.storageClass }}
+        storageClassName: {{ . }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size }}
