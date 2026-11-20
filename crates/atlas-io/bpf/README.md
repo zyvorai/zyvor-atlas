@@ -15,4 +15,4 @@ not compile it: CI tests the userspace pipeline with `FakeSource`.
 | `atlas_cgroup.bpf.c` | — | contract for binding a cgroup id to an Atlas volume (not loaded) |
 
 Observe-only: the programs never change or drop I/O. Write-freeze is a userspace lease that fails
-open. Only non-GPL helpers are used, so the object loads under its `Apache-2.0` license string.
+open. Only non-GPL helpers are used, so the object loads under its non-GPL license string.

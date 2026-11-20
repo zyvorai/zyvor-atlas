@@ -46,7 +46,7 @@ columns state only what has been measured or verified in this repository.
 | Cloud-to-edge DB migration | DataBridge: six engines, CDC, cutover | (same gateway) | Not in scope |
 | Operations | AI Ops Advisor, anomaly detection, eBPF I/O RCA (`atlas-io`); MCP server with 53 read-only tools and six opt-in, audited, two-phase writes (`create_snapshot`, `ack_alert`, `silence_alert`, `create_workspace`, `reset_workspace`, `discard_workspace`) (`docs/MCP.md`) | (same gateway) | Own management GUI and monitoring |
 | Edge footprint | Single-node Rook lab profile | Single-node low-memory profile (`values-edge.yaml`): one pod, catalog memory capped at ~26 MB however many files, 61 MB peak in a 50k-file lab run (`docs/NATIVE_EDGE.md`) | Multi-node clusters on qualified hardware |
-| Licence | Apache-2.0, no key | Apache-2.0, no key | Commercial |
+| Licence | Zyvor Production 1.0 (free non-production), no key | Zyvor Production 1.0 (free non-production), no key | Commercial |
 
 ## WEKA as an Atlas backend
 
@@ -137,7 +137,7 @@ Atlas today as well as where Atlas differs.
 | Replication / DR | Snapshot replication, RBD mirroring with failback, verified on two lab clusters | SnapMirror, MetroCluster | Async, NearSync, Sync, Metro |
 | Protocols | Block, POSIX, NFS, SMB, S3 | NFS, SMB, S3, FC, iSCSI, NVMe-oF | Files, Objects, Volumes (iSCSI) |
 | Multi-vendor control plane | Yes: Ceph, ZFS, NFS, Longhorn, WEKA, macOS, native, any S3 | ONTAP (and cloud variants) | Nutanix clusters |
-| Open source, no licence key | Apache-2.0 | No | No |
+| Source-available, no licence key | Zyvor Production 1.0 (free non-production) | No | No |
 | Performance proof | Lab numbers only, no NVMe benchmark | Published vendor benchmarks | Published vendor benchmarks |
 
 ## Compared with VMware vSAN (hyperconverged infrastructure)
@@ -160,7 +160,7 @@ checked against a current VMware page; verify it before quoting it.
 | Remote and edge sites | Single-node profile, ~26 MB catalog memory | Small clusters on qualified hardware |
 | Protocols | Block, POSIX, NFS, SMB, S3, Kubernetes CSI | vSphere datastores; file services as an add-on |
 | Hardware support | Any Linux host; lab-verified only, no NVMe benchmark | Hardware compatibility list and vendor support |
-| Licence | Apache-2.0, no key | Commercial subscription |
+| Licence | Zyvor Production 1.0 (free non-production), no key | Commercial subscription |
 
 **Choose vSAN** when the estate stays on vSphere and you want one vendor to support compute and
 storage together, or you need a synchronous stretched cluster. **Choose Atlas** when you are leaving
@@ -187,7 +187,7 @@ Limits to state plainly:
   be addressed as `rbd:pool/image`. NFS and ZFS are not imported this way. The qcow2 and RBD paths have
   not been run on a real cluster or a large image.
 - **Licence differs.** h2kvm is source-available under the Zyvor Production License: free for
-  evaluation and labs, a paid subscription for production. Atlas stays Apache-2.0.
+  evaluation and labs, a paid subscription for production. Atlas uses the same license.
 - **Source coverage is partial.** AWS and Proxmox Backup Server are library modules only, and GCP,
   Xen, VirtualBox and remote Hyper-V have no pickup code (their disk files work as local files).
 - **Naming.** Some Atlas docs call Transiva the converter and use its old owner id `hyper2kvm`. In

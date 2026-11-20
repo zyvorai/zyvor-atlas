@@ -130,7 +130,7 @@ const config: Config = {
           ],
         },
       ],
-      copyright: `Copyright © ${new Date().getFullYear()} ZyvorAI Labs. Apache License 2.0.`,
+      copyright: `Copyright © ${new Date().getFullYear()} ZyvorAI Labs. Zyvor Production License v1.0.`,
     },
     prism: {
       theme: prismThemes.github,

@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-EXPECTED_SPDX='Apache-2.0'
+EXPECTED_SPDX='LicenseRef-Zyvor-Production-1.0'
 COPYRIGHT_NEEDLE='Copyright (c) 2026 ZyvorAI Labs Private Limited'
 
 # File types that must carry headers (first ~20 lines / 2 KiB).

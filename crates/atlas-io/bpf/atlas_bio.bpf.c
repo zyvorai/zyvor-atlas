@@ -299,4 +299,4 @@ int atlas_rq_complete(struct trace_event_raw_block_rq_completion *ctx)
 #include "atlas_uring.bpf.c"
 
 // Only non-GPL helpers are used, so the program loads under the project's own license.
-char LICENSE[] SEC("license") = "Apache-2.0";
+char LICENSE[] SEC("license") = "Proprietary";

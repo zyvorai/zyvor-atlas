@@ -142,7 +142,7 @@ def svg(p, label):
   <!-- footer -->
   <line x1="72" y1="560" x2="1128" y2="560" stroke="{p['hair']}" stroke-width="1"/>
   <text x="72" y="596" font-family="{MONO}" font-size="16" fill="{p['sec']}">github.com/zyvorai/zyvor-atlas</text>
-  <text x="1128" y="596" text-anchor="end" font-family="{SANS}" font-size="16" fill="{p['sec']}">v0.5.0 · Apache License 2.0</text>
+  <text x="1128" y="596" text-anchor="end" font-family="{SANS}" font-size="16" fill="{p['sec']}">v0.5.0 · Zyvor Production License</text>
 </svg>
 '''
 

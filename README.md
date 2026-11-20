@@ -7,7 +7,7 @@
 **One API for the storage you have. A filesystem for the storage you need.**
 
 [![CI](https://img.shields.io/github/actions/workflow/status/zyvorai/zyvor-atlas/ci.yml?branch=main&style=flat-square&labelColor=1d1d1f&label=CI)](https://github.com/zyvorai/zyvor-atlas/actions/workflows/ci.yml)
-[![License: Apache 2.0](https://img.shields.io/badge/license-Apache%202.0-0071e3?style=flat-square&labelColor=1d1d1f)](LICENSE)
+[![License: Zyvor Production](https://img.shields.io/badge/license-Zyvor%20Production-0071e3?style=flat-square&labelColor=1d1d1f)](LICENSE)
 [![Version](https://img.shields.io/badge/version-0.13.0-0071e3?style=flat-square&labelColor=1d1d1f)](CHANGELOG.md)
 [![Rust](https://img.shields.io/badge/Rust-gateway%20%C2%B7%20drivers%20%C2%B7%20native%20fs-dea584?style=flat-square&labelColor=1d1d1f&logo=rust&logoColor=white)](Cargo.toml)
 [![Docs](https://img.shields.io/badge/docs-zyvorai.github.io%2Fzyvor--atlas-0071e3?style=flat-square&labelColor=1d1d1f)](https://zyvorai.github.io/zyvor-atlas/)
@@ -20,7 +20,7 @@
 
 <img src="docs/ux/anim/hero.gif" alt="Atlas Storage Center: overview, volumes, observatory, Ceph, DataBridge, alerts and jobs" width="100%">
 
-**Atlas is two things in one Apache-2.0 platform.** A **control plane** that maps volume, snapshot and bucket intent to Ceph, NFS, ZFS, Longhorn and a Mac's own APFS disks through pluggable drivers. And **Atlas Native**, a distributed filesystem with its own data path: striped and erasure-coded extents, sharded Raft metadata, NFS, SMB and S3 gateways, replication to a second site, and a single-node edge profile.
+**Atlas is two things in one platform.** A **control plane** that maps volume, snapshot and bucket intent to Ceph, NFS, ZFS, Longhorn and a Mac's own APFS disks through pluggable drivers. And **Atlas Native**, a distributed filesystem with its own data path: striped and erasure-coded extents, sharded Raft metadata, NFS, SMB and S3 gateways, replication to a second site, and a single-node edge profile.
 
 **4 backends + Native** · **150+ REST endpoints** · **REST · gRPC · SSE** · **Two-way DR, clean failback** · **6 DB engines in DataBridge**
 
@@ -37,7 +37,7 @@
 | When this happens… | Atlas gives you… |
 |---|---|
 | Every product talks to Ceph pools, NFS exports and ZFS datasets its own way | One intent API (volumes, snapshots, clones, CephFS RWX, S3 buckets) over REST and gRPC |
-| You need a scale-out filesystem but not another vendor's appliance | Atlas Native: your own nodes, Raft metadata, erasure coding, NFS/SMB/S3/CSI, under Apache-2.0 |
+| You need a scale-out filesystem but not another vendor's appliance | Atlas Native: your own nodes, Raft metadata, erasure coding, NFS/SMB/S3/CSI, source-available under the Zyvor Production License |
 | A second site exists, but nobody trusts the failback | Two-way RBD mirroring and native replication, with a promote guard and a status endpoint that says when it is safe |
 | Edge sites have one small box and no storage team | The Native edge profile: one pod, small caches, replication or snapshot export back to the core |
 | Tenants share storage with no guardrails | Per-tenant quotas, rate limiting, OIDC/SSO, Vault-backed secrets and token revocation |
@@ -155,7 +155,7 @@ Atlas Native on Kubernetes: `helm upgrade --install atlas-native deploy/helm/atl
 
 ## What it is, and is not
 
-Atlas is Apache-2.0 software you can use in production and in commercial products ([licensing](docs/LICENSING.md)). What is verified where, and what is lab-only (including the experimental live eBPF attach), is in [docs/STATUS.md](docs/STATUS.md). History: [CHANGELOG.md](CHANGELOG.md).
+Atlas is source-available under the Zyvor Production License v1.0: non-production use is free, production use needs a commercial license ([licensing](docs/LICENSING.md)). What is verified where, and what is lab-only (including the experimental live eBPF attach), is in [docs/STATUS.md](docs/STATUS.md). History: [CHANGELOG.md](CHANGELOG.md).
 
 ## Part of the Zyvor stack
 
@@ -163,11 +163,11 @@ Atlas is Apache-2.0 software you can use in production and in commercial product
 
 ## Support
 
-The current release is Apache-2.0 (older tags used other licenses, see the [CHANGELOG](CHANGELOG.md)). If it helps you, you can donate any amount you like: <https://rzp.io/rzp/utwdYh3>. A donation is voluntary and supports development and maintenance of the current code. It is not a purchase: it buys no support, SLA, features, priority or license, and it is not tax-deductible (Zyvor AI Labs Private Limited is a company, not a charity). Zyvor Enterprise (supported releases, SLAs, a named contact and enterprise features) is separate: sales@zyvor.dev.
+Non-production use is free under the Zyvor Production License v1.0; production use requires a commercial license (sales@zyvor.dev). Older tags used other licenses, see the [CHANGELOG](CHANGELOG.md). If it helps you, you can donate any amount you like: <https://rzp.io/rzp/utwdYh3>. A donation is voluntary and supports development and maintenance of the current code. It is not a purchase: it buys no support, SLA, features, priority or license, and it is not tax-deductible (Zyvor AI Labs Private Limited is a company, not a charity). Zyvor Enterprise (supported releases, SLAs, a named contact and enterprise features) is separate: sales@zyvor.dev.
 
 ## License and support
 
-Free and open source under the [Apache License 2.0](LICENSE) ([NOTICE](NOTICE)). **Zyvor Enterprise** adds supported releases, deployment and upgrade guidance, priority incident triage, a named technical contact and 24x7 critical intake: per usable TB per year from USD 12 (INR 1,189 in India incl. 18% GST), minimums from USD 6,000 (INR 594,720): [plans and list rates](docs/SUBSCRIPTION-MODEL.md) · [buy / get a quote](https://zyvor.dev/buy) · [pricing](https://zyvor.dev/pricing?utm_source=github&utm_medium=atlas&utm_campaign=readme_license) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
+Source-available under the [Zyvor Production License v1.0](LICENSE) ([NOTICE](NOTICE)): free for evaluation, development, testing, research, education and other non-production use; production use needs a commercial license from Zyvor AI Labs (30-day trial key available). **Zyvor Enterprise** adds supported releases, deployment and upgrade guidance, priority incident triage, a named technical contact and 24x7 critical intake: per usable TB per year from USD 12 (INR 1,189 in India incl. 18% GST), minimums from USD 6,000 (INR 594,720): [plans and list rates](docs/SUBSCRIPTION-MODEL.md) · [buy / get a quote](https://zyvor.dev/buy) · [pricing](https://zyvor.dev/pricing?utm_source=github&utm_medium=atlas&utm_campaign=readme_license) · [sales@zyvor.dev](mailto:sales@zyvor.dev).
 
 Contributing: [CONTRIBUTING.md](CONTRIBUTING.md), under the [CLA](CLA.md) and [DCO](DCO.md) (`git commit -s`), governed by the [Code of Conduct](CODE_OF_CONDUCT.md). Security issues: [SECURITY.md](SECURITY.md).
 

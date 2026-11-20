@@ -26,7 +26,7 @@ function HomepageHeader() {
         <p className="hero__subtitle">
           A control plane that maps intent to Ceph, NFS, ZFS and Longhorn, plus
           Atlas Native: erasure-coded, Raft-backed, NFS, SMB and S3, with
-          tamper-proof snapshots, replication and clean DR failback. Apache-2.0.
+          tamper-proof snapshots, replication and clean DR failback.
         </p>
         <div className={styles.buttons}>
           <Link
@@ -85,11 +85,11 @@ function TrustBand() {
         <Reveal className={styles.trustGrid}>
           <div>
             <Heading as="h3" className={styles.sectionHeading}>
-              Open source. Apache License 2.0.
+              Source-available. Zyvor Production License.
             </Heading>
             <p className={styles.lede}>
-              Atlas is Apache-2.0: run it, modify it, and ship it — in
-              production, in managed services, and in your own products.
+              Free for evaluation, development, testing and research. Production
+              use needs a commercial license from Zyvor.
             </p>
             <Link to="/docs/licensing">Read the licensing guide →</Link>
           </div>
@@ -99,8 +99,8 @@ function TrustBand() {
               alt="CI status"
             />
             <img
-              src="https://img.shields.io/badge/License-Apache%202.0-blue.svg"
-              alt="Apache License 2.0"
+              src="https://img.shields.io/badge/License-Zyvor%20Production-blue.svg"
+              alt="Zyvor Production License v1.0"
             />
           </div>
         </Reveal>
@@ -118,8 +118,9 @@ function EnterpriseCTA() {
             Running Atlas in production?
           </Heading>
           <p className={styles.enterpriseCopy}>
-            The software is free under Apache-2.0. Talk to Zyvor about
-            deployment help, support, and integrations.
+            Non-production use is free; production use needs a commercial
+            license. Talk to Zyvor about licensing, deployment help, support,
+            and integrations.
           </p>
           <Link
             className={clsx('button button--primary button--lg', styles.pill)}
@@ -141,7 +142,7 @@ export default function Home(): ReactNode {
   return (
     <Layout
       title="Atlas — one API for your storage, and a filesystem of its own"
-      description="Apache-2.0 storage platform: an intent API over Ceph, NFS, ZFS and Longhorn, plus Atlas Native, a distributed filesystem with erasure coding, NFS, SMB, S3, retention-locked snapshots, ransomware-aware auto-protect, replication and clean DR failback, and an MCP server so AI agents can triage storage read-only.">
+      description="Source-available storage platform: an intent API over Ceph, NFS, ZFS and Longhorn, plus Atlas Native, a distributed filesystem with erasure coding, NFS, SMB, S3, retention-locked snapshots, ransomware-aware auto-protect, replication and clean DR failback, and an MCP server so AI agents can triage storage read-only.">
       <HomepageHeader />
       <main>
         <StatsBand />

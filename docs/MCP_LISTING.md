@@ -8,7 +8,7 @@ decide when and where to post it. Keep claims factual: other storage vendors als
 
 ## One-line description
 
-Atlas: Apache-2.0 storage control plane (Ceph, NFS, ZFS, Longhorn, native filesystem). MCP server with 32
+Atlas: source-available (Zyvor Production License v1.0) storage control plane (Ceph, NFS, ZFS, Longhorn, native filesystem). MCP server with 32
 read-only tools (inventory, Ops Advisor, eBPF I/O risk, Ceph, DR, DataBridge, jobs, audit) and two opt-in,
 audited, two-phase writes (`create_snapshot`, `ack_alert`); self-hosted, bearer-JWT auth, tenant-scoped.
 
@@ -17,7 +17,7 @@ audited, two-phase writes (`create_snapshot`, `ack_alert`); self-hosted, bearer-
 | Field | Value |
 |---|---|
 | Repository | `https://github.com/zyvorai/zyvor-atlas` |
-| Licence | Apache-2.0 |
+| Licence | Zyvor Production License v1.0 (free non-production) |
 | Language | Rust |
 | Transport | streamable HTTP (`POST /api/atlas/v1/mcp` on the user's own gateway) |
 | Auth | `Authorization: Bearer <operator JWT>` (`examples/agent/mint-token.sh`) |

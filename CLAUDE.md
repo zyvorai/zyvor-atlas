@@ -152,8 +152,8 @@ cluster or real NVMe hardware**, so the `ceph device get-health-metrics` JSON sh
 of an `nvmeof.csi.ceph.com` StorageClass (experimental, Ceph Tentacle or later), so there is no
 supported way to map an existing RBD volume. Atlas does nothing Crimson-specific.
 
-**Licensed** under the [Apache License 2.0](LICENSE) (`Apache-2.0`; relicensed from the Zyvor
-Production License v1.0 at the maintainer's explicit request — history in
+**Licensed** under the [Zyvor Production License v1.0](LICENSE) (`LicenseRef-Zyvor-Production-1.0`;
+non-production use is free, Production Use needs a commercial license — see
 [`docs/LICENSING.md`](docs/LICENSING.md)). Don't weaken or remove license notices,
 [`CLA.md`](CLA.md), [`DCO.md`](DCO.md), or [`NOTICE`](NOTICE) without an explicit human
 request. There is **no** runtime license-key or trial/JWT gate.

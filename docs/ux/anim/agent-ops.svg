@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="An AI agent calls Atlas over MCP: read-only tools by default, guarded writes that need a confirmation token">
-  <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. SPDX-License-Identifier: Apache-2.0 -->
+  <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
   <defs>
     <style>
       .box{fill:#0f2233;stroke:#3fa7c9;stroke-width:1.5}

@@ -366,7 +366,7 @@ export function Login() {
       showSignInChapter
       footer={
         <p className="login-license-notice">
-          Copyright © {new Date().getFullYear()} ZyvorAI Labs · Apache License 2.0 ·{" "}
+          Copyright © {new Date().getFullYear()} ZyvorAI Labs · Zyvor Production License ·{" "}
           <a href="https://zyvor.dev">zyvor.dev</a>
         </p>
       }

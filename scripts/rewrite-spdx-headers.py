@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
 # SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
-"""Rewrite Atlas source headers to the Apache-2.0 SPDX form.
+"""Rewrite Atlas source headers to the LicenseRef-Zyvor-Production-1.0 SPDX form.
 
 Replaces leading Zyvor copyright / "All rights reserved" banners with:
   <comment> Copyright (c) 2026 ZyvorAI Labs Private Limited.
@@ -17,7 +17,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-SPDX = "Apache-2.0"
+SPDX = "LicenseRef-Zyvor-Production-1.0"
 COPYRIGHT = "Copyright (c) 2026 ZyvorAI Labs Private Limited."
 
 SKIP_DIRS = {
