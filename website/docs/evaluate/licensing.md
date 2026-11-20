@@ -13,8 +13,7 @@ custom_edit_url: "https://github.com/zyvorai/zyvor-atlas/edit/main/docs/LICENSIN
 
 Atlas is source-available under the **[Zyvor Production License v1.0](https://github.com/zyvorai/zyvor-atlas/blob/main/LICENSE)**.
 
-- **Free** for evaluation, development, testing, research, education and other non-production use.
-- **Production Use needs a commercial license** from Zyvor AI Labs Private Limited
+- **A commercial license is needed to run Atlas** from Zyvor AI Labs Private Limited
   ([sales@zyvor.dev](mailto:sales@zyvor.dev), [zyvor.dev/buy](https://zyvor.dev/buy)). A 30-day trial key is
   available for production evaluation. See [the subscription model](./subscription-model.md) for plans.
 

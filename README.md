@@ -140,7 +140,7 @@ Atlas Native on Kubernetes: `helm upgrade --install atlas-native deploy/helm/atl
 
 ## What it is, and is not
 
-Atlas is source-available under the Zyvor Production License v1.0: non-production use is free, production use needs a commercial license ([licensing](docs/LICENSING.md)). What is verified where, and what is lab-only (including the experimental live eBPF attach), is in [docs/STATUS.md](docs/STATUS.md). History: [CHANGELOG.md](CHANGELOG.md).
+Atlas is source-available under the Zyvor Production License v1.0: a commercial license is needed to run it ([licensing](docs/LICENSING.md)). What is verified where, and what is lab-only (including the experimental live eBPF attach), is in [docs/STATUS.md](docs/STATUS.md). History: [CHANGELOG.md](CHANGELOG.md).
 
 ## Part of the Zyvor stack
 
@@ -148,7 +148,7 @@ Atlas is source-available under the Zyvor Production License v1.0: non-productio
 
 ## Support
 
-Non-production use is free under the Zyvor Production License v1.0; production use requires a commercial license (sales@zyvor.dev). Older tags used other licenses, see the [CHANGELOG](CHANGELOG.md). If it helps you, you can donate any amount you like: <https://rzp.io/rzp/utwdYh3>. A donation is voluntary and supports development and maintenance of the current code. It is not a purchase: it buys no support, SLA, features, priority or license, and it is not tax-deductible (Zyvor AI Labs Private Limited is a company, not a charity). Zyvor Enterprise (supported releases, SLAs, a named contact and enterprise features) is separate: sales@zyvor.dev.
+A commercial license is required under the Zyvor Production License v1.0 (sales@zyvor.dev). Older tags used other licenses, see the [CHANGELOG](CHANGELOG.md). If it helps you, you can donate any amount you like: <https://rzp.io/rzp/utwdYh3>. A donation is voluntary and supports development and maintenance of the current code. It is not a purchase: it buys no support, SLA, features, priority or license, and it is not tax-deductible (Zyvor AI Labs Private Limited is a company, not a charity). Zyvor Enterprise (supported releases, SLAs, a named contact and enterprise features) is separate: sales@zyvor.dev.
 
 ## License and support
 

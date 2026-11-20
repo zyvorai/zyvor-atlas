@@ -88,8 +88,8 @@ function TrustBand() {
               Source-available. Zyvor Production License.
             </Heading>
             <p className={styles.lede}>
-              Free for evaluation, development, testing and research. Production
-              use needs a commercial license from Zyvor.
+              A commercial license from Zyvor is required to run Atlas; a
+              30-day trial key is available for evaluation.
             </p>
             <Link to="/docs/licensing">Read the licensing guide →</Link>
           </div>
@@ -118,8 +118,7 @@ function EnterpriseCTA() {
             Running Atlas in production?
           </Heading>
           <p className={styles.enterpriseCopy}>
-            Non-production use is free; production use needs a commercial
-            license. Talk to Zyvor about licensing, deployment help, support,
+            A commercial license is required. Talk to Zyvor about licensing, deployment help, support,
             and integrations.
           </p>
           <Link

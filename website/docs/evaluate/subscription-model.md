@@ -15,7 +15,6 @@ Atlas is available under an annual **enterprise subscription** for production us
 
 | Plan | What you get | Coverage |
 |------|--------------|----------|
-| Community | Evaluation and non-production use, where the licence allows it | Community resources |
 | Professional | Entry edition, updates and upgrades | Business hours, next-business-day critical response |
 | Enterprise | Advanced edition, updates and upgrades | Priority business hours, four-business-hour critical response |
 | Premium | Contracted enterprise scope and critical escalation | 24x7 critical intake, one-hour initial response target |
@@ -45,9 +44,9 @@ Priced per usable TB per year, billed annually in advance, with an annual minimu
 
 The minimum is the price floor, so the volume discount only lowers the bill once the discounted amount is above it (about 545 TB on Enterprise, 500 TB on Professional and 706 TB on Premium, before discount).
 
-Atlas itself is source-available under the Zyvor Production License v1.0: non-production use is free, production use needs a commercial license ([licensing](./licensing.md)); the subscription buys supported releases, the stated response targets and a named technical contact. Hardware is not included: Atlas runs on your servers. Rates are quoted and invoiced by Zyvor.
+Atlas itself is source-available under the Zyvor Production License v1.0: a commercial license is needed to run it ([licensing](./licensing.md)); the subscription buys supported releases, the stated response targets and a named technical contact. Hardware is not included: Atlas runs on your servers. Rates are quoted and invoiced by Zyvor.
 
-Prices: INR incl. 18% GST in India; US dollars excl. tax elsewhere (VAT, GST or sales tax added where applicable). Pay online by UPI, card or netbanking where a buy page exists; international cards work (charged in rupees); or request a US-dollar invoice by bank transfer. Custom pricing: contact [sales@zyvor.dev](mailto:sales@zyvor.dev). Buy or get a quote: [zyvor.dev/buy](https://zyvor.dev/buy). A 30-day trial key is available for production evaluation; non-production use of the software itself stays free.
+Prices: INR incl. 18% GST in India; US dollars excl. tax elsewhere (VAT, GST or sales tax added where applicable). Pay online by UPI, card or netbanking where a buy page exists; international cards work (charged in rupees); or request a US-dollar invoice by bank transfer. Custom pricing: contact [sales@zyvor.dev](mailto:sales@zyvor.dev). Buy or get a quote: [zyvor.dev/buy](https://zyvor.dev/buy). A 30-day trial key is available for production evaluation.
 
 ## Terms
 
