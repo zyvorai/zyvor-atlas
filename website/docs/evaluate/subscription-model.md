@@ -30,11 +30,20 @@ Priced per usable TB per year, billed annually in advance, with an annual minimu
 | Enterprise | $22 | $24,000 |
 | Premium | $34 | $48,000 |
 
-**Volume.** The rate for the whole subscription drops with total usable capacity: over 500 TB, 20% off; over 2 PB, 35% off; over 10 PB, 50% off (or a flat per-node price, on request). A three-year prepay takes a further 10% off.
+**Volume.** The rate for the whole subscription drops with total usable capacity: over 500 TB, 10% off; over 2 PB, 20% off; over 10 PB, 30% off (or a flat per-node price, on request). A three-year prepay takes a further 10% off. Volume and multi-year discounts together never exceed 40%.
 
-**Edge.** A single-pod edge site (the [edge profile](../atlas-native/edge.md)) is a flat $1,500 per site per year, so a fleet of small sites is not priced by capacity it barely has.
+**Edge.** A single-pod edge site (the [edge profile](NATIVE_EDGE.md)) is a flat $1,500 per site per year, so a fleet of small sites is not priced by capacity it barely has.
 
-**Example.** 1 PB usable on Enterprise: $22 x 1,000 TB x 0.8 = $17,600 per year.
+**Examples** (Enterprise, $22 per usable TB, annual minimum $24,000 applied after discounts):
+
+| Usable capacity | Calculation | Per year |
+|-----------------|-------------|---------:|
+| 500 TB | $22 x 500 = $11,000, below the minimum | $24,000 |
+| 1 PB (1,000 TB) | $22 x 1,000 x 0.9 = $19,800, below the minimum | $24,000 |
+| 2 PB | $22 x 2,000 x 0.9 = $39,600 | $39,600 |
+| 3 PB | $22 x 3,000 x 0.8 = $52,800 | $52,800 |
+
+The minimum is the price floor, so the volume discount only lowers the bill once the discounted amount is above it (about 1,090 TB on Enterprise, about 1,000 TB on Professional, about 1,410 TB on Premium, before discount).
 
 Atlas itself is Apache-2.0 and free to run ([licensing](./licensing.md)); the subscription buys supported releases, the stated response targets and a named technical contact. Hardware is not included: Atlas runs on your servers. Rates are quoted and invoiced by Zyvor: contact [sales@zyvor.dev](mailto:sales@zyvor.dev).
 
