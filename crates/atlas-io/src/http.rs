@@ -11,11 +11,13 @@ use axum::routing::{delete, get, post};
 use axum::{Json, Router};
 use serde::Deserialize;
 
+use crate::gpu::GpuMonitor;
 use crate::{score, CapacitySignal, Collector};
 
 #[derive(Clone)]
 pub struct AppState {
     pub collector: Arc<Collector>,
+    pub gpu: Arc<GpuMonitor>,
 }
 
 /// Router without authentication (tests, `make run`, loopback use).
@@ -26,6 +28,15 @@ pub fn router(collector: Arc<Collector>) -> Router {
 /// Router that, when `token` is `Some`, requires `Authorization: Bearer <token>` on everything
 /// except the liveness endpoints (`/health`, `/io/health`) that kubelet probes hit.
 pub fn router_with_token(collector: Arc<Collector>, token: Option<String>) -> Router {
+    router_with_gpu(collector, token, Arc::new(GpuMonitor::off()))
+}
+
+/// Same, with a GPU monitor behind `/io/gpu`, `/io/gpu-correlation` and `/io/gds`.
+pub fn router_with_gpu(
+    collector: Arc<Collector>,
+    token: Option<String>,
+    gpu: Arc<GpuMonitor>,
+) -> Router {
     let app = Router::new()
         .route("/health", get(health))
         .route("/io/health", get(health))
@@ -41,13 +52,17 @@ pub fn router_with_token(collector: Arc<Collector>, token: Option<String>) -> Ro
         .route("/io/native", get(native))
         .route("/io/cgroup", get(cgroup_list).put(cgroup_put))
         .route("/io/cgroup/{id}", delete(cgroup_delete))
+        .route("/io/gpu", get(gpu_report))
+        .route("/io/gpu-correlation", get(gpu_correlation))
+        .route("/io/gds", get(gds))
         .route("/metrics", get(prom))
         .route("/io/poll", post(poll))
         .with_state(AppState {
             collector: collector.clone(),
+            gpu: gpu.clone(),
         });
     #[cfg(feature = "mcp")]
-    let app = app.nest_service("/mcp", crate::mcp::service(collector, token.is_some()));
+    let app = app.nest_service("/mcp", crate::mcp::service(collector, gpu, token.is_some()));
     match token {
         Some(t) => app.layer(axum::middleware::from_fn_with_state(
             Arc::<str>::from(t),
@@ -272,6 +287,21 @@ async fn cgroup_delete(State(st): State<AppState>, Path(id): Path<u64>) -> impl 
     }
 }
 
+/// Read-only GPU telemetry. A failing real source reports `error` with empty lists.
+async fn gpu_report(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.gpu.report())
+}
+
+/// GPU utilisation next to the storage latency of the same processes; a heuristic, with evidence.
+async fn gpu_correlation(State(st): State<AppState>) -> impl IntoResponse {
+    st.collector.poll();
+    Json(st.gpu.correlation(&st.collector.workloads()))
+}
+
+async fn gds() -> impl IntoResponse {
+    Json(crate::gpu::gds_readiness())
+}
+
 async fn poll(State(st): State<AppState>) -> impl IntoResponse {
     st.collector.poll();
     Json(serde_json::json!({ "seen": st.collector.seen() }))
@@ -307,6 +337,31 @@ async fn prom(State(st): State<AppState>) -> impl IntoResponse {
     out.push_str("# HELP atlas_io_risk_level Risk from RCA (0 healthy, 1 elevated, 2 critical)\n# TYPE atlas_io_risk_level gauge\n");
     let level = score(&st.collector.rca(None), None);
     out.push_str(&format!("atlas_io_risk_level {}\n", level as u8));
+    let gpu = st.gpu.report();
+    if gpu.mode != "off" {
+        out.push_str("# HELP atlas_gpu_up 1 when the GPU source answered, 0 on error\n# TYPE atlas_gpu_up gauge\n");
+        out.push_str(&format!("atlas_gpu_up {}\n", u8::from(gpu.error.is_none())));
+        for d in &gpu.devices {
+            let l = format!("gpu=\"{}\",uuid=\"{}\"", d.index, d.uuid);
+            out.push_str(&format!("atlas_gpu_utilization_percent{{{l}}} {}\n", d.util_percent));
+            out.push_str(&format!("atlas_gpu_memory_used_mib{{{l}}} {}\n", d.mem_used_mib));
+            out.push_str(&format!("atlas_gpu_memory_total_mib{{{l}}} {}\n", d.mem_total_mib));
+            out.push_str(&format!("atlas_gpu_temperature_celsius{{{l}}} {}\n", d.temp_c));
+            if let Some(p) = d.power_w {
+                out.push_str(&format!("atlas_gpu_power_watts{{{l}}} {p}\n"));
+            }
+            if let Some(e) = d.ecc_uncorrected {
+                out.push_str(&format!("atlas_gpu_ecc_uncorrected_total{{{l}}} {e}\n"));
+            }
+        }
+        for c in st.gpu.correlation(&st.collector.workloads()) {
+            out.push_str(&format!(
+                "atlas_gpu_storage_starved{{gpu=\"{}\"}} {}\n",
+                c.gpu_index,
+                u8::from(c.verdict == "storage_starved_suspected")
+            ));
+        }
+    }
     if let Some(n) = st.collector.native() {
         out.push_str("# HELP atlas_io_native_tracked_pids Atlas Native processes in the kernel PID set\n# TYPE atlas_io_native_tracked_pids gauge\n");
         out.push_str(&format!(

@@ -16,6 +16,7 @@ pub mod bpf;
 pub mod cgroup;
 pub mod collector;
 pub mod devmap;
+pub mod gpu;
 pub mod heat;
 pub mod hist;
 pub mod http;
