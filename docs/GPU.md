@@ -23,6 +23,7 @@ fake-first pattern as the I/O sources. It stays in the agent so the gateway neve
 - `GET /io/gpu-correlation` each GPU next to the storage requests and mean latency of the same pids.
 - `GET /io/gds` read-only GPUDirect Storage readiness (the `nvidia_fs` module; run `gdscheck -p` for the rest).
 - `GET /io/gpu-health` threshold findings (uncorrected ECC is `critical`; temperature at or above 85 °C and memory at or above 95% are `warning`).
+- `GET /io/gpu-xid` recent NVIDIA `Xid` events parsed from `dmesg` (e.g. 79 fell off the bus and 48/95 ECC are `critical`; unlisted codes are `info`/`unclassified` with the raw line). Real mode needs `CAP_SYSLOG` or `kernel.dmesg_restrict=0`; if `dmesg` fails the route returns 503 with the reason, never an empty list. The parser is tested on lines written from NVIDIA's documented format, not on a real GPU's log.
 - `GET /io/gpu-whatif?gpus=&per_gpu_mbps=&storage_mbps=` whether the stated storage bandwidth can feed that many GPUs (`ok` at 120% of need or more, `tight`, `starves`). Arithmetic on rates you supply: it does not measure bandwidth and does not model checkpoint writes or caching.
 - `/io/gpu` lists each GPU process with its cgroup path (`/proc/<pid>/cgroup`), `null` when unreadable, so a container or job can be named.
 - `/metrics` gains `atlas_gpu_*` gauges and `atlas_gpu_storage_starved{gpu}`.
@@ -48,5 +49,5 @@ batch size, and per-pid accounting only covers I/O on devices the agent sees. Th
 
 ## Not done
 
-Real-GPU verification, DCGM, MIG partitions, Xid log parsing, and folding GPU health into the advisor's
-`risk_score`.
+Real-GPU verification, DCGM, MIG partitions, and folding GPU health into the advisor's `risk_score`
+(deliberately left out: the `io_*` views stay informational and never change it).

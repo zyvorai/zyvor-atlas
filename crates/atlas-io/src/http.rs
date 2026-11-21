@@ -57,6 +57,7 @@ pub fn router_with_gpu(
         .route("/io/gds", get(gds))
         .route("/io/gpu-health", get(gpu_health))
         .route("/io/gpu-whatif", get(gpu_whatif))
+        .route("/io/gpu-xid", get(gpu_xid))
         .route("/metrics", get(prom))
         .route("/io/poll", post(poll))
         .with_state(AppState {
@@ -135,7 +136,10 @@ struct HeatQuery {
 
 async fn heatmap(State(st): State<AppState>, Query(q): Query<HeatQuery>) -> impl IntoResponse {
     st.collector.poll();
-    let minutes = q.minutes.unwrap_or(15).clamp(1, crate::heat::MAX_COLUMNS as u64);
+    let minutes = q
+        .minutes
+        .unwrap_or(15)
+        .clamp(1, crate::heat::MAX_COLUMNS as u64);
     Json(st.collector.heatmap(minutes))
 }
 
@@ -305,6 +309,19 @@ async fn gpu_health(State(st): State<AppState>) -> impl IntoResponse {
     Json(st.gpu.health())
 }
 
+/// Recent NVIDIA Xid events from the kernel log. An unreadable log is a 503 with the reason, never an
+/// empty (clean-looking) list.
+async fn gpu_xid(State(st): State<AppState>) -> impl IntoResponse {
+    match st.gpu.xid_events() {
+        Ok(events) => (StatusCode::OK, Json(serde_json::json!(events))).into_response(),
+        Err(e) => (
+            StatusCode::SERVICE_UNAVAILABLE,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
+}
+
 #[derive(Deserialize)]
 struct WhatIfQuery {
     gpus: u32,
@@ -369,10 +386,22 @@ async fn prom(State(st): State<AppState>) -> impl IntoResponse {
         out.push_str(&format!("atlas_gpu_up {}\n", u8::from(gpu.error.is_none())));
         for d in &gpu.devices {
             let l = format!("gpu=\"{}\",uuid=\"{}\"", d.index, d.uuid);
-            out.push_str(&format!("atlas_gpu_utilization_percent{{{l}}} {}\n", d.util_percent));
-            out.push_str(&format!("atlas_gpu_memory_used_mib{{{l}}} {}\n", d.mem_used_mib));
-            out.push_str(&format!("atlas_gpu_memory_total_mib{{{l}}} {}\n", d.mem_total_mib));
-            out.push_str(&format!("atlas_gpu_temperature_celsius{{{l}}} {}\n", d.temp_c));
+            out.push_str(&format!(
+                "atlas_gpu_utilization_percent{{{l}}} {}\n",
+                d.util_percent
+            ));
+            out.push_str(&format!(
+                "atlas_gpu_memory_used_mib{{{l}}} {}\n",
+                d.mem_used_mib
+            ));
+            out.push_str(&format!(
+                "atlas_gpu_memory_total_mib{{{l}}} {}\n",
+                d.mem_total_mib
+            ));
+            out.push_str(&format!(
+                "atlas_gpu_temperature_celsius{{{l}}} {}\n",
+                d.temp_c
+            ));
             if let Some(p) = d.power_w {
                 out.push_str(&format!("atlas_gpu_power_watts{{{l}}} {p}\n"));
             }
