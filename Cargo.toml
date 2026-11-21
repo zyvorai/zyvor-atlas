@@ -118,7 +118,7 @@ rustls-pki-types = "1"
 # Same version rusty-s3 already resolves to (Cargo.lock); used directly to sign a generic bucket
 # subresource request (versioning/lifecycle/policy/tagging/cors/object-lock/encryption) that has
 # no dedicated rusty-s3 action type, see atlas-driver-rgw/src/lib.rs.
-jiff = "0.2"
+jiff = "1.0"
 # eBPF loader for atlas-io's live block-layer source (`bpf` feature, Linux only).
 aya = "0.16"
 
