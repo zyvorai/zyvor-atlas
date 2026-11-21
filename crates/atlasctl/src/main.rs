@@ -102,6 +102,8 @@ enum Command {
     CephSizing,
     /// GET /api/atlas/v1/io/ai — heuristic AI I/O shape per device, via the gateway's atlas-io agent
     IoAi,
+    /// GET /api/atlas/v1/io/gpu — GPU utilisation vs storage latency, via the gateway's atlas-io agent
+    IoGpu,
     /// GET /api/atlas/v1/ceph/df — cluster + per-pool capacity/usage/objects
     CephDf,
     /// GET /api/atlas/v1/metrics/history — persisted capacity/IO/job time-series (--minutes)
@@ -607,6 +609,23 @@ enum IoCommand {
     },
     /// GET /io/ai — heuristic I/O shape per device (checkpoint-like writes, bulk reads, small reads)
     Ai,
+    /// GET /io/gpu — read-only GPU telemetry
+    Gpu,
+    /// GET /io/gpu-correlation — GPU utilisation next to the storage latency of the same processes
+    GpuCorrelation,
+    /// GET /io/gpu-health — ECC, temperature and memory findings
+    GpuHealth,
+    /// GET /io/gpu-whatif — can this storage bandwidth feed N GPUs (arithmetic on the rates you give)
+    GpuWhatIf {
+        #[arg(long)]
+        gpus: u32,
+        /// MB/s each GPU ingests
+        #[arg(long)]
+        per_gpu_mbps: u64,
+        /// MB/s the storage sustains
+        #[arg(long)]
+        storage_mbps: u64,
+    },
     /// GET /io/coverage
     Coverage,
     /// GET /io/native — kernel-aggregated Atlas Native I/O and recent slow requests
@@ -641,6 +660,23 @@ async fn io_request(
             .await;
         }
         IoCommand::Ai => "/io/ai",
+        IoCommand::Gpu => "/io/gpu",
+        IoCommand::GpuCorrelation => "/io/gpu-correlation",
+        IoCommand::GpuHealth => "/io/gpu-health",
+        IoCommand::GpuWhatIf {
+            gpus,
+            per_gpu_mbps,
+            storage_mbps,
+        } => {
+            return get_print(
+                client,
+                token,
+                &format!(
+                    "{base}/io/gpu-whatif?gpus={gpus}&per_gpu_mbps={per_gpu_mbps}&storage_mbps={storage_mbps}"
+                ),
+            )
+            .await;
+        }
         IoCommand::Coverage => "/io/coverage",
         IoCommand::Native => "/io/native",
         IoCommand::Leases => "/io/leases",
@@ -793,6 +829,7 @@ async fn main() -> Result<()> {
         Command::CephOsdObjectstore => ("GET", "/api/atlas/v1/ceph/osd-objectstore".to_string(), None),
         Command::CephSizing => ("GET", "/api/atlas/v1/ceph/sizing".to_string(), None),
         Command::IoAi => ("GET", "/api/atlas/v1/io/ai".to_string(), None),
+        Command::IoGpu => ("GET", "/api/atlas/v1/io/gpu".to_string(), None),
         Command::CephDf => ("GET", "/api/atlas/v1/ceph/df".to_string(), None),
         Command::Policies => ("GET", "/api/atlas/v1/policies".to_string(), None),
         Command::ScheduleSnapshots {

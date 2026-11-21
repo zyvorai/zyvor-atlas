@@ -8,10 +8,10 @@
 //!
 //! | gate                                     | tools | made of                                   |
 //! |------------------------------------------|-------|-------------------------------------------|
-//! | default (read-only)                      | 53    | `mcp.rs` 21 + `mcp/ops.rs` 30 + 2 workspace reads |
-//! | `ATLAS_MCP_WRITE_ENABLE`                 | 59    | + 3 guarded writes + 3 workspace writes   |
-//! | `ATLAS_DATA_URL`                         | 60    | default + 7 `atlas_data` reads            |
-//! | both                                     | 70    | write + 7 reads + 4 `atlas_data` writes   |
+//! | default (read-only)                      | 54    | `mcp.rs` 22 + `mcp/ops.rs` 30 + 2 workspace reads |
+//! | `ATLAS_MCP_WRITE_ENABLE`                 | 60    | + 3 guarded writes + 3 workspace writes   |
+//! | `ATLAS_DATA_URL`                         | 61    | default + 7 `atlas_data` reads            |
+//! | both                                     | 71    | write + 7 reads + 4 `atlas_data` writes   |
 #![cfg(feature = "mcp")]
 
 use std::collections::HashSet;
@@ -20,10 +20,10 @@ mod common;
 mod mcp_data_support;
 use mcp_data_support::*;
 
-const COUNT_READ_ONLY: usize = 53;
-const COUNT_WITH_WRITES: usize = 59;
-const COUNT_WITH_DATA: usize = 60;
-const COUNT_WITH_BOTH: usize = 70;
+const COUNT_READ_ONLY: usize = 54;
+const COUNT_WITH_WRITES: usize = 60;
+const COUNT_WITH_DATA: usize = 61;
+const COUNT_WITH_BOTH: usize = 71;
 
 fn tool_attrs(src: &str) -> usize {
     src.matches("#[tool(").count()
@@ -37,7 +37,7 @@ fn source_attribute_counts_match_the_documented_breakdown() {
     let ws = tool_attrs(include_str!("../src/mcp/workspaces.rs"));
     let write = tool_attrs(include_str!("../src/mcp/write.rs"));
     let data = tool_attrs(include_str!("../src/mcp/data.rs"));
-    assert_eq!((core, ops, ws, write, data), (21, 30, 5, 3, 11));
+    assert_eq!((core, ops, ws, write, data), (22, 30, 5, 3, 11));
     assert_eq!(
         core + ops + 2,
         COUNT_READ_ONLY,

@@ -40,6 +40,10 @@ struct Cli {
     /// bpffs elsewhere (e.g. /host-bpf) and point this there.
     #[arg(long, env = "ATLAS_IO_NATIVE_PIN_DIR", default_value = atlas_io::NATIVE_PIN_DIR)]
     native_pin_dir: String,
+    /// GPU telemetry: `fake` (scripted), `real` (nvidia-smi) or `off`. Unset follows `--mode`
+    /// (fake with fake, off with live) so a node without GPUs is unchanged.
+    #[arg(long, env = "ATLAS_GPU_MODE")]
+    gpu_mode: Option<String>,
 }
 
 #[tokio::main]
@@ -84,7 +88,13 @@ async fn main() -> Result<()> {
             "ATLAS_IO_TOKEN is not set and the agent is bound to a non-loopback address: its API is unauthenticated"
         );
     }
-    let app = atlas_io::http::router_with_token(collector, token);
+    let gpu_mode = cli
+        .gpu_mode
+        .clone()
+        .unwrap_or_else(|| if cli.mode == "live" { "off".into() } else { "fake".into() });
+    let gpu = std::sync::Arc::new(atlas_io::gpu::GpuMonitor::from_mode(&gpu_mode));
+    tracing::info!(gpu_mode = %gpu_mode, "gpu telemetry");
+    let app = atlas_io::http::router_with_gpu(collector, token, gpu);
     let listener = tokio::net::TcpListener::bind(cli.bind).await?;
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())

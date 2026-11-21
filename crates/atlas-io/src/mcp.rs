@@ -28,11 +28,13 @@ use schemars::JsonSchema;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
+use crate::gpu::GpuMonitor;
 use crate::{score, Collector};
 
 #[derive(Clone)]
 pub struct IoMcp {
     collector: Arc<Collector>,
+    gpu: Arc<GpuMonitor>,
     #[allow(dead_code)]
     tool_router: ToolRouter<IoMcp>,
 }
@@ -66,9 +68,10 @@ fn bounded(v: Value) -> Result<Value, McpError> {
 
 #[tool_router]
 impl IoMcp {
-    pub fn new(collector: Arc<Collector>) -> Self {
+    pub fn new(collector: Arc<Collector>, gpu: Arc<GpuMonitor>) -> Self {
         Self {
             collector,
+            gpu,
             tool_router: Self::tool_router(),
         }
     }
@@ -91,6 +94,33 @@ impl IoMcp {
     async fn io_ai(&self) -> Result<ToolJson<Value>, McpError> {
         self.collector.poll();
         Ok(ToolJson(json!(self.collector.ai_shapes())))
+    }
+
+    #[tool(
+        description = "Read-only GPU telemetry (util, memory, temperature, power, ECC, GPU \
+                        processes). A failing real source returns an error, never guessed data."
+    )]
+    async fn gpu_status(&self) -> Result<ToolJson<Value>, McpError> {
+        Ok(ToolJson(json!(self.gpu.report())))
+    }
+
+    #[tool(
+        description = "GPU utilisation next to the storage latency of the same processes, with a \
+                        storage_starved_suspected verdict when a GPU is underused while its \
+                        process's storage I/O is slow. Heuristic with evidence; it cannot see the \
+                        data loader."
+    )]
+    async fn gpu_correlation(&self) -> Result<ToolJson<Value>, McpError> {
+        self.collector.poll();
+        Ok(ToolJson(json!(self.gpu.correlation(&self.collector.workloads()))))
+    }
+
+    #[tool(
+        description = "Threshold findings over the GPU snapshot: uncorrected ECC errors (critical), \
+                        high temperature and nearly full memory (warning). Read-only."
+    )]
+    async fn gpu_health(&self) -> Result<ToolJson<Value>, McpError> {
+        Ok(ToolJson(json!(self.gpu.health())))
     }
 
     #[tool(description = "Per-(device, op) latency histograms with p50/p99 and queue time.")]
@@ -295,6 +325,7 @@ should decide. Do not propose changes you cannot make.";
 /// is reachable on the network must not also accept arbitrary Host headers).
 pub fn service(
     collector: Arc<Collector>,
+    gpu: Arc<GpuMonitor>,
     authenticated: bool,
 ) -> StreamableHttpService<IoMcp, LocalSessionManager> {
     let cfg = StreamableHttpServerConfig::default();
@@ -304,7 +335,7 @@ pub fn service(
         cfg
     };
     StreamableHttpService::new(
-        move || Ok(IoMcp::new(collector.clone())),
+        move || Ok(IoMcp::new(collector.clone(), gpu.clone())),
         LocalSessionManager::default().into(),
         cfg,
     )
@@ -332,7 +363,10 @@ mod tool_tests {
     use crate::Collector;
 
     fn mcp() -> IoMcp {
-        IoMcp::new(Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab()))
+        IoMcp::new(
+            Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab()),
+            std::sync::Arc::new(crate::gpu::GpuMonitor::from_mode("fake")),
+        )
     }
 
     /// The fake source carries atlas_native data, so the tool returns the real view, not the "unavailable" marker.

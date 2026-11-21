@@ -152,6 +152,13 @@ cluster or real NVMe hardware**, so the `ceph device get-health-metrics` JSON sh
 of an `nvmeof.csi.ceph.com` StorageClass (experimental, Ceph Tentacle or later), so there is no
 supported way to map an existing RBD volume. Atlas does nothing Crimson-specific.
 
+**GPU telemetry** (`docs/GPU.md`): `atlas-io` gains a fake-first `GpuSource` (`ATLAS_GPU_MODE=fake|real|off`; real runs
+`nvidia-smi`), `/io/gpu`, `/io/gpu-correlation` (GPU utilisation next to the storage latency of the same pids, a
+`storage_starved_suspected` heuristic with evidence), `/io/gds` readiness and `atlas_gpu_*` metrics; the gateway proxies it as
+`GET /io/gpu`, an `io_gpu` advisor block, an `io_gpu` MCP tool and `atlasctl io gpu`. Tested over the fake source on a Linux
+host with no GPU; **real `nvidia-smi` mode not yet run on a GPU**. `KVConnector` in `tools/atlas_data/client.py` is glue only,
+unrun against vLLM/LMCache.
+
 **Licensed** under the [Zyvor Production License v1.0](LICENSE) (`LicenseRef-Zyvor-Production-1.0`;
 non-production use is free, Production Use needs a commercial license — see
 [`docs/LICENSING.md`](docs/LICENSING.md)). Don't weaken or remove license notices,

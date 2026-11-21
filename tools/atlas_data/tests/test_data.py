@@ -18,7 +18,7 @@ import urllib.request
 
 from atlas_data import Actor, DataError, Store
 from atlas_data.api import Server, Service, decode
-from atlas_data.client import Client, KVAdapter, prefix_digests
+from atlas_data.client import Client, KVAdapter, KVConnector, prefix_digests
 from atlas_data.core import sha
 from atlas_data.iceberg import Iceberg
 from atlas_data.recovery import Recovery
@@ -377,6 +377,34 @@ class PrefixBlockTests(unittest.TestCase):
         self.assertEqual(adapter.longest_prefix([]), [])
         with self.assertRaises(DataError):
             adapter.put_blocks(digests, [b"x"])
+
+    def test_connector_exists_get_put_and_prefix_hits(self):
+        class Fake:
+            def __init__(self):
+                self.blocks = {}
+
+            def call(self, op, compatibility, data=None, ttl=None):
+                key = compatibility["prefix"]
+                if op == "kv.put":
+                    self.blocks[key] = data
+                    return {}
+                if key not in self.blocks:
+                    raise DataError("missing", 404)
+                return {"data": self.blocks[key]}
+
+        fake = Fake()
+        conn = KVConnector(KVAdapter(fake, "m", "t", "none", "f16"))
+        digests = prefix_digests(list(range(12)), 4)
+        self.assertFalse(conn.exists(digests[0]))
+        conn.put(digests[0], b"b0")
+        conn.put(digests[2], b"b2")
+        self.assertTrue(conn.exists(digests[0]))
+        self.assertEqual(conn.get(digests[0]), b"b0")
+        self.assertIsNone(conn.get(digests[1]))
+        self.assertEqual(conn.prefix_hit_blocks(list(range(12)), 4), 1)  # gap at block 1
+        conn.put(digests[1], b"b1")
+        self.assertEqual(conn.prefix_hit_blocks(list(range(12)), 4), 3)
+        self.assertEqual(conn.prefix_hit_blocks([1, 2], 4), 0)  # no full block
 
 
 class RecoveryTests(Fixture):
