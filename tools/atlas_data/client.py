@@ -217,3 +217,28 @@ class KVAdapter:
                 break
             found.append(block)
         return found
+
+
+class KVConnector:
+    """Remote-cache style interface (`exists`, `get`, `put`, `prefix_hit_blocks`) over a [`KVAdapter`].
+
+    The shape inference engines' remote KV tiers ask for: key-addressed byte blocks plus a cheap
+    "how many leading blocks are cached" probe. It is engine-neutral glue. It has not been run
+    against vLLM, LMCache or Dynamo, and it claims no speed-up; the engine owns tensor
+    serialisation, block sizing and eviction.
+    """
+    def __init__(self, adapter):
+        self.adapter = adapter
+
+    def exists(self, key):
+        return self.adapter.get(key) is not None
+
+    def get(self, key):
+        return self.adapter.get(key)
+
+    def put(self, key, block, ttl=3600):
+        self.adapter.put(key, block, ttl)
+
+    def prefix_hit_blocks(self, token_ids, block_size):
+        """Number of leading full token blocks already cached (stops at the first miss)."""
+        return len(self.adapter.longest_prefix(prefix_digests(token_ids, block_size)))

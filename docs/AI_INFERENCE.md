@@ -35,6 +35,8 @@ The engine owns tensor serialisation, block sizing and eviction. Atlas stores an
 
 The engine-neutral `KVAdapter` in `tools/atlas_data/client.py` ([AI_DATA_SERVICES.md](AI_DATA_SERVICES.md#prefix-blocks))
 is a separate, content-addressed store with tenant-scoped keys. It is not a vLLM or Dynamo connector.
+`KVConnector` (same file) wraps it in the `exists` / `get` / `put` / `prefix_hit_blocks` shape remote KV tiers ask for.
+It is unit tested over a fake client only; it has not been run against vLLM, LMCache or Dynamo, and no speed-up is claimed.
 
 ## Pointing an engine at Atlas
 
