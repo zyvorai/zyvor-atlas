@@ -61,6 +61,10 @@ pub struct GpuSnapshot {
 pub trait GpuSource: Send + Sync {
     fn mode(&self) -> &'static str;
     fn snapshot(&self) -> Result<GpuSnapshot, String>;
+    /// Kernel log text to scan for NVIDIA `Xid` lines. The default is empty (no log source).
+    fn kernel_log(&self) -> Result<String, String> {
+        Ok(String::new())
+    }
 }
 
 /// Deterministic source for tests, `make run` and `ATLAS_GPU_MODE=fake`. Matches the pids of the
@@ -70,6 +74,10 @@ pub struct FakeGpuSource;
 impl GpuSource for FakeGpuSource {
     fn mode(&self) -> &'static str {
         "fake"
+    }
+
+    fn kernel_log(&self) -> Result<String, String> {
+        Ok("[ 100.1] NVRM: Xid (PCI:0000:3b:00): 79, pid=1234, GPU has fallen off the bus.\n[ 101.2] eth0: link up\n[ 102.3] NVRM: Xid (PCI:0000:3b:00): 13, Graphics Exception\n".into())
     }
 
     fn snapshot(&self) -> Result<GpuSnapshot, String> {
@@ -153,6 +161,21 @@ impl Default for NvidiaSmiSource {
 impl GpuSource for NvidiaSmiSource {
     fn mode(&self) -> &'static str {
         "real"
+    }
+
+    /// `dmesg` (arg-array); commonly needs `CAP_SYSLOG` or `kernel.dmesg_restrict=0`, in which case
+    /// the error says so instead of reporting a clean log.
+    fn kernel_log(&self) -> Result<String, String> {
+        let out = Command::new("dmesg")
+            .output()
+            .map_err(|e| format!("cannot run dmesg: {e}"))?;
+        if !out.status.success() {
+            return Err(format!(
+                "dmesg failed: {}",
+                String::from_utf8_lossy(&out.stderr).trim()
+            ));
+        }
+        Ok(String::from_utf8_lossy(&out.stdout).into_owned())
     }
 
     fn snapshot(&self) -> Result<GpuSnapshot, String> {
@@ -305,6 +328,15 @@ impl GpuMonitor {
         }
     }
 
+    /// Recent NVIDIA `Xid` events from the kernel log; `Err` when the log cannot be read or there
+    /// is no source (an unreadable log is never reported as a clean one).
+    pub fn xid_events(&self) -> Result<Vec<XidEvent>, String> {
+        let Some(src) = &self.source else {
+            return Err("GPU source is off".into());
+        };
+        Ok(parse_xid(&src.kernel_log()?))
+    }
+
     pub fn health(&self) -> Vec<GpuFinding> {
         health_findings(&self.report().devices)
     }
@@ -358,6 +390,67 @@ pub fn health_findings(devices: &[GpuDevice]) -> Vec<GpuFinding> {
                 detail: format!("{} of {} MiB used", d.mem_used_mib, d.mem_total_mib),
             });
         }
+    }
+    out
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct XidEvent {
+    pub pci: String,
+    pub xid: u32,
+    /// `critical`, `warning` or `info`.
+    pub severity: &'static str,
+    pub meaning: &'static str,
+    /// The kernel log line, truncated.
+    pub line: String,
+}
+
+/// Most recent events kept.
+const MAX_XID_EVENTS: usize = 50;
+
+/// What a few well-known Xid codes mean, from NVIDIA's public Xid catalogue. Unlisted codes are
+/// `unclassified`/`info`: the number and raw line are still reported.
+fn xid_meaning(xid: u32) -> (&'static str, &'static str) {
+    match xid {
+        13 => ("warning", "graphics engine exception"),
+        31 => ("warning", "GPU memory page fault"),
+        43 => ("warning", "GPU stopped processing (reset channel)"),
+        48 => ("critical", "double-bit ECC error"),
+        63 | 64 => ("warning", "ECC row-remapping event"),
+        74 => ("warning", "NVLink error"),
+        79 => ("critical", "GPU has fallen off the bus"),
+        94 => ("warning", "contained ECC error"),
+        95 => ("critical", "uncontained ECC error"),
+        _ => ("info", "unclassified"),
+    }
+}
+
+/// Extract `NVRM: Xid (PCI:<addr>): <code>, ...` lines from kernel log text (newest last,
+/// capped to the last 50).
+pub fn parse_xid(log: &str) -> Vec<XidEvent> {
+    let mut out: Vec<XidEvent> = log
+        .lines()
+        .filter_map(|line| {
+            let rest = &line[line.find("NVRM: Xid (PCI:")? + "NVRM: Xid (PCI:".len()..];
+            let (pci, tail) = rest.split_once("):")?;
+            let code: String = tail
+                .trim_start()
+                .chars()
+                .take_while(char::is_ascii_digit)
+                .collect();
+            let xid: u32 = code.parse().ok()?;
+            let (severity, meaning) = xid_meaning(xid);
+            Some(XidEvent {
+                pci: pci.chars().take(32).collect(),
+                xid,
+                severity,
+                meaning,
+                line: line.chars().take(200).collect(),
+            })
+        })
+        .collect();
+    if out.len() > MAX_XID_EVENTS {
+        out.drain(..out.len() - MAX_XID_EVENTS);
     }
     out
 }
@@ -595,6 +688,34 @@ mod tests {
             health_findings(&d[..1]).is_empty(),
             "unsupported ECC is not an error"
         );
+    }
+
+    #[test]
+    fn parses_xid_lines_and_ignores_the_rest() {
+        let log = "[1] NVRM: Xid (PCI:0000:3b:00): 79, pid=1, GPU has fallen off the bus.\n\
+                   [2] unrelated line\n\
+                   [3] NVRM: Xid (PCI:0000:3b:00): 13, Graphics Exception\n\
+                   [4] NVRM: Xid (PCI:0000:af:00): 9999, who knows\n\
+                   [5] NVRM: Xid (PCI:bad";
+        let e = parse_xid(log);
+        assert_eq!(e.len(), 3);
+        assert_eq!((e[0].xid, e[0].severity), (79, "critical"));
+        assert_eq!(e[0].pci, "0000:3b:00");
+        assert_eq!((e[1].xid, e[1].severity), (13, "warning"));
+        assert_eq!(
+            (e[2].xid, e[2].severity, e[2].meaning),
+            (9999, "info", "unclassified")
+        );
+        let many = "NVRM: Xid (PCI:0000:01:00): 13, x\n".repeat(80);
+        assert_eq!(parse_xid(&many).len(), 50);
+    }
+
+    #[test]
+    fn xid_log_failure_is_an_error_not_a_clean_log() {
+        let off = GpuMonitor::off();
+        assert!(off.xid_events().is_err());
+        let fake = GpuMonitor::from_mode("fake");
+        assert_eq!(fake.xid_events().unwrap().len(), 2);
     }
 
     #[test]

@@ -88,3 +88,18 @@ async fn health_whatif_and_cgroup_over_http() {
     let v: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(v["processes"][0]["cgroup"], "/kubepods.slice/pod-trainer-a");
 }
+
+#[tokio::test]
+async fn xid_events_over_http_and_off_is_unavailable() {
+    let app_fake = app(GpuMonitor::from_mode("fake"));
+    let (st, body) = get(&app_fake, "/io/gpu-xid").await;
+    assert_eq!(st, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v[0]["xid"], 79);
+    assert_eq!(v[0]["severity"], "critical");
+
+    let app_off = app(GpuMonitor::off());
+    let (st, body) = get(&app_off, "/io/gpu-xid").await;
+    assert_eq!(st, StatusCode::SERVICE_UNAVAILABLE);
+    assert!(body.contains("error"));
+}

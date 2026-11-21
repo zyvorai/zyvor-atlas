@@ -615,6 +615,8 @@ enum IoCommand {
     GpuCorrelation,
     /// GET /io/gpu-health — ECC, temperature and memory findings
     GpuHealth,
+    /// GET /io/gpu-xid — recent NVIDIA Xid events from the kernel log
+    GpuXid,
     /// GET /io/gpu-whatif — can this storage bandwidth feed N GPUs (arithmetic on the rates you give)
     GpuWhatIf {
         #[arg(long)]
@@ -663,6 +665,7 @@ async fn io_request(
         IoCommand::Gpu => "/io/gpu",
         IoCommand::GpuCorrelation => "/io/gpu-correlation",
         IoCommand::GpuHealth => "/io/gpu-health",
+        IoCommand::GpuXid => "/io/gpu-xid",
         IoCommand::GpuWhatIf {
             gpus,
             per_gpu_mbps,
