@@ -115,6 +115,14 @@ impl IoMcp {
         Ok(ToolJson(json!(self.gpu.correlation(&self.collector.workloads()))))
     }
 
+    #[tool(
+        description = "Threshold findings over the GPU snapshot: uncorrected ECC errors (critical), \
+                        high temperature and nearly full memory (warning). Read-only."
+    )]
+    async fn gpu_health(&self) -> Result<ToolJson<Value>, McpError> {
+        Ok(ToolJson(json!(self.gpu.health())))
+    }
+
     #[tool(description = "Per-(device, op) latency histograms with p50/p99 and queue time.")]
     async fn io_histograms(&self) -> Result<ToolJson<Value>, McpError> {
         self.collector.poll();

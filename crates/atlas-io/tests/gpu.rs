@@ -61,3 +61,30 @@ async fn off_mode_serves_an_empty_honest_report() {
     let (_, m) = get(&app, "/metrics").await;
     assert!(!m.contains("atlas_gpu_"));
 }
+
+#[tokio::test]
+async fn health_whatif_and_cgroup_over_http() {
+    let app = app(GpuMonitor::from_mode("fake"));
+    let (st, body) = get(&app, "/io/gpu-health").await;
+    assert_eq!(st, StatusCode::OK);
+    assert_eq!(body.trim(), "[]", "the fake fleet is healthy");
+
+    let (st, body) = get(
+        &app,
+        "/io/gpu-whatif?gpus=8&per_gpu_mbps=2000&storage_mbps=15000",
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["verdict"], "starves");
+    assert_eq!(v["max_gpus_fed"], 7);
+
+    let (st, _) = get(&app, "/io/gpu-whatif?gpus=0&per_gpu_mbps=1&storage_mbps=1").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+    let (st, _) = get(&app, "/io/gpu-whatif?gpus=1").await;
+    assert_eq!(st, StatusCode::BAD_REQUEST);
+
+    let (_, body) = get(&app, "/io/gpu").await;
+    let v: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(v["processes"][0]["cgroup"], "/kubepods.slice/pod-trainer-a");
+}

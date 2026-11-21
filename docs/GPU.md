@@ -22,8 +22,11 @@ fake-first pattern as the I/O sources. It stays in the agent so the gateway neve
 - `GET /io/gpu` per GPU utilisation, memory, temperature, power, uncorrected ECC and the compute processes.
 - `GET /io/gpu-correlation` each GPU next to the storage requests and mean latency of the same pids.
 - `GET /io/gds` read-only GPUDirect Storage readiness (the `nvidia_fs` module; run `gdscheck -p` for the rest).
+- `GET /io/gpu-health` threshold findings (uncorrected ECC is `critical`; temperature at or above 85 °C and memory at or above 95% are `warning`).
+- `GET /io/gpu-whatif?gpus=&per_gpu_mbps=&storage_mbps=` whether the stated storage bandwidth can feed that many GPUs (`ok` at 120% of need or more, `tight`, `starves`). Arithmetic on rates you supply: it does not measure bandwidth and does not model checkpoint writes or caching.
+- `/io/gpu` lists each GPU process with its cgroup path (`/proc/<pid>/cgroup`), `null` when unreadable, so a container or job can be named.
 - `/metrics` gains `atlas_gpu_*` gauges and `atlas_gpu_storage_starved{gpu}`.
-- MCP tools `gpu_status` and `gpu_correlation` (the agent's `mcp` feature).
+- MCP tools `gpu_status`, `gpu_correlation` and `gpu_health` (the agent's `mcp` feature).
 
 ## Gateway and CLI
 
@@ -45,5 +48,5 @@ batch size, and per-pid accounting only covers I/O on devices the agent sees. Th
 
 ## Not done
 
-Real-GPU verification, DCGM, per-cgroup (container) GPU attribution, MIG partitions, and a what-if
-planner for GPU count against storage bandwidth.
+Real-GPU verification, DCGM, MIG partitions, Xid log parsing, and folding GPU health into the advisor's
+`risk_score`.

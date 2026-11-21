@@ -55,6 +55,8 @@ pub fn router_with_gpu(
         .route("/io/gpu", get(gpu_report))
         .route("/io/gpu-correlation", get(gpu_correlation))
         .route("/io/gds", get(gds))
+        .route("/io/gpu-health", get(gpu_health))
+        .route("/io/gpu-whatif", get(gpu_whatif))
         .route("/metrics", get(prom))
         .route("/io/poll", post(poll))
         .with_state(AppState {
@@ -296,6 +298,30 @@ async fn gpu_report(State(st): State<AppState>) -> impl IntoResponse {
 async fn gpu_correlation(State(st): State<AppState>) -> impl IntoResponse {
     st.collector.poll();
     Json(st.gpu.correlation(&st.collector.workloads()))
+}
+
+/// Threshold findings over the current snapshot: uncorrected ECC, high temperature, full memory.
+async fn gpu_health(State(st): State<AppState>) -> impl IntoResponse {
+    Json(st.gpu.health())
+}
+
+#[derive(Deserialize)]
+struct WhatIfQuery {
+    gpus: u32,
+    per_gpu_mbps: u64,
+    storage_mbps: u64,
+}
+
+/// Can the stated storage bandwidth feed this many GPUs? Arithmetic on caller-supplied rates.
+async fn gpu_whatif(Query(q): Query<WhatIfQuery>) -> impl IntoResponse {
+    match crate::gpu::what_if(q.gpus, q.per_gpu_mbps, q.storage_mbps) {
+        Ok(w) => (StatusCode::OK, Json(serde_json::json!(w))).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({ "error": e })),
+        )
+            .into_response(),
+    }
 }
 
 async fn gds() -> impl IntoResponse {

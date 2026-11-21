@@ -331,7 +331,7 @@ no model required for the default path. See [AI_ADVISOR.md](../control-plane/ai-
 - **MCP tool exposure** (`crates/atlas-gateway/src/mcp.rs`, `mcp` feature): 54 read-only tools (inventory,
   `ops_advisor`, `list_incidents`, `detect_anomalies`, `what_if_capacity`, `io_risk`, DR, jobs, snapshots) plus
   six opt-in guarded writes (`create_snapshot`, `ack_alert`, `silence_alert` and the three workspace tools;
-  two-phase confirmation token, audited; off unless `ATLAS_MCP_WRITE_ENABLE=1`), and an authenticated `/mcp` on the `atlas-io` agent (12 read-only tools). Failover, delete, restore
+  two-phase confirmation token, audited; off unless `ATLAS_MCP_WRITE_ENABLE=1`), and an authenticated `/mcp` on the `atlas-io` agent (13 read-only tools). Failover, delete, restore
   and disk operations are deliberately not exposed. See [MCP.md](../control-plane/mcp.md) and
   [API.md](../api-reference/index.md#mcp-model-context-protocol).
 

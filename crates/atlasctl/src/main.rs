@@ -613,6 +613,19 @@ enum IoCommand {
     Gpu,
     /// GET /io/gpu-correlation — GPU utilisation next to the storage latency of the same processes
     GpuCorrelation,
+    /// GET /io/gpu-health — ECC, temperature and memory findings
+    GpuHealth,
+    /// GET /io/gpu-whatif — can this storage bandwidth feed N GPUs (arithmetic on the rates you give)
+    GpuWhatIf {
+        #[arg(long)]
+        gpus: u32,
+        /// MB/s each GPU ingests
+        #[arg(long)]
+        per_gpu_mbps: u64,
+        /// MB/s the storage sustains
+        #[arg(long)]
+        storage_mbps: u64,
+    },
     /// GET /io/coverage
     Coverage,
     /// GET /io/native — kernel-aggregated Atlas Native I/O and recent slow requests
@@ -649,6 +662,21 @@ async fn io_request(
         IoCommand::Ai => "/io/ai",
         IoCommand::Gpu => "/io/gpu",
         IoCommand::GpuCorrelation => "/io/gpu-correlation",
+        IoCommand::GpuHealth => "/io/gpu-health",
+        IoCommand::GpuWhatIf {
+            gpus,
+            per_gpu_mbps,
+            storage_mbps,
+        } => {
+            return get_print(
+                client,
+                token,
+                &format!(
+                    "{base}/io/gpu-whatif?gpus={gpus}&per_gpu_mbps={per_gpu_mbps}&storage_mbps={storage_mbps}"
+                ),
+            )
+            .await;
+        }
         IoCommand::Coverage => "/io/coverage",
         IoCommand::Native => "/io/native",
         IoCommand::Leases => "/io/leases",

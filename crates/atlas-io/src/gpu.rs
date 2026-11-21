@@ -47,6 +47,9 @@ pub struct GpuProcess {
     pub gpu_uuid: String,
     pub name: String,
     pub used_mib: u64,
+    /// The process's cgroup path (`/proc/<pid>/cgroup`), so a container or job can be named.
+    /// `None` when it cannot be read; never guessed.
+    pub cgroup: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq, Default)]
@@ -93,12 +96,14 @@ impl GpuSource for FakeGpuSource {
                     gpu_uuid: "GPU-fake-0".into(),
                     name: "python3".into(),
                     used_mib: 41_000,
+                    cgroup: Some("/kubepods.slice/pod-trainer-a".into()),
                 },
                 GpuProcess {
                     pid: 4242,
                     gpu_uuid: "GPU-fake-1".into(),
                     name: "python3".into(),
                     used_mib: 70_200,
+                    cgroup: Some("/kubepods.slice/pod-trainer-b".into()),
                 },
             ],
         })
@@ -213,6 +218,15 @@ pub fn parse_devices(csv: &str) -> Result<Vec<GpuDevice>, String> {
     Ok(out)
 }
 
+/// First cgroup line of a process (`0::/path` on cgroup v2), or `None` when unreadable (other
+/// namespace, process gone, not Linux).
+fn read_cgroup(pid: u32) -> Option<String> {
+    let text = std::fs::read_to_string(format!("/proc/{pid}/cgroup")).ok()?;
+    let line = text.lines().next()?;
+    let path = line.rsplit(':').next()?.trim();
+    (!path.is_empty()).then(|| path.chars().take(256).collect())
+}
+
 pub fn parse_processes(csv: &str) -> Result<Vec<GpuProcess>, String> {
     let mut out = Vec::new();
     for line in csv.lines().filter(|l| !l.trim().is_empty()) {
@@ -220,11 +234,13 @@ pub fn parse_processes(csv: &str) -> Result<Vec<GpuProcess>, String> {
         if f.len() != 4 {
             return Err(format!("unexpected nvidia-smi process row: {line:?}"));
         }
+        let pid: u32 = num(f[0], "pid")?;
         out.push(GpuProcess {
-            pid: num(f[0], "pid")?,
+            pid,
             gpu_uuid: f[1].to_string(),
             name: f[2].to_string(),
             used_mib: opt(f[3]).unwrap_or(0),
+            cgroup: read_cgroup(pid),
         });
     }
     Ok(out)
@@ -289,10 +305,102 @@ impl GpuMonitor {
         }
     }
 
+    pub fn health(&self) -> Vec<GpuFinding> {
+        health_findings(&self.report().devices)
+    }
+
     pub fn correlation(&self, workloads: &[IoWorkload]) -> Vec<GpuCorrelation> {
         let r = self.report();
         correlate(&r.devices, &r.processes, workloads)
     }
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct GpuFinding {
+    pub gpu_index: u32,
+    /// `critical` or `warning`.
+    pub severity: &'static str,
+    /// `ecc_uncorrected`, `temperature_high` or `memory_nearly_full`.
+    pub kind: &'static str,
+    pub detail: String,
+}
+
+/// Temperature (°C) at or above which a GPU is flagged.
+const HOT_C: u32 = 85;
+/// Memory use (%) at or above which a GPU is flagged.
+const MEM_FULL_PERCENT: u64 = 95;
+
+/// Plain threshold checks over one snapshot. Thresholds are constants, not vendor limits.
+pub fn health_findings(devices: &[GpuDevice]) -> Vec<GpuFinding> {
+    let mut out = Vec::new();
+    for d in devices {
+        if let Some(e) = d.ecc_uncorrected.filter(|e| *e > 0) {
+            out.push(GpuFinding {
+                gpu_index: d.index,
+                severity: "critical",
+                kind: "ecc_uncorrected",
+                detail: format!("{e} uncorrected ECC error(s) reported"),
+            });
+        }
+        if d.temp_c >= HOT_C {
+            out.push(GpuFinding {
+                gpu_index: d.index,
+                severity: "warning",
+                kind: "temperature_high",
+                detail: format!("{} °C (threshold {HOT_C} °C)", d.temp_c),
+            });
+        }
+        if d.mem_total_mib > 0 && d.mem_used_mib * 100 / d.mem_total_mib >= MEM_FULL_PERCENT {
+            out.push(GpuFinding {
+                gpu_index: d.index,
+                severity: "warning",
+                kind: "memory_nearly_full",
+                detail: format!("{} of {} MiB used", d.mem_used_mib, d.mem_total_mib),
+            });
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, Serialize, PartialEq)]
+pub struct GpuWhatIf {
+    pub gpus: u32,
+    pub per_gpu_mbps: u64,
+    pub storage_mbps: u64,
+    pub required_mbps: u64,
+    /// Whole GPUs the stated storage bandwidth can feed at the stated per-GPU rate.
+    pub max_gpus_fed: u64,
+    /// `ok` (supply at least 120% of need), `tight` (100% to 120%) or `starves`.
+    pub verdict: &'static str,
+    pub note: &'static str,
+}
+
+/// Arithmetic capacity check: can `storage_mbps` feed `gpus` GPUs that each ingest `per_gpu_mbps`?
+/// Both rates are caller-supplied (measure them; this does not). It models sustained reads only.
+pub fn what_if(gpus: u32, per_gpu_mbps: u64, storage_mbps: u64) -> Result<GpuWhatIf, String> {
+    if !(1..=100_000).contains(&gpus) {
+        return Err("gpus must be 1..=100000".into());
+    }
+    if !(1..=10_000_000).contains(&per_gpu_mbps) || storage_mbps > 1_000_000_000 {
+        return Err("per_gpu_mbps must be 1..=10000000 and storage_mbps at most 1000000000".into());
+    }
+    let required = u64::from(gpus) * per_gpu_mbps;
+    let verdict = if storage_mbps * 100 >= required * 120 {
+        "ok"
+    } else if storage_mbps >= required {
+        "tight"
+    } else {
+        "starves"
+    };
+    Ok(GpuWhatIf {
+        gpus,
+        per_gpu_mbps,
+        storage_mbps,
+        required_mbps: required,
+        max_gpus_fed: storage_mbps / per_gpu_mbps,
+        verdict,
+        note: "sustained-read arithmetic on caller-supplied rates; checkpoint writes, cache hits and burst behaviour are not modelled",
+    })
 }
 
 #[derive(Debug, Clone, Serialize, PartialEq)]
@@ -467,6 +575,47 @@ mod tests {
         assert_eq!(r.mode, "real");
         assert!(r.devices.is_empty());
         assert!(r.error.is_some());
+    }
+
+    #[test]
+    fn health_findings_flag_ecc_heat_and_full_memory() {
+        let mut d = FakeGpuSource.snapshot().unwrap().devices;
+        assert!(health_findings(&d).is_empty());
+        d[0].ecc_uncorrected = Some(2);
+        d[1].temp_c = 90;
+        d[2].mem_used_mib = 80_000;
+        let f = health_findings(&d);
+        assert_eq!(f.len(), 3);
+        assert_eq!(f[0].kind, "ecc_uncorrected");
+        assert_eq!(f[0].severity, "critical");
+        assert_eq!(f[1].kind, "temperature_high");
+        assert_eq!(f[2].kind, "memory_nearly_full");
+        d[0].ecc_uncorrected = None;
+        assert!(
+            health_findings(&d[..1]).is_empty(),
+            "unsupported ECC is not an error"
+        );
+    }
+
+    #[test]
+    fn what_if_is_plain_arithmetic_with_bounds() {
+        let w = what_if(8, 2_000, 24_000).unwrap();
+        assert_eq!(
+            (w.required_mbps, w.max_gpus_fed, w.verdict),
+            (16_000, 12, "ok")
+        );
+        assert_eq!(what_if(8, 2_000, 17_000).unwrap().verdict, "tight");
+        assert_eq!(what_if(8, 2_000, 15_999).unwrap().verdict, "starves");
+        assert_eq!(what_if(8, 2_000, 0).unwrap().max_gpus_fed, 0);
+        assert!(what_if(0, 1, 1).is_err());
+        assert!(what_if(1, 0, 1).is_err());
+        assert!(what_if(100_001, 1, 1).is_err());
+    }
+
+    #[test]
+    fn parse_processes_keeps_cgroup_unknown_for_a_missing_pid() {
+        let p = parse_processes("4294967290, GPU-a, python3, 1\n").unwrap();
+        assert_eq!(p[0].cgroup, None);
     }
 
     #[test]

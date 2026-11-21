@@ -38,7 +38,7 @@ like any other backend. Erase, add/delete volume and eject are REST only, never 
 
 ## Node agent tools
 
-`io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `gpu_status`, `gpu_correlation`, `io_leases`, `io_heatmap` (columns for the last N minutes), `io_coverage` (BPF programs loaded and missing) and `io_native` (Atlas Native kernel maps; `unavailable` when they are not loaded, which is not healthy): read-only views of the
+`io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `gpu_status`, `gpu_correlation`, `gpu_health`, `io_leases`, `io_heatmap` (columns for the last N minutes), `io_coverage` (BPF programs loaded and missing) and `io_native` (Atlas Native kernel maps; `unavailable` when they are not loaded, which is not healthy): read-only views of the
 sensor ([IO_EBPF.md](IO_EBPF.md)). There is no tool that grants a write-freeze lease.
 
 ## Prompts and resources
