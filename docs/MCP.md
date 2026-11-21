@@ -18,7 +18,7 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 |---|---|
 | Inventory | `list_clusters`, `cluster_health`, `list_backends`, `list_pools`, `list_volumes` (tenant-scoped), `list_alerts`, `metrics_summary` |
 | Advisory | `ops_advisor`, `list_incidents`, `detect_anomalies`, `what_if_capacity` (always local mode: never calls an external LLM) |
-| I/O | `io_risk`, `io_ai` (from the node agent; `unavailable` when not configured/reachable, never healthy) |
+| I/O | `io_risk`, `io_ai`, `io_gpu` (from the node agent; `unavailable` when not configured/reachable, never healthy) |
 | DR | `dr_status`, `dr_preflight`, `list_dr_mirrors`, `dr_mirror_status`, `list_volume_groups` |
 | Work | `list_jobs`, `get_job`, `list_snapshots` (operator role, stricter than REST; limited to the caller's tenant unless admin) |
 | Ceph | `ceph_status`, `ceph_df`, `ceph_osd_tree` (summary: counts and the OSDs that are down or out), `ceph_nvme` (NVMe wear, media errors and spare from Ceph's device-health scrapes), `ceph_nvmeof` (Rook NVMe-oF gateways and their StorageClasses; needs a Kubernetes cluster), `ceph_osd_objectstore` (each OSD's object store and Ceph version), `ceph_sizing` (NVMe hosts against a CPU/RAM rule of thumb). Operator role; output capped at 256 KiB |
@@ -38,7 +38,7 @@ like any other backend. Erase, add/delete volume and eject are REST only, never 
 
 ## Node agent tools
 
-`io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `io_leases`, `io_heatmap` (columns for the last N minutes), `io_coverage` (BPF programs loaded and missing) and `io_native` (Atlas Native kernel maps; `unavailable` when they are not loaded, which is not healthy): read-only views of the
+`io_health`, `io_histograms`, `io_workloads`, `io_rca`, `io_ai`, `io_risk`, `gpu_status`, `gpu_correlation`, `io_leases`, `io_heatmap` (columns for the last N minutes), `io_coverage` (BPF programs loaded and missing) and `io_native` (Atlas Native kernel maps; `unavailable` when they are not loaded, which is not healthy): read-only views of the
 sensor ([IO_EBPF.md](IO_EBPF.md)). There is no tool that grants a write-freeze lease.
 
 ## Prompts and resources
@@ -238,7 +238,7 @@ its own bucket. The scope is enforced in one place (`call_tool`/`list_tools` in
 | `ATLAS_MCP_TOOL_CALLS_PER_MIN` | gateway | Calls per minute each token may make to any one tool, so a loop on one expensive tool cannot use up the whole `ATLAS_MCP_CALLS_PER_MIN` allowance. Calls over it are refused and audited as `mcp.tool.rate_limited` (with `scope: tool`). Only real tool names are counted. Unset or `0` is off. Shared through the database like `ATLAS_MCP_CALLS_PER_MIN`; read once at startup. |
 | `ATLAS_AGENT_WORKSPACE_BYTES` | gateway | Default budget on the bytes of workspaces one caller may hold at once: the sum of the `max_bytes` of every workspace they own in the tenant, checked at create. A token's own `workspace_bytes` overrides it. Unset or `0` is off. While a budget applies `max_bytes` (or `ATLAS_WORKSPACE_DEFAULT_MAX_BYTES`) must be set, since an uncapped workspace cannot be counted. |
 | `ATLAS_DATA_URL` / `ATLAS_DATA_TOKENS` / `ATLAS_DATA_TOKENS_FILE` / `ATLAS_DATA_TIMEOUT_SECS` | gateway | Enable and configure the `data_*` tools; see [AI data tools](#ai-data-tools-atlas_data). Unset URL: the tools do not exist. |
-| `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk`, `io_ai` and the Ops Advisor's `io_risk` and `io_ai` blocks read the node agent from. |
+| `ATLAS_IO_AGENT_URL` / `ATLAS_IO_AGENT_TOKEN` / `ATLAS_IO_AGENT_TIMEOUT_SECS` | gateway | Where `io_risk`, `io_ai`, `io_gpu` and the Ops Advisor's `io_risk`, `io_ai` and `io_gpu` blocks read the node agent from. |
 | `ATLAS_IO_TOKEN` | agent | Bearer token for the agent API (health probes exempt) and its `/mcp`. |
 
 ## Guarded writes
