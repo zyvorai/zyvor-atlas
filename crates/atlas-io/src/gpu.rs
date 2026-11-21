@@ -384,9 +384,12 @@ pub fn gds_readiness() -> GdsReadiness {
     let module = std::fs::read_to_string("/proc/modules")
         .map(|m| m.lines().any(|l| l.starts_with("nvidia_fs ")))
         .unwrap_or(false);
-    let gdscheck = ["/usr/local/cuda/gds/tools/gdscheck", "/usr/local/cuda/gds/tools/gdscheck.py"]
-        .iter()
-        .any(|p| std::path::Path::new(p).exists());
+    let gdscheck = [
+        "/usr/local/cuda/gds/tools/gdscheck",
+        "/usr/local/cuda/gds/tools/gdscheck.py",
+    ]
+    .iter()
+    .any(|p| std::path::Path::new(p).exists());
     GdsReadiness {
         nvidia_fs_module_loaded: module,
         gdscheck_found: gdscheck,
@@ -430,7 +433,11 @@ mod tests {
     #[test]
     fn fake_demo_flags_the_starved_gpu_only() {
         let s = FakeGpuSource.snapshot().unwrap();
-        let c = correlate(&s.devices, &s.processes, &[wl(99, 20, 360_000), wl(4242, 80, 9_600)]);
+        let c = correlate(
+            &s.devices,
+            &s.processes,
+            &[wl(99, 20, 360_000), wl(4242, 80, 9_600)],
+        );
         assert_eq!(c[0].verdict, "storage_starved_suspected");
         assert_eq!(c[0].storage_avg_us, Some(18_000));
         assert_eq!(c[1].verdict, "compute_bound_or_ok");
@@ -453,7 +460,9 @@ mod tests {
 
     #[test]
     fn real_mode_without_nvidia_smi_reports_an_error_not_data() {
-        let m = GpuMonitor::new(Box::new(NvidiaSmiSource::with_bin("/nonexistent/nvidia-smi")));
+        let m = GpuMonitor::new(Box::new(NvidiaSmiSource::with_bin(
+            "/nonexistent/nvidia-smi",
+        )));
         let r = m.report();
         assert_eq!(r.mode, "real");
         assert!(r.devices.is_empty());

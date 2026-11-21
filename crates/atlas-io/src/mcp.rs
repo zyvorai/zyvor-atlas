@@ -355,7 +355,10 @@ mod tool_tests {
     use crate::Collector;
 
     fn mcp() -> IoMcp {
-        IoMcp::new(Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab()))
+        IoMcp::new(
+            Collector::new(Box::new(FakeSource::demo()), DeviceMap::lab()),
+            std::sync::Arc::new(crate::gpu::GpuMonitor::from_mode("fake")),
+        )
     }
 
     /// The fake source carries atlas_native data, so the tool returns the real view, not the "unavailable" marker.
