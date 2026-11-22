@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Full-load batch-Job builders: dump the source dataset and load it into the freshly-provisioned
 //! edge database, inside the cluster. Applied via `atlas_driver_k8s::apply_cr("batch","v1","Job",…)`
 //! and watched to completion by the reconciler.

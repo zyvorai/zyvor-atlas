@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Atlas storage control plane — initial schema (PostgreSQL dialect).
 -- Phase-1 HA: Postgres dialect of migrations/0001_init.sql.
 -- Timestamps stay TEXT (RFC3339 UTC via to_char) to minimize query rewrite.

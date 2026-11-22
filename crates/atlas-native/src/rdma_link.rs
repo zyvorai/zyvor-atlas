@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! The transport-independent half of RDMA support: what a pooled RDMA connection is, how a client
 //! decides to use one and falls back to TCP, and a fake transport for testing all of that on any

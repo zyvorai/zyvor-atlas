@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- `JobEngine::enqueue` (atlas-jobs/src/engine.rs) deduplicates on `idempotency_key` by SELECTing
 -- for an existing job and, if none is found, INSERTing a new row (PDF §17.4) — a classic
 -- check-then-act race: two concurrent submissions of the same key (a client retry after a timeout,

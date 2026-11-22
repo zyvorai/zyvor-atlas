@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Single-node Rook Ceph overlay
 
 The top-level `deploy/rook-ceph-lab/` manifests assume a 3-node cluster (replica size 3, host

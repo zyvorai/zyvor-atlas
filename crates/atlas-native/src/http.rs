@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! A minimal blocking HTTP/1.1 server for the native node's ops and volume API: persistent
 //! connections (closed on `Connection: close`, HTTP/1.0, a malformed request or

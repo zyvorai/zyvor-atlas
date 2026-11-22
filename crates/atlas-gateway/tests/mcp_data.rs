@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! atlas_data MCP tools against a fake atlas_data HTTP server: identity mapping, tenant isolation,
 //! size cap, upstream-error mapping without credential leaks, two-phase guarded writes and scoped
 //! tokens. Own test binary (one test): ATLAS_DATA_* and the write gate are process-wide environment.

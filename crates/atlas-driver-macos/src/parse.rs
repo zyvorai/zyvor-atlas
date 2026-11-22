@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Pure parsing and mapping for `diskutil` output. Nothing here runs a command or touches the host, so
 //! it is tested against recorded plists on any OS (`tests/fixtures`).
 //!

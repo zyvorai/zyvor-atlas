@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Atlas: enterprise subscription
 
 Atlas is available under an annual **enterprise subscription** for production use. One subscription covers product access, updates and upgrades, and the stated support level. There is no separate support surcharge.
@@ -35,7 +35,7 @@ Priced per usable TB per year, billed annually in advance, with an annual minimu
 
 The minimum is the price floor, so the volume discount only lowers the bill once the discounted amount is above it (about 545 TB on Enterprise, 500 TB on Professional and 706 TB on Premium, before discount).
 
-Atlas itself is source-available under the Zyvor Production License v1.0: a commercial license is needed to run it ([licensing](LICENSING.md)); the subscription buys supported releases, the stated response targets and a named technical contact. Hardware is not included: Atlas runs on your servers. Rates are quoted and invoiced by Zyvor.
+Atlas itself is source-available under the Zyvor Production Licence v2.0: a commercial license is needed to run it ([licensing](LICENSING.md)); the subscription buys supported releases, the stated response targets and a named technical contact. Hardware is not included: Atlas runs on your servers. Rates are quoted and invoiced by Zyvor.
 
 Prices: INR incl. 18% GST in India; US dollars excl. tax elsewhere (VAT, GST or sales tax added where applicable). Pay online by UPI, card or netbanking where a buy page exists; international cards work (charged in rupees); or request a US-dollar invoice by bank transfer. Custom pricing: contact [sales@zyvor.dev](mailto:sales@zyvor.dev). Buy or get a quote: [zyvor.dev/buy](https://zyvor.dev/buy). A 30-day trial key is available for production evaluation.
 
@@ -44,6 +44,6 @@ Prices: INR incl. 18% GST in India; US dollars excl. tax elsewhere (VAT, GST or 
 - Annual prepaid subscription is the default, with a 12-month minimum. Multi-year prepay is available.
 - Minimums are annual contract values and apply after any discounts.
 - Implementation, migration, training and managed operations are separate services.
-- At expiry, updates, downloads and support end. Rights under the Zyvor Production License v1.0 continue on the terms of the licence.
+- At expiry, updates, downloads and support end. Rights under the Zyvor Production Licence v2.0 continue on the terms of the licence.
 - Response targets need a contracted scope and are not uptime guarantees.
 - Existing signed agreements keep their agreed terms.

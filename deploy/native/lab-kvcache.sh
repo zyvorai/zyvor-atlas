@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 #
 # Runs deploy/native/kvcache-smoke.sh against a real throwaway native cluster: plain processes inside the
 # Dockerfile builder image on the lab host (scripts/lab-kvcache-remote.sh), with /dev/fuse. It starts the

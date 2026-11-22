@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Merge into ~/.hermes/config.yaml. Token: examples/agent/mint-token.sh (operator role).
 mcp_servers:
   atlas:

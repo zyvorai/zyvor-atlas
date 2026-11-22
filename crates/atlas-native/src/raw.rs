@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Block-aligned devices for data nodes: a regular file or a raw block device accessed in whole
 //! 4 KiB blocks, through positional I/O ([`PreadIo`]) or `io_uring` with `O_DIRECT`

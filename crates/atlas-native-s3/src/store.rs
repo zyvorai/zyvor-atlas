@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Objects as files: a bucket is one native filesystem, an object key `a/b/c` is the file `c` in
 //! directory `a/b`, and a key ending in `/` is a directory marker. Every call here blocks (it

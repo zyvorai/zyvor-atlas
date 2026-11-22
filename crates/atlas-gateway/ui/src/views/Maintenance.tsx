@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // Day-2 maintenance: upgrade pre-flight, job-engine pause, backend cordon, orphan backups.
 import { AlertTriangle, CheckCircle2, PauseCircle, PlayCircle } from "lucide-react";
 import { submit } from "../api/client";

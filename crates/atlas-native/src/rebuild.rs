@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! The rebuild controller a metadata leader runs for each group it leads.
 //!
 //! Each [`Rebuilder::step`] first probes the data nodes, then works on one batch:

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Fake-driver coverage for the observability / read surface and cross-cutting guards that the
 //! existing suites don't touch: Ceph-native passthrough, Prometheus + JSON metrics, the unified
 //! events/audit feeds, `/readyz`, per-tenant quota admission (409), and NFS/ZFS drivers flowing

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Explainable AI-assisted storage operations. The local advisor is always available and never
 //! mutates storage. An optional OpenAI-compatible provider can rewrite only the executive summary;
 //! Atlas remains the source of truth for risk, evidence, and recommended actions.

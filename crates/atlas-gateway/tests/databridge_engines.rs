@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Every DataBridge source engine drives the full migration pipeline over REST with the fake
 //! connector, and each provisions the correct edge target. Complements `databridge_pipeline.rs`
 //! (which covers the Postgres state machine + cutover guard in depth) by proving all six engines —

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Alert records (PDF §15.2). Alerts are keyed by a deterministic id (rule + resource) so the
 //! monitor upserts rather than duplicating on each tick.
 

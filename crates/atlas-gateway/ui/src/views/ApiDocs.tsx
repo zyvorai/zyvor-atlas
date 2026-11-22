@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 /** In-console API surface map — curated from docs/API.md (not a full OpenAPI host). */
 import { Link } from "react-router-dom";
 import { navCrumbs } from "../nav/routes";

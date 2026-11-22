@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! A Mac reached through its `atlas-mac-agent`: the gateway's view of one Mac in a fleet. Discovery
 //! is read-only; [`RemoteMacosOps`] runs the guarded lifecycle operations on it, and only if the
 //! agent was started with writes allowed.

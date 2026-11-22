@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Blocking client for a native cluster's `/v1/fs` API. Requests go to whichever metadata node
 //! is the leader: "not the leader" (421), "try again" (503) and transport failures move on to

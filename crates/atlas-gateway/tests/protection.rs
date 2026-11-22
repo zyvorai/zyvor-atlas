@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! `GET /protection-status` and `GET /volumes/{id}/protection` — pin the real route → inventory
 //! synthesis path. See `atlas_inventory::protection` for the verdict logic itself (unit-tested
 //! there); this file just proves the HTTP surface returns the expected shape.

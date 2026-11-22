@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! End-to-end tests for the read-only gateway surface, driven by the FakeCephDriver (no Ceph, no
 //! Kubernetes). Verifies discovery populates inventory and that audit rows are written.
 

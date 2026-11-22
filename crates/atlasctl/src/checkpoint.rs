@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! `atlasctl checkpoint seal` — seal a finished training checkpoint on an atlas-native filesystem.
 //!
 //! Thin glue over the existing REST API (`docs/CHECKPOINTS.md`): check that the checkpoint is

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! A `reqwest::Client` that additionally trusts a CA certificate from `ATLAS_S3_CA_CERT`, for
 //! talking to an S3-compatible endpoint (Ceph RGW, MinIO, Garage, ...) whose TLS certificate was
 //! not issued by a CA already in the system trust store — a private CA, or a self-signed lab cert.

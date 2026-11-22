@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Importing a raw disk image into an atlas-native volume
 
 `POST /api/atlas/v1/volumes/{id}/import` queues a job that streams a disk image from an HTTP(S)

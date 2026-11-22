@@ -2,7 +2,7 @@
   "name": "atlas-storage-center",
   "version": "0.13.0",
   "private": true,
-  "license": "LicenseRef-Zyvor-Production-1.0",
+  "license": "LicenseRef-Zyvor-Production-2.0",
   "type": "module",
   "description": "Atlas Storage Center — Zeus OS-style web console for the Atlas storage control plane",
   "scripts": {

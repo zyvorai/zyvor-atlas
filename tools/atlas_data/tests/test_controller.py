@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 """Controller, node agent, metering and KV connector over a real local HTTP service and a fake Gryvia."""
 from pathlib import Path
 import tempfile

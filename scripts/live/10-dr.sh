@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # DR control-plane: create peer → preflight → direct-RBD → enable-mirror (soft) → delete all.
 # Live rbd mirror dataplane is not asserted (needs a second Ceph cluster).
 set -euo pipefail

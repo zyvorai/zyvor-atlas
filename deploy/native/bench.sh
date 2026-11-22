@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Data-path benchmark in a directory: an fio baseline on the filesystem under test, then the Atlas
 # engine bench (crates/atlas-native/tests/datapath_bench.rs: 3 in-process data nodes, 3 replicas).
 # Writes one JSON document to $OUT. Never touches block devices, never drops caches; it only creates

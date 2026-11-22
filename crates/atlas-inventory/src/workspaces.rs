@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Agent workspaces: the catalog side of disposable clones (migration 0037). The gateway does the
 //! snapshot/clone/delete against the backend; this records which clone belongs to which run and when
 //! it expires. State changes are compare-and-set so two gateway replicas (Postgres) never both act

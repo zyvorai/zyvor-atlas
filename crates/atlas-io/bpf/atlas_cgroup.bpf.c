@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //
 // cgroup id → Atlas volume id. Userspace (the agent's PUT /io/cgroup) fills this map.
 // Included by atlas_bio.bpf.c; it is a map only, not a tracepoint program. The value is

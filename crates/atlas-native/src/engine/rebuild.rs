@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! What the rebuild controller ([`crate::rebuild`]) asks of an engine: which nodes are lost,
 //! which extents that leaves short of parts, and repairing one extent at a time.
 

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 import { useUi, type Density, type Theme } from "../store/ui";
 import { THEME_OPTIONS } from "../lib/themes";
 import { SettingsPage, type SettingsBlock } from "../ui/templates/SettingsPage";

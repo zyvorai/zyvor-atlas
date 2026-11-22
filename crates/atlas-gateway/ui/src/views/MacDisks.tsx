@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // External-disk lifecycle for Macs (docs/MACOS.md): erase, add a volume, resize a container, eject,
 // on the Mac the gateway runs on or on a fleet Mac through its agent. The server refuses internal
 // disks, the running system and system volumes whatever is sent here; this page only keeps the

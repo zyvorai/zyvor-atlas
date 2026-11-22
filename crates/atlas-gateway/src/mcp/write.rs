@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Guarded action tools for the MCP edge. Off unless `ATLAS_MCP_WRITE_ENABLE=1` (when off the tools
 //! are not even listed). Every write is two-phase: a call without a `confirmation_token` changes
 //! nothing and returns the plan plus a short-lived, single-use token bound to the caller, the tool

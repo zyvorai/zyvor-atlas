@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! A small registry mapping backend ids to live driver instances. Interior-mutable so drivers can be
 //! registered at startup *and* at runtime (e.g. `POST /backends`) through a shared `Arc`.
 

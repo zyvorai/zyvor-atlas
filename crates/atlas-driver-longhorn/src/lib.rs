@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Longhorn through its Kubernetes CRDs (`longhorn.io/v1beta2`). Discovery reads `nodes`,
 //! `volumes` and `replicas`. Create, delete and expand post or patch `volumes`; snapshots are
 //! `snapshots` CRs; a clone is a new `Volume` whose `dataSource` is `snap://volume/snapshot`;

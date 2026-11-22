@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Erasure-coded extents: space, reads that survive lost and corrupt shards, repair onto spare
 //! nodes, and coexistence with replicated extents.

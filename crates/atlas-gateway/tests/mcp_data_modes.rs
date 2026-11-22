@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! atlas_data MCP tool availability by configuration: unlisted without `ATLAS_DATA_URL`, read tools
 //! only without `ATLAS_MCP_WRITE_ENABLE`, clean error for an unreachable service. Own test binary
 //! (one test): the tool list is decided from process-wide environment when a session starts.

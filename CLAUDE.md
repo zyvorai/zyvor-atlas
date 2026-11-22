@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Atlas — Zyvor Storage Control Plane
 
 Atlas is the central storage control plane for the Zyvor product suite. Products (Zeus OS/v9s,
@@ -159,8 +159,8 @@ supported way to map an existing RBD volume. Atlas does nothing Crimson-specific
 host with no GPU; **real `nvidia-smi` mode not yet run on a GPU**. `KVConnector` in `tools/atlas_data/client.py` is glue only,
 unrun against vLLM/LMCache.
 
-**Licensed** under the [Zyvor Production License v1.0](LICENSE) (`LicenseRef-Zyvor-Production-1.0`;
-non-production use is free, Production Use needs a commercial license — see
+**Licensed** under the [Zyvor Production Licence v2.0](LICENSE) (`LicenseRef-Zyvor-Production-2.0`;
+a 30-day trial is available on request from sales@zyvor.dev (a paid evaluation Order at no charge); Production Use needs a paid Order — see
 [`docs/LICENSING.md`](docs/LICENSING.md)). Don't weaken or remove license notices,
 [`CLA.md`](CLA.md), [`DCO.md`](DCO.md), or [`NOTICE`](NOTICE) without an explicit human
 request. There is **no** runtime license-key or trial/JWT gate.
@@ -268,7 +268,7 @@ integrations beyond the gRPC surface.
 
 ## Conventions
 - Every source file begins with a Zyvor copyright line plus
-  `SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0`
+  `SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0`
   (enforced by `make headers` / CI). Don't weaken license notices, [`CLA.md`](CLA.md),
   [`DCO.md`](DCO.md), or [`NOTICE`](NOTICE) without an explicit human request.
 - Match the monorepo Rust stack: axum 0.8, `sqlx::Any` (SQLite/Postgres, `$N` placeholders — no

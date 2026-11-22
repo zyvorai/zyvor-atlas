@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 #
 # RBAC for a second Rook cluster in namespace rook-ceph-dr, managed by the existing operator in
 # rook-ceph. Generated from Rook v1.20.8 deploy/examples/common-second-cluster.yaml

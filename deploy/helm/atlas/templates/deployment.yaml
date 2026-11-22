@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 {{- if and .Values.disks.enabled (gt (int .Values.replicaCount) 1) }}
 {{- fail "disks.enabled requires replicaCount: 1 (ZFS/raw disks are node-local; pin the pod with nodeSelector)" }}
 {{- end }}

@@ -1,23 +1,22 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Licensing
 
-Atlas is source-available under the **[Zyvor Production License v1.0](../LICENSE)**.
+Atlas is source-available under the **[Zyvor Production Licence v2.0](../LICENSE)**.
 
 - **A commercial license is needed to run Atlas** from Zyvor AI Labs Private Limited
-  ([sales@zyvor.dev](mailto:sales@zyvor.dev), [zyvor.dev/buy](https://zyvor.dev/buy)). A 30-day trial key is
-  available for production evaluation. See [the subscription model](SUBSCRIPTION-MODEL.md) for plans.
+  ([sales@zyvor.dev](mailto:sales@zyvor.dev), [zyvor.dev/buy](https://zyvor.dev/buy)). A 30-day trial is available on request from sales@zyvor.dev (a paid evaluation Order at no charge). See [the subscription model](SUBSCRIPTION-MODEL.md) for plans.
 
 There is no runtime license key. The license text controls; this page is a summary.
 
-SPDX identifier used in source headers and Cargo/npm metadata: `LicenseRef-Zyvor-Production-1.0` (see
-[`LICENSES/LicenseRef-Zyvor-Production-1.0.txt`](../LICENSES/LicenseRef-Zyvor-Production-1.0.txt), [`NOTICE`](../NOTICE)).
+SPDX identifier used in source headers and Cargo/npm metadata: `LicenseRef-Zyvor-Production-2.0` (see
+[`LICENSES/LicenseRef-Zyvor-Production-2.0.txt`](../LICENSES/LicenseRef-Zyvor-Production-2.0.txt), [`NOTICE`](../NOTICE)).
 
 Contributions require the [CLA](../CLA.md) and [DCO](../DCO.md) (`git commit -s`). Header checks: `make headers`.
 
 ## SQL migrations keep their original headers
 
-The files under `migrations/` and `migrations-postgres/` are licensed under the Zyvor Production License v1.0 like everything
+The files under `migrations/` and `migrations-postgres/` are licensed under the Zyvor Production Licence v2.0 like everything
 else in this repository, but their header comments are frozen: the migration runner (sqlx) records a
 checksum of each applied file, so editing even a comment makes existing databases refuse to start. They
 are therefore exempt from the SPDX-identifier check (`scripts/check-license-headers.sh`), and must never be
@@ -25,7 +24,7 @@ edited after release.
 
 ## Older releases
 
-This repository carries a single license: the Zyvor Production License v1.0. Releases that were published earlier under
+This repository carries a single license: the Zyvor Production Licence v2.0. Releases that were published earlier under
 different terms keep the terms they were published with — see the licensing notes at the relevant git
 tag and [`CHANGELOG.md`](../CHANGELOG.md).
 

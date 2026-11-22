@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! `GET /ceph/health-rollup` pins the real route → driver → classify() path against the fake
 //! driver's known fixture (1 OSD down, 8/289 PGs active+undersized+degraded, no active recovery).
 

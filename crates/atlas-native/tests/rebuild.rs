@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! The rebuild controller: lost nodes found by probing, degraded extents rebuilt most at risk
 //! first and at a capped rate, no rebuild for a node back within the delay, and an incremental

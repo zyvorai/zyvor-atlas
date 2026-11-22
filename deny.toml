@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Supply-chain gate: `cargo deny check` (CI job + `make audit`). Scoped to what's actionable in
 # this workspace's size — a large dependency graph naturally carries duplicate transitive versions
 # and a handful of unmaintained leaf crates that aren't worth blocking every PR over, so only

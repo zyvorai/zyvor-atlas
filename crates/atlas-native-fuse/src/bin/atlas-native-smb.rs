@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! `atlas-native-smb --endpoint https://node:7400 --shares-file shares.json --users-file
 //! users.json`: the SMB gateway. Mounts each share's filesystem with `atlas-native-mount` under

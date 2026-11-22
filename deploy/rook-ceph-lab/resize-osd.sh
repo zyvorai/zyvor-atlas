@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # resize-osd.sh — cap Ceph to a fixed slice of the OSD disk (default 400 GiB).
 #
 # A BlueStore OSD on a raw device claims the WHOLE device (here /dev/sdb = 931 GiB). There is no

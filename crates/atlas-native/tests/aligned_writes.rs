@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Whole-extent writes place their data without the engine's write lock, so concurrent
 //! writers (checkpoint ranks, say) overlap on the data nodes, while partial writes, which merge

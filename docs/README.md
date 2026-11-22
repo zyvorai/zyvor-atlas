@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Atlas Documentation Index
 
 Start at the top-level [README](../README.md) for the overview and quickstart. This index covers
@@ -51,7 +51,7 @@ duplicated.
 ## Project
 - **[ROADMAP.md](ROADMAP.md)** — what's shipped and what's deferred, slice by slice.
 - **[STATUS.md](STATUS.md)** — the short maturity matrix: what's verified on real infrastructure vs. lab-only. When ROADMAP.md and this disagree, STATUS.md wins.
-- **[LICENSING.md](LICENSING.md)** — Zyvor Production License v1.0; SPDX / CLA / DCO.
+- **[LICENSING.md](LICENSING.md)** — Zyvor Production Licence v2.0; SPDX / CLA / DCO.
 - **[../CONTRIBUTING.md](../CONTRIBUTING.md)** — conventions; how to add an endpoint / driver / migration.
 - **[../SECURITY.md](../SECURITY.md)** — supported versions, how to report a vulnerability.
 - **[../CODE_OF_CONDUCT.md](../CODE_OF_CONDUCT.md)** — community conduct.

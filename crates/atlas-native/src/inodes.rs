@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! A filesystem's inode table. Inodes are shared (`Arc`): a read hands out a reference without
 //! holding the table, and a snapshot or clone shares every inode until one side changes it.

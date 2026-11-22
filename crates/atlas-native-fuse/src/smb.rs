@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! SMB gateway configuration (binary `atlas-native-smb`): which filesystems to share under which
 //! names, and the users who may connect, checked and rendered as a Samba configuration serving

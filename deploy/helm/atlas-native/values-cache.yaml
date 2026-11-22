@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Single-copy profile for data that can be recomputed, such as an inference KV-cache tier
 # (docs/AI_INFERENCE.md). Layer it over the defaults:
 #   helm install kvcache deploy/helm/atlas-native -f deploy/helm/atlas-native/values-cache.yaml

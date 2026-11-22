@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Strimzi + Debezium CR builders for CDC: a `KafkaConnect` cluster (with the Debezium + JDBC-sink
 //! plugins and a Kubernetes Secret config-provider) plus two `KafkaConnector`s — a Debezium source
 //! (reads the cloud DB's WAL/binlog into Kafka) and a JDBC sink (applies the topics to the edge DB).

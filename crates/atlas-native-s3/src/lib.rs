@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! S3 front end for atlas-native filesystems (`docs/NATIVE_S3.md`): each bucket is a filesystem
 //! (or a snapshot of one), each object a file, served through the same node API the FUSE client

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Day-2 cross-cluster DR — hardened control-plane. Register a peer, enable RBD mirroring on a
 //! volume, and fail over (promote/demote) with transition guards, preflight, and a confirm-gated
 //! failover runbook. Fake driver: `rbd mirror` CLI is skipped so jobs succeed; live mirroring still

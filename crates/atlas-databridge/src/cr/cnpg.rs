@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! CloudNativePG `Cluster` CR builder for the Postgres edge target. Data + WAL land on Ceph RBD
 //! StorageClasses; `wal_level=logical` so Debezium can read the WAL for CDC.
 

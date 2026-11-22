@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Native Slack alerting via an incoming webhook URL. Independent from the generic `webhook` sink
 //! (which also happens to be Slack-payload-compatible) so a deployment can run both at once — a
 //! generic webhook feeding a SIEM/automation pipeline, and this one posting human-readable

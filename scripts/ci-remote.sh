@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Run Atlas's CI gates on the lab host instead of locally (nothing is compiled on the developer
 # machine): rsync the tree, then inside the Dockerfile's own builder image run clippy (-D warnings),
 # the whole Rust test suite, and — in a Node container — the UI lint, tests and production build.

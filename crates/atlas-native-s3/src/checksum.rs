@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! `x-amz-checksum-*` verification for uploads: the algorithms AWS clients send (CRC32, CRC32C,
 //! CRC64NVME, SHA-1, SHA-256), from headers or from aws-chunked trailers.

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # atlas-native-s3: S3 gateway for atlas-native filesystems (docs/NATIVE_S3.md). Talks to the cluster
 # over its HTTP API, so unlike the NFS gateway it needs no FUSE and no privileges.
 # ---- builder ----

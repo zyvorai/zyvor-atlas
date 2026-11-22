@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Direct writes: whole extents go from this client straight to the data nodes; the metadata
 //! leader only leases the targets and commits (`POST .../direct-write`, `.../direct-commit`).

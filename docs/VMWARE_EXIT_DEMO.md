@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # 30-minute VMware exit demonstration
 
 This is a presenter script, not a claim that Atlas imports disks. One Windows or Linux VM is discovered, scored, converted, and booted on a Ceph RBD StorageClass. The source VM is not modified. If validation fails, delete the target VM.

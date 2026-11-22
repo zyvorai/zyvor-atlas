@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Install Envoy Gateway (the Gateway API implementation Atlas's chart targets) and the `eg`
 # GatewayClass. Additive: it creates the `envoy-gateway-system` namespace, the Gateway API + Envoy
 # Gateway CRDs and one controller Deployment. It does not touch existing Ingress objects or workloads.

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Lab values: a side-by-side Helm install next to the raw-manifest gateway (deploy/k8s/atlas-gateway.yaml)
 # on a single k3s host, using the locally imported image. Own namespace, own NodePorts, so it does not
 # collide with the zyvor-system gateway (30510). Used by scripts/helm-lab-remote.sh; adjust NodePorts

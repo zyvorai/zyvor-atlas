@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // Object-storage migration (the DataBridge object leg): copy one S3 bucket into another.
 // Either side can be an Atlas Ceph RGW backend or an external S3 endpoint.
 import { useState } from "react";

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Cache leases: a client session may cache an inode's attributes (and, for a directory, the
 //! names in it) while it holds a lease on the inode. The leader keeps leases in memory. A change

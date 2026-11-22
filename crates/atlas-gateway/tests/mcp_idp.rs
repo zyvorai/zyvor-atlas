@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! IdP-issued JWT access tokens on `/mcp` (`src/idp_token.rs`): an in-process fake identity provider
 //! (discovery + JWKS over axum on a loopback port) and throwaway RS256/ES256 keys generated at test
 //! time, driving a real gateway over HTTP. No real IdP is involved.

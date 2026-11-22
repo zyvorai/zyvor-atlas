@@ -1,13 +1,13 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Verify Atlas source files carry copyright + SPDX license headers.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-EXPECTED_SPDX='LicenseRef-Zyvor-Production-1.0'
+EXPECTED_SPDX='LicenseRef-Zyvor-Production-2.0'
 COPYRIGHT_NEEDLE='Copyright (c) 2026 ZyvorAI Labs Private Limited'
 
 # File types that must carry headers (first ~20 lines / 2 KiB).

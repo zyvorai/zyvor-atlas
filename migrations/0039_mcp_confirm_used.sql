@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Single-use record of MCP write confirmation tokens (docs/MCP.md). A confirmation token is a signed JWT whose
 -- `jti` is inserted here when it is redeemed; the PRIMARY KEY turns a second redemption (a replay, a retry racing
 -- the first call, another gateway replica) into a unique violation, which is how "already used" is decided. Rows

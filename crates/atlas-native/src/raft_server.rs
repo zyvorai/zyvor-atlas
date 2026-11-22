@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Runs a [`RaftNode`] over TCP: a driver thread owns the clock and inbound queue, one sender
 //! thread per peer keeps a connection open and drops messages while the peer is unreachable

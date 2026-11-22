@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Dedup-savings estimate for a zpool from `zdb -S <pool>`, which builds the dedup table ZFS
 //! *would* have if `dedup=on` had been set from the start and prints the resulting ratios. ZFS
 //! does this itself, so unlike the Ceph estimate nothing here hashes data.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Per-sink alert delivery tracking (PagerDuty/Opsgenie/Slack — `crates/atlas-monitor/src/notify/`).
 //! Separate from `alerts::list_unnotified_open`/`mark_notified`, which remain the pre-existing
 //! generic webhook's own single-sink tracking (`storage_alerts.notified_at`), untouched here —

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Throwaway Dex OIDC provider — see dex-config.yaml for the caveats. Single replica, in-memory
 # storage: a pod restart loses all state (fine for a disposable test IdP, never do this for a
 # real deployment).

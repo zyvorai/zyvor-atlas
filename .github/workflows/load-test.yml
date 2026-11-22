@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Load/perf testing (scripts/loadtest/) — nightly + on-demand, not on every PR (slower and
 # noisier than the rest of atlas-ci). See scripts/loadtest/README.md.
 name: Load test

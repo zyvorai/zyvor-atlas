@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Shared test-database provisioning for atlas-gateway's integration tests.
 //!
 //! Default (no env var set): a fresh SQLite temp-file DB per call — exactly what every test file

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # The atlas_data AI data service (Dockerfile.data, docs/AI_DATA_SERVICES.md). One replica on SQLite; set
 # ATLAS_DATA_DATABASE_URL (Secret atlas-data-db) and the data volume to ReadWriteMany to run more.
 #

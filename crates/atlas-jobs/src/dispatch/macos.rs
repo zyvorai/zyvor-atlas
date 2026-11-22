@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Lifecycle operations on a Mac's external disks: the Mac the gateway runs on, or another Mac through
 //! its agent (the job's `backend_id`). The hard
 //! refusals live in `atlas_driver_macos::ops` and are re-checked here, right before executing,

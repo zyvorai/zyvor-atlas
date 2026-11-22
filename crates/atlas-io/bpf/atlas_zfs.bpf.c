@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //
 // OpenZFS probes (tracepoint category `zfs`, names `zfs_read` / `zfs_write`). Many kernels
 // ship without those tracepoints; attach then fails open and atlas_zfs stays in

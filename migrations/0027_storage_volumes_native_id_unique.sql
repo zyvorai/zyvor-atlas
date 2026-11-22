@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Same class of race as migrations/0024 (idempotency_key): the direct-RBD create/clone routes
 -- check "does this pool/name already exist?" before enqueueing, but that check is not atomic with
 -- the job's later INSERT — two concurrent requests for the same name can both see "doesn't exist"
