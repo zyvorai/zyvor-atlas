@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Tier-3 live suite orchestrator. Hits a deployed Atlas gateway (default:
 # http://212.8.248.187:30511). Requires ATLAS_LIVE=1.
 #

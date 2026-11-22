@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 import type {ReactNode} from 'react';
 import clsx from 'clsx';
 import Link from '@docusaurus/Link';
@@ -85,11 +85,10 @@ function TrustBand() {
         <Reveal className={styles.trustGrid}>
           <div>
             <Heading as="h3" className={styles.sectionHeading}>
-              Source-available. Zyvor Production License.
+              Source-available. Zyvor Production Licence.
             </Heading>
             <p className={styles.lede}>
-              A commercial license from Zyvor is required to run Atlas; a
-              30-day trial key is available for evaluation.
+              A 30-day trial is available on request from sales@zyvor.dev (a paid evaluation Order at no charge); production and any other use needs a paid Order under the Zyvor Production Licence v2.0.
             </p>
             <Link to="/docs/licensing">Read the licensing guide →</Link>
           </div>
@@ -100,7 +99,7 @@ function TrustBand() {
             />
             <img
               src="https://img.shields.io/badge/License-Zyvor%20Production-blue.svg"
-              alt="Zyvor Production License v1.0"
+              alt="Zyvor Production Licence v2.0"
             />
           </div>
         </Reveal>

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 import { useState } from "react";
 import { useJobs } from "../api/hooks";
 import { useUi } from "../store/ui";

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! The CSI controller service: a volume is an atlas-native filesystem, a snapshot a filesystem
 //! snapshot. Ids are derived from the CSI names, so a retried create lands on the object the

@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # GPU / GPUDirect Storage capability probe (atlas-native)
 
 **Status: UNVERIFIED on real GPU hardware.** The files probe (`crates/atlas-native/src/gpu.rs`) was

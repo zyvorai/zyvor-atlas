@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! PagerDuty Events API v2 — triggers an incident per open alert and auto-resolves it once the
 //! underlying condition clears, so PagerDuty's own incident state tracks Atlas's rather than
 //! needing an operator to close it there by hand too.

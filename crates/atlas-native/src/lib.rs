@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Atlas Native distributed-storage core.
 //!
 //! Phase 2 added a durable metadata command log, replayable state machine, extent reference

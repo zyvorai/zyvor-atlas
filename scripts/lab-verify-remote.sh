@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Live verification of retention locks, ransomware assessment and data reduction on the lab host:
 # rsync the tree, build the binaries in the Dockerfile's builder image, and run
 # deploy/native/lab-verify.sh there as plain host-network processes (no Kubernetes pod slot, nothing

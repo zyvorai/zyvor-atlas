@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Single-node, low-memory edge profile (docs/NATIVE_EDGE.md). Layer it over the defaults:
 #   helm install edge deploy/helm/atlas-native -f deploy/helm/atlas-native/values-edge.yaml
 # One pod is both the metadata voter and the data node and keeps one copy of each extent: the

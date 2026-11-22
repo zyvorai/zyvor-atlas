@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Pipeline stage functions called by the job-engine `dispatch` arms. Each takes the SQLite pool
 //! (+ later the k8s driver), does the work, updates the DataBridge inventory, and returns a JSON
 //! result the job engine persists. Keeping the logic here keeps the `dispatch` match arms thin.

@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- No-op on SQLite: this migration's Postgres counterpart
 -- (migrations-postgres/0032_bigint_capacity_columns.sql) widens several byte-count/capacity
 -- columns from Postgres-dialect INTEGER (4 bytes) to BIGINT (8 bytes) — a bug that only ever

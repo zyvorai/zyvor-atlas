@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // Ops Advisor — explainable AI posture and read-only runbooks. No action execution by design.
 import { useState, type FormEvent } from "react";
 import {

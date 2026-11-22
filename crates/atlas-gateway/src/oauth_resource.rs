@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! RFC 9728 OAuth 2.0 Protected Resource Metadata for the MCP endpoint, plus the `WWW-Authenticate`
 //! challenge `auth_middleware` adds to 401s under `/api/atlas/v1/mcp`.
 //!

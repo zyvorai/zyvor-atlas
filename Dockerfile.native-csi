@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # atlas-native-csi: the CSI plugin for atlas-native filesystems (docs/NATIVE_CSI.md), plus the
 # atlas-native-mount FUSE client the node plugin runs for every published volume. fuser mounts
 # through fusermount3, so the runtime image needs the fuse3 package and no libfuse headers.

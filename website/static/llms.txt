@@ -1,6 +1,6 @@
 # Atlas
 
-> Atlas is a source-available (Zyvor Production License v1.0) storage control plane: one intent API (REST, gRPC, SSE) over Ceph, NFS, ZFS, Longhorn, a Mac's APFS and external disks, and its own native distributed filesystem, with DataBridge database migration, cross-site DR and an Ops Advisor. It includes an MCP server so AI agents can inspect storage read-only.
+> Atlas is a source-available (Zyvor Production Licence v2.0) storage control plane: one intent API (REST, gRPC, SSE) over Ceph, NFS, ZFS, Longhorn, a Mac's APFS and external disks, and its own native distributed filesystem, with DataBridge database migration, cross-site DR and an Ops Advisor. It includes an MCP server so AI agents can inspect storage read-only.
 
 ## Agents and MCP
 - [MCP and agents](https://zyvorai.github.io/zyvor-atlas/docs/control-plane/mcp): endpoints, tools, authentication, the guarded write flow, threat model.

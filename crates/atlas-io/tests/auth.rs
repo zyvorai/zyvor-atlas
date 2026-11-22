@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Bearer-token gate on the agent API (`ATLAS_IO_TOKEN`) and, with `--features mcp`, the MCP view.
 
 use atlas_io::devmap::DeviceMap;

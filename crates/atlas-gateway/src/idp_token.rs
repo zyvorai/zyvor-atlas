@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Identity-provider JWT access tokens on the MCP endpoint, and nowhere else.
 //!
 //! The MCP authorization spec (2026-07-28) has an MCP server act as an OAuth 2.1 *resource server*: it

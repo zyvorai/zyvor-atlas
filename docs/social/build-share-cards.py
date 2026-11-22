@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 """Generate the Atlas share cards (light + dark) as SVG from one palette.
 
     python3 docs/social/build-share-cards.py docs/social
@@ -64,7 +64,7 @@ def svg(p, label):
             f'<text x="{x}" y="498" font-size="38" font-weight="700" letter-spacing="-1" fill="{p["ink"]}">{num}</text>\n'
             f'    <text x="{x}" y="524" font-size="15" fill="{p["sec"]}">{lab}</text>')
     return f'''<!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630" role="img" aria-label="{label}">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="0" y2="630" gradientUnits="userSpaceOnUse">
@@ -142,7 +142,7 @@ def svg(p, label):
   <!-- footer -->
   <line x1="72" y1="560" x2="1128" y2="560" stroke="{p['hair']}" stroke-width="1"/>
   <text x="72" y="596" font-family="{MONO}" font-size="16" fill="{p['sec']}">github.com/zyvorai/zyvor-atlas</text>
-  <text x="1128" y="596" text-anchor="end" font-family="{SANS}" font-size="16" fill="{p['sec']}">v0.5.0 · Zyvor Production License</text>
+  <text x="1128" y="596" text-anchor="end" font-family="{SANS}" font-size="16" fill="{p['sec']}">v0.5.0 · Zyvor Production Licence</text>
 </svg>
 '''
 

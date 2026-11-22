@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! `GET /ceph/devices`: the drives Ceph tracks, with the failure predictions its device-health
 //! module has made, and a short list of the ones expected to fail soon.
 

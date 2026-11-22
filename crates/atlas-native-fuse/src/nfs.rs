@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! NFS gateway configuration (binary `atlas-native-nfs`): which filesystems to export to which
 //! clients, checked and rendered as an NFS-Ganesha configuration serving each filesystem's FUSE

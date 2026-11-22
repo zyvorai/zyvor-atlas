@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! HTTP side of the Mac agent: a Mac's disk inventory for a central gateway. The gateway registers
 //! each agent as a backend (`ATLAS_MACOS_AGENTS`) and polls `GET /v1/discover`.
 //!

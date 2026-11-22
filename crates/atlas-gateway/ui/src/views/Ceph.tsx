@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // Ceph — live cluster introspection: health checks, quorum/daemons, PG states, client I/O,
 // the CRUSH OSD tree, and per-pool df. Backed by /ceph/status, /ceph/osd-tree, /ceph/df.
 import { useState } from "react";

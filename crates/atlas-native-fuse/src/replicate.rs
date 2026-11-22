@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Asynchronous filesystem replication between two native clusters (binary
 //! `atlas-native-replicate`). Each round snapshots the source filesystem, sends the changes

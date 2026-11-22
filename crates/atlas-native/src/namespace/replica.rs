@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Replica filesystems: the receiving side of asynchronous replication. A source's snapshots
 //! arrive as increments ([`FsOp::ReplicaApply`] parts, then [`FsOp::ReplicaCommit`]), keeping

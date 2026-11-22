@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # atlas-mlperf: MLPerf Storage (MLCommons) runner for atlas-native filesystems (docs/MLPERF.md).
 # Mounts a filesystem with atlas-native-mount and runs the unmodified upstream `mlpstorage`
 # benchmark on it. MLPerf Storage is a separate program (Apache-2.0); nothing in Atlas links it.

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # S3 gateway (docs/NATIVE_S3.md): atlas-native-s3 serving the listed filesystems as buckets over
 # the cluster's HTTP API, behind a Service. Every request's state lives in the filesystem (multipart
 # uploads included), so the Deployment scales out and rolls.

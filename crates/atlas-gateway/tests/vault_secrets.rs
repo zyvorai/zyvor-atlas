@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Integration tests for `startup::resolve_vault_secrets` against a local mock Vault KV v2
 //! endpoint — exercises the real HTTP round trip and header/path shape, not just the parsing
 //! logic. Tests mutate process-wide `ATLAS_*` env vars, so they run serially (`#[serial]`-style

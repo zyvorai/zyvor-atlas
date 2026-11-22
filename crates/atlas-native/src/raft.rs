@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Minimal Raft for the Atlas Native metadata log: leader election, log replication, quorum
 //! commit, log compaction and snapshot installation. It replicates `MetaCommand` records and

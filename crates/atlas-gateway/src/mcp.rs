@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! MCP (Model Context Protocol) server: exposes a small, read-only/advisory slice of Atlas's
 //! inventory + Ops Advisor as MCP tools, so an MCP host (Hermes Agent, Claude, etc.) can operate
 //! Atlas. Mounted at `/api/atlas/v1/mcp`, behind the same `auth_middleware` bearer-JWT gate as the

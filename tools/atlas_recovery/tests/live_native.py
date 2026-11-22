@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 """Actual gateway + single Native metadata/data process, disposable loopback storage.
 
 No Kubernetes/Ceph, privileged disks or production endpoints are used. Exits nonzero

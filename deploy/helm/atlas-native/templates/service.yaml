@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Headless: stable per-pod DNS. Not-ready pods must resolve too, or the voters could never reach
 # each other to elect the leader that readiness waits for.
 apiVersion: v1

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Cross-cluster DR state: mirroring peers + per-image mirror records (day-2 scaffolding). The real
 //! `rbd mirror` operations run as jobs; this is the control-plane catalog they update.
 

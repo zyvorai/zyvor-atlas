@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Object storage for tiered extents: a directory ([`DirObjectStore`]) or, with the `s3`
 //! feature, any S3-compatible bucket ([`S3ObjectStore`], Ceph RGW by default) through
 //! `atlas_driver_rgw::S3Target`.

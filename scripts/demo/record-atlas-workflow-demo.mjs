@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 /**
  * Atlas — "how it works" client demo: actually create, snapshot, and expand a volume
  * (not just a click-through tour). Same recorder/caption pipeline as record-atlas-demo.mjs.

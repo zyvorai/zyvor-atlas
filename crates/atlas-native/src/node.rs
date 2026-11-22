@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! A runnable native storage node (`atlas-native-node`): any combination of a data node and a
 //! metadata replica (Raft + engine), plus an HTTP endpoint for health, metrics, status and a small

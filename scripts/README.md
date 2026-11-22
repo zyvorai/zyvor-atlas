@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Atlas scripts
 
 Reusable automation for testing and deploying Atlas. Run from the repo root.
@@ -12,7 +12,7 @@ python3 scripts/rewrite-spdx-headers.py   # one-shot rewrite of legacy banners â
 ```
 
 Every source file needs Zyvor copyright +
-`SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0`.
+`SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0`.
 See [`CLA.md`](../CLA.md), [`DCO.md`](../DCO.md), [`NOTICE`](../NOTICE).
 
 ## `test-all.sh` â€” full local gate

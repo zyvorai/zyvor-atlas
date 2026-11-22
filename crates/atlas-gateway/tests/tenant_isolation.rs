@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Regression guard for the cross-tenant read-isolation fix: a viewer-role JWT scoped to one
 //! tenant must never see another tenant's volumes/buckets via list, get, or CSV export, while
 //! admin stays cross-tenant by design. Seeds two tenants' worth of resources directly into

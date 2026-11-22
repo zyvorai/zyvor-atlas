@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Atlas storage control plane — initial schema (SQLite dialect).
 -- Translated from the PostgreSQL schema in the developer plan (PDF §11):
 --   TIMESTAMPTZ -> TEXT (RFC3339, default strftime UTC)

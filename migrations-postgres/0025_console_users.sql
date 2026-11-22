@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Console users for username/password sign-in. Admins create operators/viewers with a role
 -- that maps to the existing JWT privilege levels (viewer=0, operator=1, admin=2).
 -- SQLite used COLLATE NOCASE; Phase-1 keeps TEXT PK (case-fold in app / citext later).

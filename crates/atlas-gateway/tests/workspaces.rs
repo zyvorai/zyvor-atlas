@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Agent workspaces over REST on the atlas-native backend (fixture driver, no infra): create, write,
 //! reset, discard, TTL expiry GC, quota and size-cap refusals, tenant isolation and roles.
 //! The native engine's own snapshot/clone behaviour is tested against live nodes in

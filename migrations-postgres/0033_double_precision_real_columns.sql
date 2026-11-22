@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Widen every REAL column to DOUBLE PRECISION — found live via crates/atlas-gateway/tests/*.rs's
 -- dual-backend run (docs/HA.md): sqlx decoded a Rust `f64` bind against a Postgres `REAL` (4-byte
 -- float4) column and failed with "mismatched types; Rust type `f64` is not compatible with SQL

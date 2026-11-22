@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! REST surface. Slice 1 read-only inventory/discovery (PDF §10.2) + slice 2 async write path
 //! (volume create/expand/delete, snapshots) — write ops return `202 Accepted` with a job id.
 

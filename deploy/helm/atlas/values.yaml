@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Default values for the atlas chart. Mirrors deploy/k8s/atlas-gateway.yaml (fake/k8s driver) and
 # deploy/k8s/atlas-gateway-ceph.yaml (real Ceph driver) — see README.md for which values.yaml
 # fields switch between the two. `helm install atlas ./deploy/helm/atlas --create-namespace` is

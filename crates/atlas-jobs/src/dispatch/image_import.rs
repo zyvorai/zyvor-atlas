@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! `image.import`: stream a raw or qcow2 disk image over HTTP(S) into a block volume.
 //!
 //! The image is read in 4 MiB blocks. Each block is hashed, and written unless it is all zeros (a

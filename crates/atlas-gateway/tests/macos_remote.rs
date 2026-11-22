@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Lifecycle on another Mac through its agent, driven from the gateway routes (`?backend=`). The agent
 //! is in-process with fixture data and fake ops: nothing is executed, but the agent's refusals are
 //! the real ones. Its own test file because it sets `ATLAS_MACOS_AGENTS` for the whole process.

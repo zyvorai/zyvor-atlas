@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Cross-replica rate-limit sync (docs/HA.md). Each gateway replica keeps its own fast, in-process,
 -- fully synchronous per-actor counter (crates/atlas-gateway/src/state.rs::RateLimiter — deliberately
 -- never touches the database directly, since it must stay callable from the gRPC path's synchronous

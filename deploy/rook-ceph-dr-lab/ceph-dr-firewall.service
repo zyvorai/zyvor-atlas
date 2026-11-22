@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 [Unit]
 Description=Restrict the Atlas DR-lab Ceph ports to the mirror peer
 After=network-online.target k3s.service

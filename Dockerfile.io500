@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # atlas-io500: IO500 benchmark runner for atlas-native filesystems (docs/IO500.md). Mounts a
 # filesystem with atlas-native-mount and runs the IO500 suite (IOR, mdtest, pfind) on it under
 # Open MPI. The benchmarks are unmodified upstream sources built as separate programs (IO500: MIT,

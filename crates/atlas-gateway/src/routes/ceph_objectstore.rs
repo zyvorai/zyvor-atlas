@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! `GET /ceph/osd-objectstore`: which object store and Ceph version each OSD reports, from
 //! `ceph osd metadata`. Read-only and descriptive: it reports what the OSDs say and does not infer
 //! anything about the OSD implementation (for example Crimson) from it.

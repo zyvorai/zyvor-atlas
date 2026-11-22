@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // Per-bucket settings: versioning, lifecycle, access policy, and object versions. Every call goes
 // through the gateway's generic bucket-subresource proxy (`/buckets/{id}/subresource?<name>`),
 // which signs the request against whichever backend owns the bucket (Ceph RGW, or any

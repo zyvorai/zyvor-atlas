@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Alert notification sinks. `webhook` is the original generic (Slack-payload-shaped) single-URL
 //! notifier, tracked via `storage_alerts.notified_at`. `pagerduty`/`opsgenie`/`slack` are native
 //! integrations that fan out independently — a deployment can run several at once (e.g. PagerDuty

@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # atlas-gateway
 
 The REST edge of the control plane (binary: `atlas-gateway`). axum 0.8.

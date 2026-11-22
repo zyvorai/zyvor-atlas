@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Shared harness for the atlas_data MCP tool tests: a gateway on an ephemeral port, MCP client
 //! helpers and a fake atlas_data HTTP server that mimics its per-credential tenant isolation.
 

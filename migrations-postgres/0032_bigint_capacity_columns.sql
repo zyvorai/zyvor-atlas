@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Widen every byte-count/capacity column from the Postgres-dialect INTEGER (4 bytes, max ~2.1GB)
 -- to BIGINT (8 bytes) — found live via crates/atlas-gateway/tests/*.rs's new dual-backend run
 -- (docs/HA.md): a real NFS/ZFS discovery pass failed with "integer out of range" persisting a

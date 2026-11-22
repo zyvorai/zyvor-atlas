@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Atlas UI — Apple product design contract
 
 Paste reference: apple.com product pages + Mac Terminal for ops output. This section is **policy**.

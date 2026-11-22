@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Tiering cold extents to object storage: space comes back from the data nodes, reads come
 //! from the object, recent reads keep extents hot, overwrites and snapshots behave, GC and the

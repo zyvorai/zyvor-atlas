@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # NFS gateway (docs/NATIVE_NFS.md): one pod running atlas-native-nfs, which mounts every exported
 # filesystem through FUSE and serves the mounts with NFS-Ganesha, behind a Service. NFSv4 state
 # lives in the one Ganesha process, so the Deployment has a single replica and is recreated, not

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Safe command wrappers for provisioning a raw, unformatted local block device into a new zpool.
 //! Local-host-only, same as the rest of this driver (see the module doc in `lib.rs`).
 //!

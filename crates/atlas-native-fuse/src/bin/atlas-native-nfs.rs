@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! `atlas-native-nfs --endpoint https://node:7400 --exports-file exports.json`: the NFS gateway.
 //! Mounts every exported filesystem with `atlas-native-mount` under `--root`, writes an

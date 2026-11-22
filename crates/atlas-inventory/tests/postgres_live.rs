@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Live verification for the HA migration (docs/HA.md): proves `connect()`/`migrate()` work
 //! against a real Postgres via the shared `sqlx::Any` driver, not just that they compile.
 //!

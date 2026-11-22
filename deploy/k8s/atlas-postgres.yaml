@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Sketch only — NOT applied to the lab. Atlas gateways still use SQLite (see docs/HA.md).
 #
 # Option A: plain Deployment + PVC (single-replica Postgres for smoke / CI).

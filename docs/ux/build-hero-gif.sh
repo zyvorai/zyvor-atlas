@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Build docs/ux/anim/hero.gif from the console screenshots in docs/ux. Needs ffmpeg.
 #   ./docs/ux/build-hero-gif.sh
 set -euo pipefail

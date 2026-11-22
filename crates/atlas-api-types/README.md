@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # atlas-api-types
 
 The **shared contract**: serde DTOs used by the gateway, drivers, and inventory. Pure data, no

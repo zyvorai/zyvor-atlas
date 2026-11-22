@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Atlas — Feature Guide
 
 > **The central storage control plane for the Zyvor product suite.**
@@ -288,4 +288,4 @@ _A Zeus OS-style React console embedded in the gateway, wiring every capability 
 > **Good to know:** Atlas is at slices 1–5 plus DataBridge, verified end-to-end on real k3s + Rook Ceph clusters. Some capabilities require real infrastructure or optional build features: cross-cluster DR (rbd mirror) is verified between two lab Rook clusters, including two-way mirroring with a guarded clean failback, but each deployment must drill its own sites before setting `ATLAS_DR_DATAPLANE_VERIFIED`; true multi-replica HA requires Postgres (single-replica SQLite is the default); Oracle, SQL Server, MongoDB, precise CDC lag, and Azure Blob connectors are behind cargo features that link native dependencies; CDC and cutover are verified live against Kafka/Debezium on the lab for all six source engines (Postgres, MySQL incl. `TIMESTAMP` columns, MariaDB, MongoDB, and SQL Server and Oracle into Postgres).
 
 ---
-_Atlas is developed by ZyvorAI Labs. Licensed under the Zyvor Production License v1.0. See [LICENSING.md](LICENSING.md). Contact **https://zyvor.dev**._
+_Atlas is developed by ZyvorAI Labs. Licensed under the Zyvor Production Licence v2.0. See [LICENSING.md](LICENSING.md). Contact **https://zyvor.dev**._

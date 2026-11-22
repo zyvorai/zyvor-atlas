@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Live MongoDB source connector (Atlas / DocumentDB / any mongod or replica set). Introspects the
 //! databases + collections over a real `mongodb` (async, pure-Rust) connection so the pipeline can
 //! assess readiness for a real migration.

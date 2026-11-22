@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // Bespoke primitive kit styled with the vendored Zeus/Tahoe design foundation.
 import React, { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
