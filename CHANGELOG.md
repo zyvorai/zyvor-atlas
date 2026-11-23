@@ -9,6 +9,13 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Changed
+
+- Gateway API front door now runs on Setura instead of Envoy Gateway: Helm values `envoy.*` became
+  `gateway.*` (default GatewayClass `setura`), `deploy/envoy-lab/` became `deploy/setura-lab/`
+  (`setura gateway install`), `deploy-remote.sh --no-envoy` became `--no-gateway`, `docs/ENVOY.md` became
+  `docs/SETURA.md`.
+
 ### Added
 
 - `GET /doctor` (and `atlasctl doctor` / `AtlasClient::doctor`): unauthenticated operator one-pager with readiness, inventory counts, open alerts, jobs by state and backend breakdown. Always HTTP 200; inspect `ok` (use `/readyz` when kubelet needs 503).
