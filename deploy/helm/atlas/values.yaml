@@ -85,15 +85,15 @@ ingress:
   host: ""
   tls: []
 
-# Envoy front door via the Kubernetes Gateway API (needs a Gateway API implementation such as
-# Envoy Gateway — see deploy/envoy-lab/). Mutually exclusive with `ingress`. Plain HTTP to the
+# Gateway API front door (needs a Gateway API implementation; Setura is the default, see
+# deploy/setura-lab/). Mutually exclusive with `ingress`. Plain HTTP to the
 # gateway's `service.httpPort`; HTTP/2 gRPC and TLS-to-backend are not routed by this chart.
-envoy:
+gateway:
   enabled: false
   # The chart creates a Gateway (+ HTTPS/HTTP listeners) when true; when false it only attaches an
   # HTTPRoute to the existing Gateway named below.
   createGateway: true
-  gatewayClassName: eg
+  gatewayClassName: setura
   gatewayName: ""        # existing Gateway to attach to when createGateway=false (default: release fullname)
   gatewayNamespace: ""   # existing Gateway's namespace (default: release namespace)
   host: ""               # required: the hostname clients use
