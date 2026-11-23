@@ -815,7 +815,7 @@ fn forge(secret: &str, sub: &str, tool: &str, params: &str, exp: u64) -> String 
     jsonwebtoken::encode(
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
         &json!({ "jti": uuid_like(), "sub": sub, "tool": tool, "params": params, "exp": exp }),
-        &jsonwebtoken::EncodingKey::from_secret(&key),
+        &jsonwebtoken::EncodingKey::from_secret(&key).unwrap(),
     )
     .unwrap()
 }

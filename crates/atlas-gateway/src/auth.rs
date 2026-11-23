@@ -288,7 +288,9 @@ pub fn mint_agent_token(
     let token = encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
+        // jsonwebtoken 12 refuses an empty HMAC secret instead of signing with it.
+        &EncodingKey::from_secret(secret.as_bytes())
+            .map_err(|e| atlas_common::AppError::Internal(format!("mint token: {e}")))?,
     )
     .map_err(|e| atlas_common::AppError::Internal(format!("mint token: {e}")))?;
     Ok((token, exp, jti))
@@ -307,18 +309,13 @@ pub fn decode_token(
 ) -> jsonwebtoken::errors::Result<jsonwebtoken::TokenData<Claims>> {
     let mut validation = Validation::new(Algorithm::HS256);
     validation.validate_exp = true;
-    let primary = decode::<Claims>(
-        token,
-        &DecodingKey::from_secret(secret.as_bytes()),
-        &validation,
-    );
+    // jsonwebtoken 12 rejects an empty HMAC key when it is built; that is an error here too.
+    let primary = DecodingKey::from_secret(secret.as_bytes())
+        .and_then(|k| decode::<Claims>(token, &k, &validation));
     match (primary, previous_secret) {
         (Ok(data), _) => Ok(data),
-        (Err(_), Some(prev)) => decode::<Claims>(
-            token,
-            &DecodingKey::from_secret(prev.as_bytes()),
-            &validation,
-        ),
+        (Err(_), Some(prev)) => DecodingKey::from_secret(prev.as_bytes())
+            .and_then(|k| decode::<Claims>(token, &k, &validation)),
         (Err(e), None) => Err(e),
     }
 }
@@ -850,7 +847,7 @@ mod tests {
                 role: "admin",
                 exp: "99999999999", // "never expires", if the bypass worked
             },
-            &EncodingKey::from_secret(secret.as_bytes()),
+            &EncodingKey::from_secret(secret.as_bytes()).unwrap(),
         )
         .unwrap();
         let result = decode_token(&forged, secret, None);

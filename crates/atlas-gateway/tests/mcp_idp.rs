@@ -77,10 +77,11 @@ fn rsa_key(idx: usize) -> &'static TestKey {
 fn ec_key() -> &'static TestKey {
     static KEY: OnceLock<TestKey> = OnceLock::new();
     KEY.get_or_init(|| {
-        use p256::elliptic_curve::sec1::ToEncodedPoint;
+        use p256::elliptic_curve::sec1::ToSec1Point;
+        use p256::elliptic_curve::Generate;
         use p256::pkcs8::{EncodePrivateKey, EncodePublicKey, LineEnding};
-        let secret = p256::SecretKey::random(&mut rand::rngs::OsRng);
-        let point = secret.public_key().to_encoded_point(false);
+        let secret = p256::SecretKey::generate_from_rng(&mut rand10::rng());
+        let point = secret.public_key().to_sec1_point(false);
         let der = secret.to_pkcs8_der().unwrap();
         TestKey {
             kid: "ec-0".into(),
@@ -605,7 +606,7 @@ async fn hs256_with_the_public_key_as_secret_is_refused() {
     let mac = |secret: &[u8], kid: &str, alg: Algorithm| {
         let mut h = Header::new(alg);
         h.kid = Some(kid.into());
-        encode(&h, &claims, &EncodingKey::from_secret(secret)).unwrap()
+        encode(&h, &claims, &EncodingKey::from_secret(secret).unwrap()).unwrap()
     };
     let n_bytes = B64.decode(key.jwk["n"].as_str().unwrap()).unwrap();
     for (what, token) in [

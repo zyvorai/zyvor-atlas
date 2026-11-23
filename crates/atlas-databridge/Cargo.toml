@@ -38,7 +38,7 @@ oracle = { version = "0.6", optional = true }
 mongodb = { version = "3", optional = true }
 # Precise CDC offset-lag via an embedded Kafka AdminClient (vendored librdkafka via cmake).
 # Enable with `--features kafka-lag`.
-rdkafka = { version = "0.39", default-features = false, features = ["cmake-build", "tokio"], optional = true }
+rdkafka = { version = "0.40", default-features = false, features = ["cmake-build", "tokio"], optional = true }
 # Native Azure Blob Storage object-migration source (Azure is not S3-compatible). Enable with
 # `--features azure-blob`. Pure-Rust Azure SDK + streaming sha256; no native system libraries.
 # Pinned to the 0.21 series deliberately: azure_storage/azure_storage_blobs haven't published a

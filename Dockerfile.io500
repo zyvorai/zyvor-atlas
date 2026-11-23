@@ -5,7 +5,7 @@
 # Open MPI. The benchmarks are unmodified upstream sources built as separate programs (IO500: MIT,
 # IOR/mdtest: GPL-2.0, pfind: LGPL-3.0); nothing in Atlas links them.
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
+FROM docker.io/library/rust:1.100-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS builder
 ARG DEBIAN_FRONTEND=noninteractive
 # IO500 SC26 release (tag io500-sc26_v1); prepare.sh pins IOR and pfind to its own commits.
 ARG IO500_COMMIT=34a596582715934d2f7695302a7c51e8f7e73d9a
