@@ -827,7 +827,7 @@ async fn main() -> Result<()> {
         Command::CapacityForecastFile { file } => (
             "POST",
             "/api/atlas/v1/capacity/forecast".to_string(),
-            Some(read_json_file(&file)?),
+            Some(read_json_file(file)?),
         ),
         Command::DrReadiness {
             target_rpo_secs,
@@ -850,7 +850,7 @@ async fn main() -> Result<()> {
         Command::ScrubPlan { file } => (
             "POST",
             "/api/atlas/v1/maintenance/scrub-plan".to_string(),
-            Some(read_json_file(&file)?),
+            Some(read_json_file(file)?),
         ),
         Command::SelfMetrics => ("GET", "/metrics".to_string(), None),
         Command::CephStatus => ("GET", "/api/atlas/v1/ceph/status".to_string(), None),
@@ -1467,6 +1467,16 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Read a JSON request body from a file (planning commands). Capped so a wrong path cannot load a huge file.
+fn read_json_file(path: &str) -> Result<serde_json::Value> {
+    let meta = std::fs::metadata(path).with_context(|| format!("stat {path}"))?;
+    if meta.len() > 4 * 1024 * 1024 {
+        anyhow::bail!("{path} is larger than 4 MiB");
+    }
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+    serde_json::from_str(&text).with_context(|| format!("{path} is not valid JSON"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1492,14 +1502,4 @@ mod tests {
         let plain = issue_token_body("svc", "viewer", 60, &[], &[("volumes", none.as_slice())], None);
         assert!(plain.get("scope").is_none() && plain.get("workspace_bytes").is_none());
     }
-}
-
-/// Read a JSON request body from a file (planning commands). Capped so a wrong path cannot load a huge file.
-fn read_json_file(path: &str) -> Result<serde_json::Value> {
-    let meta = std::fs::metadata(path).with_context(|| format!("stat {path}"))?;
-    if meta.len() > 4 * 1024 * 1024 {
-        anyhow::bail!("{path} is larger than 4 MiB");
-    }
-    let text = std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
-    serde_json::from_str(&text).with_context(|| format!("{path} is not valid JSON"))
 }
