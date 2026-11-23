@@ -116,6 +116,22 @@ enum Command {
         #[arg(long, default_value_t = 1440)]
         minutes: i64,
     },
+    /// GET /api/atlas/v1/capacity/forecast — time-to-full with trend and confidence from stored history
+    CapacityForecast {
+        #[arg(long, default_value_t = 10080)]
+        minutes: i64,
+    },
+    /// POST /api/atlas/v1/capacity/forecast — time-to-full per pool from a JSON file of usage samples
+    CapacityForecastFile { file: String },
+    /// GET /api/atlas/v1/dr/readiness — DR readiness score and explicit gaps (read-only)
+    DrReadiness {
+        #[arg(long)]
+        target_rpo_secs: Option<i64>,
+        #[arg(long)]
+        drill_max_age_days: Option<i64>,
+    },
+    /// POST /api/atlas/v1/maintenance/scrub-plan — dry-run scrub ordering from a JSON file (starts nothing)
+    ScrubPlan { file: String },
     /// GET /metrics — Atlas's own state in Prometheus text-exposition format
     SelfMetrics,
     /// GET /api/atlas/v1/policies
@@ -803,6 +819,39 @@ async fn main() -> Result<()> {
             format!("/api/atlas/v1/metrics/forecast?minutes={minutes}"),
             None,
         ),
+        Command::CapacityForecast { minutes } => (
+            "GET",
+            format!("/api/atlas/v1/capacity/forecast?minutes={minutes}"),
+            None,
+        ),
+        Command::CapacityForecastFile { file } => (
+            "POST",
+            "/api/atlas/v1/capacity/forecast".to_string(),
+            Some(read_json_file(&file)?),
+        ),
+        Command::DrReadiness {
+            target_rpo_secs,
+            drill_max_age_days,
+        } => {
+            let mut q = Vec::new();
+            if let Some(v) = target_rpo_secs {
+                q.push(format!("target_rpo_secs={v}"));
+            }
+            if let Some(v) = drill_max_age_days {
+                q.push(format!("drill_max_age_days={v}"));
+            }
+            let q = if q.is_empty() {
+                String::new()
+            } else {
+                format!("?{}", q.join("&"))
+            };
+            ("GET", format!("/api/atlas/v1/dr/readiness{q}"), None)
+        }
+        Command::ScrubPlan { file } => (
+            "POST",
+            "/api/atlas/v1/maintenance/scrub-plan".to_string(),
+            Some(read_json_file(&file)?),
+        ),
         Command::SelfMetrics => ("GET", "/metrics".to_string(), None),
         Command::CephStatus => ("GET", "/api/atlas/v1/ceph/status".to_string(), None),
         Command::CephOsdTree => ("GET", "/api/atlas/v1/ceph/osd-tree".to_string(), None),
@@ -1443,4 +1492,14 @@ mod tests {
         let plain = issue_token_body("svc", "viewer", 60, &[], &[("volumes", none.as_slice())], None);
         assert!(plain.get("scope").is_none() && plain.get("workspace_bytes").is_none());
     }
+}
+
+/// Read a JSON request body from a file (planning commands). Capped so a wrong path cannot load a huge file.
+fn read_json_file(path: &str) -> Result<serde_json::Value> {
+    let meta = std::fs::metadata(path).with_context(|| format!("stat {path}"))?;
+    if meta.len() > 4 * 1024 * 1024 {
+        anyhow::bail!("{path} is larger than 4 MiB");
+    }
+    let text = std::fs::read_to_string(path).with_context(|| format!("read {path}"))?;
+    serde_json::from_str(&text).with_context(|| format!("{path} is not valid JSON"))
 }

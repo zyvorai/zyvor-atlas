@@ -208,7 +208,7 @@ impl RdmaStats {
     /// Reserves one of at most `cap` live connections; the slot is released when dropped.
     pub(crate) fn reserve(self: &Arc<Self>, cap: usize) -> Option<ConnSlot> {
         self.live
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < cap).then_some(n + 1))
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < cap).then_some(n + 1))
             .ok()
             .map(|_| ConnSlot(self.clone()))
     }

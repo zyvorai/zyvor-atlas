@@ -243,7 +243,7 @@ async fn grpc_enforces_jwt_when_auth_required() {
     let token = encode(
         &Header::default(),
         &claims,
-        &EncodingKey::from_secret(secret.as_bytes()),
+        &EncodingKey::from_secret(secret.as_bytes()).unwrap(),
     )
     .unwrap();
     let mut req = Request::new(HealthRequest {});

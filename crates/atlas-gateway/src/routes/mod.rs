@@ -25,6 +25,7 @@ mod object_store;
 pub(crate) mod observability;
 mod oidc;
 mod owners;
+pub(crate) mod planning;
 pub(crate) mod protection;
 pub mod ransomware;
 mod rbd;
@@ -407,6 +408,12 @@ pub fn router(state: AppState) -> Router {
         .route("/metrics/ceph", get(metrics_ceph))
         .route("/metrics/history", get(metrics_history))
         .route("/metrics/forecast", get(metrics_forecast))
+        .route(
+            "/capacity/forecast",
+            get(planning::get_capacity_forecast).post(planning::post_capacity_forecast),
+        )
+        .route("/dr/readiness", get(planning::get_dr_readiness))
+        .route("/maintenance/scrub-plan", post(planning::post_scrub_plan))
         .route("/alerts", get(list_alerts))
         .route("/alerts/evaluate", post(evaluate_alerts))
         .route("/alerts/{id}/ack", post(ack_alert))
