@@ -30,7 +30,7 @@ cufile = []
 anyhow = { workspace = true, optional = true }
 atlas-driver-rgw = { workspace = true, optional = true }
 libc = "0.2"
-redb = "4"
+redb = "5"
 lz4_flex = { version = "0.14", default-features = false, features = ["std", "safe-encode", "safe-decode"] }
 reed-solomon-simd = "3"
 serde.workspace = true
