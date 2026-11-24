@@ -245,6 +245,10 @@ Run the alert rules on demand (also runs every `ATLAS_MONITOR_INTERVAL_SECS`).
 - `POST /api/atlas/v1/volumes/{id}/mirror?mode=snapshot|journal&peer=<id>` · `DELETE .../mirror` — enable / disable (peer required).
 - `GET /api/atlas/v1/dr/mirrors` · `GET /dr/status` · `GET /dr/preflight` — catalog, posture, checklist.
 - `GET /api/atlas/v1/dr/readiness[?target_rpo_secs=&drill_max_age_days=]` — read-only readiness score and explicit gaps ([PLANNING.md](PLANNING.md)).
+- `GET /api/atlas/v1/snapshots/hygiene`, `GET /api/atlas/v1/tenants/quota-headroom`, `GET /api/atlas/v1/schedules/coverage`,
+  `GET|POST /api/atlas/v1/ceph/health-explain` — read-only operations reports (operator): snapshot
+  hygiene findings, quota headroom per tenant, schedule coverage, Ceph health-check explainer.
+  See [REPORTS.md](REPORTS.md).
 - `GET|POST /api/atlas/v1/capacity/forecast` — time-to-full per pool with trend and confidence; `POST /maintenance/scrub-plan` — dry-run scrub ordering ([PLANNING.md](PLANNING.md)).
 - `GET /api/atlas/v1/dr/mirrors/{id}/status` — live `rbd mirror image status`, `promote_ready`, `promote_blocker`;
   journal mode adds `journal_peers_replayed` (read it on the demoted site).

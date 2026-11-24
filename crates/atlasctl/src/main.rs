@@ -132,6 +132,38 @@ enum Command {
     },
     /// POST /api/atlas/v1/maintenance/scrub-plan — dry-run scrub ordering from a JSON file (starts nothing)
     ScrubPlan { file: String },
+    /// GET /api/atlas/v1/snapshots/hygiene — orphan, failed, stuck, over-retained, old and lock-expiry snapshot findings (read-only)
+    SnapshotHygiene {
+        #[arg(long)]
+        stale_days: Option<i64>,
+        #[arg(long)]
+        max_per_volume: Option<i64>,
+        #[arg(long)]
+        lock_warn_days: Option<i64>,
+        #[arg(long)]
+        stuck_minutes: Option<i64>,
+    },
+    /// GET /api/atlas/v1/tenants/quota-headroom — every tenant's usage against its quota, most urgent first
+    QuotaHeadroom {
+        #[arg(long)]
+        warn_percent: Option<f64>,
+        #[arg(long)]
+        critical_percent: Option<f64>,
+    },
+    /// GET /api/atlas/v1/schedules/coverage — volumes with no enabled schedule, orphan/stalled/disabled schedules
+    ScheduleCoverage {
+        #[arg(long)]
+        min_keep: Option<i64>,
+        #[arg(long)]
+        overdue_intervals: Option<i64>,
+    },
+    /// Explain Ceph health-check codes: --codes A,B (GET), or --file with `ceph health detail -f json` or {"codes":[..]} (POST); neither lists the table
+    CephHealthExplain {
+        #[arg(long)]
+        codes: Option<String>,
+        #[arg(long)]
+        file: Option<String>,
+    },
     /// GET /metrics — Atlas's own state in Prometheus text-exposition format
     SelfMetrics,
     /// GET /api/atlas/v1/policies
@@ -847,6 +879,64 @@ async fn main() -> Result<()> {
             };
             ("GET", format!("/api/atlas/v1/dr/readiness{q}"), None)
         }
+        Command::SnapshotHygiene {
+            stale_days,
+            max_per_volume,
+            lock_warn_days,
+            stuck_minutes,
+        } => (
+            "GET",
+            with_query(
+                "/api/atlas/v1/snapshots/hygiene",
+                &[
+                    ("stale_days", stale_days.map(|v| v.to_string())),
+                    ("max_per_volume", max_per_volume.map(|v| v.to_string())),
+                    ("lock_warn_days", lock_warn_days.map(|v| v.to_string())),
+                    ("stuck_minutes", stuck_minutes.map(|v| v.to_string())),
+                ],
+            ),
+            None,
+        ),
+        Command::QuotaHeadroom {
+            warn_percent,
+            critical_percent,
+        } => (
+            "GET",
+            with_query(
+                "/api/atlas/v1/tenants/quota-headroom",
+                &[
+                    ("warn_percent", warn_percent.map(|v| v.to_string())),
+                    ("critical_percent", critical_percent.map(|v| v.to_string())),
+                ],
+            ),
+            None,
+        ),
+        Command::ScheduleCoverage {
+            min_keep,
+            overdue_intervals,
+        } => (
+            "GET",
+            with_query(
+                "/api/atlas/v1/schedules/coverage",
+                &[
+                    ("min_keep", min_keep.map(|v| v.to_string())),
+                    ("overdue_intervals", overdue_intervals.map(|v| v.to_string())),
+                ],
+            ),
+            None,
+        ),
+        Command::CephHealthExplain { codes, file } => match file {
+            Some(f) => (
+                "POST",
+                "/api/atlas/v1/ceph/health-explain".to_string(),
+                Some(read_json_file(f)?),
+            ),
+            None => (
+                "GET",
+                with_query("/api/atlas/v1/ceph/health-explain", &[("codes", codes.clone())]),
+                None,
+            ),
+        },
         Command::ScrubPlan { file } => (
             "POST",
             "/api/atlas/v1/maintenance/scrub-plan".to_string(),
@@ -1467,6 +1557,19 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
+/// Append the given query parameters that have a value (`?a=1&b=2`), none when all are absent.
+fn with_query(path: &str, pairs: &[(&str, Option<String>)]) -> String {
+    let q: Vec<String> = pairs
+        .iter()
+        .filter_map(|(k, v)| v.as_ref().map(|v| format!("{k}={v}")))
+        .collect();
+    if q.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{}", q.join("&"))
+    }
+}
+
 /// Read a JSON request body from a file (planning commands). Capped so a wrong path cannot load a huge file.
 fn read_json_file(path: &str) -> Result<serde_json::Value> {
     let meta = std::fs::metadata(path).with_context(|| format!("stat {path}"))?;
@@ -1480,6 +1583,15 @@ fn read_json_file(path: &str) -> Result<serde_json::Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_query_keeps_only_given_params() {
+        assert_eq!(with_query("/p", &[("a", None), ("b", None)]), "/p");
+        assert_eq!(
+            with_query("/p", &[("a", Some("1".into())), ("b", None), ("c", Some("x".into()))]),
+            "/p?a=1&c=x"
+        );
+    }
 
     #[test]
     fn a_token_is_scoped_only_when_tools_are_given() {

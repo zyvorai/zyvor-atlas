@@ -60,3 +60,24 @@ The three features take caller-supplied samples or read the existing catalog and
 They never call a driver, start a scrub, or touch erasure coding, Raft, checksums or on-disk
 formats. Heuristics (default scrub intervals, penalty weights, the one-hour/three-sample minimum)
 are listed in each response's `assumptions` object.
+
+## Round 3 (2026-11-24): hygiene, coverage, quota and health explanation
+
+Same marking as above (`[R]` read from the fetched page, `[U]` unverified).
+
+| Area | Practice | Source |
+| --- | --- | --- |
+| Longhorn recurring jobs | Jobs can create snapshots or backups, delete snapshots beyond a retention count, purge leftover snapshots or trim; retention is count-based (default) or age-based; volumes with no recurring job fall into a `default` group, so "which volumes have no schedule" is a first-class question. [R] | https://longhorn.io/docs/latest/snapshots-and-backups/scheduling-backups-and-snapshots/ |
+| Longhorn orphans | Orphaned replica directories are detected and listed as resources; automatic deletion waits a grace period; operators are told to review each before mass deletion because an orphan may hold data still needed, and to watch orphan counts for lifecycle problems. [R] (third-party write-up) | https://oneuptime.com/blog/post/2026-03-20-longhorn-orphaned-replica-cleanup/view |
+| Kubernetes VolumeSnapshot | `deletionPolicy` Delete or Retain decides whether the storage snapshot outlives its object; a source PVC is protected until the snapshot is `readyToUse`. [R] (page read to 100000 of 106715 characters) | https://kubernetes.io/docs/concepts/storage/volume-snapshots/ |
+| Ceph health checks | Named checks with a documented first step: `OSD_DOWN`, `OSD_NEARFULL`, `OSD_FULL`, `POOL_FULL`, `PG_DEGRADED`, `PG_AVAILABILITY`, `SLOW_OPS`, `OSDMAP_FLAGS`, `OSD_FLAGS`, `MON_CLOCK_SKEW`, `RECENT_CRASH`, `PG_NOT_DEEP_SCRUBBED` and others; no check named for a pool with no redundancy. [R] | https://docs.ceph.com/en/latest/rados/operations/health-checks/ |
+| Rook orphans | Stray OSDs and RGW orphans are found with `ceph osd tree` and `radosgw-admin` tooling, not as a volume feature. [U] (search summary only) | https://oneuptime.com/blog/post/2026-03-31-rook-orphan-list-tooling-ceph-rgw/view |
+| Portworx | Snapshot policy and audit features: the search returned nothing usable. [U] | n/a |
+
+Built, all read-only: snapshot hygiene (Longhorn orphan and retention practice, VolumeSnapshot
+retain semantics), schedule coverage (Longhorn `default` group question, count-based retention),
+tenant quota headroom (Atlas had quota limits and live usage but no ranked view), and a Ceph
+health-check explainer (static table from the Ceph page). Not built: age-based retention changes,
+orphan deletion (Atlas would have to delete; the Longhorn guidance says to review first), and
+live Ceph diagnosis. Note: snapshot and schedule rows cascade on volume delete, so orphan rows
+cannot normally exist; those two findings are defensive.

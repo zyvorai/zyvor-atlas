@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Changelog
 
 All notable changes to Atlas will be documented in this file.
@@ -11,6 +11,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Changed
 
+- Dependency pass 2: `cargo update` (ahash, const-random, crypto-common, hyper 1.13 and others) and `kube` requirement 5.0 to 5.1 (the only newer release `cargo upgrade --incompatible` found; no major bumps are available). License header fix: `crates/atlas-io/src/gpu.rs`, `crates/atlas-io/tests/gpu.rs`, `docs/GPU.md` and `CHANGELOG.md` carried the wrong SPDX identifier, so `scripts/check-license-headers.sh` failed on main.
 - Dependency upgrade pass (`cargo update` plus majors, verified with clippy `-D warnings` on the workspace with `atlas-gateway/mcp`, the gateway lib and auth/MCP/gRPC/IdP tests, and `cargo check` of `kafka-lag`):
   - Major bumps: `jsonwebtoken` 11 to 12 (`EncodingKey::from_secret` / `DecodingKey::from_secret` now return `Result` and refuse an empty HMAC secret: the token mint and decode paths turn that into an error instead of signing with an empty key), `rdkafka` 0.39 to 0.40 (`kafka-lag` feature).
   - `jsonwebtoken` 12 moves to the RustCrypto 0.14 line, so the `p256` 0.13 / `crypto-bigint` 0.5.5 copies are gone from `Cargo.lock`: the `RUSTSEC-2026-0387` ignore in `deny.toml` is removed. `libsqlite3-sys` is now 0.40 (via `cargo update`, fixes `RUSTSEC-2026-0459`), so that ignore is removed too. `cargo-deny` is not installed on the build host, so `cargo deny check` was not run; both removals rest on `Cargo.lock`.
@@ -28,6 +29,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Added
 
+- Read-only operations reports (`docs/REPORTS.md`, research in `docs/RESEARCH.md` round 3): `GET /snapshots/hygiene` (failed, stuck, over-retained, old, orphan and lock-expiry findings; locked or protected snapshots are never called reclaimable), `GET /tenants/quota-headroom` (usage against quota per tenant, `ok`/`warning`/`critical`/`exceeded`/`unlimited`), `GET /schedules/coverage` (volumes with no enabled schedule, stalled, disabled, orphan, low-retention and unbounded schedules) and `GET|POST /ceph/health-explain` (22 Ceph health-check codes with meaning and first step; paste `ceph health detail -f json`; unknown codes are listed, not guessed). Operator role, `can_execute: false`, thresholds in `assumptions`, validated bounds. `atlasctl snapshot-hygiene`, `quota-headroom`, `schedule-coverage`, `ceph-health-explain`; `AtlasClient` methods of the same names.
 - Read-only planning reports (`docs/PLANNING.md`, research in `docs/RESEARCH.md`): `GET|POST /capacity/forecast` (time-to-full per pool by least squares, with trend, confidence, thresholds, and caps on pools, samples and NaN/negative input), `GET /dr/readiness` (0 to 100 score with explicit gaps: no peer, mirror errors, RPO over target, stale state, forced promote, no or stale failover drill; RTO reported as not measured) and `POST /maintenance/scrub-plan` (dry-run ordering of overdue scrubs in lanes; starts nothing). `atlasctl capacity-forecast`, `capacity-forecast-file`, `dr-readiness`, `scrub-plan`. No data-path, erasure-coding, Raft or format changes. No MCP tools were added (the MCP tool-count test is unchanged). Unit tested with fabricated inputs only; not exercised against a live cluster.
 - `GET /doctor` (and `atlasctl doctor` / `AtlasClient::doctor`): unauthenticated operator one-pager with readiness, inventory counts, open alerts, jobs by state and backend breakdown. Always HTTP 200; inspect `ok` (use `/readyz` when kubelet needs 503).
 - Owner registry: wire ids `fabric`, `netra` and `kavira` alongside the existing five; `GET /owners/{id}/workflows` lists recent intent rows (`atlasctl owner-workflows`, `AtlasClient::list_owner_workflows`). Still local stubs — Atlas does not call those products (`docs/PRODUCTS.md`).

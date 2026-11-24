@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: Apache-2.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Read-only GPU telemetry and a storage-starvation heuristic.
 //!
 //! Same fake-first pattern as the I/O sources: [`FakeGpuSource`] is the default and needs no
