@@ -30,6 +30,7 @@ pub(crate) mod protection;
 pub mod ransomware;
 mod rbd;
 pub mod reduction;
+pub(crate) mod reports;
 mod rook;
 pub(crate) mod util;
 pub(crate) mod volume_groups;
@@ -414,6 +415,13 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/dr/readiness", get(planning::get_dr_readiness))
         .route("/maintenance/scrub-plan", post(planning::post_scrub_plan))
+        .route("/snapshots/hygiene", get(reports::get_snapshot_hygiene))
+        .route("/tenants/quota-headroom", get(reports::get_quota_headroom))
+        .route("/schedules/coverage", get(reports::get_schedule_coverage))
+        .route(
+            "/ceph/health-explain",
+            get(reports::get_ceph_health_explain).post(reports::post_ceph_health_explain),
+        )
         .route("/alerts", get(list_alerts))
         .route("/alerts/evaluate", post(evaluate_alerts))
         .route("/alerts/{id}/ack", post(ack_alert))

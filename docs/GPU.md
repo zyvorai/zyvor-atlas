@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: Apache-2.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # GPU telemetry and storage-starvation correlation
 
 Status: **unit and HTTP tested over the fake source on a Linux dev host with no GPU. Real mode

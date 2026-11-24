@@ -134,3 +134,31 @@ async fn a_job_that_never_finishes_times_out() {
         .await;
     assert!(matches!(r, Err(ClientError::Timeout { .. })), "{r:?}");
 }
+
+/// The report helpers hit the right paths and forward the query string untouched.
+#[tokio::test]
+async fn report_helpers_use_the_right_paths_and_queries() {
+    use axum::extract::{OriginalUri, Request};
+    let echo = |name: &'static str| {
+        get(move |OriginalUri(u): OriginalUri, _r: Request| async move {
+            Json(json!({ "route": name, "path": u.path(), "query": u.query() }))
+        })
+    };
+    let app = Router::new()
+        .route("/api/atlas/v1/snapshots/hygiene", echo("hygiene"))
+        .route("/api/atlas/v1/tenants/quota-headroom", echo("quota"))
+        .route("/api/atlas/v1/schedules/coverage", echo("coverage"))
+        .route("/api/atlas/v1/ceph/health-explain", echo("explain"));
+    let l = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = l.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(l, app).await.unwrap() });
+    let c = AtlasClient::new(format!("http://{addr}"), None);
+    let h = c.snapshot_hygiene("stale_days=30&max_per_volume=5").await.unwrap();
+    assert_eq!((h["route"].as_str(), h["query"].as_str()), (Some("hygiene"), Some("stale_days=30&max_per_volume=5")));
+    assert!(c.snapshot_hygiene("").await.unwrap()["query"].is_null());
+    assert_eq!(c.quota_headroom("warn_percent=70").await.unwrap()["route"], "quota");
+    assert_eq!(c.schedule_coverage("").await.unwrap()["route"], "coverage");
+    let e = c.ceph_health_explain(&["OSD_DOWN", "SLOW_OPS"]).await.unwrap();
+    assert_eq!(e["query"], "codes=OSD_DOWN,SLOW_OPS");
+    assert!(c.ceph_health_explain(&[]).await.unwrap()["query"].is_null());
+}

@@ -22,6 +22,14 @@ use serde_json::Value;
 
 pub mod owners;
 
+fn with_query(path: &str, query: &str) -> String {
+    if query.is_empty() {
+        path.to_string()
+    } else {
+        format!("{path}?{query}")
+    }
+}
+
 const API: &str = "/api/atlas/v1";
 
 #[derive(Debug, thiserror::Error)]
@@ -166,6 +174,29 @@ impl AtlasClient {
     ) -> Result<Value, ClientError> {
         let path = format!("/owners/{}/workflows", product.wire_id());
         Self::send(self.request(reqwest::Method::GET, &path)).await
+    }
+
+    /// `GET /snapshots/hygiene`. Read-only findings over the snapshot catalog; `query` is the raw
+    /// query string without the `?` (for example `stale_days=30&max_per_volume=10`), or empty.
+    pub async fn snapshot_hygiene(&self, query: &str) -> Result<Value, ClientError> {
+        Self::send(self.request(reqwest::Method::GET, &with_query("/snapshots/hygiene", query))).await
+    }
+
+    /// `GET /tenants/quota-headroom`. Every tenant's usage against its quota, most urgent first.
+    pub async fn quota_headroom(&self, query: &str) -> Result<Value, ClientError> {
+        Self::send(self.request(reqwest::Method::GET, &with_query("/tenants/quota-headroom", query))).await
+    }
+
+    /// `GET /schedules/coverage`. Volumes with no enabled schedule and unhealthy schedules.
+    pub async fn schedule_coverage(&self, query: &str) -> Result<Value, ClientError> {
+        Self::send(self.request(reqwest::Method::GET, &with_query("/schedules/coverage", query))).await
+    }
+
+    /// `GET /ceph/health-explain`. Explains Ceph health-check codes (all of them when `codes` is
+    /// empty). Static reference, not a live diagnosis.
+    pub async fn ceph_health_explain(&self, codes: &[&str]) -> Result<Value, ClientError> {
+        let q = if codes.is_empty() { String::new() } else { format!("codes={}", codes.join(",")) };
+        Self::send(self.request(reqwest::Method::GET, &with_query("/ceph/health-explain", &q))).await
     }
 
     /// `POST /volumes`. Returns the accepted job; follow it with [`Self::wait_for_job`].
