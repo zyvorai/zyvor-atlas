@@ -29,6 +29,7 @@ members = [
     "crates/atlas-native-fuse",
     "crates/atlas-native-csi",
     "crates/atlas-native-s3",
+    "crates/atlas-native-ublk",
     "crates/atlasctl",
     "crates/atlas-client",
 ]

@@ -109,6 +109,17 @@ enum Round {
     Again(Error),
 }
 
+/// What one request to one node came to ([`Client::attempt`]).
+pub enum Attempt {
+    /// A 2xx answer and its body.
+    Done(Vec<u8>),
+    /// The node answered with an error status; its handler is done with the request.
+    Refused { status: StatusCode, error: Error },
+    /// No complete answer. `may_still_run` means the request may have reached the node and no
+    /// status came back, so the node may still be acting on it.
+    NoAnswer { may_still_run: bool, error: Error },
+}
+
 pub struct Client {
     http: blocking::Client,
     cfg: ClientConfig,
@@ -193,57 +204,89 @@ impl Client {
         let mut last = Error::Transport("no endpoint answered".into());
         for k in 0..n {
             let i = (start + k) % n;
-            let url = format!("{}{path}", self.cfg.endpoints[i].trim_end_matches('/'));
-            let mut req = self.http.request(method.clone(), &url);
-            if let Some(t) = &self.cfg.token {
-                req = req.bearer_auth(t);
-            }
-            req = match body {
-                Body::Empty => req,
-                Body::Json(v) => req.json(v),
-                Body::Bytes(b) => req.body(b.to_vec()),
-            };
-            let resp = match req.send() {
-                Ok(r) => r,
-                Err(e) => {
-                    // The request may have reached the leader before the connection failed.
+            match self.attempt(i, method, path, body) {
+                Attempt::Done(bytes) => {
+                    self.prefer(i);
+                    return Round::Done(bytes);
+                }
+                // The request may have reached the leader before the connection failed.
+                Attempt::NoAnswer { error, .. } => {
                     *ambiguous = true;
-                    last = Error::Transport(format!("{url}: {e}"));
-                    continue;
+                    last = error;
                 }
-            };
-            let status = resp.status();
-            let bytes = match resp.bytes() {
-                Ok(b) => b.to_vec(),
-                Err(e) => {
-                    *ambiguous = true;
-                    last = Error::Transport(format!("{url}: {e}"));
-                    continue;
-                }
-            };
-            if status.is_success() {
-                self.preferred.store(i, Ordering::Relaxed);
-                return Round::Done(bytes);
-            }
-            let err = api_error(status, &bytes);
-            match status {
-                StatusCode::MISDIRECTED_REQUEST => last = err,
-                StatusCode::SERVICE_UNAVAILABLE => {
-                    // A proposal that timed out may still commit.
-                    *ambiguous = true;
-                    last = err;
-                }
-                StatusCode::NOT_FOUND if retry == Retry::Remove && *ambiguous => {
-                    self.preferred.store(i, Ordering::Relaxed);
-                    return Round::Done(Vec::new());
-                }
-                _ => {
-                    self.preferred.store(i, Ordering::Relaxed);
-                    return Round::Failed(err);
-                }
+                Attempt::Refused { status, error } => match status {
+                    StatusCode::MISDIRECTED_REQUEST => last = error,
+                    StatusCode::SERVICE_UNAVAILABLE => {
+                        // A proposal that timed out may still commit.
+                        *ambiguous = true;
+                        last = error;
+                    }
+                    StatusCode::NOT_FOUND if retry == Retry::Remove && *ambiguous => {
+                        self.prefer(i);
+                        return Round::Done(Vec::new());
+                    }
+                    _ => {
+                        self.prefer(i);
+                        return Round::Failed(error);
+                    }
+                },
             }
         }
         Round::Again(last)
+    }
+
+    /// How many endpoints are configured.
+    pub fn endpoint_count(&self) -> usize {
+        self.cfg.endpoints.len()
+    }
+
+    /// The endpoint requests are tried at first.
+    pub fn preferred(&self) -> usize {
+        self.preferred.load(Ordering::Relaxed) % self.cfg.endpoints.len()
+    }
+
+    /// Makes endpoint `i` (modulo the endpoint count) the one tried first.
+    pub fn prefer(&self, i: usize) {
+        self.preferred
+            .store(i % self.cfg.endpoints.len(), Ordering::Relaxed);
+    }
+
+    /// One request to endpoint `i` (modulo the endpoint count): no retry, no failover, and the
+    /// preferred endpoint is left alone. For callers with their own retry rules.
+    pub fn attempt(&self, i: usize, method: &Method, path: &str, body: &Body<'_>) -> Attempt {
+        let base = &self.cfg.endpoints[i % self.cfg.endpoints.len()];
+        let url = format!("{}{path}", base.trim_end_matches('/'));
+        let mut req = self.http.request(method.clone(), &url);
+        if let Some(t) = &self.cfg.token {
+            req = req.bearer_auth(t);
+        }
+        req = match body {
+            Body::Empty => req,
+            Body::Json(v) => req.json(v),
+            Body::Bytes(b) => req.body(b.to_vec()),
+        };
+        let resp = match req.send() {
+            Ok(r) => r,
+            Err(e) => {
+                return Attempt::NoAnswer {
+                    may_still_run: !e.is_connect() && !e.is_builder(),
+                    error: Error::Transport(format!("{url}: {e}")),
+                }
+            }
+        };
+        let status = resp.status();
+        match resp.bytes() {
+            Ok(b) if status.is_success() => Attempt::Done(b.to_vec()),
+            Ok(b) => Attempt::Refused {
+                status,
+                error: api_error(status, &b),
+            },
+            // The status arrived, so the node's handler had already returned.
+            Err(e) => Attempt::NoAnswer {
+                may_still_run: false,
+                error: Error::Transport(format!("{url}: {e}")),
+            },
+        }
     }
 }
 

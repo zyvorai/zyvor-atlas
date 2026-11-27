@@ -1,0 +1,37 @@
+# Copyright (c) 2026 ZyvorAI Labs Private Limited.
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+[package]
+name = "atlas-native-ublk"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[[bin]]
+name = "atlas-native-ublk"
+path = "src/bin/atlas-native-ublk.rs"
+
+[features]
+# The kernel ublk server (Linux only); without it the binary only checks a volume and reports how
+# it was built. Pulls in `bitmaps` (MPL-2.0+), which deny.toml does not allow: see
+# docs/NATIVE_UBLK.md before shipping a binary built with it.
+ublk = ["dep:libublk", "dep:io-uring", "dep:smol"]
+
+[dependencies]
+atlas-native-fuse = { path = "../atlas-native-fuse" }
+clap.workspace = true
+libc = "0.2"
+reqwest.workspace = true
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+
+[target.'cfg(target_os = "linux")'.dependencies]
+libublk = { version = "0.4.8", optional = true }
+io-uring = { version = "0.7", optional = true }
+smol = { version = "2", optional = true }
+
+[dev-dependencies]
+atlas-native.workspace = true
+tempfile.workspace = true
