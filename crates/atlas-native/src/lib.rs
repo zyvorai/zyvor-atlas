@@ -59,9 +59,9 @@ pub use alloc::{FreeList, FreeRange};
 pub use data_node::{DataNodeServer, RemoteDevice};
 pub use device::{BlockStore, DeviceId, FileDevice};
 pub use engine::{
-    EngineConfig, ExportInfo, ExportManifest, ExportStats, FileLayout, HostLocality, LayoutExtent,
-    LayoutReplica, Locality, MetaBackend, NativeEngine, NativeError, NodeLocality, NodeStatus,
-    ObjectKind, PinReport, RepairStats, TierPolicy, TierStats, VolumeInfo,
+    DeltaConfig, EngineConfig, ExportInfo, ExportManifest, ExportStats, FileLayout, HostLocality,
+    LayoutExtent, LayoutReplica, Locality, MetaBackend, NativeEngine, NativeError, NodeLocality,
+    NodeStatus, ObjectKind, PinReport, RepairStats, TierPolicy, TierStats, VolumeInfo,
 };
 pub use gc::GcStats;
 pub use grant::{Grant, GrantKey};

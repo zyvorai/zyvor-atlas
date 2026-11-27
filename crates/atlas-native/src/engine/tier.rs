@@ -55,6 +55,7 @@ impl NativeEngine {
                     let e = &m.extent;
                     m.refs > 0
                         && !m.tombstoned
+                        && !e.delta
                         && e.object.is_none()
                         && !e.replicas.is_empty()
                         && e.payload_len >= policy.min_bytes
@@ -91,7 +92,7 @@ impl NativeEngine {
         let Some(ext) = self.with_catalog(|c| c.extents.get(id).map(|e| e.extent.clone()))? else {
             return Ok(None);
         };
-        if ext.object.is_some() || ext.replicas.is_empty() {
+        if ext.delta || ext.object.is_some() || ext.replicas.is_empty() {
             return Ok(None);
         }
         let data = self.read_placed(&ext)?;

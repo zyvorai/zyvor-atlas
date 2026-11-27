@@ -25,8 +25,8 @@ use crate::{
     device::BlockStore,
     ec::EcScheme,
     engine::{
-        check_export_name, EngineConfig, MetaBackend, NativeEngine, NativeError, ObjectKind,
-        RepairStats, TierPolicy, TierStats,
+        check_export_name, DeltaConfig, EngineConfig, MetaBackend, NativeEngine, NativeError,
+        ObjectKind, RepairStats, TierPolicy, TierStats,
     },
     gc::GcStats,
     grant::GrantKey,
@@ -183,6 +183,10 @@ pub struct MetadataRole {
     /// Page cache of each group's catalog store (at least 1 MiB).
     #[serde(default = "default_store_cache_bytes")]
     pub store_cache_bytes: usize,
+    /// Store small overwrites as deltas beside their extent (`docs/NATIVE_DELTA_WRITES.md`);
+    /// off by default.
+    #[serde(default)]
+    pub delta_writes: DeltaConfig,
     /// Move cold extents to object storage (`docs/NATIVE_NODE.md`, "Tiering").
     #[serde(default)]
     pub tiering: Option<TieringConfig>,
@@ -430,6 +434,7 @@ impl NodeConfig {
                     "metadata.groups must be between 1 and {MAX_GROUPS}"
                 ));
             }
+            m.delta_writes.validate()?;
             if let Some(t) = &m.tiering {
                 let p = &t.prefix;
                 if p.is_empty()
@@ -489,6 +494,8 @@ struct NodeShared {
     stop: AtomicBool,
     repair: TaskStats,
     gc: TaskStats,
+    /// Delta folding passes.
+    fold: TaskStats,
     last_repair: Mutex<Option<RepairStats>>,
     /// The rebuild controller's status for each group, once this node has led it.
     rebuild: Mutex<Vec<Option<RebuildStatus>>>,
@@ -717,6 +724,7 @@ impl NativeNode {
                     ecfg.compression = m.compression;
                     ecfg.dedup = m.dedup;
                     ecfg.cross_group_dedup = m.cross_group_dedup;
+                    ecfg.delta_writes = m.delta_writes.clone();
                     ecfg.grant_key = grant_key.clone();
                     ecfg.meta_group = g;
                     ecfg.catalog_cache_inodes = m.cache_inodes;
@@ -760,7 +768,8 @@ impl NativeNode {
                         t.interval_secs,
                     )
                 });
-                Some((rebuild, m.gc_interval_secs, tier))
+                let fold = Duration::from_millis(m.delta_writes.fold_interval_ms);
+                Some((rebuild, m.gc_interval_secs, tier, fold))
             }
             None => None,
         };
@@ -781,10 +790,11 @@ impl NativeNode {
             stop: AtomicBool::new(false),
             repair: TaskStats::default(),
             gc: TaskStats::default(),
+            fold: TaskStats::default(),
             last_repair: Mutex::new(None),
             rebuild: Mutex::new(Vec::new()),
             tiering: match &intervals {
-                Some((_, _, Some((policy, rate, _)))) => Some((*policy, *rate)),
+                Some((_, _, Some((policy, rate, _)), _)) => Some((*policy, *rate)),
                 _ => None,
             },
             tier: TaskStats::default(),
@@ -808,7 +818,19 @@ impl NativeNode {
         });
 
         let mut loops = Vec::new();
-        if let Some((rebuild, gc_secs, tier)) = intervals {
+        if let Some((rebuild, gc_secs, tier, fold)) = intervals {
+            {
+                // Runs with delta writes off too: it folds deltas written while they were on.
+                let sh = shared.clone();
+                loops.push(thread::spawn(move || {
+                    maintenance(
+                        &sh,
+                        fold,
+                        |_, e| e.delta_maintenance_once().map(|_| ()),
+                        |sh| &sh.fold,
+                    )
+                }));
+            }
             if let Some((_, _, secs)) = tier.filter(|t| t.2 > 0) {
                 let sh = shared.clone();
                 loops.push(thread::spawn(move || {
@@ -1731,7 +1753,13 @@ fn metrics(sh: &NodeShared) -> Response {
     if !sh.groups.is_empty() {
         let node = [("node", sh.id.as_str())];
         let mut p = PromText::new();
-        for (task, st) in [("repair", &sh.repair), ("gc", &sh.gc), ("tier", &sh.tier)] {
+        let tasks = [
+            ("repair", &sh.repair),
+            ("gc", &sh.gc),
+            ("tier", &sh.tier),
+            ("fold", &sh.fold),
+        ];
+        for (task, st) in tasks {
             for (suffix, help, v) in [
                 (
                     "runs",

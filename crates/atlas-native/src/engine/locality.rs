@@ -360,7 +360,7 @@ impl NativeEngine {
         let order = self.placement_order(data.len() as u64, |n| {
             !targets.contains(n.failure_domain.host.as_str()) || taken.contains(n.id.as_str())
         });
-        let alloc = self.lease()?;
+        let alloc = self.lease(fence)?;
         let mut placed = None;
         for node_id in &order {
             if let Some(r) = self.place_replica(node_id, fence, &data, &alloc)? {

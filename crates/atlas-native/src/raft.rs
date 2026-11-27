@@ -51,6 +51,10 @@ use crate::{
 pub type NodeId = String;
 pub type Entry = WalRecord<MetaCommand>;
 
+/// Capability bit: this build decodes the delta commands and keeps the delta fields of a
+/// catalog. A leader proposes neither until every replica it feeds has advertised it.
+pub const CAP_DELTA: u64 = 1;
+
 #[derive(Debug, thiserror::Error)]
 pub enum RaftError {
     #[error("io error: {0}")]
@@ -101,6 +105,9 @@ pub struct RaftConfig {
     pub catalog_cache_inodes: usize,
     /// The catalog store's page cache.
     pub catalog_cache_bytes: usize,
+    /// Capability bits this node advertises to a leader ([`CAP_DELTA`]; tests clear them to
+    /// stand in for an older build).
+    pub capabilities: u64,
 }
 
 impl RaftConfig {
@@ -116,6 +123,7 @@ impl RaftConfig {
             compact_after: 1024,
             catalog_cache_inodes: DEFAULT_CACHE_INODES,
             catalog_cache_bytes: DEFAULT_STORE_CACHE_BYTES,
+            capabilities: CAP_DELTA,
         }
     }
 }
@@ -172,6 +180,10 @@ pub enum Message {
         match_index: u64,
         #[serde(default, skip_serializing_if = "is_zero")]
         read_seq: u64,
+        /// The responder's capability bits. Builds from before them send none, and ignore the
+        /// field when they receive it.
+        #[serde(default, skip_serializing_if = "is_zero")]
+        caps: u64,
     },
     /// Chunk `seq` of the leader's applied catalog as of `index` (see [`crate::raft_snapshot`]);
     /// the header's `applied_index`/`current_term` are the snapshot's last included index/term.
@@ -330,6 +342,8 @@ pub struct RaftNode {
     match_index: BTreeMap<NodeId, u64>,
     /// Peers that answered the leader since the last check-quorum round.
     recent_active: BTreeSet<NodeId>,
+    /// Leader only: what each peer advertised in its last answer this term.
+    peer_caps: BTreeMap<NodeId, u64>,
     check_quorum_elapsed: u64,
     election_elapsed: u64,
     election_timeout: u64,
@@ -443,6 +457,7 @@ impl RaftNode {
             next_index: BTreeMap::new(),
             match_index: BTreeMap::new(),
             recent_active: BTreeSet::new(),
+            peer_caps: BTreeMap::new(),
             check_quorum_elapsed: 0,
             election_elapsed: 0,
             election_timeout: 0,
@@ -492,6 +507,26 @@ impl RaftNode {
     }
     pub fn catalog(&self) -> &Catalog {
         &self.catalog
+    }
+    /// Leader only: the applied catalog plus every logged entry, which a command proposed now
+    /// would apply on.
+    pub fn speculative(&mut self) -> Result<&Catalog, RaftError> {
+        if self.role != Role::Leader {
+            return Err(RaftError::NotLeader {
+                leader: self.leader.clone(),
+            });
+        }
+        Ok(self.spec_mut())
+    }
+    /// Whether this node leads and it, and every replica it feeds, has capability `cap` (each
+    /// peer as of its last answer in this term).
+    pub fn peers_support(&self, cap: u64) -> bool {
+        self.role == Role::Leader
+            && self.cfg.capabilities & cap == cap
+            && self
+                .peers()
+                .iter()
+                .all(|p| self.peer_caps.get(p).is_some_and(|have| have & cap == cap))
     }
     pub fn last_index(&self) -> u64 {
         self.log
@@ -1046,6 +1081,7 @@ impl RaftNode {
                             success: false,
                             match_index: 0,
                             read_seq,
+                            caps: self.cfg.capabilities,
                         },
                     );
                     return Ok(());
@@ -1064,6 +1100,7 @@ impl RaftNode {
                         success,
                         match_index,
                         read_seq,
+                        caps: self.cfg.capabilities,
                     },
                 );
             }
@@ -1072,6 +1109,7 @@ impl RaftNode {
                 success,
                 match_index,
                 read_seq,
+                caps,
             } => {
                 if self.role != Role::Leader
                     || term != self.hard.term
@@ -1080,6 +1118,7 @@ impl RaftNode {
                     return Ok(());
                 }
                 self.recent_active.insert(from.clone());
+                self.peer_caps.insert(from.clone(), caps);
                 if read_seq > 0 {
                     self.confirm_reads(Some(&from), read_seq);
                 }
@@ -1421,6 +1460,7 @@ impl RaftNode {
         self.heartbeat_elapsed = 0;
         self.check_quorum_elapsed = 0;
         self.recent_active.clear();
+        self.peer_caps.clear();
         let next = self.last_index() + 1;
         self.next_index = self.peers().into_iter().map(|p| (p, next)).collect();
         self.match_index = self.peers().into_iter().map(|p| (p, 0)).collect();

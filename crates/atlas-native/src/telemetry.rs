@@ -18,6 +18,9 @@ pub struct NativeIoCounters {
     object_reads: AtomicU64,
     dedup_hits: AtomicU64,
     dedup_saved_bytes: AtomicU64,
+    delta_writes: AtomicU64,
+    delta_folds: AtomicU64,
+    delta_fallbacks: AtomicU64,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +39,11 @@ pub struct NativeIoSnapshot {
     /// Extent writes that referenced an existing identical extent, and the bytes they avoided.
     pub dedup_hits: u64,
     pub dedup_saved_bytes: u64,
+    /// Writes committed as deltas, cells folded, and writes that were eligible but rewrote
+    /// their cell instead (over a cap, a target being snapshotted, a rejected commit).
+    pub delta_writes: u64,
+    pub delta_folds: u64,
+    pub delta_fallbacks: u64,
 }
 
 impl NativeIoCounters {
@@ -74,6 +82,15 @@ impl NativeIoCounters {
     pub fn object_read(&self) {
         self.object_reads.fetch_add(1, Ordering::Relaxed);
     }
+    pub fn delta_written(&self) {
+        self.delta_writes.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn delta_folded(&self) {
+        self.delta_folds.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn delta_fallback(&self) {
+        self.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
+    }
     pub fn snapshot(&self) -> NativeIoSnapshot {
         NativeIoSnapshot {
             reads: self.reads.load(Ordering::Relaxed),
@@ -89,6 +106,9 @@ impl NativeIoCounters {
             object_reads: self.object_reads.load(Ordering::Relaxed),
             dedup_hits: self.dedup_hits.load(Ordering::Relaxed),
             dedup_saved_bytes: self.dedup_saved_bytes.load(Ordering::Relaxed),
+            delta_writes: self.delta_writes.load(Ordering::Relaxed),
+            delta_folds: self.delta_folds.load(Ordering::Relaxed),
+            delta_fallbacks: self.delta_fallbacks.load(Ordering::Relaxed),
         }
     }
 }

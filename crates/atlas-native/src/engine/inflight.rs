@@ -34,7 +34,9 @@ pub(super) struct Inflight {
 
 #[derive(Debug, Default)]
 struct State {
-    view: Option<(FreeList, Instant)>,
+    /// The applied free list minus held and quarantined ranges, when it was built, and the term
+    /// of the lease that built it.
+    view: Option<(FreeList, Instant, u64)>,
     held: BTreeMap<u64, Vec<FreeRange>>,
     quarantine: Vec<(Instant, FreeRange)>,
     next: u64,
@@ -44,10 +46,13 @@ struct State {
 pub(super) struct Lease<'a> {
     engine: &'a NativeEngine,
     token: u64,
+    /// The term the holder allocates in ([`NativeEngine::write_fence`]).
+    term: u64,
 }
 
 impl NativeEngine {
-    pub(super) fn lease(&self) -> Result<Lease<'_>, NativeError> {
+    /// A claim on free space for data written under term `term`.
+    pub(super) fn lease(&self, term: u64) -> Result<Lease<'_>, NativeError> {
         // Leases clients held and never committed come due here, so their space is reclaimed
         // by the next placement.
         self.reap_direct();
@@ -62,6 +67,7 @@ impl NativeEngine {
         Ok(Lease {
             engine: self,
             token,
+            term,
         })
     }
 }
@@ -81,9 +87,10 @@ impl Lease<'_> {
             .lock()
             .map_err(|_| NativeError::Poisoned("alloc"))?;
         let s = &mut *s;
+        // A view from another term may predate another leader's allocations.
         if s.view
             .as_ref()
-            .is_none_or(|(_, at)| at.elapsed() >= REFRESH)
+            .is_none_or(|(_, at, term)| at.elapsed() >= REFRESH || *term != self.term)
         {
             let mut view = self.engine.with_catalog(|c| c.free.clone())?;
             let now = Instant::now();
@@ -97,9 +104,9 @@ impl Lease<'_> {
                 // A range whose commit already applied is no longer free: nothing to do.
                 view.reserve(&r.node_id, r.device_index, r.offset, r.len);
             }
-            s.view = Some((view, now));
+            s.view = Some((view, now, self.term));
         }
-        let Some((view, _)) = s.view.as_mut() else {
+        let Some((view, ..)) = s.view.as_mut() else {
             return Ok(None);
         };
         let Some(offset) = view.find(node_id, device_index, len) else {
@@ -155,9 +162,11 @@ impl Lease<'_> {
 impl NativeEngine {
     /// The lease a [`Lease::detach`] returned the token of.
     pub(super) fn adopt(&self, token: u64) -> Lease<'_> {
+        // Adopted leases only settle or release what they hold; they never take more.
         Lease {
             engine: self,
             token,
+            term: 0,
         }
     }
 }

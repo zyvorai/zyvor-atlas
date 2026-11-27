@@ -6,7 +6,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{now_ns, NativeEngine, NativeError, Target};
+use super::{now_ns, NativeEngine, NativeError, Scope, Target};
 use crate::{
     metadata::{Catalog, MetaCommand, MetaError, SnapshotId},
     namespace::{
@@ -499,14 +499,20 @@ impl NativeEngine {
     }
 
     /// Changes attributes. Truncating into the middle of an extent first rewrites that extent
-    /// without its tail, so growing the file again later reads zeros there, not stale bytes.
+    /// (folding any deltas on it) without its tail, so growing the file again later reads zeros
+    /// there, not stale bytes.
     pub fn fs_setattr(&self, fs: &str, ino: u64, attr: SetAttr) -> Result<Attr, NativeError> {
         writable(fs)?;
         let _write = self
             .write_lock
             .lock()
             .map_err(|_| NativeError::Poisoned("write"))?;
+        let mut fence = None;
         if let Some(size) = attr.size {
+            // Before the catalog is read: it must include every delta proposed so far, and
+            // while the write lock is held no more are proposed.
+            let term = self.write_fence()?;
+            fence = Some(term);
             let target = Target::File {
                 fs,
                 ino,
@@ -515,22 +521,22 @@ impl NativeEngine {
             let grid = self.with_catalog(|c| target.grid(c, self.cfg.extent_bytes))??;
             let cell = size - size % grid;
             if size > cell {
-                if let Some(ext) = self.with_catalog(|c| target.extent_at(c, cell))?? {
-                    if cell + ext.len() as u64 > size {
-                        let fence = self.write_fence()?;
-                        let mut buf = self.read_extent(&ext)?;
+                if let Some(view) = self.with_catalog(|c| target.cell_view(c, cell))?? {
+                    if cell + view.base.len() as u64 > size {
+                        let (_, mut buf) = self.read_view(view, Some(&target))?;
                         buf.truncate((size - cell) as usize);
-                        self.install_extent(&target, cell, &buf, fence)?;
+                        self.install_extent(&target, cell, &buf, term)?;
                     }
                 }
             }
         }
-        self.fs_commit(FsOp::SetAttr {
+        let op = FsOp::SetAttr {
             fs: fs.into(),
             ino,
             attr,
             now_ns: now_ns(),
-        })?;
+        };
+        self.commit(MetaCommand::Fs { op }, fence)?;
         self.fs_getattr(fs, ino)
     }
 
@@ -596,9 +602,14 @@ impl NativeEngine {
         offset: u64,
         len: usize,
     ) -> Result<Vec<u8>, NativeError> {
-        let (extents, len) = self.with_fs(fs, |c, f| {
+        let (cells, len) = self.with_fs(fs, |c, f| {
             let inode = f.inode(ino)?;
-            let InodeKind::File { size, extents, .. } = &inode.kind else {
+            let InodeKind::File {
+                size,
+                extents,
+                deltas,
+            } = &inode.kind
+            else {
                 return Err(NativeError::Invalid(format!(
                     "inode {ino} is not a regular file"
                 )));
@@ -608,9 +619,15 @@ impl NativeEngine {
                 return Ok((Vec::new(), 0));
             }
             let grid = f.extent_bytes.unwrap_or(self.cfg.extent_bytes as u64);
-            Ok((self.extents_in(c, extents, grid, *size, offset, len)?, len))
+            let maps = (extents, Some(deltas));
+            Ok((self.cells_in(c, maps, grid, *size, offset, len)?, len))
         })?;
-        self.read_range(extents, offset, len)
+        let source = Target::File {
+            fs,
+            ino,
+            replica: false,
+        };
+        self.read_range(cells, offset, len, Some(&source))
     }
 
     /// Where the bytes [`Self::read_file`] would return live: each overlapping extent with its
@@ -623,9 +640,14 @@ impl NativeEngine {
         offset: u64,
         len: usize,
     ) -> Result<FileLayout, NativeError> {
-        let (extents, len, size) = self.with_fs(fs, |c, f| {
+        let (cells, len, size) = self.with_fs(fs, |c, f| {
             let inode = f.inode(ino)?;
-            let InodeKind::File { size, extents, .. } = &inode.kind else {
+            let InodeKind::File {
+                size,
+                extents,
+                deltas,
+            } = &inode.kind
+            else {
                 return Err(NativeError::Invalid(format!(
                     "inode {ino} is not a regular file"
                 )));
@@ -635,15 +657,23 @@ impl NativeEngine {
                 return Ok((Vec::new(), 0, *size));
             }
             let grid = f.extent_bytes.unwrap_or(self.cfg.extent_bytes as u64);
+            let maps = (extents, Some(deltas));
             Ok((
-                self.extents_in(c, extents, grid, *size, offset, len)?,
+                self.cells_in(c, maps, grid, *size, offset, len)?,
                 len,
                 *size,
             ))
         })?;
-        let extents = extents
+        let extents = cells
             .into_iter()
-            .map(|ext| {
+            .map(|view| {
+                let mut ext = view.base;
+                // A client reading the data nodes itself would miss the deltas: with no
+                // replica to read it falls back to the leader (older clients too).
+                if !view.deltas.is_empty() {
+                    ext.replicas.clear();
+                    ext.ec = None;
+                }
                 let start = match ext.ec {
                     Some(_) => 0,
                     None => super::replica_start(&ext.id, ext.replicas.len()),
@@ -693,7 +723,8 @@ impl NativeEngine {
         })
     }
 
-    /// Freezes `fs` as a read-only snapshot (metadata only), with a caller-chosen id.
+    /// Freezes `fs` as a read-only snapshot (metadata only; pending deltas are folded first),
+    /// with a caller-chosen id.
     pub fn snapshot_fs_as(
         &self,
         id: String,
@@ -701,11 +732,14 @@ impl NativeEngine {
         name: impl Into<String>,
     ) -> Result<SnapshotId, NativeError> {
         writable(fs)?;
-        self.fs_commit(FsOp::SnapshotFs {
+        let op = FsOp::SnapshotFs {
             id: id.clone(),
             fs: fs.into(),
             name: name.into(),
             now_ns: now_ns(),
+        };
+        self.commit_folded(Scope::Fs(fs.into()), |fence| {
+            self.commit(MetaCommand::Fs { op: op.clone() }, fence)
         })?;
         Ok(id)
     }

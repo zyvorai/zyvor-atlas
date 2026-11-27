@@ -738,6 +738,87 @@ impl RaftServer {
         self.propose_inner(command, Some(term), timeout)
     }
 
+    /// The current term if this node leads it.
+    pub fn leader_term(&self) -> Result<Option<u64>, RaftError> {
+        let n = self.shared.lock()?;
+        Ok(n.is_leader().then(|| n.term()))
+    }
+
+    /// See [`RaftNode::peers_support`].
+    pub fn peers_support(&self, cap: u64) -> Result<bool, RaftError> {
+        Ok(self.shared.lock()?.peers_support(cap))
+    }
+
+    /// Proposes, in `term` only, the command `build` makes from the catalog it will apply on
+    /// ([`RaftNode::speculative`]), without waiting for it: nothing can be proposed in between.
+    /// `None` from `build` proposes nothing. Returns the index to [`Self::wait_applied`] for.
+    pub fn propose_with(
+        &self,
+        term: u64,
+        build: impl FnOnce(&Catalog) -> Option<MetaCommand>,
+    ) -> Result<Option<u64>, RaftError> {
+        let mut node = self.shared.lock()?;
+        if node.term() != term {
+            return Err(RaftError::TermChanged {
+                expected: term,
+                current: node.term(),
+            });
+        }
+        let Some(command) = build(node.speculative()?) else {
+            return Ok(None);
+        };
+        let index = node.propose(command)?;
+        self.shared.flush(&mut node)?;
+        Ok(Some(index))
+    }
+
+    /// Blocks until `index`, proposed in `term`, is applied here. `LeadershipLost` if this node
+    /// stops leading that term first: the entry may or may not commit.
+    pub fn wait_applied(&self, index: u64, term: u64, timeout: Duration) -> Result<(), RaftError> {
+        let deadline = Instant::now() + timeout;
+        let node = self.shared.lock()?;
+        self.await_applied(node, index, term, deadline)
+    }
+
+    fn await_applied(
+        &self,
+        mut node: MutexGuard<'_, RaftNode>,
+        index: u64,
+        term: u64,
+        deadline: Instant,
+    ) -> Result<(), RaftError> {
+        loop {
+            if self.shared.stop.load(Ordering::SeqCst) {
+                return Err(RaftError::Shutdown);
+            }
+            if !node.is_leader() || node.term() != term {
+                return Err(RaftError::LeadershipLost { index });
+            }
+            if node.applied_index() >= index {
+                return Ok(());
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(RaftError::Timeout { index });
+            }
+            node = self
+                .shared
+                .changed
+                .wait_timeout(node, deadline - now)
+                .map_err(|_| RaftError::Shutdown)?
+                .0;
+        }
+    }
+
+    /// Stops this replica at once, as a killed process would: it sends and answers nothing more
+    /// and every wait on it fails. For failover tests; [`Self::shutdown`] still joins threads.
+    #[doc(hidden)]
+    pub fn halt(&self) {
+        self.shared.stop.store(true, Ordering::SeqCst);
+        self.shared.changed.notify_all();
+        self.mux.unregister(self.shared.group);
+    }
+
     /// Prometheus text exposition for this node's Raft state and transport.
     pub fn render_metrics(&self) -> Result<String, RaftError> {
         let n = self.shared.lock()?;
@@ -946,27 +1027,8 @@ impl RaftServer {
         }
         let index = node.propose(command)?;
         self.shared.flush(&mut node)?;
-        loop {
-            if self.shared.stop.load(Ordering::SeqCst) {
-                return Err(RaftError::Shutdown);
-            }
-            if !node.is_leader() || node.term() != term {
-                return Err(RaftError::LeadershipLost { index });
-            }
-            if node.applied_index() >= index {
-                return Ok(index);
-            }
-            let now = Instant::now();
-            if now >= deadline {
-                return Err(RaftError::Timeout { index });
-            }
-            node = self
-                .shared
-                .changed
-                .wait_timeout(node, deadline - now)
-                .map_err(|_| RaftError::Shutdown)?
-                .0;
-        }
+        self.await_applied(node, index, term, deadline)
+            .map(|()| index)
     }
 
     pub fn shutdown(&mut self) {

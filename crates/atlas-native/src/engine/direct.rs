@@ -267,7 +267,7 @@ impl NativeEngine {
         let needed = self.cfg.placement.replicas;
         let lease_id = Uuid::new_v4().to_string();
         let exp_ms = now_ms().saturating_add(ttl.as_millis() as u64);
-        let alloc = self.lease()?;
+        let alloc = self.lease(term)?;
         let mut out_cells = Vec::with_capacity(cells);
         let mut pending_cells = Vec::with_capacity(cells);
         for i in 0..cells {

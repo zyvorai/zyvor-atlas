@@ -114,6 +114,7 @@ impl Cluster {
                     compression: false,
                     dedup: false,
                     cross_group_dedup: false,
+                    delta_writes: Default::default(),
                     rebuild_delay_secs: 60,
                     rebuild_bytes_per_sec: 0,
                     scrub_bytes_per_sec: 0,

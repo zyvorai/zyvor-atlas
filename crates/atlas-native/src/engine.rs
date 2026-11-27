@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     fs,
     path::{Path, PathBuf},
     sync::{
@@ -20,7 +20,8 @@ use crate::{
     gc,
     grant::GrantKey,
     metadata::{
-        Catalog, ExtentId, ExtentRef, MetaCommand, MetaError, ReplicaRef, SnapshotId, VolumeId,
+        Catalog, DeltaMap, DeltaRef, ExtentId, ExtentRef, MetaCommand, MetaError, ReplicaRef,
+        SnapshotId, VolumeId,
     },
     metrics::PromText,
     namespace::{FsOp, InodeKind},
@@ -36,6 +37,7 @@ use crate::{
     wal::{Wal, WalError, WalRecord},
 };
 
+mod delta;
 mod direct;
 mod export;
 mod files;
@@ -45,6 +47,9 @@ mod locality;
 mod rebuild;
 mod replica;
 mod tier;
+use delta::{CellView, Scope};
+
+pub use delta::DeltaConfig;
 pub use direct::{
     DirectCell, DirectCellDone, DirectCommit, DirectLease, DirectReplicaDone, DirectTarget,
 };
@@ -84,6 +89,35 @@ impl Target<'_> {
         })
     }
 
+    /// The base extent and deltas at grid cell `cell` as `c` has them, if the cell has data.
+    fn cell_view(&self, c: &Catalog, cell: u64) -> Result<Option<CellView>, NativeError> {
+        let (id, deltas) = match self {
+            Target::Volume(v) => c.volumes.get(*v).map_or((None, None), |v| {
+                (v.extents.get(&cell).cloned(), v.deltas.get(&cell).cloned())
+            }),
+            Target::File { fs, ino, .. } => match &c.fs_view(fs)?.inode(*ino)?.kind {
+                InodeKind::File {
+                    extents, deltas, ..
+                } => (extents.get(&cell).cloned(), deltas.get(&cell).cloned()),
+                _ => {
+                    return Err(
+                        MetaError::IsDir(format!("inode {ino} is not a regular file")).into(),
+                    )
+                }
+            },
+        };
+        let Some(base) = id.and_then(|id| c.extents.get(&id)) else {
+            return Ok(None);
+        };
+        Ok(Some(CellView {
+            base: ExtentRef {
+                logical_offset: cell,
+                ..base.extent.clone()
+            },
+            deltas: delta_extents(c, cell, deltas.as_deref().unwrap_or_default())?,
+        }))
+    }
+
     /// The extent currently at grid cell `cell`, if any.
     fn extent_at(&self, c: &Catalog, cell: u64) -> Result<Option<ExtentRef>, NativeError> {
         let id = match self {
@@ -105,6 +139,30 @@ impl Target<'_> {
             ..m.extent.clone()
         }))
     }
+}
+
+/// The extents a delta list names, each with the offset it applies at.
+fn delta_extents(
+    c: &Catalog,
+    cell: u64,
+    list: &[DeltaRef],
+) -> Result<Vec<(u64, ExtentRef)>, NativeError> {
+    list.iter()
+        .map(|d| {
+            c.extents
+                .get(&d.id)
+                .map(|m| {
+                    (
+                        d.at,
+                        ExtentRef {
+                            logical_offset: cell + d.at,
+                            ..m.extent.clone()
+                        },
+                    )
+                })
+                .ok_or_else(|| NativeError::NotFound(d.id.clone()))
+        })
+        .collect()
 }
 
 /// The replica index a read of extent `id` starts at (FNV-1a, stable across processes).
@@ -199,6 +257,8 @@ pub struct EngineConfig {
     pub grant_key: Option<GrantKey>,
     /// The metadata group this engine serves: the group its direct-write grants are fenced as.
     pub meta_group: u32,
+    /// Delta writes ([`DeltaConfig`]).
+    pub delta_writes: DeltaConfig,
 }
 
 /// See [`NativeEngine::data_reduction`].
@@ -239,6 +299,7 @@ impl EngineConfig {
             export_prefix: "atlas-native/".into(),
             grant_key: None,
             meta_group: 0,
+            delta_writes: DeltaConfig::default(),
         }
     }
 }
@@ -356,6 +417,7 @@ pub struct NativeEngine {
     write_lock: Mutex<()>,
     /// Free ranges held by placements whose commit hasn't applied yet.
     inflight: inflight::Inflight,
+    delta: delta::DeltaState,
     /// Leases clients hold to write data nodes directly, until they commit or expire.
     direct: direct::DirectWrites,
     /// One repair at a time, so two never write replacements for the same part.
@@ -412,6 +474,7 @@ impl NativeEngine {
         if cfg.extent_bytes == 0 {
             return Err(NativeError::Invalid("extent_bytes must be > 0".into()));
         }
+        cfg.delta_writes.validate()?;
         if let Some((n, _)) = nodes.iter().find(|(_, d)| d.is_empty()) {
             return Err(NativeError::Invalid(format!(
                 "node {} has no devices",
@@ -449,6 +512,7 @@ impl NativeEngine {
             meta,
             write_lock: Mutex::new(()),
             inflight: Default::default(),
+            delta: Default::default(),
             direct: Default::default(),
             repair_lock: Mutex::new(()),
             reads: Mutex::new(Default::default()),
@@ -606,10 +670,11 @@ impl NativeEngine {
             let within = (pos - cell) as usize;
             let n = rest.len().min(grid as usize - within);
             let (part, tail) = rest.split_at(n);
-            let existing = self.with_catalog(|c| target.extent_at(c, cell))??;
+            // One look at the base and its deltas: the new base replaces both.
+            let existing = self.with_catalog(|c| target.cell_view(c, cell))??;
             let content = match existing {
-                Some(ext) if within > 0 || n < ext.len() => {
-                    let mut buf = self.read_extent(&ext)?;
+                Some(view) if within > 0 || n < view.base.len() => {
+                    let (_, mut buf) = self.read_view(view, Some(target))?;
                     if buf.len() < within + n {
                         buf.resize(within + n, 0);
                     }
@@ -644,11 +709,11 @@ impl NativeEngine {
         cells: &[(u64, std::borrow::Cow<[u8]>)],
         fence: u64,
     ) -> Result<(), NativeError> {
-        let alloc = self.lease()?;
+        let alloc = self.lease(fence)?;
         let (placed, shared) = self.place_cells(cells, fence, &alloc, true)?;
         match self.commit_cells(target, placed, shared, fence, &alloc) {
             Err(e) if is_stale_share(&e) => {
-                let alloc = self.lease()?;
+                let alloc = self.lease(fence)?;
                 let (placed, _) = self.place_cells(cells, fence, &alloc, false)?;
                 self.commit_cells(target, placed, Vec::new(), fence, &alloc)
             }
@@ -688,7 +753,7 @@ impl NativeEngine {
             .enumerate()
             .map(|(i, chunk)| (offset + i as u64 * grid, chunk.into()))
             .collect();
-        let alloc = self.lease()?;
+        let alloc = self.lease(fence)?;
         let (placed, shared) = self.place_cells(&cells, fence, &alloc, true)?;
         let _write = self
             .write_lock
@@ -697,7 +762,7 @@ impl NativeEngine {
         self.with_catalog(&in_bounds)??;
         match self.commit_cells(target, placed, shared, fence, &alloc) {
             Err(e) if is_stale_share(&e) => {
-                let alloc = self.lease()?;
+                let alloc = self.lease(fence)?;
                 let (placed, _) = self.place_cells(&cells, fence, &alloc, false)?;
                 self.commit_cells(target, placed, Vec::new(), fence, &alloc)?;
             }
@@ -791,7 +856,7 @@ impl NativeEngine {
             let scanned: Vec<([u8; 32], ExtentId)> = self.with_catalog(|c| {
                 c.extents
                     .values()
-                    .filter(|m| !m.tombstoned && m.refs > 0)
+                    .filter(|m| !m.tombstoned && m.refs > 0 && !m.extent.delta)
                     .map(|m| (m.extent.content_sha(), m.extent.id.clone()))
                     .collect()
             })?;
@@ -809,7 +874,9 @@ impl NativeEngine {
                 .map(|(id, len)| {
                     id.as_ref()
                         .and_then(|id| c.extents.get(id))
-                        .filter(|m| !m.tombstoned && m.refs > 0 && m.extent.len() == *len)
+                        .filter(|m| {
+                            !m.tombstoned && m.refs > 0 && !m.extent.delta && m.extent.len() == *len
+                        })
                         .map(|m| m.extent.clone())
                 })
                 .collect()
@@ -898,7 +965,7 @@ impl NativeEngine {
         chunk: &[u8],
         fence: u64,
     ) -> Result<(), NativeError> {
-        let alloc = self.lease()?;
+        let alloc = self.lease(fence)?;
         let extent = self.place_extent(chunk, fence, &alloc)?;
         self.commit_extent(target, logical, chunk.len(), extent, fence)
             .inspect_err(|e| alloc.settle(e))
@@ -1094,15 +1161,16 @@ impl NativeEngine {
     /// Reads `len` bytes at any `offset` within the volume, across extents. Never-written ranges
     /// read as zeros.
     pub fn read(&self, volume_id: &str, offset: u64, len: usize) -> Result<Vec<u8>, NativeError> {
-        let extents = self.with_catalog(|c| {
+        let cells = self.with_catalog(|c| {
             let vol = c
                 .volumes
                 .get(volume_id)
                 .ok_or_else(|| NativeError::NotFound(volume_id.into()))?;
             let grid = self.cfg.extent_bytes as u64;
-            self.extents_in(c, &vol.extents, grid, vol.size_bytes, offset, len)
+            let maps = (&vol.extents, Some(&vol.deltas));
+            self.cells_in(c, maps, grid, vol.size_bytes, offset, len)
         })??;
-        self.read_range(extents, offset, len)
+        self.read_range(cells, offset, len, Some(&Target::Volume(volume_id)))
     }
 
     pub fn create_snapshot(
@@ -1120,14 +1188,14 @@ impl NativeEngine {
         volume_id: &str,
         name: impl Into<String>,
     ) -> Result<SnapshotId, NativeError> {
-        self.commit(
-            MetaCommand::CreateSnapshot {
-                id: id.clone(),
-                volume_id: volume_id.to_string(),
-                name: name.into(),
-            },
-            None,
-        )?;
+        let cmd = MetaCommand::CreateSnapshot {
+            id: id.clone(),
+            volume_id: volume_id.to_string(),
+            name: name.into(),
+        };
+        self.commit_folded(Scope::Volume(volume_id.to_string()), |fence| {
+            self.commit(cmd.clone(), fence)
+        })?;
         Ok(id)
     }
 
@@ -1172,7 +1240,7 @@ impl NativeEngine {
         offset: u64,
         len: usize,
     ) -> Result<Vec<u8>, NativeError> {
-        let extents = self.with_catalog(|c| {
+        let cells = self.with_catalog(|c| {
             let s = c
                 .snapshots
                 .get(snapshot_id)
@@ -1182,16 +1250,16 @@ impl NativeEngine {
             } else {
                 c.written_end(&s.extents)
             };
-            self.extents_in(
+            self.cells_in(
                 c,
-                &s.extents,
+                (&s.extents, None),
                 self.cfg.extent_bytes as u64,
                 size,
                 offset,
                 len,
             )
         })??;
-        self.read_range(extents, offset, len)
+        self.read_range(cells, offset, len, None)
     }
 
     /// What compression and sharing save, from the live catalog. `referenced_bytes` counts an
@@ -1220,28 +1288,38 @@ impl NativeEngine {
         })
     }
 
+    /// Reclaims dead extents. While delta writes are in use, one is reclaimed only after it has
+    /// been seen dead for [`DeltaConfig::gc_grace_ms`].
     pub fn gc_once(&self) -> Result<gc::GcStats, NativeError> {
-        if let Meta::Raft { server, timeout } = &self.meta {
-            // Candidates come from applied state; an extent already reclaimed by an applied-but-
-            // unseen entry would otherwise be proposed again and rejected.
-            server.leader_ready(*timeout)?;
-        }
-        let (candidates, free_before) =
-            self.with_catalog(|c| (gc::collect_candidates(c), c.free.total_bytes()))?;
+        let _pass = self
+            .delta
+            .reclaiming
+            .lock()
+            .map_err(|_| NativeError::Poisoned("gc"))?;
+        // Candidates come from applied state; an extent already reclaimed by an applied-but-
+        // unseen entry would otherwise be proposed again and rejected.
+        let term = match &self.meta {
+            Meta::Local { .. } => 0,
+            Meta::Raft { server, timeout } => server.leader_ready(*timeout)?,
+        };
+        let enabled = self.cfg.delta_writes.enabled;
+        let (candidates, free_before) = self.with_catalog(|c| {
+            let in_use = enabled || !c.dirty.is_empty();
+            let candidates: Vec<(ExtentId, bool)> = gc::collect_candidates(c)
+                .into_iter()
+                .map(|id| {
+                    let graced = in_use || c.extents.get(&id).is_some_and(|m| m.extent.delta);
+                    (id, graced)
+                })
+                .collect();
+            (candidates, c.free.total_bytes())
+        })?;
         let mut stats = gc::GcStats {
             candidates: candidates.len() as u64,
             ..Default::default()
         };
-        for eid in candidates {
-            let object =
-                self.with_catalog(|c| c.extents.get(&eid).and_then(|e| e.extent.object.clone()))?;
-            self.commit(MetaCommand::MarkExtentReclaimed { extent_id: eid }, None)?;
-            stats.reclaimed += 1;
-            // A failed delete leaves an orphan for the next tiering pass's sweep.
-            if let (Some(key), Some(store)) = (object, &self.cfg.objects) {
-                let _ = store.delete(&key);
-            }
-        }
+        let ripe = self.ripe(term, candidates)?;
+        self.reclaim(&ripe, term, |batch| stats.reclaimed += batch.len() as u64)?;
         stats.freed_bytes = self.free_bytes()?.saturating_sub(free_before);
         self.telemetry.gc_reclaimed(stats.reclaimed);
         Ok(stats)
@@ -1380,7 +1458,7 @@ impl NativeEngine {
                     || (distinct && taken_hosts.contains(n.failure_domain.host.as_str()))
             });
             let mut placed = None;
-            let alloc = self.lease()?;
+            let alloc = self.lease(fence)?;
             for node_id in order {
                 if let Some(r) = self.place_replica(&node_id, fence, data, &alloc)? {
                     placed = Some(r);
@@ -1527,6 +1605,7 @@ impl NativeEngine {
                 )
             })?;
         let wal_records = self.wal_records()?;
+        let (dirty_cells, delta) = self.with_catalog(|c| (c.dirty.len(), c.delta_totals))?;
         let mut p = PromText::new();
         for (name, help, v) in [
             ("atlas_native_reads_total", "Extent reads served.", t.reads),
@@ -1586,6 +1665,21 @@ impl NativeEngine {
                 "Bytes those writes did not have to store.",
                 t.dedup_saved_bytes,
             ),
+            (
+                "atlas_native_delta_writes_total",
+                "Writes committed as deltas.",
+                t.delta_writes,
+            ),
+            (
+                "atlas_native_delta_folds_total",
+                "Cells folded into a new base extent.",
+                t.delta_folds,
+            ),
+            (
+                "atlas_native_delta_fallbacks_total",
+                "Eligible writes that rewrote their cell instead.",
+                t.delta_fallbacks,
+            ),
         ] {
             p.single(name, "counter", help, v);
         }
@@ -1630,6 +1724,30 @@ impl NativeEngine {
             "gauge",
             "Bytes of the live extents held in object storage.",
             tiered_bytes,
+        );
+        p.single(
+            "atlas_native_delta_dirty_cells",
+            "gauge",
+            "Cells with pending deltas.",
+            dirty_cells,
+        );
+        p.single(
+            "atlas_native_delta_pending",
+            "gauge",
+            "Deltas not folded yet.",
+            delta.pending,
+        );
+        p.single(
+            "atlas_native_delta_pending_bytes",
+            "gauge",
+            "Device bytes (summed over replicas) of pending deltas.",
+            delta.pending_bytes,
+        );
+        p.single(
+            "atlas_native_dead_bytes",
+            "gauge",
+            "Device bytes (summed over replicas) of dead extents not reclaimed yet.",
+            delta.dead_bytes,
         );
         p.single(
             "atlas_native_client_sessions",
@@ -1819,16 +1937,17 @@ impl NativeEngine {
         }
     }
 
-    /// The extents of a map overlapping `[offset, offset + len)`, which must lie within `size`.
-    fn extents_in(
+    /// The cells of an extent map overlapping `[offset, offset + len)`, which must lie within
+    /// `size`, each with its deltas: one look at the catalog for the whole range.
+    fn cells_in(
         &self,
         c: &Catalog,
-        extents: &std::collections::BTreeMap<u64, String>,
+        (extents, deltas): (&BTreeMap<u64, ExtentId>, Option<&DeltaMap>),
         grid: u64,
         size: u64,
         offset: u64,
         len: usize,
-    ) -> Result<Vec<ExtentRef>, NativeError> {
+    ) -> Result<Vec<CellView>, NativeError> {
         let end = offset
             .checked_add(len as u64)
             .filter(|e| *e <= size)
@@ -1842,42 +1961,50 @@ impl NativeEngine {
             .map(|(at, eid)| {
                 // The catalog keeps one ExtentRef per extent id, but a shared extent can sit at
                 // a different offset in each file or volume that references it.
-                c.extents
+                let base = c
+                    .extents
                     .get(eid)
                     .map(|m| ExtentRef {
                         logical_offset: *at,
                         ..m.extent.clone()
                     })
-                    .ok_or_else(|| NativeError::NotFound(eid.clone()))
+                    .ok_or_else(|| NativeError::NotFound(eid.clone()))?;
+                let list = deltas.and_then(|d| d.get(at));
+                Ok(CellView {
+                    base,
+                    deltas: delta_extents(c, *at, list.map_or(&[][..], Vec::as_slice))?,
+                })
             })
             .collect()
     }
 
-    /// One past the last byte any extent of the map covers.
+    /// The bytes of `[offset, offset + len)` from `cells`; ranges no cell covers are zeros.
+    /// `source` is where to look a cell up again if it changes while it is read.
     fn read_range(
         &self,
-        extents: Vec<ExtentRef>,
+        cells: Vec<CellView>,
         offset: u64,
         len: usize,
+        source: Option<&Target>,
     ) -> Result<Vec<u8>, NativeError> {
         let mut out = vec![0u8; len];
         let end = offset + len as u64;
-        let wanted: Vec<(ExtentRef, u64, u64)> = extents
+        let wanted: Vec<CellView> = cells
             .into_iter()
-            .filter_map(|ext| {
-                let start = ext.logical_offset.max(offset);
-                let stop = (ext.logical_offset + ext.len() as u64).min(end);
-                (start < stop).then_some((ext, start, stop))
+            .filter(|v| {
+                let at = v.base.logical_offset;
+                at.max(offset) < (at + v.base.len() as u64).min(end)
             })
             .collect();
+        // `Target` holds only borrowed ids, so each reader can have the reference.
         for window in wanted.chunks(READ_PARALLELISM) {
             let bufs: Vec<Result<Vec<u8>, NativeError>> = if window.len() == 1 {
-                vec![self.read_extent(&window[0].0)]
+                vec![self.read_view(window[0].clone(), source).map(|r| r.1)]
             } else {
                 std::thread::scope(|s| {
                     let handles: Vec<_> = window
                         .iter()
-                        .map(|(ext, _, _)| s.spawn(|| self.read_extent(ext)))
+                        .map(|v| s.spawn(move || self.read_view(v.clone(), source).map(|r| r.1)))
                         .collect();
                     handles
                         .into_iter()
@@ -1888,12 +2015,16 @@ impl NativeEngine {
                         .collect()
                 })
             };
-            for ((ext, start, stop), buf) in window.iter().zip(bufs) {
+            for (view, buf) in window.iter().zip(bufs) {
                 let buf = buf?;
-                out[(start - offset) as usize..(stop - offset) as usize].copy_from_slice(
-                    &buf[(start - ext.logical_offset) as usize
-                        ..(stop - ext.logical_offset) as usize],
-                );
+                let at = view.base.logical_offset;
+                let start = at.max(offset);
+                // A cell looked up again may have become shorter (a truncate).
+                let stop = (at + buf.len() as u64).min(end);
+                if start < stop {
+                    out[(start - offset) as usize..(stop - offset) as usize]
+                        .copy_from_slice(&buf[(start - at) as usize..(stop - at) as usize]);
+                }
             }
         }
         Ok(out)
