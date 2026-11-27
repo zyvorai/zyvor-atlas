@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 import { useState } from "react";
 import { Plus } from "lucide-react";
-import { submit } from "../api/client";
+import { apiError, submit } from "../api/client";
 import { useBuckets, useInvalidate, useSchedules, useVolumes } from "../api/hooks";
 import { Badge, Button, FormModal } from "../ui/kit";
 import { ListPage } from "../ui/templates/ListPage";
@@ -10,9 +10,11 @@ import { navCrumbs } from "../nav/routes";
 import { del } from "../ui/confirm";
 import { Table } from "../ui/Table";
 import { timeAgo } from "../lib/format";
+import { EmptyState } from "../graphics";
+import "./Schedules.css";
 
 export default function Schedules() {
-  const { data } = useSchedules();
+  const { data, isError, error, refetch: reload } = useSchedules();
   const { data: vols } = useVolumes();
   const { data: buckets } = useBuckets();
   const inv = useInvalidate();
@@ -21,43 +23,54 @@ export default function Schedules() {
   return (
     <ListPage
       crumbs={navCrumbs("schedules")}
-      eyebrow="DATA PROTECTION · INDEX"
+      eyebrow={null}
       title="Schedules"
       state={
-        n
-          ? `${n} protection schedule${n === 1 ? "" : "s"} — periodic snapshots & backups for a volume.`
-          : "No schedules yet. Create one to automate snapshots or backups."
+        !data
+          ? isError
+            ? "Couldn't load schedules."
+            : "Loading schedules…"
+          : n
+            ? `${n} schedule${n === 1 ? "" : "s"} taking snapshots and backups automatically.`
+            : "No schedules yet. Create one to automate snapshots or backups."
       }
       actions={
         <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-          <Plus size={14} /> Schedule
+          <Plus size={14} aria-hidden /> Schedule
         </button>
       }
     >
-      <Table
-        soundings
-        panelTitle="Schedule index"
-        rows={data}
-        rowKey={(s) => s.id}
-        empty="No schedules yet."
-        emptyCta={
-          <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-            <Plus size={14} /> Create schedule
-          </button>
-        }
-        cols={[
-          { h: "ID", f: (s) => s.id, mono: true },
-          { h: "Kind", f: (s) => <Badge kind={s.kind === "backup" ? "info" : "neutral"}>{s.kind}</Badge> },
-          { h: "Volume", f: (s) => s.volume_id, mono: true },
-          { h: "Every", f: (s) => `${s.interval_secs}s` },
-          { h: "Keep", f: (s) => s.keep },
-          { h: "Bucket", f: (s) => s.bucket_id || "—", mono: true },
-          { h: "Next run", f: (s) => <span className="text-muted-foreground">{timeAgo(s.next_run_at)}</span> },
-        ]}
-        actions={(s) => (
-          <Button size="sm" variant="danger" onClick={() => del("schedule", () => submit("delete", `/schedules/${s.id}`, null, "delete schedule", () => inv("schedules")))}>Del</Button>
-        )}
-      />
+      {data && !data.length ? (
+        <div className="at-panel">
+          <EmptyState art="snapshot" title="No schedules yet" description="A schedule snapshots or backs up a volume at a fixed interval.">
+            <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
+              <Plus size={14} aria-hidden /> Create schedule
+            </button>
+          </EmptyState>
+        </div>
+      ) : (
+        <Table
+          soundings
+          panelTitle="All schedules"
+          rows={data}
+          error={isError}
+          errorDetail={isError ? apiError(error) : undefined}
+          onRetry={() => reload()}
+          rowKey={(s) => s.id}
+          cols={[
+            { h: "ID", f: (s) => s.id, mono: true },
+            { h: "Kind", f: (s) => <Badge kind={s.kind === "backup" ? "info" : "neutral"}>{s.kind}</Badge> },
+            { h: "Volume", f: (s) => s.volume_id, mono: true },
+            { h: "Every", f: (s) => `${s.interval_secs}s` },
+            { h: "Keep", f: (s) => s.keep },
+            { h: "Bucket", f: (s) => s.bucket_id || "—", mono: true },
+            { h: "Next run", f: (s) => <span className="sc-dim">{timeAgo(s.next_run_at)}</span> },
+          ]}
+          actions={(s) => (
+            <Button size="sm" variant="danger" onClick={() => del("schedule", () => submit("delete", `/schedules/${s.id}`, null, "delete schedule", () => inv("schedules")))}>Delete</Button>
+          )}
+        />
+      )}
 
       <FormModal open={create} onClose={() => setCreate(false)} title="Create schedule" submitLabel="Create schedule"
         fields={(vals) => [
@@ -67,7 +80,7 @@ export default function Schedules() {
             // PVC-backed (k8s) volume — filter out raw NFS/ZFS volumes so a schedule can't be
             // created against one that would silently never fire (backend also enforces this).
             options: (vols || []).filter((v) => v.pvc_name).map((v) => ({ value: v.id, label: v.name })),
-            hint: "No PVC-backed volumes yet — create one on the Volumes page first.",
+            hint: "No PVC-backed volumes yet. Create one on the Volumes page first.",
           },
           { name: "kind", label: "Kind", options: [{ value: "snapshot", label: "snapshot" }, { value: "backup", label: "backup" }] },
           { name: "interval_secs", label: "Interval (seconds)", type: "number", value: "3600", min: 60 },

@@ -1,0 +1,92 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Volumes: the filter popover, state chips and the used-space cell (also shown on RBD images and
+ * pool detail, which import it from Volumes.tsx).
+ */
+
+@layer components {
+  .vl-cap {
+    text-transform: capitalize;
+  }
+  /* Stays at the right edge even when it wraps, so the popover never opens off screen. */
+  .vl-filter-anchor {
+    position: relative;
+    margin-left: auto;
+  }
+  .vl-filter-count {
+    color: var(--a-blue);
+    font-family: var(--a-mono);
+    font-size: 11px;
+  }
+  .vl-filters {
+    gap: var(--a-s3);
+    width: min(320px, calc(100vw - 2 * var(--a-gutter)));
+    padding: var(--a-s3);
+  }
+  .vl-filters .section-label {
+    display: block;
+    margin-bottom: 6px;
+  }
+  .vl-filters .at-chip-field {
+    width: 100%;
+  }
+  .vl-filter-kinds {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  /* Nine columns and four row actions: tighter cells so all of them fit a desktop window. */
+  .vl-table {
+    --a-row-x: 9px;
+  }
+  .vl-table .at-act {
+    padding-inline: 6px;
+  }
+  .vl-table .at-row-actions {
+    gap: 0;
+  }
+  .vl-table .vl-used .at-mini {
+    width: 40px;
+  }
+  .vl-source {
+    display: block;
+    max-width: 12ch;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  @media (min-width: 1400px) {
+    .vl-source {
+      max-width: 22ch;
+    }
+  }
+  .vl-bar-note {
+    margin: 0;
+  }
+  .vl-name {
+    font-weight: 500;
+    white-space: nowrap;
+  }
+  .vl-dim {
+    color: var(--a-ink-2);
+  }
+  .vl-used {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+  }
+  .vl-used .at-mini {
+    flex: 0 0 auto;
+    width: 56px;
+  }
+  .vl-used-text {
+    color: var(--a-ink-2);
+    font-family: var(--a-mono);
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .vl-wrap {
+    overflow-wrap: anywhere;
+  }
+}

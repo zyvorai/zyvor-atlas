@@ -10,6 +10,9 @@ import { navCrumbs } from "../nav/routes";
 import { confirmThen, del } from "../ui/confirm";
 import { Table } from "../ui/Table";
 import { fmtBytes, gib } from "../lib/format";
+import { EmptyState } from "../graphics";
+import { UsageCell } from "./Volumes";
+import "./Rbd.css";
 
 export default function Rbd() {
   const [pool, setPool] = useState("rbd-nvme-prod");
@@ -24,7 +27,8 @@ export default function Rbd() {
   const [snapImg, setSnapImg] = useState<string | null>(null);
   // Raw RBD images aren't tracked with a size by /rbd-images; cross-reference the volume
   // inventory (CSI-provisioned images are), so Resize can show/guard against the current size.
-  const sizeOf = (img: string) => vols?.find((v) => v.backend_native_id === `rbd:${pool}/${img}`)?.size_bytes;
+  const volumeOf = (img: string) => vols?.find((v) => v.backend_native_id === `rbd:${pool}/${img}`);
+  const sizeOf = (img: string) => volumeOf(img)?.size_bytes;
   const [cloneSnaps, setCloneSnaps] = useState<string[] | null>(null);
   useEffect(() => {
     if (modal?.kind === "clone") {
@@ -39,16 +43,20 @@ export default function Rbd() {
   return (
     <ListPage
       crumbs={navCrumbs("rbd")}
-      eyebrow="STORAGE · INDEX"
+      eyebrow={null}
       title="RBD Images"
       state={
-        n
-          ? `${n} raw image${n === 1 ? "" : "s"} in ${pool} — machina/libvirt & bare VMs (bypassing CSI).`
-          : `No images in ${pool}. Create one or switch pool.`
+        !data
+          ? isError
+            ? `Couldn't load images in ${pool}.`
+            : `Loading images in ${pool}…`
+          : n
+            ? `${n} image${n === 1 ? "" : "s"} in ${pool}. Raw block images for virtual machines, outside CSI.`
+            : `No images in ${pool}. Create one or switch pool.`
       }
       actions={
         <>
-          <select className="field w-44" value={pool} onChange={(e) => setPool(e.target.value)}>
+          <select className="field rbd-pool" aria-label="Pool" value={pool} onChange={(e) => setPool(e.target.value)}>
             {rbdPools.length ? (
               rbdPools.map((p) => (
                 <option key={p.id} value={p.name}>
@@ -64,48 +72,53 @@ export default function Rbd() {
             className="at-btn"
             onClick={() => submit("post", "/rbd-usage/refresh", null, "usage refresh", () => inv("volumes")).catch(() => {})}
           >
-            <RefreshCw size={14} /> Refresh usage
+            <RefreshCw size={14} aria-hidden /> Refresh usage
           </button>
           <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-            <Plus size={14} /> Image
+            <Plus size={14} aria-hidden /> Image
           </button>
         </>
       }
     >
-      <Table
-        soundings
-        panelTitle={`Images · ${pool}`}
-        rows={data?.images}
-        error={isError}
-        errorDetail={isError ? apiError(error) : undefined}
-        onRetry={() => refetchImages()}
-        rowKey={(i) => i}
-        empty="No RBD images in this pool."
-        emptyCta={
-          <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-            <Plus size={14} /> Create image
-          </button>
-        }
-        cols={[
-          { h: "Image", f: (i) => i, mono: true },
-          {
-            h: "Size",
-            f: (i) => {
-              const sz = sizeOf(i);
-              return sz != null ? fmtBytes(sz) : <span style={{ color: "var(--at-ink-4)" }}>—</span>;
+      {data && !data.images?.length ? (
+        <div className="at-panel">
+          <EmptyState art="volume" title="No RBD images in this pool." description="Pick another pool or create one here.">
+            <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
+              <Plus size={14} aria-hidden /> Create image
+            </button>
+          </EmptyState>
+        </div>
+      ) : (
+        <Table
+          soundings
+          panelTitle={`Images in ${pool}`}
+          rows={data?.images}
+          error={isError}
+          errorDetail={isError ? apiError(error) : undefined}
+          onRetry={() => refetchImages()}
+          rowKey={(i) => i}
+          cols={[
+            { h: "Image", f: (i) => i, mono: true },
+            {
+              h: "Size",
+              f: (i) => {
+                const sz = sizeOf(i);
+                return sz != null ? fmtBytes(sz) : <span className="rbd-dim">—</span>;
+              },
             },
-          },
-        ]}
-        actions={(img) => (
-          <>
-            <Button size="sm" onClick={() => setSnapImg(img)}>Snaps</Button>
-            <Button size="sm" onClick={() => setModal({ img, kind: "clone" })}>Clone</Button>
-            <Button size="sm" onClick={() => setModal({ img, kind: "resize" })}>Resize</Button>
-            <Button size="sm" onClick={() => confirmThen({ title: `Flatten ${img}?`, message: "Detaches the clone from its parent (copies all data).", confirmLabel: "Flatten" }, () => submitJob("post", `/rbd-images/${pool}/${img}/flatten`, {}, `flatten ${img}`, refetch))}>Flatten</Button>
-            <Button size="sm" variant="danger" onClick={() => del(`image ${img}`, () => submitJob("delete", `/rbd-images/${pool}/${img}`, null, `delete ${img}`, refetch))}>Del</Button>
-          </>
-        )}
-      />
+            { h: "Used", f: (i) => <UsageCell used={volumeOf(i)?.used_bytes} size={sizeOf(i)} /> },
+          ]}
+          actions={(img) => (
+            <>
+              <Button size="sm" onClick={() => setSnapImg(img)}>Snapshots</Button>
+              <Button size="sm" onClick={() => setModal({ img, kind: "clone" })}>Clone</Button>
+              <Button size="sm" onClick={() => setModal({ img, kind: "resize" })}>Resize</Button>
+              <Button size="sm" onClick={() => confirmThen({ title: `Flatten ${img}?`, message: "Detaches the clone from its parent (copies all data).", confirmLabel: "Flatten" }, () => submitJob("post", `/rbd-images/${pool}/${img}/flatten`, {}, `flatten ${img}`, refetch))}>Flatten</Button>
+              <Button size="sm" variant="danger" onClick={() => del(`image ${img}`, () => submitJob("delete", `/rbd-images/${pool}/${img}`, null, `delete ${img}`, refetch))}>Delete</Button>
+            </>
+          )}
+        />
+      )}
 
       <FormModal open={create} onClose={() => setCreate(false)} title="Create RBD image" submitLabel="Create"
         fields={[{ name: "name", label: "Name" }, { name: "size_gib", label: "Size (GiB)", type: "number", value: "1", min: 1 }]}
@@ -114,7 +127,7 @@ export default function Rbd() {
       {modal?.kind === "clone" && (
         cloneSnaps && cloneSnaps.length === 0 ? (
           <FormModal open onClose={() => setModal(null)} title={`Clone ${modal.img}`} submitLabel="Clone"
-            fields={[{ name: "name", label: "Clone name" }, { name: "snap", label: "Snapshot", value: "", hint: `${modal.img} has no snapshots yet — create one first (Snaps → snapshot name), then retry.` }]}
+            fields={[{ name: "name", label: "Clone name" }, { name: "snap", label: "Snapshot", value: "", hint: `${modal.img} has no snapshots yet. Create one first under Snapshots, then retry.` }]}
             onSubmit={(v) => submitJob("post", `/rbd-images/${pool}/${modal.img}/clone`, { name: v.name, snap: v.snap }, "clone", refetch)} />
         ) : (
           <FormModal open onClose={() => setModal(null)} title={`Clone ${modal.img}`} submitLabel="Clone"
@@ -133,7 +146,7 @@ export default function Rbd() {
             fields={[{
               name: "size_gib", label: "New size (GiB)", type: "number", min: curGib != null ? curGib : 1,
               hint: cur != null
-                ? `Current size: ${fmtBytes(cur)} — shrinking isn't supported from this dialog.`
+                ? `Current size: ${fmtBytes(cur)}. Shrinking isn't supported from this dialog.`
                 : "Current size unknown for this image (not tracked as a volume).",
             }]}
             onSubmit={(v) => submitJob("post", `/rbd-images/${pool}/${modal.img}/resize`, { size_bytes: gib(+v.size_gib) }, "resize", refetch)} />
@@ -155,18 +168,19 @@ function RbdSnaps({ pool, img, onClose }: { pool: string; img: string | null; on
   return (
     <SlideOver open={!!img} onClose={close} title={<span className="mono">{img} · snapshots</span>}>
       <div className="flex gap-2 mb-4">
-        <input className="field" placeholder="snapshot name" value={name} onChange={(e) => setName(e.target.value)} />
+        <input className="field" placeholder="snapshot name" aria-label="Snapshot name" value={name} onChange={(e) => setName(e.target.value)} />
         <Button variant="primary" disabled={!name || !/^[a-zA-Z0-9_.-]+$/.test(name)} onClick={async () => { await submitJob("post", `/rbd-images/${pool}/${img}/snapshots`, { name }, "snapshot"); setName(""); setTimeout(load, 1200); }}>Create</Button>
       </div>
       {name && !/^[a-zA-Z0-9_.-]+$/.test(name) && <div className="text-xs text-danger -mt-2 mb-3">Letters, digits, dot, dash, underscore only (no spaces or slashes).</div>}
       <Table
-        rows={snaps || []}
+        rows={snaps ?? undefined}
         rowKey={(s) => s}
+        empty="No snapshots yet."
         cols={[{ h: "Snapshot", f: (s) => s, mono: true }]}
         actions={(s) => (
           <>
-            <Button size="sm" variant="danger" onClick={() => confirmThen({ title: `Roll back to ${s}?`, message: "Destructive: reverts the image to this snapshot's contents.", confirmLabel: "Roll back", danger: true }, () => submitJob("post", `/rbd-images/${pool}/${img}/rollback`, { name: s }, `rollback to ${s}`))}>Rollback</Button>
-            <Button size="sm" variant="danger" onClick={() => del(`snapshot ${s}`, () => submitJob("delete", `/rbd-images/${pool}/${img}/snapshots/${s}`, null, `delete snapshot ${s}`, load))}>Del</Button>
+            <Button size="sm" variant="danger" onClick={() => confirmThen({ title: `Roll back to ${s}?`, message: "Destructive: reverts the image to this snapshot's contents.", confirmLabel: "Roll back", danger: true }, () => submitJob("post", `/rbd-images/${pool}/${img}/rollback`, { name: s }, `rollback to ${s}`))}>Roll back</Button>
+            <Button size="sm" variant="danger" onClick={() => del(`snapshot ${s}`, () => submitJob("delete", `/rbd-images/${pool}/${img}/snapshots/${s}`, null, `delete snapshot ${s}`, load))}>Delete</Button>
           </>
         )}
       />

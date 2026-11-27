@@ -1,0 +1,13 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ */
+
+@layer components {
+  .rbd-pool {
+    width: 13rem;
+    max-width: 100%;
+  }
+  .rbd-dim {
+    color: var(--a-ink-2);
+  }
+}

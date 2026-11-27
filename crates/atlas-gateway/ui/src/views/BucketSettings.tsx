@@ -11,6 +11,7 @@ import type { StorageBucket } from "../api/types";
 import { Badge, Button, SlideOver, Tabs } from "../ui/kit";
 import { Table } from "../ui/Table";
 import { fmtBytes } from "../lib/format";
+import "./BucketSettings.css";
 
 const S3_NS = "http://s3.amazonaws.com/doc/2006-03-01/";
 const TABS = ["Versioning", "Object Lock", "Lifecycle", "Access", "Versions"] as const;
@@ -164,13 +165,13 @@ function VersioningTab({ id, status, onChanged }: { id: string; status: string |
   };
   return (
     <div>
-      <p className="mb-3">
+      <p className="bs-status">
         Status:{" "}
         <Badge kind={status === "Enabled" ? "success" : status === "Suspended" ? "warning" : "neutral"} dot>
           {status ?? "…"}
         </Badge>
       </p>
-      <p className="mb-3" style={{ color: "var(--at-ink-4)" }}>
+      <p className="bs-note">
         With versioning enabled every overwrite and delete keeps the previous version (a delete adds a delete
         marker). Suspending stops creating new versions but keeps the existing ones.
       </p>
@@ -233,16 +234,16 @@ function ObjectLockTab({ id }: { id: string }) {
     }
   };
 
-  if (enabled === null) return <div className="at-caption">Loading…</div>;
+  if (enabled === null) return <div className="bs-note">Loading…</div>;
   if (!enabled) {
     return (
       <div>
-        <p className="mb-3">
+        <p className="bs-status">
           Object Lock: <Badge kind="neutral" dot>not enabled</Badge>
         </p>
-        <div className="at-caption">
+        <div className="bs-note">
           Object Lock (versioned, write-once-read-many retention) can only be turned on when a bucket is
-          created. This bucket was not created with it — create a new bucket with "Object Lock" enabled if
+          created. This bucket was not created with it. Create a new bucket with "Object Lock" enabled if
           you need WORM retention.
         </div>
       </div>
@@ -250,27 +251,27 @@ function ObjectLockTab({ id }: { id: string }) {
   }
   return (
     <div>
-      <p className="mb-3">
+      <p className="bs-status">
         Object Lock: <Badge kind="warning" dot>enabled</Badge>
       </p>
-      {error && <div className="at-caption mb-2">{error}</div>}
-      <div className="at-caption mb-2">Default retention (applied to new objects with no explicit retention)</div>
-      <div className="flex gap-2 mb-3">
-        <select className="field" value={mode} onChange={(e) => setMode(e.target.value)}>
+      {error && <div className="bs-note">{error}</div>}
+      <div className="at-caption">Default retention (applied to new objects with no explicit retention)</div>
+      <div className="bs-retention">
+        <select className="field" aria-label="Retention mode" value={mode} onChange={(e) => setMode(e.target.value)}>
           <option value="GOVERNANCE">Governance (can be overridden by a permitted user)</option>
           <option value="COMPLIANCE">Compliance (cannot be shortened or removed by anyone)</option>
         </select>
         <input
-          className="field"
-          style={{ width: 100 }}
+          className="field bs-days"
           type="number"
           min={1}
+          aria-label="Retention days"
           placeholder="days"
           value={days}
           onChange={(e) => setDays(e.target.value)}
         />
       </div>
-      <div className="flex gap-2">
+      <div className="bs-actions">
         <Button variant="primary" loading={busy} disabled={!days.trim()} onClick={() => save(false)}>
           Set default retention
         </Button>
@@ -349,17 +350,17 @@ function LifecycleTab({ bucketId }: { bucketId: string }) {
         ]}
         actions={(r) => (
           <Button size="sm" variant="danger" loading={busy} onClick={() => save((rules ?? []).filter((x) => x !== r))}>
-            Del
+            Delete
           </Button>
         )}
         empty="No lifecycle rules."
       />
-      <div className="mt-4 grid gap-2">
+      <div className="bs-form">
         <div className="at-caption">Add rule</div>
-        <input className="field" placeholder="rule id" value={id} onChange={(e) => setId(e.target.value)} />
-        <input className="field" placeholder="prefix (empty = whole bucket)" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
-        <input className="field" type="number" min={1} placeholder="expire current versions after (days)" value={days} onChange={(e) => setDays(e.target.value)} />
-        <input className="field" type="number" min={1} placeholder="expire noncurrent versions after (days, optional)" value={ncDays} onChange={(e) => setNcDays(e.target.value)} />
+        <input className="field" placeholder="rule id" aria-label="Rule ID" value={id} onChange={(e) => setId(e.target.value)} />
+        <input className="field" placeholder="prefix (empty = whole bucket)" aria-label="Prefix" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
+        <input className="field" type="number" min={1} placeholder="expire current versions after (days)" aria-label="Expire current versions after (days)" value={days} onChange={(e) => setDays(e.target.value)} />
+        <input className="field" type="number" min={1} placeholder="expire noncurrent versions after (days, optional)" aria-label="Expire noncurrent versions after (days)" value={ncDays} onChange={(e) => setNcDays(e.target.value)} />
         <div>
           <Button variant="primary" loading={busy} onClick={add}>
             Add rule
@@ -475,13 +476,13 @@ function AccessTab({ id, bucket }: { id: string; bucket: string }) {
 
   return (
     <div>
-      <p className="mb-3">
+      <p className="bs-status">
         Access:{" "}
         <Badge kind={configured ? "warning" : "success"} dot>
           {configured === null ? "…" : configured ? (isPublicRead(text) ? "public read" : "custom policy") : "private"}
         </Badge>
       </p>
-      <div className="flex gap-2 mb-3">
+      <div className="bs-actions bs-gap">
         <Button loading={busy} onClick={makePrivate}>
           Private
         </Button>
@@ -494,13 +495,13 @@ function AccessTab({ id, bucket }: { id: string; bucket: string }) {
         )}
       </div>
       <textarea
-        className="field mono"
-        style={{ width: "100%", minHeight: 220 }}
+        className="field mono bs-policy"
+        aria-label="Bucket policy JSON"
         placeholder='Bucket policy JSON (empty = private). Example: {"Version":"2012-10-17","Statement":[...]}'
         value={text}
         onChange={(e) => setText(e.target.value)}
       />
-      <div className="mt-2">
+      <div className="bs-actions">
         <Button variant="primary" loading={busy} disabled={!text.trim()} onClick={() => put(text)}>
           Apply policy
         </Button>
@@ -564,7 +565,7 @@ function VersionsTab({ id }: { id: string }) {
   }, [load]);
   return (
     <div>
-      <div className="mb-3">
+      <div className="bs-actions bs-gap">
         <Button onClick={load}>Refresh</Button>
       </div>
       <Table

@@ -1,0 +1,47 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ */
+
+@layer components {
+  .at-panel.pd-fill {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: var(--a-s2);
+    min-height: 200px;
+    padding: var(--a-s5);
+  }
+  .pd-note {
+    margin: 0;
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .pd-osd-note {
+    padding: var(--a-s4) var(--a-s5) 0;
+  }
+  .pd-osds {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
+    gap: var(--a-s2);
+    max-height: 360px;
+    margin: 0;
+    padding: var(--a-s4) var(--a-s5) var(--a-s5);
+    overflow: auto;
+    list-style: none;
+  }
+  .pd-osds li {
+    display: flex;
+    align-items: center;
+    gap: var(--a-s2);
+    min-width: 0;
+    padding: 8px 12px;
+    border-radius: var(--a-radius-xs);
+    background: var(--a-surface-2);
+    font-size: 13px;
+  }
+  .pd-osd-state {
+    margin-left: auto;
+    color: var(--a-ink-2);
+    font-size: 12px;
+  }
+}
