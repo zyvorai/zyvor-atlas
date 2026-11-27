@@ -85,9 +85,11 @@ fn a_coded_extent_takes_one_and_a_half_times_its_size_on_six_nodes() {
     let mut want = data.clone();
     want[100..150].fill(9);
     assert_eq!(e.read(&v, 0, EXTENT).unwrap(), want);
+    // With delta writes on, the overwrite is a 50-byte delta on three replicas until folded.
+    let deltas = e.fold_all_deltas().unwrap() as u64;
     let st = e.gc_once().unwrap();
-    assert_eq!(st.reclaimed, 1);
-    assert_eq!(st.freed_bytes, 6 * SHARD);
+    assert_eq!(st.reclaimed, 1 + deltas);
+    assert_eq!(st.freed_bytes, 6 * SHARD + deltas * 3 * 50);
 }
 
 #[test]

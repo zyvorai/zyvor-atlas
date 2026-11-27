@@ -640,6 +640,35 @@ fn reverts_and_snapshot_deletes_keep_the_delta_books_straight() {
     }));
 }
 
+/// A delta extent belongs to the one cell that lists it: no write may share it, and it stays
+/// on the data nodes.
+#[test]
+fn deltas_are_never_shared_or_tiered() {
+    let mut t = T::new();
+    t.ok(file_deltas(vec![item(file("f", 2), 0, 0, "d1", 512)]));
+    let delta = t.c.extents["d1"].extent.clone();
+    // A file tail of the same length and bytes, claiming to share the delta.
+    let shared = ExtentRef {
+        logical_offset: GRID,
+        delta: false,
+        ..delta.clone()
+    };
+    t.rejected(fs(FsOp::InstallFileExtents {
+        fs: "f".into(),
+        ino: 2,
+        extents: vec![shared],
+        size: GRID + 512,
+        now_ns: 3,
+        replica: false,
+        shared: vec!["d1".into()],
+    }));
+    t.rejected(MetaCommand::TierExtent {
+        extent_id: "d1".into(),
+        key: "k".into(),
+        replicas: delta.replicas,
+    });
+}
+
 /// A log with every delta command, including rejected ones.
 fn delta_log() -> Vec<MetaCommand> {
     let mut log = base_log();

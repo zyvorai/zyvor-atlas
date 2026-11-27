@@ -8,7 +8,7 @@ use std::{collections::BTreeMap, net::TcpListener, path::Path, sync::Arc, time::
 
 use atlas_native::{
     node::{DataNodeRole, DataNodeSpec, Listeners, MetadataRole, NativeNode, NodeConfig},
-    NodeType, SetAttr, TlsIdentity, ROOT_INO,
+    DeltaConfig, NodeType, SetAttr, TlsIdentity, ROOT_INO,
 };
 use atlas_native_fuse::{
     client::{Body, Client, ClientConfig, Retry},
@@ -51,6 +51,15 @@ impl Cluster {
     }
 
     fn start_cfg(erasure: Option<&str>, data_nodes: usize, grants: bool) -> Self {
+        Self::start_full(erasure, data_nodes, grants, Default::default())
+    }
+
+    fn start_full(
+        erasure: Option<&str>,
+        data_nodes: usize,
+        grants: bool,
+        delta_writes: DeltaConfig,
+    ) -> Self {
         let td = tempfile::tempdir().unwrap();
         std::fs::write(td.path().join("token"), TOKEN).unwrap();
         std::fs::write(td.path().join("grant"), "fuse-test-grant-secret").unwrap();
@@ -122,7 +131,7 @@ impl Cluster {
                     compression: false,
                     dedup: false,
                     cross_group_dedup: false,
-                    delta_writes: Default::default(),
+                    delta_writes: delta_writes.clone(),
                     rebuild_delay_secs: 60,
                     rebuild_bytes_per_sec: 0,
                     scrub_bytes_per_sec: 0,
@@ -495,7 +504,9 @@ fn direct_reads_fetch_extents_from_the_data_nodes() {
     writer.write(f.ino, 100_000, b"rewritten").unwrap();
     writer.flush(f.ino).unwrap();
     assert_eq!(ops.read(f.ino, 100_000, 9).unwrap(), b"rewritten");
-    assert_eq!(ops.direct_fallbacks(), 0);
+    // With delta writes on, the rewrite is a delta, and its cell is read through the leader.
+    let fallbacks = u64::from(DeltaConfig::default().enabled);
+    assert_eq!(ops.direct_fallbacks(), fallbacks);
 }
 
 #[test]
@@ -654,6 +665,48 @@ fn direct_reads_of_erasure_coded_extents_read_the_data_shards() {
     assert_eq!(ops.direct_fallbacks(), 0);
     // Through the leader too.
     assert_eq!(writer.read(f.ino, 0, 1 << 20).unwrap(), data);
+}
+
+/// The layout of a cell with pending deltas lists no replica, so a direct reader (an older one
+/// too: it only sees an extent with nowhere to read it from) asks the leader, which lays the
+/// deltas over the base.
+#[test]
+fn direct_reads_of_cells_with_deltas_go_through_the_leader() {
+    let delta = DeltaConfig {
+        enabled: true,
+        // Keep the delta pending for the length of the test.
+        fold_after_ms: 600_000,
+        ..DeltaConfig::default()
+    };
+    let c = Cluster::start_full(None, 3, false, delta);
+    create_fs(&c, "dd");
+    let writer = mount(&c, "dd", OpsConfig::default());
+    let f = new_file(&writer, "a.bin");
+    let mut want = pattern(2 * EXT, 9);
+    writer.write(f, 0, &want).unwrap();
+    writer.flush(f).unwrap();
+
+    let layout = || -> atlas_native::engine::FileLayout {
+        let path = format!("/v1/fs/dd/inodes/{f}/layout?offset=0&len={}", 2 * EXT);
+        let v = c
+            .client()
+            .json(Method::GET, &path, Body::Empty, Retry::Idempotent)
+            .unwrap();
+        serde_json::from_value(v).unwrap()
+    };
+    // Until every metadata replica has answered, the write rewrites the cell instead.
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !layout().extents[0].replicas.is_empty() {
+        assert!(std::time::Instant::now() < deadline, "no delta was written");
+        writer.write(f, 100, b"delta").unwrap();
+        writer.flush(f).unwrap();
+    }
+    want[100..105].copy_from_slice(b"delta");
+    assert_eq!(layout().extents[1].replicas.len(), 3);
+
+    let ops = mount(&c, "dd", direct(None));
+    assert_eq!(ops.read(f, 0, want.len()).unwrap(), want);
+    assert!(ops.direct_fallbacks() > 0);
 }
 
 #[test]

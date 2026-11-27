@@ -54,6 +54,8 @@ const MAX_HEADER: usize = 64 << 10;
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
 /// Payloads up to this size are sent in the same write as their header.
 const SMALL_PAYLOAD: usize = 16 << 10;
+/// How long a data node that cannot say whether it pads writes is assumed to.
+const GRANULARITY_RETRY: Duration = Duration::from_secs(60);
 /// Largest payload accepted in either direction.
 pub const MAX_PAYLOAD: u64 = 256 << 20;
 
@@ -89,6 +91,12 @@ enum Request {
         device: usize,
     },
     Len {
+        #[serde(default, skip_serializing_if = "is_zero")]
+        device: usize,
+    },
+    /// Whether the device takes writes of any length without padding them. Older nodes don't
+    /// know this op and drop the connection: the client then assumes it pads.
+    Granularity {
         #[serde(default, skip_serializing_if = "is_zero")]
         device: usize,
     },
@@ -136,6 +144,9 @@ enum Response {
     },
     Devices {
         count: usize,
+    },
+    Granularity {
+        byte_granular: bool,
     },
     /// `(group, fence)` pairs.
     Fences {
@@ -970,6 +981,15 @@ fn serve_requests<S: Read + Write>(
                 };
                 write_message(&mut stream, &resp, &[])
             }
+            Request::Granularity { device } => {
+                let resp = match sh.device(device).and_then(|d| d.byte_granular()) {
+                    Ok(byte_granular) => Response::Granularity { byte_granular },
+                    Err(e) => Response::Error {
+                        message: e.to_string(),
+                    },
+                };
+                write_message(&mut stream, &resp, &[])
+            }
             Request::Devices => write_message(
                 &mut stream,
                 &Response::Devices {
@@ -1098,6 +1118,9 @@ pub struct RemoteDevice {
     grant_key: Option<GrantKey>,
     /// Sent as `Auth` on every new connection when set.
     bearer: Option<String>,
+    /// The device's answer to [`BlockStore::byte_granular`], and until when to trust it (`None`:
+    /// for good).
+    granular: Mutex<Option<(bool, Option<Instant>)>>,
 }
 
 impl std::fmt::Debug for RemoteDevice {
@@ -1127,6 +1150,7 @@ impl RemoteDevice {
             group_checked: AtomicBool::new(false),
             grant_key: None,
             bearer: None,
+            granular: Mutex::new(None),
         }
     }
 
@@ -1149,6 +1173,7 @@ impl RemoteDevice {
             group_checked: AtomicBool::new(false),
             grant_key: None,
             bearer: None,
+            granular: Mutex::new(None),
         })
     }
 
@@ -1520,6 +1545,33 @@ impl BlockStore for RemoteDevice {
             Response::Len { len } => Ok(len),
             other => Err(unexpected(other)),
         }
+    }
+
+    fn byte_granular(&self) -> Result<bool, NativeError> {
+        let mut known = self
+            .granular
+            .lock()
+            .map_err(|_| NativeError::Poisoned("remote device"))?;
+        if let Some((answer, until)) = *known {
+            if until.is_none_or(|t| Instant::now() < t) {
+                return Ok(answer);
+            }
+        }
+        let req = Request::Granularity {
+            device: self.device,
+        };
+        let answer = match self.call(&req, &[]) {
+            Ok((Response::Granularity { byte_granular }, _)) => (byte_granular, None),
+            Ok((other, _)) => return Err(unexpected(other)),
+            // A node that answers but not this: an older one, assumed to pad until asked
+            // again. One that does not answer at all is an error.
+            Err(e) => {
+                self.len().map_err(|_| e)?;
+                (false, Some(Instant::now() + GRANULARITY_RETRY))
+            }
+        };
+        *known = Some(answer);
+        Ok(answer.0)
     }
 
     fn endpoint(&self) -> Option<&str> {

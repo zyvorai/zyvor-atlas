@@ -31,6 +31,11 @@ pub trait BlockStore: std::fmt::Debug + Send + Sync {
     fn is_empty(&self) -> Result<bool, NativeError> {
         Ok(self.len()? == 0)
     }
+    /// Whether a write takes exactly the space it asks for. Block-aligned devices round it up,
+    /// so they hold no deltas.
+    fn byte_granular(&self) -> Result<bool, NativeError> {
+        Ok(false)
+    }
     /// Network address a client can read this device at directly, if it is remote.
     fn endpoint(&self) -> Option<&str> {
         None
@@ -38,6 +43,9 @@ pub trait BlockStore: std::fmt::Debug + Send + Sync {
 }
 
 impl BlockStore for FileDevice {
+    fn byte_granular(&self) -> Result<bool, NativeError> {
+        Ok(true)
+    }
     fn append(&self, _fence: u64, data: &[u8]) -> Result<u64, NativeError> {
         FileDevice::append(self, data)
     }

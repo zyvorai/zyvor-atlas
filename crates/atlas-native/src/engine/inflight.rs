@@ -25,7 +25,7 @@ use crate::{
 /// space freed meanwhile).
 const REFRESH: Duration = Duration::from_secs(1);
 /// How long the ranges of a commit with an unknown outcome stay unavailable.
-const QUARANTINE: Duration = Duration::from_secs(300);
+pub(super) const QUARANTINE: Duration = Duration::from_secs(300);
 
 #[derive(Debug, Default)]
 pub(super) struct Inflight {

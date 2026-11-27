@@ -1109,6 +1109,7 @@ fn error_response(e: NativeError) -> Response {
         (_, Some(MetaError::NoSession)) => (410, "no_session", None),
         // Retryable: the client asks again once the pending delta writes are folded.
         (_, Some(MetaError::Busy(_))) => (503, "unavailable", None),
+        (NativeError::Unknown(_), _) => (503, "unavailable", None),
         (_, Some(m)) => (
             409,
             match m {
@@ -1916,5 +1917,54 @@ mod tests {
         let e = cfg("4+2").unwrap().validate().unwrap_err().to_string();
         assert!(e.contains("needs 6 data_nodes, 5 configured"), "{e}");
         assert!(cfg("4-2").is_err());
+    }
+
+    #[test]
+    fn delta_writes_are_configured_per_node_and_off_unless_asked_for() {
+        let cfg = |delta: Option<serde_json::Value>| {
+            let mut metadata = serde_json::json!({
+                "listen": "127.0.0.1:0",
+                "peers": {},
+                "data_nodes": [{ "id": "d1", "addr": "d1:7000" }],
+                "replicas": 1,
+            });
+            if let Some(d) = delta {
+                metadata["delta_writes"] = d;
+            }
+            serde_json::from_value::<super::NodeConfig>(serde_json::json!({
+                "node_id": "m1",
+                "data_dir": "/tmp/x",
+                "http_listen": "127.0.0.1:0",
+                "metadata": metadata,
+            }))
+        };
+        let delta = |c: super::NodeConfig| c.metadata.unwrap().delta_writes;
+        let unset = delta(cfg(None).unwrap());
+        assert_eq!(unset.enabled, cfg!(feature = "delta-writes-test"));
+        assert_eq!(unset.max_bytes, 131_072);
+        let on = cfg(Some(
+            serde_json::json!({ "enabled": true, "max_bytes": 4096 }),
+        ))
+        .unwrap();
+        on.validate().unwrap();
+        let on = delta(on);
+        assert!(on.enabled);
+        assert_eq!((on.max_bytes, on.max_deltas_per_cell), (4096, 32));
+        assert!(cfg(Some(serde_json::json!({ "enable": true }))).is_err());
+        let bad = serde_json::json!({ "max_pending_bytes": 10, "fold_headroom_bytes": 10 });
+        assert!(cfg(Some(bad)).unwrap().validate().is_err());
+    }
+
+    /// Both say "ask again": the FUSE client retries 503 and gives up on 409.
+    #[test]
+    fn unknown_outcomes_and_pending_folds_are_retryable() {
+        use super::{error_response, MetaError, NativeError, RaftError};
+        for e in [
+            NativeError::Unknown("timed out".into()),
+            MetaError::Busy("x".into()).into(),
+            RaftError::Rejected(MetaError::Busy("x".into())).into(),
+        ] {
+            assert_eq!(error_response(e).status, 503);
+        }
     }
 }

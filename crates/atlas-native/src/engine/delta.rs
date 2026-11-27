@@ -9,17 +9,26 @@ use std::{
     collections::HashMap,
     sync::{
         atomic::{AtomicU64, Ordering},
-        Mutex,
+        Arc, Mutex,
     },
     time::{Duration, Instant},
 };
 
-use super::{Meta, NativeEngine, NativeError, Target, READ_PARALLELISM};
+use super::{
+    combiner::{Combiner, Outcome},
+    now_ns, Meta, NativeEngine, NativeError, Target, READ_PARALLELISM,
+};
 use crate::{
-    metadata::{Catalog, DeltaCell, DeltaTarget, ExtentId, ExtentRef, MetaCommand, MetaError},
+    metadata::{
+        Catalog, DeltaCell, DeltaItem, DeltaTarget, ExtentId, ExtentRef, MetaCommand, MetaError,
+    },
+    namespace::InodeKind,
     raft::{RaftError, CAP_DELTA},
 };
 
+/// Times a delta write is tried again after it certainly did not apply (a new term, a command
+/// rejected under it) before the cell is rewritten instead.
+const DELTA_ATTEMPTS: usize = 3;
 /// Times one cell is looked up again after a read of it failed because it changed.
 const CELL_RETRIES: usize = 8;
 /// Dirty cells one maintenance pass looks at when choosing what to fold.
@@ -141,11 +150,100 @@ struct FoldQueue {
     since: HashMap<DeltaCell, Instant>,
 }
 
+/// A step of a delta write, for tests that act between steps.
+#[doc(hidden)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeltaPoint {
+    /// The bytes are on the data nodes; nothing is proposed.
+    Replicated,
+    /// A batch is about to be proposed.
+    BeforePropose,
+    /// The batch is proposed and may not be applied.
+    Proposed,
+}
+
+type Hook = Arc<dyn Fn(DeltaPoint) + Send + Sync>;
+
+#[derive(Default)]
+struct Hooks(Mutex<Option<Hook>>);
+
+impl std::fmt::Debug for Hooks {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Hooks")
+    }
+}
+
+/// Where a write that can be a delta goes.
+struct Plan {
+    key: DeltaCell,
+    at: u64,
+}
+
+/// Where `len` bytes at `offset` of `target` can be stored as a delta: inside one cell, over part
+/// of its base extent, within the volume or file. `None`: the ordinary path takes the write (and
+/// reports what is wrong with it, if anything is).
+fn plan(c: &Catalog, target: &Target, cluster: usize, offset: u64, len: u64) -> Option<Plan> {
+    let grid = target.grid(c, cluster).ok()?;
+    let cell = offset - offset % grid;
+    let at = offset - cell;
+    let end = offset.checked_add(len).filter(|_| at + len <= grid)?;
+    let (target, base, size) = match target {
+        Target::Volume(id) => {
+            let v = c.volumes.get(*id)?;
+            let target = DeltaTarget::Volume { id: id.to_string() };
+            (target, v.extents.get(&cell)?.clone(), v.size_bytes)
+        }
+        Target::File {
+            fs,
+            ino,
+            replica: false,
+        } => {
+            let f = c.filesystem(fs).ok().filter(|f| f.replica.is_none())?;
+            let inode = f.inode(*ino).ok()?;
+            let InodeKind::File { size, extents, .. } = &inode.kind else {
+                return None;
+            };
+            let target = DeltaTarget::File {
+                fs: fs.to_string(),
+                ino: *ino,
+            };
+            (target, extents.get(&cell)?.clone(), *size)
+        }
+        Target::File { replica: true, .. } => return None,
+    };
+    let base_len = c.extents.get(&base)?.extent.len() as u64;
+    let whole = at == 0 && len >= base_len;
+    (!whole && at + len <= base_len && end <= size).then_some(Plan {
+        key: DeltaCell { target, cell },
+        at,
+    })
+}
+
+/// Room under the caps held by a delta that is not applied yet.
+struct Room<'a> {
+    state: &'a DeltaState,
+    bytes: u64,
+}
+
+impl Drop for Room<'_> {
+    fn drop(&mut self) {
+        self.state
+            .inflight_bytes
+            .fetch_sub(self.bytes, Ordering::Relaxed);
+        self.state.inflight.fetch_sub(1, Ordering::Relaxed);
+    }
+}
+
 /// Leader-local state of delta writes; none of it is replicated.
 #[derive(Debug, Default)]
 pub(super) struct DeltaState {
     /// The last term `leader_ready` succeeded for.
     ready_term: AtomicU64,
+    pub(super) combiner: Combiner,
+    /// Deltas being written, and their device bytes.
+    inflight: AtomicU64,
+    inflight_bytes: AtomicU64,
+    hooks: Hooks,
     /// Targets taking no new deltas while a snapshot of them is folded and taken.
     blocked: Mutex<Vec<Scope>>,
     dead: Mutex<DeadSince>,
@@ -235,6 +333,106 @@ impl NativeEngine {
             engine: self,
             scope,
         })
+    }
+
+    pub(super) fn is_blocked(&self, target: &DeltaTarget) -> bool {
+        self.delta.blocked.lock().map_or(true, |b| {
+            b.iter().any(|s| match (s, target) {
+                (Scope::Volume(v), DeltaTarget::Volume { id }) => v == id,
+                (Scope::Fs(f), DeltaTarget::File { fs, .. }) => f == fs,
+                _ => false,
+            })
+        })
+    }
+
+    #[doc(hidden)]
+    pub fn set_delta_hook(&self, hook: Option<Arc<dyn Fn(DeltaPoint) + Send + Sync>>) {
+        if let Ok(mut h) = self.delta.hooks.0.lock() {
+            *h = hook;
+        }
+    }
+
+    pub(super) fn delta_point(&self, point: DeltaPoint) {
+        let hook = self.delta.hooks.0.lock().ok().and_then(|h| h.clone());
+        if let Some(hook) = hook {
+            hook(point);
+        }
+    }
+
+    /// Takes room under the caps for one more delta on `key` costing `bytes` of device space.
+    fn room(&self, key: &DeltaCell, bytes: u64) -> Result<Option<Room<'_>>, NativeError> {
+        let cfg = &self.cfg.delta_writes;
+        let state = &self.delta;
+        let writing = state.inflight.fetch_add(1, Ordering::Relaxed) + 1;
+        let writing_bytes = state.inflight_bytes.fetch_add(bytes, Ordering::Relaxed) + bytes;
+        let room = Room { state, bytes };
+        let fits = self.with_catalog(|c| {
+            let t = c.delta_totals;
+            t.pending_bytes + t.dead_bytes + writing_bytes
+                <= cfg.max_pending_bytes - cfg.fold_headroom_bytes
+                && t.pending + writing <= cfg.max_pending_deltas
+                && c.dirty.get(key).copied().unwrap_or(0) < cfg.max_deltas_per_cell
+        })?;
+        Ok(fits.then_some(room))
+    }
+
+    /// Stores `data` as a delta if it can be one: its bytes go to the data nodes without the
+    /// write lock, then join the next delta command. `Ok(false)`: nothing was written, and the
+    /// ordinary path takes the write.
+    pub(super) fn try_delta(
+        &self,
+        target: &Target,
+        offset: u64,
+        data: &[u8],
+    ) -> Result<bool, NativeError> {
+        let cfg = &self.cfg.delta_writes;
+        let replica = matches!(target, Target::File { replica: true, .. });
+        if !cfg.enabled || replica || data.is_empty() || data.len() > cfg.max_bytes {
+            return Ok(false);
+        }
+        let cost = data.len() as u64 * self.cfg.placement.replicas as u64;
+        for _ in 0..DELTA_ATTEMPTS {
+            // Before the catalog is read or space is taken.
+            let fence = self.term_fence()?;
+            if !self.delta_supported()? {
+                return Ok(false);
+            }
+            let cluster = self.cfg.extent_bytes;
+            let Some(plan) =
+                self.with_catalog(|c| plan(c, target, cluster, offset, data.len() as u64))?
+            else {
+                return Ok(false);
+            };
+            if self.is_blocked(&plan.key.target) {
+                break;
+            }
+            let Some(_room) = self.room(&plan.key, cost)? else {
+                break;
+            };
+            let alloc = self.lease(fence)?;
+            let Some(extent) = self.place_delta(data, fence, &alloc)? else {
+                break;
+            };
+            self.delta_point(DeltaPoint::Replicated);
+            let item = DeltaItem {
+                target: plan.key.target,
+                cell: plan.key.cell,
+                at: plan.at,
+                extent,
+                now_ns: now_ns(),
+            };
+            match self.submit_delta(fence, item, alloc.detach())? {
+                Outcome::Applied => {
+                    self.telemetry.delta_written();
+                    self.telemetry.record_write(data.len());
+                    return Ok(true);
+                }
+                Outcome::Unknown(why) => return Err(NativeError::Unknown(why)),
+                Outcome::Rejected => {}
+            }
+        }
+        self.telemetry.delta_fallback();
+        Ok(false)
     }
 
     /// Reads a cell: the base with its deltas laid over it, from one look at the catalog. If a
@@ -557,3 +755,6 @@ impl NativeEngine {
         self.with_catalog(|c| (c.dirty.len(), c.delta_totals.pending))
     }
 }
+
+#[cfg(test)]
+mod tests;

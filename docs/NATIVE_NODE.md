@@ -80,6 +80,7 @@ data-node addresses are `host:port` and resolved on every connect, so DNS names 
 | `metadata.dedup` | `false` | Store identical extents once; see [`NATIVE_DATA_REDUCTION.md`](NATIVE_DATA_REDUCTION.md). |
 | `metadata.compression` | `false` | LZ4-compress new extents that shrink by at least 12.5%; see [`NATIVE_DATA_REDUCTION.md`](NATIVE_DATA_REDUCTION.md). |
 | `metadata.extent_bytes` | 4 MiB | Writes are split into extents of this size. |
+| `metadata.delta_writes` | off | Store small partial overwrites as deltas folded later (`{"enabled": true, ...}`); read [`NATIVE_DELTA_WRITES.md`](NATIVE_DELTA_WRITES.md), including its upgrade rules, before enabling. |
 | `metadata.tick_ms` | 50 | Raft tick; elections take 10–20 ticks. |
 | `metadata.proposal_timeout_ms` | 5000 | Bounds leader readiness, each proposal and each data-node I/O. |
 | `metadata.repair_interval_secs` | 300 | Time between the starts of two scrub passes of the leader's rebuild controller; 0 disables the controller (scrub and rebuild). See [Rebuild and scrub](#rebuild-and-scrub). |

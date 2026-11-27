@@ -37,6 +37,7 @@ use crate::{
     wal::{Wal, WalError, WalRecord},
 };
 
+mod combiner;
 mod delta;
 mod direct;
 mod export;
@@ -49,7 +50,7 @@ mod replica;
 mod tier;
 use delta::{CellView, Scope};
 
-pub use delta::DeltaConfig;
+pub use delta::{DeltaConfig, DeltaPoint};
 pub use direct::{
     DirectCell, DirectCellDone, DirectCommit, DirectLease, DirectReplicaDone, DirectTarget,
 };
@@ -211,6 +212,9 @@ pub enum NativeError {
     Remote(String),
     #[error("read-only: {0}")]
     ReadOnly(String),
+    /// The write may or may not have happened; it was not retried.
+    #[error("outcome unknown: {0}")]
+    Unknown(String),
 }
 
 #[derive(Debug, Clone)]
@@ -302,6 +306,14 @@ impl EngineConfig {
             delta_writes: DeltaConfig::default(),
         }
     }
+}
+
+/// A command [`NativeEngine::commit_with`] proposed.
+enum Proposed {
+    /// Applied already, or there was nothing to propose.
+    Done,
+    /// In the Raft log at `index`, not necessarily applied.
+    Raft { index: u64, term: u64 },
 }
 
 /// Where the engine commits metadata.
@@ -628,6 +640,10 @@ impl NativeEngine {
             Ok(())
         };
         let target = Target::Volume(volume_id);
+        // Deltas first: they take no write lock to place their data.
+        if self.try_delta(&target, offset, data)? {
+            return Ok(());
+        }
         if self.write_aligned(&target, offset, data, in_bounds)? {
             return Ok(());
         }
@@ -995,8 +1011,32 @@ impl NativeEngine {
             return self.place_shards(scheme, payload, raw_len, content, fence, alloc);
         }
         let chunk = payload;
-        let needed = self.cfg.placement.replicas;
         let order = self.placement_order(chunk.len() as u64, |_| false);
+        let replicas = self.write_replicas(order, chunk, fence, alloc)?;
+        Ok(ExtentRef {
+            id: Uuid::new_v4().to_string(),
+            logical_offset: 0,
+            payload_len: chunk.len(),
+            raw_len,
+            checksum: checksum::sha256(chunk),
+            content,
+            replicas,
+            ec: None,
+            created_ms: now_ms(),
+            object: None,
+            delta: false,
+        })
+    }
+
+    /// Writes `chunk` to the configured number of nodes of `order` and returns the replicas.
+    fn write_replicas(
+        &self,
+        order: Vec<String>,
+        chunk: &[u8],
+        fence: u64,
+        alloc: &inflight::Lease<'_>,
+    ) -> Result<Vec<ReplicaRef>, NativeError> {
+        let needed = self.cfg.placement.replicas;
         if order.len() < needed {
             return Err(NativeError::InsufficientReplicas {
                 needed,
@@ -1037,19 +1077,50 @@ impl NativeEngine {
                 found: replicas.len(),
             });
         }
-        Ok(ExtentRef {
+        Ok(replicas)
+    }
+
+    /// Whether every device of a node takes writes of any length without padding them: only
+    /// such nodes hold deltas, since the padding of a block-aligned device would be lost.
+    fn byte_granular(&self, node_id: &str) -> bool {
+        let Ok(node) = self.node(node_id) else {
+            return false;
+        };
+        node.devices.iter().all(|d| match d.byte_granular() {
+            Ok(b) => b,
+            Err(_) => {
+                self.mark_down(node);
+                false
+            }
+        })
+    }
+
+    /// Writes a delta's bytes to plain replicas (never compressed, erasure-coded or shared).
+    /// `None` if too few nodes take byte-granular writes.
+    fn place_delta(
+        &self,
+        data: &[u8],
+        fence: u64,
+        alloc: &inflight::Lease<'_>,
+    ) -> Result<Option<ExtentRef>, NativeError> {
+        let order = self.placement_order(data.len() as u64, |n| !self.byte_granular(&n.id));
+        if order.len() < self.cfg.placement.replicas {
+            return Ok(None);
+        }
+        let replicas = self.write_replicas(order, data, fence, alloc)?;
+        Ok(Some(ExtentRef {
             id: Uuid::new_v4().to_string(),
             logical_offset: 0,
-            payload_len: chunk.len(),
-            raw_len,
-            checksum: checksum::sha256(chunk),
-            content,
+            payload_len: data.len(),
+            raw_len: 0,
+            checksum: checksum::sha256(data),
+            content: None,
             replicas,
             ec: None,
             created_ms: now_ms(),
             object: None,
-            delta: false,
-        })
+            delta: true,
+        }))
     }
 
     /// Erasure-codes `chunk` and writes each shard to its own node (in parallel); a node that
@@ -1456,6 +1527,7 @@ impl NativeEngine {
             let order = self.placement_order(data.len() as u64, |n| {
                 taken_nodes.contains(n.id.as_str())
                     || (distinct && taken_hosts.contains(n.failure_domain.host.as_str()))
+                    || (ext.delta && !self.byte_granular(&n.id))
             });
             let mut placed = None;
             let alloc = self.lease(fence)?;
@@ -1541,6 +1613,19 @@ impl NativeEngine {
                 })
                 .collect()
         })
+    }
+
+    /// A copy of the applied catalog (for tests).
+    #[doc(hidden)]
+    pub fn catalog_copy(&self) -> Result<Catalog, NativeError> {
+        self.with_catalog(Catalog::clone)
+    }
+
+    /// See [`Catalog::check_delta_invariants`] (for tests).
+    #[doc(hidden)]
+    pub fn check_delta_invariants(&self) -> Result<(), NativeError> {
+        self.with_catalog(Catalog::check_delta_invariants)?
+            .map_err(NativeError::Invalid)
     }
 
     /// Current per-node health.
@@ -2030,6 +2115,46 @@ impl NativeEngine {
         Ok(out)
     }
 
+    /// Builds a command from the catalog it will apply on (under Raft, the applied one plus
+    /// every entry proposed so far) and proposes it in `term`, with nothing in between.
+    /// `build` returning `None` proposes nothing.
+    fn commit_with(
+        &self,
+        term: u64,
+        build: impl FnOnce(&Catalog) -> Option<MetaCommand>,
+    ) -> Result<Proposed, NativeError> {
+        match &self.meta {
+            Meta::Local {
+                catalog,
+                wal,
+                store,
+            } => {
+                let mut wal = wal.lock().map_err(|_| NativeError::Poisoned("wal"))?;
+                let mut c = catalog
+                    .write()
+                    .map_err(|_| NativeError::Poisoned("catalog"))?;
+                if let Some(command) = build(&c) {
+                    self.commit_local(&mut c, &mut wal, store, command)?;
+                }
+                Ok(Proposed::Done)
+            }
+            Meta::Raft { server, .. } => Ok(match server.propose_with(term, build)? {
+                Some(index) => Proposed::Raft { index, term },
+                None => Proposed::Done,
+            }),
+        }
+    }
+
+    /// Waits for what [`Self::commit_with`] proposed to apply.
+    fn await_commit(&self, proposed: Proposed) -> Result<(), NativeError> {
+        if let (Meta::Raft { server, timeout }, Proposed::Raft { index, term }) =
+            (&self.meta, proposed)
+        {
+            server.wait_applied(index, term, *timeout)?;
+        }
+        Ok(())
+    }
+
     /// `fence` is the term data was written under; a Raft proposal is refused if leadership
     /// moved to another term since.
     fn commit(&self, command: MetaCommand, fence: Option<u64>) -> Result<(), NativeError> {
@@ -2051,6 +2176,17 @@ impl NativeEngine {
         let mut c = catalog
             .write()
             .map_err(|_| NativeError::Poisoned("catalog"))?;
+        self.commit_local(&mut c, &mut wal, store, command)
+    }
+
+    /// Applies `command` to the local catalog and logs it, with both locks held.
+    fn commit_local(
+        &self,
+        c: &mut Catalog,
+        wal: &mut Wal,
+        store: &CatalogStore,
+        command: MetaCommand,
+    ) -> Result<(), NativeError> {
         let index = wal.last_index() + 1;
         let term = c.current_term.max(1);
         let rec = WalRecord {
@@ -2081,7 +2217,7 @@ impl NativeEngine {
         }
         if self.cfg.wal_compact_after > 0 && wal.len() >= self.cfg.wal_compact_after {
             // Once the store durably covers `index`, every record up to it is redundant.
-            store.checkpoint(&mut c)?;
+            store.checkpoint(c)?;
             wal.compact_through(index)?;
         }
         Ok(())

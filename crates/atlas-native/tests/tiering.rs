@@ -138,8 +138,11 @@ fn overwrites_go_to_the_data_nodes_and_gc_deletes_dead_objects() {
     data[EXTENT..].copy_from_slice(&fresh);
     assert_eq!(e.read(&v, 0, data.len()).unwrap(), data);
 
+    // With delta writes on, the partial overwrite is a delta until folded.
+    let deltas = e.fold_all_deltas().unwrap() as u64;
+    assert_eq!(e.read(&v, 0, data.len()).unwrap(), data);
     let gc = e.gc_once().unwrap();
-    assert_eq!(gc.reclaimed, 2);
+    assert_eq!(gc.reclaimed, 2 + deltas);
     assert_eq!(objects(&store), 0, "both tiered extents are dead");
     assert_eq!(metric(&e, "atlas_native_tiered_extents"), 0);
 }
