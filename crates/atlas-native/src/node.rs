@@ -1146,6 +1146,16 @@ fn read_range(sh: &NodeShared, req: &Request) -> Result<(u64, usize), Response> 
     Ok((offset, len as usize))
 }
 
+/// Runs the engine's read barrier before a block data read, on any replica, unless the request
+/// opts out with `?stale=1`: waits until this replica has applied everything committed before
+/// the request (503 if no leader answers).
+fn catch_up(req: &Request, e: &NativeEngine) -> Result<(), NativeError> {
+    if req.query.contains_key("stale") {
+        return Ok(());
+    }
+    e.read_barrier()
+}
+
 /// `{"voters": {"<id>": "<raft host:port>", ...}}`: the complete new voter set. Each group's
 /// leader applies it to its group: this node changes the groups it leads, skips those already
 /// there, and answers 421 while another node's groups still need it, so a client repeating the
@@ -1367,7 +1377,10 @@ fn volume_route(sh: &NodeShared, req: &Request, segs: &[&str]) -> Response {
                 Err(r) => return r,
             };
             volume_engine(sh, id)
-                .and_then(|e| e.read(id, offset, len))
+                .and_then(|e| {
+                    catch_up(req, e)?;
+                    e.read(id, offset, len)
+                })
                 .map(|b| Response::bytes(200, b))
         }
         ("POST", ["v1", "volumes", id, "snapshots"]) => {
@@ -1439,7 +1452,10 @@ fn volume_route(sh: &NodeShared, req: &Request, segs: &[&str]) -> Response {
                 Err(r) => return r,
             };
             snapshot_engine(sh, id)
-                .and_then(|e| e.read_snapshot(id, offset, len))
+                .and_then(|e| {
+                    catch_up(req, e)?;
+                    e.read_snapshot(id, offset, len)
+                })
                 .map(|b| Response::bytes(200, b))
         }
         ("POST", ["v1", "repair"]) => repair_all(sh).map(|st| Response::json(200, &json!(st))),

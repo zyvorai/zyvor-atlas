@@ -16,7 +16,14 @@ client, and "Atlas gateway" below for how the gateway drives it.
   for them (and their TLS server name).
 - **Metadata replicas** form one Raft group (3 or 5 voters), or several sharing the same voters
   (`metadata.groups`), and all list the same `data_nodes`.
-  Only the leader accepts mutations; any replica serves reads from its applied state.
+  Only the leader accepts mutations. Block data reads (`GET .../data` on a volume or snapshot) are
+  answered by any replica after a read barrier, so they include every write completed before the
+  request; a replica that cannot reach a leader answers 503. `?stale=1` skips the barrier and
+  returns whatever the replica has applied, which can be arbitrarily old (a restarted replica starts
+  from its last checkpoint). The volume list (`GET /v1/volumes`) has no barrier. The barrier has one
+  known hole: a leader holds a read lease granted by the check-quorum round, so a leader that was
+  just partitioned can answer for up to a quarter of the election timeout after its successor has
+  committed writes.
 
 A typical small cluster runs metadata and data roles on the same three hosts, or three metadata
 nodes plus N data nodes. `replicas` must not exceed the number of data nodes; with one spare data
@@ -231,7 +238,7 @@ leading the group; resubmit them to the new leader. `GET /v1/transfers/{id}` rep
 | `DELETE /v1/volumes/{id}` | yes | 204. |
 | `POST /v1/volumes/{id}/resize` | yes | `{"size_bytes": N}` → 200. Grow only; a smaller size gets 409 (it would drop written data). |
 | `PUT /v1/volumes/{id}/data?offset=N` | yes | Raw body written at any `offset` → 204. Extents sit on a fixed `extent_bytes` grid; a write covering part of an extent rewrites that extent with the old bytes merged in. |
-| `GET /v1/volumes/{id}/data?offset=N&len=M` | yes | Raw bytes from any range within the volume, across extents; never-written bytes read as zeros. `len` above `max_request_bytes` gets 413. |
+| `GET /v1/volumes/{id}/data?offset=N&len=M` | yes | Raw bytes from any range within the volume, across extents; never-written bytes read as zeros. `len` above `max_request_bytes` gets 413. Runs a read barrier first (503 without a reachable leader) unless `&stale=1`. |
 | `POST /v1/volumes/{id}/snapshots` | yes | `{"name": "...", "id"?: "..."}` → 201 `{"id": "..."}` (`id` as for volumes). |
 | `POST /v1/snapshots/{id}/clone` | yes | `{"name": "...", "size_bytes"?: N, "id"?: "..."}` → 201 `{"id": "..."}`: a new volume sharing the snapshot's extents (copy-on-write; it survives deleting the snapshot and its source). `size_bytes` defaults to the snapshot's size and may only be larger. |
 | `DELETE /v1/snapshots/{id}` | yes | 204. |
