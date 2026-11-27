@@ -65,6 +65,11 @@ disk_sectors() { awk -v d="$DISK" '$3 == d {print $6, $10}' /proc/diskstats; } #
 # Drop the page cache of this system's own server files (never the whole host's).
 evict() {
   inct sh -c 'sync -f /srv/bench && find /srv/bench -type f -size +0 -exec sh -c '\''for f; do dd if="$f" iflag=nocache count=0 status=none || true; done'\'' sh {} +'
+  # BlueStore and the MDS also cache inside their own processes, which fadvise cannot reach.
+  if [ "$SYSTEM" = ceph ]; then
+    inct timeout 120 ceph tell 'osd.*' cache drop >>"$OUT/cache-drop.log" 2>&1 ||
+      echo "WARNING: OSD cache drop failed; Ceph reads may be warm" | tee -a "$OUT/env.txt" >&2
+  fi
 }
 
 FAILED=0
@@ -139,6 +144,10 @@ fio_run verify 1 0 --directory="$DIR" --filename=verify.dat --size=128m --rw=ran
   --numjobs=1 --verify=crc32c --verify_fatal=1 --do_verify=1
 
 inct du -sk /srv/bench >"$OUT/space.txt" || true
+# Ceph's OSD files are preallocated, so du says nothing about its usage: ask the cluster as well.
+if [ "$SYSTEM" = ceph ]; then
+  inct timeout 60 ceph df >>"$OUT/space.txt" || true
+fi
 {
   echo "end=$(date -Is)"
   echo "loadavg_end=$(cat /proc/loadavg)"
