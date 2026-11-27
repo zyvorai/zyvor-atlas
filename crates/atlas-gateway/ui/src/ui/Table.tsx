@@ -111,7 +111,13 @@ export function Table<T>({
     const allSelected = selectable && allKeys.length > 0 && allKeys.every((k) => selected?.has(k));
 
     return (
-      <div className="overflow-x-auto">
+      // A wide table scrolls sideways on narrow screens, so the scroller must take keyboard focus.
+      <div
+        className="overflow-x-auto"
+        role="region"
+        tabIndex={0}
+        aria-label={typeof panelTitle === "string" ? `${panelTitle} table` : "Data table"}
+      >
         <table className={soundings ? "at-tbl" : "ztable"}>
           <thead>
             <tr>
