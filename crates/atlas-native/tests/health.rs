@@ -273,6 +273,7 @@ fn replace_replica_rejects_invalid_moves() {
                 ec: None,
                 created_ms: 0,
                 object: None,
+                delta: false,
             },
         },
     )

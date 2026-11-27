@@ -476,6 +476,7 @@ impl NativeEngine {
                 ec: None,
                 created_ms: now_ms(),
                 object: None,
+                delta: false,
             });
         }
         let target = Target::File {

@@ -598,7 +598,7 @@ impl NativeEngine {
     ) -> Result<Vec<u8>, NativeError> {
         let (extents, len) = self.with_fs(fs, |c, f| {
             let inode = f.inode(ino)?;
-            let InodeKind::File { size, extents } = &inode.kind else {
+            let InodeKind::File { size, extents, .. } = &inode.kind else {
                 return Err(NativeError::Invalid(format!(
                     "inode {ino} is not a regular file"
                 )));
@@ -625,7 +625,7 @@ impl NativeEngine {
     ) -> Result<FileLayout, NativeError> {
         let (extents, len, size) = self.with_fs(fs, |c, f| {
             let inode = f.inode(ino)?;
-            let InodeKind::File { size, extents } = &inode.kind else {
+            let InodeKind::File { size, extents, .. } = &inode.kind else {
                 return Err(NativeError::Invalid(format!(
                     "inode {ino} is not a regular file"
                 )));

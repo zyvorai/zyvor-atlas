@@ -26,7 +26,7 @@ use crate::{
     inodes::{DirEntries, InodeTable},
     leases::Leases,
     membership::Membership,
-    metadata::{Catalog, SnapshotId},
+    metadata::{Catalog, DeltaCell, SnapshotId},
     namespace::{FsId, FsMeta, FsQuota, FsUsage, Inode, InodeKind, ReplicaState},
     tracked::Tracked,
 };
@@ -51,6 +51,11 @@ struct StateRef<'a> {
     membership: &'a Option<Membership>,
     raft_addrs: &'a BTreeMap<String, String>,
     leases: &'a Leases,
+    #[serde(
+        skip_serializing_if = "BTreeMap::is_empty",
+        serialize_with = "crate::metadata::dirty_cells::serialize"
+    )]
+    dirty: &'a BTreeMap<DeltaCell, u32>,
 }
 
 #[derive(Deserialize)]
@@ -62,6 +67,8 @@ struct State {
     raft_addrs: BTreeMap<String, String>,
     #[serde(default)]
     leases: Leases,
+    #[serde(default, with = "crate::metadata::dirty_cells")]
+    dirty: BTreeMap<DeltaCell, u32>,
 }
 
 /// A filesystem without its inodes, which have records of their own.
@@ -116,6 +123,7 @@ pub fn load_checkpoint(root: &Path, store: &CatalogStore) -> io::Result<Catalog>
         None => Catalog::default(),
     };
     c.fill_usage().map_err(io::Error::other)?;
+    c.fill_delta_totals();
     Ok(c)
 }
 
@@ -222,6 +230,7 @@ impl CatalogStore {
             membership: state.membership,
             raft_addrs: state.raft_addrs,
             leases: state.leases,
+            dirty: state.dirty,
             ..Catalog::default()
         };
         c.volumes = read_table(&tx, VOLUMES)?;
@@ -355,6 +364,7 @@ fn write_state(tx: &WriteTransaction, c: &Catalog) -> io::Result<()> {
         membership: &c.membership,
         raft_addrs: &c.raft_addrs,
         leases: &c.leases,
+        dirty: &c.dirty,
     })?;
     tx.open_table(STATE)
         .map_err(err)?
@@ -768,6 +778,7 @@ mod tests {
             ec: None,
             created_ms: 0,
             object: None,
+            delta: false,
         }
     }
 

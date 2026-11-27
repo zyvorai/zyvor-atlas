@@ -14,7 +14,7 @@ use super::{
 };
 use crate::{
     inodes::DirEntries,
-    metadata::{Catalog, ExtentId, MetaError, SnapshotId},
+    metadata::{Catalog, DeltaRef, DeltaTarget, ExtentId, MetaError, SnapshotId},
 };
 
 fn invalid(msg: String) -> MetaError {
@@ -96,7 +96,7 @@ impl Catalog {
         self.filesystems.insert(fs.to_string(), fresh);
         self.leases.forget_fs(fs);
         for inode in &old {
-            self.drop_inode(inode, gc)?;
+            self.drop_inode(fs, inode, gc)?;
         }
         Ok(())
     }
@@ -215,6 +215,8 @@ impl Catalog {
             self.discard_partial(fs, gc)?;
         }
         let mut dropped: Vec<ExtentId> = Vec::new();
+        // Delta lists of cells this increment cuts or clears: (inode, cell, list).
+        let mut stale: Vec<(u64, u64, Vec<DeltaRef>)> = Vec::new();
         let mut gone: Vec<Inode> = Vec::new();
         let mut file_bytes: i128 = 0;
         {
@@ -231,12 +233,19 @@ impl Catalog {
                         i.ctime_ns = n.ctime_ns;
                         i.xattrs = n.xattrs.clone();
                         match &mut i.kind {
-                            InodeKind::File { size, extents } => {
+                            InodeKind::File {
+                                size,
+                                extents,
+                                deltas,
+                            } => {
                                 if n.size < *size {
                                     dropped.extend(extents.split_off(&n.size).into_values());
+                                    let cut = deltas.split_off(&n.size);
+                                    stale.extend(cut.into_iter().map(|(c, l)| (n.ino, c, l)));
                                 }
                                 for h in &n.holes {
                                     dropped.extend(extents.remove(h));
+                                    stale.extend(deltas.remove(h).map(|l| (n.ino, *h, l)));
                                 }
                                 file_bytes += i128::from(n.size) - i128::from(*size);
                                 *size = n.size;
@@ -253,6 +262,7 @@ impl Catalog {
                             NodeType::File => InodeKind::File {
                                 size: n.size,
                                 extents: BTreeMap::new(),
+                                deltas: BTreeMap::new(),
                             },
                             NodeType::Dir => InodeKind::Dir {
                                 parent: n.parent,
@@ -302,9 +312,16 @@ impl Catalog {
         for e in &dropped {
             self.dec_ref(e, gc)?;
         }
+        for (ino, cell, list) in stale {
+            let target = DeltaTarget::File {
+                fs: fs.to_string(),
+                ino,
+            };
+            self.drop_deltas(target, cell, list, gc)?;
+        }
         for inode in &gone {
             self.forget_usage(fs, inode);
-            self.drop_inode(inode, gc)?;
+            self.drop_inode(fs, inode, gc)?;
         }
         Ok(())
     }
@@ -424,7 +441,7 @@ impl Catalog {
         self.filesystems.insert(fs.to_string(), tree);
         self.leases.forget_fs(fs);
         for inode in &old {
-            self.drop_inode(inode, gc)?;
+            self.drop_inode(fs, inode, gc)?;
         }
         Ok(())
     }

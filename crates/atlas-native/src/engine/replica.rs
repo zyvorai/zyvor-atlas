@@ -65,10 +65,12 @@ fn same(a: &Inode, b: &Inode) -> bool {
             InodeKind::File {
                 size: sa,
                 extents: ea,
+                ..
             },
             InodeKind::File {
                 size: sb,
                 extents: eb,
+                ..
             },
         ) => sa == sb && ea == eb,
         (InodeKind::Dir { parent: pa, .. }, InodeKind::Dir { parent: pb, .. }) => pa == pb,
@@ -130,7 +132,7 @@ fn diff_inode(c: &Catalog, old: Option<&Inode>, new: &Inode) -> Option<DiffInode
     };
     let mut data = Vec::new();
     match &new.kind {
-        InodeKind::File { size, extents } => {
+        InodeKind::File { size, extents, .. } => {
             r.size = *size;
             let before = match old.map(|o| &o.kind) {
                 Some(InodeKind::File { extents, .. }) => Some(extents),
@@ -419,7 +421,7 @@ mod tests {
                     payload_len: len,
                     raw_len: 0,
                     checksum: [0; 32],
-                content: None,
+                    content: None,
                     replicas: vec![ReplicaRef {
                         node_id: "n".into(),
                         device_index: 0,
@@ -428,6 +430,7 @@ mod tests {
                     ec: None,
                     created_ms: 0,
                     object: None,
+                    delta: false,
                 },
                 size: off + len as u64,
                 now_ns,

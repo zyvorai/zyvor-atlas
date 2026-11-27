@@ -13,6 +13,10 @@ use crate::{
     tracked::Tracked,
 };
 
+mod delta;
+pub(crate) use delta::{device_cost, dirty_cells};
+pub use delta::{DeltaCell, DeltaItem, DeltaMap, DeltaRef, DeltaTarget, DeltaTotals};
+
 pub type VolumeId = String;
 pub type SnapshotId = String;
 pub type ExtentId = String;
@@ -51,6 +55,14 @@ pub struct ExtentRef {
     /// The object holding the whole extent once it is tiered; it then has no replicas.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub object: Option<String>,
+    /// Holds only the bytes of one small overwrite, laid over a cell's base extent. Deltas are
+    /// always plain replicas: never erasure-coded, tiered, compressed or deduplicated.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub delta: bool,
+}
+
+fn is_false(v: &bool) -> bool {
+    !*v
 }
 
 fn is_zero(v: &u64) -> bool {
@@ -115,6 +127,9 @@ pub struct VolumeMeta {
     pub name: String,
     pub size_bytes: u64,
     pub extents: BTreeMap<u64, ExtentId>,
+    /// Small overwrites not yet folded into their cell's extent, oldest first.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub deltas: DeltaMap,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -163,6 +178,16 @@ pub struct Catalog {
     /// Client sessions and the file locks they hold.
     #[serde(default, skip_serializing_if = "leases_empty")]
     pub leases: Leases,
+    /// Every cell with pending deltas, and how many it has.
+    #[serde(
+        default,
+        skip_serializing_if = "BTreeMap::is_empty",
+        with = "delta::dirty_cells"
+    )]
+    pub dirty: BTreeMap<DeltaCell, u32>,
+    /// Device bytes held by deltas and dead extents ([`Catalog::fill_delta_totals`]).
+    #[serde(skip)]
+    pub delta_totals: DeltaTotals,
     /// Whether the catalog store holds this catalog apart from the changes the maps track.
     /// False for a catalog built any other way (new, from JSON, from a Raft snapshot), which the
     /// next checkpoint writes in full.
@@ -271,6 +296,23 @@ pub enum MetaCommand {
     },
     /// Appended by a new Raft leader so entries from earlier terms can be committed.
     Noop,
+    /// Small overwrites of volumes, applied all or none ([`FsOp::AppendDeltas`] is the file
+    /// one). Like the two commands below it, proposed only once every metadata node decodes it.
+    AppendDeltas {
+        items: Vec<DeltaItem>,
+    },
+    /// Replaces a cell's base extent with one that includes the `consumed` deltas, if the base is
+    /// still `base` and `consumed` still starts the cell's delta list.
+    FoldCell {
+        cell: DeltaCell,
+        base: ExtentId,
+        consumed: Vec<ExtentId>,
+        extent: ExtentRef,
+    },
+    /// [`MetaCommand::MarkExtentReclaimed`] for several extents, applied all or none.
+    ReclaimExtents {
+        extent_ids: Vec<ExtentId>,
+    },
 }
 
 fn leases_empty(l: &Leases) -> bool {
@@ -303,6 +345,9 @@ pub enum MetaError {
     Quota(String),
     #[error("read-only: {0}")]
     ReadOnly(String),
+    /// Pending delta writes have to be folded first: asking again will succeed.
+    #[error("busy: {0}")]
+    Busy(String),
     /// Session ids are never echoed: one lets its holder renew the session or drop its locks.
     #[error("no such session (expired or closed)")]
     NoSession,
@@ -357,6 +402,7 @@ impl Catalog {
                         name: name.clone(),
                         size_bytes: *size_bytes,
                         extents: BTreeMap::new(),
+                        deltas: BTreeMap::new(),
                     },
                 );
             }
@@ -366,16 +412,25 @@ impl Catalog {
                 extent,
             } => {
                 extent.check()?;
-                let old = {
+                let (old, stale) = {
                     let vol = self
                         .volumes
                         .get_mut(volume_id)
                         .ok_or_else(|| MetaError::NotFound(volume_id.clone()))?;
-                    vol.extents.insert(*logical_offset, extent.id.clone())
+                    (
+                        vol.extents.insert(*logical_offset, extent.id.clone()),
+                        vol.deltas.remove(logical_offset),
+                    )
                 };
                 self.add_extent_ref(extent);
                 if let Some(old_id) = old {
                     self.dec_ref(&old_id, &mut gc_candidates)?;
+                }
+                if let Some(list) = stale {
+                    let target = DeltaTarget::Volume {
+                        id: volume_id.clone(),
+                    };
+                    self.drop_deltas(target, *logical_offset, list, &mut gc_candidates)?;
                 }
             }
             MetaCommand::InstallExtents {
@@ -387,21 +442,35 @@ impl Catalog {
                     e.check()?;
                 }
                 self.check_shared(shared, extents)?;
-                let old: Vec<ExtentId> = {
+                let (old, stale) = {
                     let vol = self
                         .volumes
                         .get_mut(volume_id)
                         .ok_or_else(|| MetaError::NotFound(volume_id.clone()))?;
-                    extents
+                    let old: Vec<ExtentId> = extents
                         .iter()
                         .filter_map(|e| vol.extents.insert(e.logical_offset, e.id.clone()))
-                        .collect()
+                        .collect();
+                    let stale: Vec<(u64, Vec<DeltaRef>)> = extents
+                        .iter()
+                        .filter_map(|e| {
+                            let at = e.logical_offset;
+                            vol.deltas.remove(&at).map(|list| (at, list))
+                        })
+                        .collect();
+                    (old, stale)
                 };
                 for e in extents {
                     self.add_extent_ref(e);
                 }
                 for old_id in old {
                     self.dec_ref(&old_id, &mut gc_candidates)?;
+                }
+                for (cell, list) in stale {
+                    let target = DeltaTarget::Volume {
+                        id: volume_id.clone(),
+                    };
+                    self.drop_deltas(target, cell, list, &mut gc_candidates)?;
                 }
             }
             MetaCommand::CreateSnapshot {
@@ -414,6 +483,13 @@ impl Catalog {
                         return self.applied(term, index, gc_candidates);
                     }
                     return Err(MetaError::Invalid(format!("snapshot {id} already exists")));
+                }
+                // After the retry check above: a snapshot already taken stays a success
+                // whatever is pending now.
+                if self.volume_is_dirty(volume_id) {
+                    return Err(MetaError::Busy(format!(
+                        "volume {volume_id} has pending deltas"
+                    )));
                 }
                 let vol = self
                     .volumes
@@ -495,6 +571,12 @@ impl Catalog {
                 for eid in v.extents.values() {
                     self.dec_ref(eid, &mut gc_candidates)?;
                 }
+                for (cell, list) in v.deltas {
+                    let target = DeltaTarget::Volume {
+                        id: volume_id.clone(),
+                    };
+                    self.drop_deltas(target, cell, list, &mut gc_candidates)?;
+                }
             }
             MetaCommand::ResizeVolume {
                 volume_id,
@@ -554,26 +636,13 @@ impl Catalog {
                         name: name.clone(),
                         size_bytes: size,
                         extents: s.extents,
+                        deltas: BTreeMap::new(),
                     },
                 );
             }
             MetaCommand::MarkExtentReclaimed { extent_id } => {
-                let e = self
-                    .extents
-                    .get(extent_id)
-                    .ok_or_else(|| MetaError::NotFound(extent_id.clone()))?;
-                if e.refs != 0 {
-                    return Err(MetaError::Invalid(format!(
-                        "extent {extent_id} still has {} refs",
-                        e.refs
-                    )));
-                }
-                let e = self.extents.remove(extent_id).expect("checked above");
-                for r in &e.extent.replicas {
-                    self.free
-                        .release(&r.node_id, r.device_index, r.offset, e.extent.stored_len())
-                        .map_err(MetaError::Invalid)?;
-                }
+                self.check_reclaim(extent_id)?;
+                self.reclaim_extent(extent_id)?;
             }
             MetaCommand::TierExtent {
                 extent_id,
@@ -589,15 +658,25 @@ impl Catalog {
                         "extent {extent_id} is already tiered"
                     )));
                 }
+                if e.extent.delta {
+                    return Err(MetaError::Invalid(format!(
+                        "extent {extent_id} is a delta and stays on the data nodes"
+                    )));
+                }
                 if &e.extent.replicas != replicas || replicas.is_empty() {
                     return Err(MetaError::Invalid(format!(
                         "extent {extent_id} changed before it could be tiered"
                     )));
                 }
                 let len = e.extent.stored_len();
+                let (dead, cost) = (e.refs == 0, device_cost(&e.extent));
                 let old = std::mem::take(&mut e.extent.replicas);
                 e.extent.ec = None;
                 e.extent.object = Some(key.clone());
+                if dead {
+                    self.delta_totals.dead_bytes =
+                        self.delta_totals.dead_bytes.saturating_sub(cost);
+                }
                 for r in &old {
                     self.free
                         .release(&r.node_id, r.device_index, r.offset, len)
@@ -679,6 +758,14 @@ impl Catalog {
                 })?;
             }
             MetaCommand::Noop => {}
+            MetaCommand::AppendDeltas { items } => self.append_deltas(items, true)?,
+            MetaCommand::FoldCell {
+                cell,
+                base,
+                consumed,
+                extent,
+            } => self.fold_cell(cell, base, consumed, extent, &mut gc_candidates)?,
+            MetaCommand::ReclaimExtents { extent_ids } => self.reclaim_extents(extent_ids)?,
         }
         self.applied(term, index, gc_candidates)
     }
@@ -745,7 +832,7 @@ impl Catalog {
             let live = self
                 .extents
                 .get(id)
-                .filter(|m| !m.tombstoned && m.refs > 0)
+                .filter(|m| !m.tombstoned && m.refs > 0 && !m.extent.delta)
                 .ok_or_else(|| MetaError::Invalid(format!("shared extent {id} is gone")))?;
             let same = extents.iter().any(|e| {
                 e.id == *id
@@ -771,8 +858,18 @@ impl Catalog {
             }
         }
         if let Some(e) = self.extents.get_mut(&extent.id) {
+            if e.refs == 0 {
+                self.delta_totals.dead_bytes = self
+                    .delta_totals
+                    .dead_bytes
+                    .saturating_sub(device_cost(&e.extent));
+            }
             e.refs += 1;
         } else {
+            if extent.delta {
+                self.delta_totals.pending += 1;
+                self.delta_totals.pending_bytes += device_cost(extent);
+            }
             self.extents.insert(
                 extent.id.clone(),
                 ExtentMeta {
@@ -800,6 +897,13 @@ impl Catalog {
         }
         e.refs -= 1;
         if e.refs == 0 {
+            let cost = device_cost(&e.extent);
+            if e.extent.delta {
+                self.delta_totals.pending = self.delta_totals.pending.saturating_sub(1);
+                self.delta_totals.pending_bytes =
+                    self.delta_totals.pending_bytes.saturating_sub(cost);
+            }
+            self.delta_totals.dead_bytes += cost;
             gc.push(extent_id.to_string());
         }
         Ok(())

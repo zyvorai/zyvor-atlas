@@ -198,6 +198,7 @@ fn a_share_of_a_missing_or_changed_extent_is_rejected_by_the_catalog() {
         ec: None,
         created_ms: 0,
         object: None,
+        delta: false,
     };
     let mut c = Catalog::default();
     c.apply(

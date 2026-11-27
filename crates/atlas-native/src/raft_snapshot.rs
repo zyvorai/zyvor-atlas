@@ -95,6 +95,8 @@ impl Outgoing {
                 .collect(),
             fs_snapshots: catalog.fs_snapshots.clone(),
             leases: catalog.leases.clone(),
+            dirty: catalog.dirty.clone(),
+            delta_totals: Default::default(),
             in_store: false,
         };
         Self {
@@ -338,6 +340,7 @@ mod tests {
                 ec: None,
                 created_ms: 0,
                 object: None,
+                delta: false,
             });
         }
         // Paged on the leader's store, with some changes on top of it.

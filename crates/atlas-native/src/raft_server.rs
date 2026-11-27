@@ -1263,6 +1263,7 @@ mod tests {
                 name: "v".into(),
                 size_bytes: 8192,
                 extents: [(4096, "e1".to_string())].into(),
+                deltas: Default::default(),
             },
         );
         let snap = Envelope {

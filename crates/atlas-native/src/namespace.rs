@@ -13,7 +13,9 @@ use std::{collections::BTreeMap, sync::Arc};
 use crate::{
     acl::{self, Acl},
     inodes::{DirEntries, InodeTable},
-    metadata::{Catalog, ExtentId, ExtentRef, MetaError, SnapshotId},
+    metadata::{
+        Catalog, DeltaItem, DeltaMap, DeltaTarget, ExtentId, ExtentRef, MetaError, SnapshotId,
+    },
 };
 
 mod replica;
@@ -177,6 +179,9 @@ pub enum InodeKind {
     File {
         size: u64,
         extents: BTreeMap<u64, ExtentId>,
+        /// Small overwrites not yet folded into their cell's extent, oldest first.
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        deltas: DeltaMap,
     },
     Symlink {
         target: String,
@@ -412,6 +417,11 @@ pub enum FsOp {
         snapshot: SnapshotId,
         base: SnapshotId,
     },
+    /// Small overwrites of files, applied all or none. The volume one is
+    /// [`crate::metadata::MetaCommand::AppendDeltas`].
+    AppendDeltas {
+        items: Vec<DeltaItem>,
+    },
 }
 
 fn is_false(b: &bool) -> bool {
@@ -419,8 +429,8 @@ fn is_false(b: &bool) -> bool {
 }
 
 impl FsOp {
-    /// The filesystem a client change applies to; replicas refuse these.
-    fn client_change(&self) -> Option<&str> {
+    /// The filesystems a client change applies to; replicas refuse these.
+    fn client_change(&self) -> Vec<&str> {
         match self {
             FsOp::Mknode { fs, .. }
             | FsOp::Link { fs, .. }
@@ -435,8 +445,15 @@ impl FsOp {
             }
             | FsOp::InstallFileExtents {
                 fs, replica: false, ..
-            } => Some(fs),
-            _ => None,
+            } => vec![fs],
+            FsOp::AppendDeltas { items } => items
+                .iter()
+                .filter_map(|i| match &i.target {
+                    DeltaTarget::File { fs, .. } => Some(fs.as_str()),
+                    DeltaTarget::Volume { .. } => None,
+                })
+                .collect(),
+            _ => Vec::new(),
         }
     }
 }
@@ -487,7 +504,7 @@ impl Inode {
         }
     }
 
-    fn touch(&mut self, now_ns: i64) {
+    pub(crate) fn touch(&mut self, now_ns: i64) {
         self.mtime_ns = now_ns;
         self.ctime_ns = now_ns;
     }
@@ -500,7 +517,7 @@ impl FsMeta {
             .ok_or_else(|| MetaError::NotFound(format!("inode {ino} in filesystem {}", self.id)))
     }
 
-    fn inode_mut(&mut self, ino: u64) -> Result<&mut Inode, MetaError> {
+    pub(crate) fn inode_mut(&mut self, ino: u64) -> Result<&mut Inode, MetaError> {
         let id = &self.id;
         self.inodes
             .get_mut(ino)?
@@ -677,16 +694,33 @@ impl Catalog {
             .ok_or_else(|| MetaError::NotFound(format!("snapshot {snap} of filesystem {fs}")))
     }
 
-    fn fs_mut(&mut self, fs: &str) -> Result<&mut FsMeta, MetaError> {
+    pub(crate) fn fs_mut(&mut self, fs: &str) -> Result<&mut FsMeta, MetaError> {
         self.filesystems
             .get_mut(fs)
             .ok_or_else(|| MetaError::NotFound(format!("filesystem {fs}")))
     }
 
-    fn drop_inode(&mut self, inode: &Inode, gc: &mut Vec<ExtentId>) -> Result<(), MetaError> {
-        if let InodeKind::File { extents, .. } = &inode.kind {
+    /// Releases the data of an inode that left the live tree or a snapshot tree of `fs` (a
+    /// snapshot's inodes hold no deltas).
+    fn drop_inode(
+        &mut self,
+        fs: &str,
+        inode: &Inode,
+        gc: &mut Vec<ExtentId>,
+    ) -> Result<(), MetaError> {
+        if let InodeKind::File {
+            extents, deltas, ..
+        } = &inode.kind
+        {
             for eid in extents.values() {
                 self.dec_ref(eid, gc)?;
+            }
+            for (cell, list) in deltas {
+                let target = DeltaTarget::File {
+                    fs: fs.to_string(),
+                    ino: inode.ino,
+                };
+                self.drop_deltas(target, *cell, list.clone(), gc)?;
             }
         }
         Ok(())
@@ -744,7 +778,7 @@ impl Catalog {
 
     /// Takes a file about to be dropped out of its filesystem's usage.
     fn forget_usage(&mut self, fs: &str, inode: &Inode) {
-        let InodeKind::File { size, extents } = &inode.kind else {
+        let InodeKind::File { size, extents, .. } = &inode.kind else {
             return;
         };
         let used: u64 = extents.values().map(|e| self.extent_len(e)).sum();
@@ -795,7 +829,7 @@ impl Catalog {
     }
 
     pub(crate) fn apply_fs(&mut self, op: &FsOp, gc: &mut Vec<ExtentId>) -> Result<(), MetaError> {
-        if let Some(fs) = op.client_change() {
+        for fs in op.client_change() {
             if self
                 .filesystems
                 .get(fs)
@@ -866,7 +900,7 @@ impl Catalog {
                 self.filesystems.remove(fs);
                 self.leases.forget_fs(fs);
                 for inode in &all {
-                    self.drop_inode(inode, gc)?;
+                    self.drop_inode(fs, inode, gc)?;
                 }
             }
             FsOp::Mknode {
@@ -897,6 +931,7 @@ impl Catalog {
                     NodeType::File => InodeKind::File {
                         size: 0,
                         extents: BTreeMap::new(),
+                        deltas: BTreeMap::new(),
                     },
                     NodeType::Dir => InodeKind::Dir {
                         parent: *parent,
@@ -969,7 +1004,7 @@ impl Catalog {
                 f.dir_changed(*parent, 0, *now_ns)?;
                 if let Some(gone) = f.drop_link(ino, *now_ns)? {
                     self.forget_usage(fs, &gone);
-                    self.drop_inode(&gone, gc)?;
+                    self.drop_inode(fs, &gone, gc)?;
                 }
             }
             FsOp::Rmdir {
@@ -1051,7 +1086,7 @@ impl Catalog {
                 }
                 if let Some(gone) = dropped {
                     self.forget_usage(fs, &gone);
-                    self.drop_inode(&gone, gc)?;
+                    self.drop_inode(fs, &gone, gc)?;
                 }
             }
             FsOp::SetAttr {
@@ -1060,6 +1095,9 @@ impl Catalog {
                 attr,
                 now_ns,
             } => {
+                if let Some(new_size) = attr.size {
+                    self.check_truncate(fs, *ino, new_size)?;
+                }
                 let i = self.fs_mut(fs)?.inode_mut(*ino)?;
                 // chmod rewrites the access ACL's owner, group (mask) and other entries.
                 let acl = match (attr.mode, i.xattrs.get(acl::ACCESS)) {
@@ -1071,15 +1109,22 @@ impl Catalog {
                     _ => None,
                 };
                 let mut cut = BTreeMap::new();
+                let mut cut_deltas = DeltaMap::new();
                 let mut resized = None;
                 if let Some(new_size) = attr.size {
-                    let InodeKind::File { size, extents } = &mut i.kind else {
+                    let InodeKind::File {
+                        size,
+                        extents,
+                        deltas,
+                    } = &mut i.kind
+                    else {
                         return Err(MetaError::IsDir(format!(
                             "inode {ino} is not a regular file"
                         )));
                     };
                     if new_size < *size {
                         cut = extents.split_off(&new_size);
+                        cut_deltas = deltas.split_off(&new_size);
                     }
                     if new_size != *size {
                         resized = Some((*size, new_size));
@@ -1115,6 +1160,13 @@ impl Catalog {
                 }
                 for eid in cut.values() {
                     self.dec_ref(eid, gc)?;
+                }
+                for (cell, list) in cut_deltas {
+                    let target = DeltaTarget::File {
+                        fs: fs.clone(),
+                        ino: *ino,
+                    };
+                    self.drop_deltas(target, cell, list, gc)?;
                 }
             }
             FsOp::SetXattr {
@@ -1207,12 +1259,18 @@ impl Catalog {
                 extent.check()?;
                 self.check_byte_quota(fs, *ino, &[(*logical_offset, extent.len() as u64)])?;
                 let i = self.fs_mut(fs)?.inode_mut(*ino)?;
-                let InodeKind::File { size, extents } = &mut i.kind else {
+                let InodeKind::File {
+                    size,
+                    extents,
+                    deltas,
+                } = &mut i.kind
+                else {
                     return Err(MetaError::IsDir(format!(
                         "inode {ino} is not a regular file"
                     )));
                 };
                 let old = extents.insert(*logical_offset, extent.id.clone());
+                let stale = deltas.remove(logical_offset);
                 let old_size = *size;
                 *size = (*size).max(*at_least);
                 let grown = *size - old_size;
@@ -1227,6 +1285,13 @@ impl Catalog {
                 }
                 if let Some(old) = old {
                     self.dec_ref(&old, gc)?;
+                }
+                if let Some(list) = stale {
+                    let target = DeltaTarget::File {
+                        fs: fs.clone(),
+                        ino: *ino,
+                    };
+                    self.drop_deltas(target, *logical_offset, list, gc)?;
                 }
             }
             FsOp::InstallFileExtents {
@@ -1248,7 +1313,12 @@ impl Catalog {
                     .collect();
                 self.check_byte_quota(fs, *ino, &lens)?;
                 let i = self.fs_mut(fs)?.inode_mut(*ino)?;
-                let InodeKind::File { size, extents } = &mut i.kind else {
+                let InodeKind::File {
+                    size,
+                    extents,
+                    deltas,
+                } = &mut i.kind
+                else {
                     return Err(MetaError::IsDir(format!(
                         "inode {ino} is not a regular file"
                     )));
@@ -1256,6 +1326,13 @@ impl Catalog {
                 let old: Vec<ExtentId> = new
                     .iter()
                     .filter_map(|e| extents.insert(e.logical_offset, e.id.clone()))
+                    .collect();
+                let stale: Vec<(u64, _)> = new
+                    .iter()
+                    .filter_map(|e| {
+                        let at = e.logical_offset;
+                        deltas.remove(&at).map(|list| (at, list))
+                    })
                     .collect();
                 let old_size = *size;
                 *size = (*size).max(*at_least);
@@ -1275,13 +1352,31 @@ impl Catalog {
                 for o in old {
                     self.dec_ref(&o, gc)?;
                 }
+                for (cell, list) in stale {
+                    let target = DeltaTarget::File {
+                        fs: fs.clone(),
+                        ino: *ino,
+                    };
+                    self.drop_deltas(target, cell, list, gc)?;
+                }
             }
             FsOp::SnapshotFs {
                 id,
                 fs,
                 name,
                 now_ns,
-            } => self.snapshot_tree(id, fs, name, *now_ns)?,
+            } => {
+                // A retry of a snapshot already taken is answered by `snapshot_tree` whatever
+                // is pending now; only a new one needs a tree without deltas. (ReplicaCommit,
+                // which changes the catalog before it takes its snapshot, is on a replica and
+                // never has any.)
+                if !self.fs_snapshots.contains_key(id) && self.fs_is_dirty(fs) {
+                    return Err(MetaError::Busy(format!(
+                        "filesystem {fs} has pending deltas"
+                    )));
+                }
+                self.snapshot_tree(id, fs, name, *now_ns)?
+            }
             FsOp::LockFsSnapshot {
                 id,
                 retain_until_unix,
@@ -1334,7 +1429,7 @@ impl Catalog {
                     .remove(id)
                     .ok_or_else(|| MetaError::NotFound(format!("filesystem snapshot {id}")))?;
                 for inode in s.tree.inodes.scan()? {
-                    self.drop_inode(&inode, gc)?;
+                    self.drop_inode(&s.fs_id, &inode, gc)?;
                 }
             }
             FsOp::CloneFs {
@@ -1405,6 +1500,7 @@ impl Catalog {
             FsOp::ReplicaDemote { fs, snapshot, base } => {
                 self.replica_demote(fs, snapshot, base, gc)?
             }
+            FsOp::AppendDeltas { items } => self.append_deltas(items, false)?,
         }
         Ok(())
     }
@@ -1532,6 +1628,7 @@ mod tests {
                 ec: None,
                 created_ms: 0,
                 object: None,
+                delta: false,
             },
             size: off + len as u64,
             now_ns: 5,

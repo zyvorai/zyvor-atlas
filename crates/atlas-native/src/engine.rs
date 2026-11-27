@@ -981,6 +981,7 @@ impl NativeEngine {
             ec: None,
             created_ms: now_ms(),
             object: None,
+            delta: false,
         })
     }
 
@@ -1053,6 +1054,7 @@ impl NativeEngine {
             ec: Some(enc.layout),
             created_ms: now_ms(),
             object: None,
+            delta: false,
         })
     }
 
