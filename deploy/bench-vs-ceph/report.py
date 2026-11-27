@@ -19,7 +19,7 @@ SECTOR = 512
 MIB = 1024 * 1024
 
 
-def side(job, name):
+def sides_of(job):
     """The fio direction(s) that carry this workload's I/O."""
     return [job[d] for d in ("read", "write") if job[d]["io_bytes"] > 0]
 
@@ -31,7 +31,7 @@ def parse(path):
         job = json.loads(text[text.index("{") :])["jobs"][0]
     except (OSError, ValueError, KeyError, IndexError):
         return None
-    sides = side(job, path.name)
+    sides = sides_of(job)
     if job.get("error") or not sides:
         return None
     busiest = max(sides, key=lambda s: s["total_ios"])
