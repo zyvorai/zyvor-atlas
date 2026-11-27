@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Provision a raw, unformatted local block device into a brand-new ZFS pool. Mirrors
 //! `routes::rook`'s create-pool shape (async job, `202 Accepted`), but this mutation is genuinely
 //! destructive (formats a disk), so it additionally requires an explicit `confirm: true`.

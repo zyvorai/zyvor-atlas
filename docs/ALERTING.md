@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Native alerting integrations
 
 The monitor worker (`crates/atlas-monitor`) evaluates alert rules every `ATLAS_MONITOR_INTERVAL_SECS`

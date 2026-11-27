@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Multi-image consistency groups (`rbd group`): one crash-consistent snapshot across several
 //! direct-RBD volumes, and rollback of all of them to it. Group snapshots stay on this cluster —
 //! rbd-mirror does not replicate them and no released Ceph has `rbd mirror group` (docs/DR.md).

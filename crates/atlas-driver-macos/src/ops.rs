@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Volume lifecycle on a Mac's **external** disks: erase a disk, add/delete an APFS volume, resize a
 //! container, eject.
 //!

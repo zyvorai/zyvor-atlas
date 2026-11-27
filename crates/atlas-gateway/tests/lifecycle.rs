@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Day-2 volume lifecycle: orphan GC surfaces backups whose source volume is gone, and per-image
 //! QoS enqueues a throttle job. Fake driver — the QoS job fails without a real `rbd`, but the
 //! enqueue contract + validation are exercised; orphan detection is pure-DB and fully verified.

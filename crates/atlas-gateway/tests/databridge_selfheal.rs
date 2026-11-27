@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Day-2 DataBridge self-heal: a stalled/errored CDC stream can be re-established. Drives a fake
 //! plan to `cdc_streaming`, forces the stream to `error`, then the restart endpoint re-establishes it
 //! (`streaming`) and bumps the restart counter. No cloud, no Kubernetes.

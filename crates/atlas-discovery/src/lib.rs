@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Discovery worker: run a driver's discovery pass and normalize it into the SQLite inventory
 //! (PDF §8.1). Emits a `storage.backend.discovered` log event on success.
 

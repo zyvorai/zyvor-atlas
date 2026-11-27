@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Ensure Secret `atlas-gateway-auth` exists in NAMESPACE with a strong jwt-secret, an optional
 # bootstrap-admin-token, and a strong admin-password (replaces the shipped Admin@321 dev default —
 # see crates/atlas-common/src/config.rs's admin_password_is_weak()/validate_for_start()).

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Smoke test of the atlas-data image and its data-ready gate with podman, no Kubernetes needed:
 #   1. start the service (loopback http, host network) and publish a tiny dataset
 #   2. reserve a job on a registered node; `gate-wait` must FAIL (timeout) while nothing is staged

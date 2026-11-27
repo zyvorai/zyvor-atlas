@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Device-space free lists. Lives inside the metadata catalog so that every allocation and release
 //! is a deterministic consequence of an applied `MetaCommand` and survives WAL replay and Raft

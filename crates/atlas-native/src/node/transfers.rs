@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Snapshot exports to and imports from object storage, run one at a time on a worker thread.
 //! A transfer runs on the leader of the group holding its snapshot (export) or volume (import)

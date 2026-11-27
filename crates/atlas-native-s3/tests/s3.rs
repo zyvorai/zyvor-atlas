@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! The S3 front end against a live in-process cluster (3 Raft metadata nodes, 3 data nodes),
 //! driven over HTTP: signed requests through Atlas's own S3 client, unsigned ones through

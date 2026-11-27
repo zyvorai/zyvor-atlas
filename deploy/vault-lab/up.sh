@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Stand up a throwaway HashiCorp Vault + External Secrets Operator (ESO) in the lab k3s cluster to
 # demonstrate the secrets-manager integration pattern a real deployment would use: secrets live in
 # Vault, ESO syncs them into a plain Kubernetes Secret via Vault's Kubernetes auth method, and

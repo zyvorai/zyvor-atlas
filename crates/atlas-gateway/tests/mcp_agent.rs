@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Agent-safety scenarios for the MCP edge: a scoped agent token (`Claims::tools`) sees and can
 //! call only its listed tools, never escalates past its role, and is refused on every non-MCP
 //! route. Scripted tool-call scenarios over the real wire protocol, no model involved.

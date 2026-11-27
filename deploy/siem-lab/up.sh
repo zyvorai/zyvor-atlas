@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Stand up a minimal HTTP log receiver in the lab k3s cluster, standing in for a SIEM's ingestion
 # endpoint, to verify ATLAS_AUDIT_EXPORT_URL (crates/atlas-monitor/src/audit_export.rs) against a
 # real network path — not just the unit test's in-process mock server. See receiver.py.

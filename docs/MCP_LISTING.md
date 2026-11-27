@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # MCP directory listings
 
 Draft text for MCP directories and awesome-lists. Nothing here has been submitted; the maintainers
@@ -7,7 +7,7 @@ decide when and where to post it. Keep claims factual: other storage vendors als
 
 ## One-line description
 
-Atlas: source-available (Zyvor Production License v1.0) storage control plane (Ceph, NFS, ZFS, Longhorn, native filesystem). MCP server with 32
+Atlas: source-available (Zyvor Production Licence v2.0) storage control plane (Ceph, NFS, ZFS, Longhorn, native filesystem). MCP server with 32
 read-only tools (inventory, Ops Advisor, eBPF I/O risk, Ceph, DR, DataBridge, jobs, audit) and two opt-in,
 audited, two-phase writes (`create_snapshot`, `ack_alert`); self-hosted, bearer-JWT auth, tenant-scoped.
 
@@ -16,7 +16,7 @@ audited, two-phase writes (`create_snapshot`, `ack_alert`); self-hosted, bearer-
 | Field | Value |
 |---|---|
 | Repository | `https://github.com/zyvorai/zyvor-atlas` |
-| Licence | Zyvor Production License v1.0 (free non-production) |
+| Licence | Zyvor Production Licence v2.0 |
 | Language | Rust |
 | Transport | streamable HTTP (`POST /api/atlas/v1/mcp` on the user's own gateway) |
 | Auth | `Authorization: Bearer <operator JWT>` (`examples/agent/mint-token.sh`) |

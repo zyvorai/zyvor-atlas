@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- RGW/S3 object buckets + backups (PDF §9.9, §16).
 
 CREATE TABLE IF NOT EXISTS storage_buckets (

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! AI data companion tools: the gateway's MCP server calling the separate `tools/atlas_data` service
 //! (immutable dataset/model revisions, data-ready gate, workspaces, cost meters; docs/AI_DATA_SERVICES.md).
 //!

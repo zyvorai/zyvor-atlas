@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! FUSE client for atlas-native filesystems (binary `atlas-native-mount`). [`ops::Ops`] holds
 //! the logic (caching, write-back, leader retry) and is tested without a kernel; the `fuse`

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Percona XtraDB Cluster CR builder for the MySQL edge target. Data lands on a Ceph RBD
 //! StorageClass; binlog is enabled by the operator image so Debezium can read it for CDC.
 

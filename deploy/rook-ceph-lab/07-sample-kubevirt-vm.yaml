@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Lab acceptance (PDF §19.1): a KubeVirt VM booting from a Ceph-backed PVC.
 # The DataVolume imports a cloud image onto zyvor-rbd-prod; the VM boots from it.
 apiVersion: cdi.kubevirt.io/v1beta1

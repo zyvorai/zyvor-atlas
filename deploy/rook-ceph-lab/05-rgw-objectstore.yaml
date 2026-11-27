@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # RGW object store (S3-compatible) + an object-bucket StorageClass for backups/exports (PDF §2, §9.9).
 apiVersion: ceph.rook.io/v1
 kind: CephObjectStore

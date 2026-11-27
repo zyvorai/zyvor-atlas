@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Changelog
 
 All notable changes to Atlas will be documented in this file.
@@ -9,8 +9,28 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Changed
+
+- Dependency pass 2: `cargo update` (ahash, const-random, crypto-common, hyper 1.13 and others) and `kube` requirement 5.0 to 5.1 (the only newer release `cargo upgrade --incompatible` found; no major bumps are available). License header fix: `crates/atlas-io/src/gpu.rs`, `crates/atlas-io/tests/gpu.rs`, `docs/GPU.md` and `CHANGELOG.md` carried the wrong SPDX identifier, so `scripts/check-license-headers.sh` failed on main.
+- Dependency upgrade pass (`cargo update` plus majors, verified with clippy `-D warnings` on the workspace with `atlas-gateway/mcp`, the gateway lib and auth/MCP/gRPC/IdP tests, and `cargo check` of `kafka-lag`):
+  - Major bumps: `jsonwebtoken` 11 to 12 (`EncodingKey::from_secret` / `DecodingKey::from_secret` now return `Result` and refuse an empty HMAC secret: the token mint and decode paths turn that into an error instead of signing with an empty key), `rdkafka` 0.39 to 0.40 (`kafka-lag` feature).
+  - `jsonwebtoken` 12 moves to the RustCrypto 0.14 line, so the `p256` 0.13 / `crypto-bigint` 0.5.5 copies are gone from `Cargo.lock`: the `RUSTSEC-2026-0387` ignore in `deny.toml` is removed. `libsqlite3-sys` is now 0.40 (via `cargo update`, fixes `RUSTSEC-2026-0459`), so that ignore is removed too. `cargo-deny` is not installed on the build host, so `cargo deny check` was not run; both removals rest on `Cargo.lock`.
+  - `mcp_idp` tests: `p256` 0.14 key generation now uses the `Generate` trait with an aliased `rand` 0.10 (`rand10`); `rsa` stays 0.9 with `rand` 0.8.
+  - Held back: `redb` stays at 4.x. The 5.0.0 bump merged on main (#416) does not compile (`Table::range` lost its type parameter, `atlas-native/src/store.rs`), and redb backs the native catalog store (an on-disk format), so it is not moved without a migration and equivalence tests; `Cargo.toml` is back to `redb = "4"` (lock 4.6.0, the previous version). `azure_core` 1.1: `azure_storage` and `azure_storage_blobs` have no release past 0.21, so the `azure-blob` feature cannot move. `fuser` 0.19: its `setattr`/`mknod`/`mkdir`/`symlink` signatures changed (owner argument), and the FUSE layer can only be proved with real kernel mounts, which this pass does not do. `rsa` 0.10 and `rand` 0.8 as dev-dependencies stay (rsa 0.10 needs a different RNG bound). `reed-solomon-simd`, `lz4_flex`, the Raft and checksum crates were not changed beyond semver-compatible patch updates in `Cargo.lock`.
+  - Dockerfiles: `rust:1.99-bookworm` to `1.100-bookworm`, refreshed digests for `node:26-alpine`, `ubuntu:26.04` and `debian:testing` (tags and digests read from the Docker Hub API). Held back: `python:3.12-slim` to 3.14 (the hash-locked requirement files were compiled for 3.12 and `uv` is not available to recompile them), `debian:bookworm-slim` to trixie (glibc and bundled client libraries need a live image test).
+  - Node: `.nvmrc` for the UI and website 22 to 24 (the UI images already build on Node 26; not run here because the host has Node 22), `scripts/ci-remote.sh` uses `node:24-bookworm-slim`.
+  - GitHub Actions: every `uses:` is already SHA-pinned at the latest major (checkout 7, setup-node 7, upload-artifact 7, build-push 7, buildx 4, login 4, cosign-installer 4, codeql-action 4, setup-go 7, dependency-review 5, deploy-pages 5, labeler 7, upload-pages-artifact 5, semantic-pull-request 6, scorecard 2); newer patch tags exist for some (checked with `git ls-remote`) and were not taken. `rustc` pin: `rust-toolchain.toml` still says 1.98.1; this pass built with the installed stable 1.100.0 because the pinned toolchain is not installed on the build host.
+  - Not upgraded (no major available or none with tests): npm packages in `crates/atlas-gateway/ui` and `website` (no newer majors); `clients/go` has no dependencies.
+
+- Gateway API front door now runs on Setura instead of Envoy Gateway: Helm values `envoy.*` became
+  `gateway.*` (default GatewayClass `setura`), `deploy/envoy-lab/` became `deploy/setura-lab/`
+  (`setura gateway install`), `deploy-remote.sh --no-envoy` became `--no-gateway`, `docs/ENVOY.md` became
+  `docs/SETURA.md`.
+
 ### Added
 
+- Read-only operations reports (`docs/REPORTS.md`, research in `docs/RESEARCH.md` round 3): `GET /snapshots/hygiene` (failed, stuck, over-retained, old, orphan and lock-expiry findings; locked or protected snapshots are never called reclaimable), `GET /tenants/quota-headroom` (usage against quota per tenant, `ok`/`warning`/`critical`/`exceeded`/`unlimited`), `GET /schedules/coverage` (volumes with no enabled schedule, stalled, disabled, orphan, low-retention and unbounded schedules) and `GET|POST /ceph/health-explain` (22 Ceph health-check codes with meaning and first step; paste `ceph health detail -f json`; unknown codes are listed, not guessed). Operator role, `can_execute: false`, thresholds in `assumptions`, validated bounds. `atlasctl snapshot-hygiene`, `quota-headroom`, `schedule-coverage`, `ceph-health-explain`; `AtlasClient` methods of the same names.
+- Read-only planning reports (`docs/PLANNING.md`, research in `docs/RESEARCH.md`): `GET|POST /capacity/forecast` (time-to-full per pool by least squares, with trend, confidence, thresholds, and caps on pools, samples and NaN/negative input), `GET /dr/readiness` (0 to 100 score with explicit gaps: no peer, mirror errors, RPO over target, stale state, forced promote, no or stale failover drill; RTO reported as not measured) and `POST /maintenance/scrub-plan` (dry-run ordering of overdue scrubs in lanes; starts nothing). `atlasctl capacity-forecast`, `capacity-forecast-file`, `dr-readiness`, `scrub-plan`. No data-path, erasure-coding, Raft or format changes. No MCP tools were added (the MCP tool-count test is unchanged). Unit tested with fabricated inputs only; not exercised against a live cluster.
 - `GET /doctor` (and `atlasctl doctor` / `AtlasClient::doctor`): unauthenticated operator one-pager with readiness, inventory counts, open alerts, jobs by state and backend breakdown. Always HTTP 200; inspect `ok` (use `/readyz` when kubelet needs 503).
 - Owner registry: wire ids `fabric`, `netra` and `kavira` alongside the existing five; `GET /owners/{id}/workflows` lists recent intent rows (`atlasctl owner-workflows`, `AtlasClient::list_owner_workflows`). Still local stubs — Atlas does not call those products (`docs/PRODUCTS.md`).
 - SAN and cloud_block backends: `atlas-driver-san` / `atlas-driver-cloudblock` (fake + real), live `POST /backends`, `ATLAS_SAN_*` / `ATLAS_CLOUDBLOCK_*` startup registration (`docs/STATUS.md`).
@@ -27,6 +47,7 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ### Fixed
 
+- Build: main did not compile `atlas-native` after the redb 5 bump (see Changed above); reverted to redb 4. `AtomicUsize::fetch_update` in `rdma_link.rs` is now `try_update` (deprecated on the current stable, which `-D warnings` turned into an error).
 - Clippy `-D warnings` needless borrows in `snapshot_volume`; pin gateway test deps `p256` 0.13 / `rand` 0.8 so `mcp_idp` builds after the workspace p256 0.14 bump.
 - STATUS image-import table row broken by an unescaped `|` in `raw|qcow2`; README now matches qcow2 + RBD import.
 

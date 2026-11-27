@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Oracle connect strings. Always compiled: the OCI driver is behind the `oracle` feature, but
 //! the descriptor is pure text and is what `OracleSourceConnector` dials when that feature is on.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Compiles the CSI proto. Requires `protoc` (system package `protobuf-compiler`) at build time.
 fn main() {
     println!("cargo:rerun-if-changed=proto/csi.proto");

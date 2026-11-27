@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Snapshot export to object storage and import back into a volume.
 //!
 //! An export is a manifest (`<export_prefix>exports/<name>/manifest.json`, written last, so an

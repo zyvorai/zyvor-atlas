@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Requires GitHub Pages enabled with Source = "GitHub Actions"
 # (repo Settings > Pages). Once: gh api repos/zyvorai/zyvor-atlas/pages -X POST -f build_type=workflow
 name: Deploy Docs Site

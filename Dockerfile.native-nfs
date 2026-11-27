@@ -1,10 +1,10 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # atlas-native-nfs: NFS gateway for atlas-native filesystems (docs/NATIVE_NFS.md). NFS-Ganesha
 # (FSAL_VFS) serves FUSE mounts of each exported filesystem; atlas-native-nfs mounts them, writes
 # the Ganesha configuration and supervises both. Ganesha runs as its own process (LGPL-3.0).
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
+FROM docker.io/library/rust:1.100-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS builder
 WORKDIR /build
 COPY . .
 RUN cargo build --release --locked -p atlas-native-fuse --features fuse \
@@ -14,7 +14,7 @@ RUN cargo build --release --locked -p atlas-native-fuse --features fuse \
 # Ganesha 9.14 or later: older releases answer the GET_DIR_DELEGATION that recent Linux clients
 # send with NFS4ERR_OP_ILLEGAL instead of NFS4ERR_NOTSUPP, which the client turns into EREMOTEIO
 # on directory reads. Debian testing has it; Ubuntu 26.04 ships 6.5.
-FROM docker.io/library/debian:testing@sha256:cf15c569a84dfda832e421ab27a8049e962ba8e90571612396cd8db799279e4e AS runtime
+FROM docker.io/library/debian:testing@sha256:2d46f43b677a047cfab870549eea0d83d0a9bea2f55b3f481efc901043916c2a AS runtime
 ARG DEBIAN_FRONTEND=noninteractive
 # Ganesha finds the filesystem under each export through /etc/mtab. NFSv3 needs rpcbind (which
 # looks its port up in /etc/services, from netbase) and rpc.statd (nfs-common) for NLM locks.

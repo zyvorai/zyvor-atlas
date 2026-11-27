@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Entry point of the atlas-io500 image (Dockerfile.io500, docs/IO500.md): mounts an atlas-native
 # filesystem, runs the IO500 suite on it with IO500_NP MPI ranks in this container, and unmounts.
 #

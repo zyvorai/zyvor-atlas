@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! File creates per second through the local-WAL engine and a 3-voter Raft group on localhost,
 //! from one thread and from several, and whether the rate holds as the namespace grows.

@@ -1,10 +1,10 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # atlas-native-csi: the CSI plugin for atlas-native filesystems (docs/NATIVE_CSI.md), plus the
 # atlas-native-mount FUSE client the node plugin runs for every published volume. fuser mounts
 # through fusermount3, so the runtime image needs the fuse3 package and no libfuse headers.
 # ---- builder ----
-FROM docker.io/library/rust:1.99-bookworm@sha256:e6f2cff35d0f309acf8433b4f05878ed77092602c5065cc81801177da0bb3a9c AS builder
+FROM docker.io/library/rust:1.100-bookworm@sha256:ade39a710ef85f3506cffcfec3e8a24ba090badef1dff2fb798f71d878833fea AS builder
 RUN apt-get update && apt-get install -y --no-install-recommends protobuf-compiler && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 COPY . .

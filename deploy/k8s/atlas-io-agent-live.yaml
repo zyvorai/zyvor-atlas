@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Optional node sensor, LIVE block-layer BPF mode (docs/IO_EBPF.md): the same DaemonSet as
 # atlas-io-agent.yaml with --mode live and the capabilities it needs instead of privileged. This is what
 # the lab runs. Apply one of the two files, not both. Without CAP_BPF the agent still serves, reporting

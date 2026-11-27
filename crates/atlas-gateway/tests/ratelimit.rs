@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Day-2 governance: per-actor rate limiting. In its own test binary so setting the
 //! `ATLAS_RATE_LIMIT_RPM` env var doesn't race other tests. Auth off → all requests share the
 //! `anonymous` bucket, so flooding one client past the limit trips 429.

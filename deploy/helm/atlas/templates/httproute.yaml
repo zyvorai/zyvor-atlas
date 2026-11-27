@@ -1,9 +1,9 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
-{{- if .Values.envoy.enabled }}
-{{- $gw := default (include "atlas.fullname" .) .Values.envoy.gatewayName }}
-{{- $gwNs := default (include "atlas.namespace" .) .Values.envoy.gatewayNamespace }}
-{{- $tls := and .Values.envoy.createGateway .Values.envoy.tlsSecretName }}
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+{{- if .Values.gateway.enabled }}
+{{- $gw := default (include "atlas.fullname" .) .Values.gateway.gatewayName }}
+{{- $gwNs := default (include "atlas.namespace" .) .Values.gateway.gatewayNamespace }}
+{{- $tls := and .Values.gateway.createGateway .Values.gateway.tlsSecretName }}
 {{- if $tls }}
 # Plain-HTTP listener: redirect everything to HTTPS.
 apiVersion: gateway.networking.k8s.io/v1
@@ -19,13 +19,13 @@ spec:
       namespace: {{ $gwNs }}
       sectionName: http
   hostnames:
-    - {{ .Values.envoy.host | quote }}
+    - {{ .Values.gateway.host | quote }}
   rules:
     - filters:
         - type: RequestRedirect
           requestRedirect:
             scheme: https
-            port: {{ .Values.envoy.httpsPort }}
+            port: {{ .Values.gateway.httpsPort }}
             statusCode: 301
 ---
 {{- end }}
@@ -44,7 +44,7 @@ spec:
       sectionName: https
       {{- end }}
   hostnames:
-    - {{ .Values.envoy.host | quote }}
+    - {{ .Values.gateway.host | quote }}
   rules:
     - matches:
         - path:
@@ -54,5 +54,5 @@ spec:
         - name: {{ include "atlas.fullname" . }}
           port: {{ .Values.service.httpPort }}
       timeouts:
-        request: {{ .Values.envoy.requestTimeout | quote }}
+        request: {{ .Values.gateway.requestTimeout | quote }}
 {{- end }}

@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Throwaway Postgres for verifying atlas-inventory's Phase-1 HA scaffolding
 # (connect_postgres/migrate_postgres, see docs/HA.md) against real infrastructure instead of just
 # compiling behind the `postgres` feature flag. Single replica, ephemeral local-path storage — this

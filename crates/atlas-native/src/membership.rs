@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
 //! Voter configuration for Raft quorum decisions. `Joint` is the intermediate configuration of a
 //! joint-consensus membership change: every decision needs a majority of the old *and* the new

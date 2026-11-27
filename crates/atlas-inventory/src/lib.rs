@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! SQLite-backed normalized inventory: connect/migrate, upsert-from-discovery, and read queries
 //! that power the gateway's read-only endpoints.
 //!

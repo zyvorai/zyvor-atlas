@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Shared serde DTOs for the Atlas storage control plane.
 //!
 //! These types are the stable wire/domain contract between the gateway, the drivers, and the

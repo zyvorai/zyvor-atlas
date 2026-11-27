@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // axios client for the Atlas REST API + SSE job watcher + toast/job glue.
 import axios from "axios";
 import { useUi } from "../store/ui";

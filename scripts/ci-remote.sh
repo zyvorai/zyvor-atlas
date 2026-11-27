@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Run Atlas's CI gates on the lab host instead of locally (nothing is compiled on the developer
 # machine): rsync the tree, then inside the Dockerfile's own builder image run clippy (-D warnings),
 # the whole Rust test suite, and — in a Node container — the UI lint, tests and production build.
@@ -38,7 +38,7 @@ fi
 
 if [[ "$WHAT" == "all" || "$WHAT" == "ui" ]]; then
   log "UI: lint, tests, production build in a Node container"
-  $SSH "cd ~/${DIR}/crates/atlas-gateway/ui && podman run --rm -v \$PWD:/ui -w /ui docker.io/library/node:22-bookworm-slim sh -c 'npm ci --no-audit --no-fund >/dev/null 2>&1; echo LINT; npm run lint 2>&1 | tail -30; echo TEST; npx vitest run 2>&1 | tail -40; echo BUILD; npm run build 2>&1 | tail -15'"
+  $SSH "cd ~/${DIR}/crates/atlas-gateway/ui && podman run --rm -v \$PWD:/ui -w /ui docker.io/library/node:24-bookworm-slim sh -c 'npm ci --no-audit --no-fund >/dev/null 2>&1; echo LINT; npm run lint 2>&1 | tail -30; echo TEST; npx vitest run 2>&1 | tail -40; echo BUILD; npm run build 2>&1 | tail -15'"
 fi
 
 if [[ "$WHAT" == "ceph" ]]; then

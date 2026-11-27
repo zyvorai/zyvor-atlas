@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Provision a raw, unformatted local block device into a brand-new ZFS pool (`zpool create`).
 //! Local-host-only — see `JobSpec::ZfsPoolCreateFromDevice`'s doc comment.
 

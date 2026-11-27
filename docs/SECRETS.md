@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Secrets backend: env vars or Vault
 
 By default (`ATLAS_SECRETS_BACKEND` unset, or `env`) Atlas reads `jwt_secret`/`admin_password`/

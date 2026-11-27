@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! gRPC edge authorization: a revoked token is refused, and a non-admin caller only sees (and
 //! may only act on) its own tenant's volumes, snapshots and buckets. Mirrors the REST rules.
 

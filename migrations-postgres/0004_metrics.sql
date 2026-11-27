@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Latest normalized Ceph metrics scraped from the mgr Prometheus module (PDF §15.1).
 -- We keep only the latest value per (name, labels) — not a full time series (that belongs in
 -- Prometheus itself); Atlas stores a curated snapshot for its summary views + alert rules.

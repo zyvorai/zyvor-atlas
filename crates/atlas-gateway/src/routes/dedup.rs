@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! `GET /pools/{id}/dedup-estimate` — what dedup (and compression) would save on a pool, without
 //! enabling either (`docs/DEDUP_ESTIMATE.md`). Read-only, but it reads data, so it is admin-only
 //! and every limit is capped here regardless of what the caller asks for.

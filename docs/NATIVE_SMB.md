@@ -1,5 +1,5 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # atlas-native SMB gateway
 
 The SMB gateway serves atlas-native filesystems ([`NATIVE_FS.md`](NATIVE_FS.md)) to SMB 2.1 and

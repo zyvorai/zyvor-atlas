@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 """Metadata catalog backends for the data service: SQLite (one process, the default) or Postgres.
 
 `Store` talks to a small connection-like object: `execute(sql, params)` with `?` placeholders,

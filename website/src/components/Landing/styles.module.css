@@ -1,5 +1,5 @@
 /* Copyright (c) 2026 ZyvorAI Labs Private Limited. */
-/* SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 */
+/* SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 */
 .term{margin:40px auto 0;max-width:780px;text-align:left;background:#07131c;border:1px solid #1f4a63;border-radius:14px;box-shadow:0 30px 80px rgba(10,132,255,.2);overflow:hidden}
 .termBar{display:flex;gap:7px;padding:12px 14px;background:#0b1f2e}.termBar i{width:11px;height:11px;border-radius:50%;background:#2c5a75}
 .term pre{margin:0;padding:18px 20px;min-height:190px;background:transparent;color:#d6e4ec;font:13.5px/1.7 var(--ifm-font-family-monospace);white-space:pre-wrap;overflow-x:auto;border:0}

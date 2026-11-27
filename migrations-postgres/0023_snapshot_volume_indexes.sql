@@ -1,5 +1,5 @@
 -- Copyright (c) 2026 ZyvorAI Labs Private Limited.
--- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 -- Hot-path read indexes: both tables are looked up by `volume_id` on every
 -- "list snapshots/schedules for this volume" request (atlas-inventory
 -- snapshots::list_snapshots / schedules::list), and `volume_id` is also the

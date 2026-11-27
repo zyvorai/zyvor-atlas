@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Runs the atlas_data test suite against a real throwaway Postgres on the lab host (podman): the same tests
 # that run on SQLite in CI, with ATLAS_DATA_DATABASE_URL pointing at Postgres. Uses its own remote directory,
 # so it does not touch ~/.deployment/atlas-ci.

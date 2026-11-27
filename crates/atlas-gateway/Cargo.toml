@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 [package]
 name = "atlas-gateway"
 version.workspace = true
@@ -99,8 +99,10 @@ tokio-stream = { version = "0.1", features = ["net"] }
 # because the workspace default used to be reqwest 0.12).
 rmcp = { version = "3.5", default-features = false, features = ["client", "transport-streamable-http-client-reqwest"] }
 # IdP access-token tests (tests/mcp_idp.rs) sign RS256 and ES256 tokens with throwaway keys generated at
-# test time, so no private key is committed. Keep rsa 0.9 / p256 0.13 / rand 0.8 — rsa 0.10 dropped
-# `to_bytes_be` and needs a different RNG bound (breaks mcp_idp under `--features mcp`).
+# test time, so no private key is committed. rsa stays on 0.9 with rand 0.8 (rsa 0.10 dropped
+# `to_bytes_be` and needs a different RNG bound); p256 0.14 needs a rand_core 0.10 RNG, which comes
+# from the aliased rand 0.10 below.
 rsa = "0.9"
-p256 = { version = "0.13", features = ["ecdsa", "pem"] }
+p256 = { version = "0.14", features = ["ecdsa", "pem"] }
 rand = "0.8"
+rand10 = { package = "rand", version = "0.10" }

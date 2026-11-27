@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Live block-layer source: attaches `bpf/atlas_bio.bpf.c` (compiled by build.rs) to the
 //! `block_rq_insert` / `block_rq_issue` / `block_rq_complete` tracepoints, drains its ring
 //! buffers, keeps the Atlas Native PID map current and pins the native maps.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Validation batch-Job builders: compare row counts of every table between the source and the edge
 //! DB, inside the cluster. Applied via `apply_cr("batch","v1","Job",…)` and watched by the reconciler
 //! (Job exit 0 = passed, non-zero = mismatch/failed). Per-table detail from logs is a follow-up.

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! With the `bpf` feature on Linux, compile `bpf/atlas_bio.bpf.c` into `$OUT_DIR/atlas_bio.bpf.o`
 //! for `src/bpf.rs` to embed. `CLANG` overrides the compiler.
 

@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Guarded action tools for the MCP edge. Off unless `ATLAS_MCP_WRITE_ENABLE=1` (when off the tools
 //! are not even listed). Every write is two-phase: a call without a `confirmation_token` changes
 //! nothing and returns the plan plus a short-lived, single-use token bound to the caller, the tool
@@ -90,7 +90,7 @@ fn issue(secret: &str, actor: &str, tool: &str, params: &str, now: u64) -> Strin
     encode(
         &Header::new(Algorithm::HS256),
         &claims,
-        &EncodingKey::from_secret(&key(secret)),
+        &EncodingKey::from_secret(&key(secret)).expect("derived key is never empty"),
     )
     .expect("HS256 encode of plain claims cannot fail")
 }
@@ -107,7 +107,8 @@ fn verify(
     let mut v = Validation::new(Algorithm::HS256);
     v.leeway = 0;
     v.set_required_spec_claims(&["exp"]);
-    let data = decode::<Claims>(token, &DecodingKey::from_secret(&key(secret)), &v)
+    let data = DecodingKey::from_secret(&key(secret))
+        .and_then(|k| decode::<Claims>(token, &k, &v))
         .map_err(|_| "confirmation token is invalid or expired")?;
     let c = data.claims;
     if c.sub != actor || c.tool != tool || c.params != params {

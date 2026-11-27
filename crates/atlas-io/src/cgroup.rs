@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Userspace cgroup → volume attribution. The collector consults this when a device map has no
 //! volume for an event. With the `bpf` feature the same binding is mirrored into the `atlas_cgroup`
 //! hash (64-byte volume id, matching `bpf/atlas_cgroup.bpf.c`) so `bpftool` can read it while the

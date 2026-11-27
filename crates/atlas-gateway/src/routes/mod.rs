@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! REST surface. Slice 1 read-only inventory/discovery (PDF §10.2) + slice 2 async write path
 //! (volume create/expand/delete, snapshots) — write ops return `202 Accepted` with a job id.
 
@@ -25,10 +25,12 @@ mod object_store;
 pub(crate) mod observability;
 mod oidc;
 mod owners;
+pub(crate) mod planning;
 pub(crate) mod protection;
 pub mod ransomware;
 mod rbd;
 pub mod reduction;
+pub(crate) mod reports;
 mod rook;
 pub(crate) mod util;
 pub(crate) mod volume_groups;
@@ -407,6 +409,19 @@ pub fn router(state: AppState) -> Router {
         .route("/metrics/ceph", get(metrics_ceph))
         .route("/metrics/history", get(metrics_history))
         .route("/metrics/forecast", get(metrics_forecast))
+        .route(
+            "/capacity/forecast",
+            get(planning::get_capacity_forecast).post(planning::post_capacity_forecast),
+        )
+        .route("/dr/readiness", get(planning::get_dr_readiness))
+        .route("/maintenance/scrub-plan", post(planning::post_scrub_plan))
+        .route("/snapshots/hygiene", get(reports::get_snapshot_hygiene))
+        .route("/tenants/quota-headroom", get(reports::get_quota_headroom))
+        .route("/schedules/coverage", get(reports::get_schedule_coverage))
+        .route(
+            "/ceph/health-explain",
+            get(reports::get_ceph_health_explain).post(reports::post_ceph_health_explain),
+        )
         .route("/alerts", get(list_alerts))
         .route("/alerts/evaluate", post(evaluate_alerts))
         .route("/alerts/{id}/ack", post(ack_alert))

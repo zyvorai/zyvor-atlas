@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Mint a short-lived OPERATOR token for an AI agent / MCP client and print only the token.
 #
 #   ATLAS_BASE_URL=http://127.0.0.1:5110 ATLAS_ADMIN_TOKEN=<admin jwt> \

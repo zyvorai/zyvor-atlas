@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # atlas-data: the atlas_data AI data service, CLI and data-ready gate (docs/AI_DATA_SERVICES.md).
 # One image for three uses, chosen by the arguments:
 #   serve --root /data --config /etc/atlas-data/config.json --host 0.0.0.0 --cert ... --key ...   the service

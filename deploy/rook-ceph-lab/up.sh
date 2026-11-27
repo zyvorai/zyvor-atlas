@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 # Stand up the Atlas lab storage stack on an existing Kubernetes/K3s cluster:
 #   ceph-csi-operator CRDs -> Rook operator -> CephCluster -> ceph-csi-drivers ->
 #   RBD/CephFS/RGW + StorageClasses -> snapshotter -> (optional) KubeVirt + CDI ->

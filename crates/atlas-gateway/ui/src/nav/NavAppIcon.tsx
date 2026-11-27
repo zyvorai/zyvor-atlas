@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 /** Atlas app tiles — colored rounded glyphs (Soundings, not Mac Tahoe squircles). */
 import type { LucideIcon } from "lucide-react";
 import type { SectionId } from "./routes";

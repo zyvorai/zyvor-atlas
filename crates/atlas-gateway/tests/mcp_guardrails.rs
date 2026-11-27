@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Agent guardrails on the MCP edge: a per-token resource scope (deny by default, enforced at the one
 //! `call_tool` chokepoint), the per-agent workspace byte budget (refused before anything is created),
 //! and the `X-Atlas-Run-Id` correlation id on every audit row a call causes. Own test binary: the

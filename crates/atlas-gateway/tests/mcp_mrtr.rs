@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! The write confirm flow on MCP multi round-trip requests (`mcp/mrtr.rs`), driven by the rmcp client in
 //! `server/discover` (2026-07-28, stateless) mode. Own test binary: the write gate and the call budget are
 //! process-wide, so both are set once for every test in this file (a budget of 6 calls per token, and every
@@ -815,7 +815,7 @@ fn forge(secret: &str, sub: &str, tool: &str, params: &str, exp: u64) -> String 
     jsonwebtoken::encode(
         &jsonwebtoken::Header::new(jsonwebtoken::Algorithm::HS256),
         &json!({ "jti": uuid_like(), "sub": sub, "tool": tool, "params": params, "exp": exp }),
-        &jsonwebtoken::EncodingKey::from_secret(&key),
+        &jsonwebtoken::EncodingKey::from_secret(&key).unwrap(),
     )
     .unwrap()
 }

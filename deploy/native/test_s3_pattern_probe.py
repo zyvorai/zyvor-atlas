@@ -1,5 +1,5 @@
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 """Offline tests for s3-pattern-probe.py: python3 -m unittest deploy/native/test_s3_pattern_probe.py
 
 The botocore cross-check runs only when botocore is installed; everything else needs only the standard library.

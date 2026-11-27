@@ -1,8 +1,8 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
-<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0 -->
+<!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Contributing to Atlas
 
-Atlas is licensed under the Zyvor Production License v1.0 — see
+Atlas is licensed under the Zyvor Production Licence v2.0 — see
 [`docs/LICENSING.md`](docs/LICENSING.md).
 All participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 
@@ -12,10 +12,10 @@ All participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
   `scripts/check-license-headers.sh`):
   ```
   // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-  // SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+  // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
   ```
   (`#` / `<!-- -->` / `/* */` / `--` variants by file type). Workspace Cargo
-  `license = "LicenseRef-Zyvor-Production-1.0"`.
+  `license = "LicenseRef-Zyvor-Production-2.0"`.
 - **Stack**: axum 0.8, `sqlx` (SQLite), `thiserror` 2.0 + `anyhow`, `tracing`, `kube-rs`.
   Match the surrounding monorepo services (`ragnarok`, `machina`).
 - **Errors**: return `atlas_common::AppError` from handlers; it maps to HTTP via `IntoResponse`.
@@ -61,10 +61,10 @@ All participation is governed by the [Code of Conduct](CODE_OF_CONDUCT.md).
 ## Licensing
 
 By contributing you agree to the [Contributor License Agreement](CLA.md) (so Zyvor
-can license contributions under the Zyvor Production License v1.0) and certify the [Developer Certificate of Origin](DCO.md) on every commit
+can license contributions under the Zyvor Production Licence v2.0) and certify the [Developer Certificate of Origin](DCO.md) on every commit
 (`git commit -s`).
 
-Inbound Contributions are accepted under the Zyvor Production License v1.0 with the CLA
+Inbound Contributions are accepted under the Zyvor Production Licence v2.0 with the CLA
 grant above. Don't submit code you don't have the rights to license that way. See
 [`docs/LICENSING.md`](docs/LICENSING.md), [`NOTICE`](NOTICE), and
 [`LICENSES/`](LICENSES/).

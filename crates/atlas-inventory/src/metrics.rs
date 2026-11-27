@@ -1,5 +1,5 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
-// SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+// SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Latest scraped Ceph metrics (PDF §15.1). One row per (name, labels), upserted each scrape.
 
 use std::collections::BTreeMap;
