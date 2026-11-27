@@ -1,7 +1,7 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Bespoke primitive kit styled with the vendored Zeus/Tahoe design foundation.
-import React, { useEffect, useState } from "react";
+// Atlas primitives, styled by the design system in ../design.
+import React, { useEffect, useId, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, X } from "lucide-react";
 import { cx } from "../lib/format";
@@ -137,12 +137,12 @@ export function PageHeader({
   return (
     <div className="flex items-center gap-3 mb-5">
       {Icon && (
-        <div className="w-10 h-10 rounded-xl glass grid place-items-center text-sky-400">
+        <div className="at-appicon at-appicon-lg">
           <Icon size={20} />
         </div>
       )}
       <div className="flex-1">
-        <h1 className="text-xl font-bold tracking-tight">{title}</h1>
+        <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
         {subtitle && <div className="text-sm text-muted-foreground">{subtitle}</div>}
       </div>
       <div className="flex items-center gap-2">{actions}</div>
@@ -152,7 +152,7 @@ export function PageHeader({
 
 export function EmptyState({ msg, copy, cta }: { msg: string; copy?: string; cta?: React.ReactNode }) {
   return (
-    <div className="at-empty-box" style={{ boxShadow: "none" }}>
+    <div className="at-empty-box">
       <div className="at-empty-title">{msg}</div>
       {copy ? <p className="at-empty-copy">{copy}</p> : null}
       {cta && <div className="mt-2 flex justify-center gap-2 flex-wrap">{cta}</div>}
@@ -189,19 +189,19 @@ export function RadialGauge({ pct, size = 120, label }: { pct: number; size?: nu
   const r = size / 2 - 10;
   const c = 2 * Math.PI * r;
   const p = Math.max(0, Math.min(100, pct));
-  const color = p >= 90 ? "var(--at-fail)" : p >= 75 ? "var(--at-warn)" : "var(--at-cyan)";
+  const color = p >= 90 ? "var(--a-fail)" : p >= 75 ? "var(--a-warn)" : "var(--a-blue)";
   return (
     <div className="relative grid place-items-center" style={{ width: size, height: size }}>
       <svg width={size} height={size} className="-rotate-90">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--at-line)" strokeWidth={9} />
+        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--a-surface-3)" strokeWidth={9} />
         <circle
           cx={size / 2} cy={size / 2} r={r} fill="none" stroke={color} strokeWidth={9} strokeLinecap="round"
-          strokeDasharray={c} strokeDashoffset={c - (p / 100) * c} style={{ transition: "stroke-dashoffset .6s var(--ease-apple, ease)" }}
+          strokeDasharray={c} strokeDashoffset={c - (p / 100) * c} style={{ transition: "stroke-dashoffset .6s var(--a-ease)" }}
         />
       </svg>
       <div className="absolute text-center">
         <div className="text-2xl font-bold" style={{ color }}>{p.toFixed(0)}%</div>
-        {label && <div className="text-[11px] text-muted-foreground">{label}</div>}
+        {label && <div className="text-xs text-muted-foreground">{label}</div>}
       </div>
     </div>
   );
@@ -216,12 +216,13 @@ export function Spinner() {
 
 export function Tabs({ tabs, value, onChange }: { tabs: string[]; value: string; onChange: (t: string) => void }) {
   return (
-    <div className="at-chips" style={{ paddingInline: 0, marginBottom: 16 }}>
+    <div className="at-chips">
       {tabs.map((t) => (
         <button
           key={t}
           type="button"
           onClick={() => onChange(t)}
+          aria-pressed={value === t}
           className={cx("at-chip", value === t && "on")}
         >
           {t}
@@ -260,7 +261,7 @@ export function colorizeJson(raw: string): React.ReactNode[] {
   return parts.length ? parts : [raw];
 }
 
-/** macOS Terminal–style black pane for logs, JSON, tokens, CRUSH dumps. */
+/** Dark monospace pane for logs, JSON, tokens, CRUSH dumps. */
 export function TerminalPane({
   children,
   title,
@@ -303,24 +304,28 @@ export function SlideOver({
   width?: number;
 }) {
   useEscape(open, onClose);
+  const titleId = useId();
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-50" onMouseDown={onClose}>
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-md" />
+      <div className="at-overlay-scrim" />
       <div
-        className="absolute right-0 top-0 h-full at-slideover overflow-auto animate-fade-in"
-        style={{ width, maxWidth: "92vw" }}
+        className="at-slideover"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        style={{ width, maxWidth: "94vw" }}
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="at-slideover-bar sticky top-0 z-1">
-          <div className="at-caption grow" style={{ flex: 1, color: "var(--at-ink)", fontSize: 13 }}>
+          <div id={titleId} className="at-modal-title">
             {title}
           </div>
-          <button type="button" className="at-btn compact" onClick={onClose}>
-            <X size={14} />
+          <button type="button" className="at-iconbtn" aria-label="Close" onClick={onClose}>
+            <X size={16} aria-hidden />
           </button>
         </div>
-        <div className="p-4">{children}</div>
+        <div className="at-slideover-body">{children}</div>
       </div>
     </div>,
     document.body,
@@ -341,20 +346,24 @@ export function Modal({
   footer?: React.ReactNode;
 }) {
   useEscape(open, onClose);
+  const titleId = useId();
   if (!open) return null;
   return createPortal(
-    <div className="fixed inset-0 z-50 grid place-items-center p-4" onMouseDown={onClose}>
-      <div className="absolute inset-0 bg-black/45 backdrop-blur-md" />
+    <div className="at-modal-root" onMouseDown={onClose}>
+      <div className="at-overlay-scrim" />
       <div
-        className="relative at-glass w-[460px] max-w-[94vw] p-5 animate-fade-in"
+        className="at-modal at-glass"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
         onMouseDown={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center gap-3 mb-3">
-          <div className="at-caption grow" style={{ flex: 1, color: "var(--at-ink)", fontSize: 14 }}>
+        <div className="at-modal-head">
+          <div id={titleId} className="at-modal-title">
             {title}
           </div>
-          <button type="button" className="at-btn compact" onClick={onClose}>
-            <X size={14} />
+          <button type="button" className="at-iconbtn" aria-label="Close" onClick={onClose}>
+            <X size={16} aria-hidden />
           </button>
         </div>
         {children}

@@ -45,7 +45,7 @@ export function Table<T>({
   /** Optional gateway/network detail under the generic failed-to-load line. */
   errorDetail?: string;
   onRetry?: () => void;
-  /** Soundings Index archetype — single at-panel + at-tbl + hover row actions. */
+  /** Index layout — the table sits in a panel with an optional title bar. */
   soundings?: boolean;
   panelTitle?: React.ReactNode;
   panelExtra?: React.ReactNode;
@@ -78,12 +78,10 @@ export function Table<T>({
     if (!rows) {
       if (error || stuck) {
         return (
-          <div className="py-10 text-center text-sm text-danger flex flex-col items-center gap-2">
-            <AlertTriangle size={18} />
+          <div className="at-table-error" role="alert">
+            <AlertTriangle size={18} aria-hidden />
             <span>Failed to load — the request errored.</span>
-            {errorDetail ? (
-              <span className="text-xs text-muted-foreground mono max-w-md px-4">{errorDetail}</span>
-            ) : null}
+            {errorDetail ? <span className="detail mono">{errorDetail}</span> : null}
             {onRetry ? (
               <Button size="sm" onClick={onRetry} className="mt-1">
                 Retry
@@ -131,12 +129,19 @@ export function Table<T>({
                 <th
                   key={c.h}
                   onClick={() => clickHeader(i)}
-                  className={c.sortKey ? (soundings ? "sortable" : "cursor-pointer select-none hover:text-white") : ""}
+                  className={c.sortKey ? "sortable" : undefined}
+                  aria-sort={sort?.i === i ? (sort.dir === 1 ? "ascending" : "descending") : undefined}
                 >
-                  <span className="inline-flex items-center gap-1">
-                    {c.h}
-                    {sort?.i === i && (sort.dir === 1 ? <ChevronUp size={12} /> : <ChevronDown size={12} />)}
-                  </span>
+                  {c.sortKey ? (
+                    // The click bubbles to the header cell, which does the sorting.
+                    <button type="button" className="at-th-sort">
+                      {c.h}
+                      {sort?.i === i &&
+                        (sort.dir === 1 ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />)}
+                    </button>
+                  ) : (
+                    c.h
+                  )}
                 </th>
               ))}
               {actions && <th />}
@@ -149,6 +154,15 @@ export function Table<T>({
                 <tr
                   key={key}
                   onClick={onRow ? () => onRow(r) : undefined}
+                  tabIndex={onRow ? 0 : undefined}
+                  onKeyDown={
+                    onRow
+                      ? (e) => {
+                          // Only the row itself: controls inside it keep their own Enter handling.
+                          if (e.key === "Enter" && e.target === e.currentTarget) onRow(r);
+                        }
+                      : undefined
+                  }
                   className={`${onRow ? "cursor-pointer" : ""} ${selected?.has(key) ? "selected" : ""}`}
                 >
                   {selectable && (

@@ -1,8 +1,7 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Apple Developer docs-style reference page: a header + a sequence of captioned panels, each
-// either free-form prose/code or a table of endpoint-shaped rows.
-// See docs/ATLAS_UI_CONTRACT.md's page-archetypes table ("Reference (docs)").
+// Reference page: a header and a sequence of captioned panels, each free-form prose/code or a
+// table of endpoint-shaped rows. See docs/ATLAS_UI_CONTRACT.md ("Reference (docs)").
 import type { ReactNode } from "react";
 import { PageHead, type PageCrumb } from "../PageHead";
 import { cx } from "../../lib/format";

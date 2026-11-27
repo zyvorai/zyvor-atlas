@@ -18,12 +18,12 @@ export default function Settings() {
 
   const blocks: SettingsBlock<Theme | Density>[] = [
     {
-      label: "Shell theme",
-      hint: "Night is graphite (#0b0b0f) with electric blue. Day is classic light shop (#F5F5F7 + Apple Blue). Cosmic Orange is reserved for the brand mark only.",
+      label: "Theme",
+      hint: "System follows this device and switches with it. Light or Dark stays put on this browser.",
       value: theme,
       onChange: (v) => setTheme(v as Theme),
       options: THEME_OPTIONS,
-      ariaLabel: "Shell theme",
+      ariaLabel: "Theme",
     },
     {
       label: "Density",
@@ -41,7 +41,7 @@ export default function Settings() {
       crumbs={navCrumbs("settings")}
       eyebrow="CONSOLE · APPEARANCE"
       title="Settings"
-      state="Look & feel and density for this browser. Night is the dark graphite shell; Day is the light shop shell."
+      state="Appearance and density for this browser."
       panelLabel="Appearance"
       blocks={blocks}
     />

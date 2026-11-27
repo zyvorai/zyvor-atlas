@@ -11,7 +11,7 @@ duplicated.
 - **[GETTING_STARTED.md](GETTING_STARTED.md)** — build, run locally (fake driver), `atlasctl`, tests.
 - **[ARCHITECTURE.md](ARCHITECTURE.md)** — control-plane design, driver model, data model, request flow, config.
 - **[API.md](API.md)** — REST v1 reference with real request/response examples.
-- **[ATLAS_UI_CONTRACT.md](ATLAS_UI_CONTRACT.md)** — the Soundings UI identity system the React console follows.
+- **[ATLAS_UI_CONTRACT.md](ATLAS_UI_CONTRACT.md)** — the design system the React console follows (tokens, themes, shell, page templates, graphics rules).
 
 ## Storage & drivers
 - **[DISKS.md](DISKS.md)** — raw disk provisioning: device pickers, `POST /zfs/pools/from-device`, `POST /ceph/devices`.

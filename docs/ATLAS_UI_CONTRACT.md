@@ -1,61 +1,125 @@
 <!-- Copyright (c) 2026 ZyvorAI Labs Private Limited. -->
 <!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
-# Atlas UI — Apple product design contract
+# Atlas UI design contract
 
-Paste reference: apple.com product pages + Mac Terminal for ops output. This section is **policy**.
-If they disagree: this file wins on rules; live pixels win for boxes / type / chrome.
+This is policy for the React console in `crates/atlas-gateway/ui`. A page that disagrees with it is
+wrong, or this file is updated in the same change.
 
 ## Identity
 
-**Storage is a product. Capacity is a choice. Atlas is the shop.**
+Large, confident headlines; short copy; generous space around big rounded tiles; one blue accent;
+graphics that carry real data. It borrows the feel of a modern product page and stays an operations
+console: **tables stay dense, legible and fast.**
 
-| Shell | Base | Accent | Mono | Metaphor |
-|---|---|---|---|---|
-| **Night** | graphite `#0b0b0f` | Electric blue `#0A84FF` | SF Mono | dark product night |
-| **Day** | shop gray `#F5F5F7` | Apple Blue `#0071E3` | SF Mono | light shop |
+- System font stack only. No web fonts, no remote stylesheets, no third-party logos, product
+  imagery or marketing copy. The Zyvor mark is the only brand image.
+- Dark (true black) and light (white and `#f5f5f7`) are equal; neither is an afterthought.
 
-Cosmic Orange is reserved for the brand mark only — never for CTAs or selected tiles.
+## Where things live (`ui/src`)
 
-Tokens live in `crates/atlas-gateway/ui/src/atlas-soundings.css` + `index.css` (`--at-*`, `--d*`).
+| File | Owns |
+|---|---|
+| `index.css` | Entry. Fixes the cascade layer order and maps Tailwind colours to tokens. Imported first by `main.tsx`. |
+| `design/tokens.css` | Every colour, radius, spacing, density and motion value. |
+| `design/base.css` | Element defaults, focus ring, reduced motion. |
+| `design/controls.css` | Buttons, links, fields, chips, badges, choice tiles. |
+| `design/surfaces.css` | Page head, modules, panels, stat tiles, lists, bars, status grids, charts, galleries, empty states, reference rows, terminal pane. |
+| `design/table.css` | `.at-tbl` / `.ztable`. |
+| `design/overlays.css` | Menus, modal, slide-over, toasts, command palette, launch pad. |
+| `design/shell.css` | Global nav, flyouts, local nav, mobile sheet, page canvas. |
+| `views/<Page>.css` | Page-specific rules only, wrapped in `@layer components`, imported by that page, with a page prefix (`ov-`, `lg-`). |
+| `graphics/` | Reusable graphics components. They read the tokens below. |
+
+Do not add a second override layer on top of these. Change the rule where it lives.
+
+## Tokens
+
+Theme selector: `data-theme="dark" | "light"` on `<html>`.
+
+| Token | Meaning |
+|---|---|
+| `--a-bg` | Page canvas |
+| `--a-surface` | Tile, panel, table |
+| `--a-surface-2` | Inner fill, row hover (`--a-surface-3` for tracks and neutral buttons) |
+| `--a-ink` / `--a-ink-2` | Primary / secondary text. There is no third text colour. |
+| `--a-line` | Hairline (`--a-line-strong` for form-control borders, 3:1) |
+| `--a-blue` | The accent: links, focus, selection, graphics. Safe as text. (`--a-blue-fill` is the button fill under white text.) |
+| `--a-ok` / `--a-warn` / `--a-fail` | State only, each with a `-wash` background |
+| `--a-series-2` | Second chart series. Never interaction. |
+| `--a-radius` | Tile radius (`-lg` feature tiles and sheets, `-sm`, `-xs`; `--a-pill`) |
+| `--a-font` / `--a-mono` | System sans / system monospace |
+
+The `--at-*`, `--d1`–`--d5` names at the end of `tokens.css` are compatibility aliases for pages not
+yet restyled. Do not use them in new work; delete each once nothing reads it.
+
+Canvas code must read colours from computed custom properties, and tokens are therefore plain
+values (no `light-dark()`).
+
+## Theme behaviour
+
+`lib/themes.ts`. The preference is **System** (default, follows the OS live), **Light** or **Dark**.
+A manual choice persists in `localStorage["atlas.theme"]`; values from the earlier console
+(`night`, `day`, `carbon`, `apple-lite`) are migrated. The picker (`ui/ThemeMenu.tsx`) is in the
+global nav and on sign-in; Settings offers the same three choices.
 
 ## Colour law
 
-- **One interaction colour:** `--at-cyan` (buttons, focus, links, active nav, selected tiles).
-- **Depth ramp is state, never interaction** — use `depth(pct)` from `lib/depth.ts`.
-- Amber/red (`--at-warn` / `--at-fail`) = cluster health verdicts, not capacity.
+- One interaction colour, blue. State colours never mark something clickable.
+- Capacity: blue below 75 %, amber from 75 %, red from 90 % (`lib/depth.ts`, classes `dp1`–`dp5`).
+- Health: green, amber, red, and a text label or a different shape as well — never colour alone.
+- Both themes meet WCAG AA: 4.5:1 text, 3:1 large text, control borders and focus ring.
 
 ## Type law
 
-- **SF system stack** — titles, labels, prose, buttons.
-- **SF Mono stack** — numbers, pool/volume names, paths, timestamps, health strings, TerminalPane.
+- Page headline `.at-title` 36–60 px; hero headline 44–88 px; module headline 21–28 px; body 14 px;
+  tables 13 px.
+- Sentence case. No letter-spaced capitals for captions or table headers.
+- Monospace for identifiers, paths, timestamps, health strings and terminal output. Numbers in
+  tables use tabular figures.
 
-## Shell chrome
+## Shell
 
-- **Top bar (44px) is the only nav surface.** Zyvor mark + Atlas · primary destinations (Overview, Volumes, Observatory, Ceph, DataBridge, Jobs, Alerts) · section overflow menus (Storage extras, Protect, DataBridge extras, Observe extras, Govern, Infra) · right tray (launch pad, search, theme, jobs, alerts, pause, health, account — account includes role, Launch pad, Settings, Auth token, sign out).
-- **No vertical icon rail.** Pinned shortcuts (`pinned: true` in `nav/routes.ts`) are not rendered as a separate column — they exist only as single-key shortcuts and the Control Center quick list; the content area runs full width under the top bar.
-- **Section overflow:** hover/click dropdown per non-primary section (Storage extras, Protect, DataBridge extras, Observe extras, Govern, Infra) — a real apple.com mega-menu, not a drawer.
-- **No mac dock.** Launch pad stays behind ⌘⌥L / account.
-- Mobile ≤900px: hamburger drawer with labeled sections (no Suite links).
-
-## Terminal surfaces
-
-Ops dumps (Jobs results/errors, Access tokens, ApiDocs samples, Ceph CRUSH trees) use **TerminalPane**: black `#1e1e1e` canvas, SF Mono, colorful JSON/ANSI-style spans.
+- **Global nav** (48 px, translucent): brand, *Overview*, one button per section, then search,
+  launch pad, theme, running jobs, alerts, pause, health and account.
+- **Flyout**: a section button opens a full-width panel with that section's pages (hover or click;
+  Arrow Down moves into it; Escape closes and returns focus). The page behind is dimmed and blurred.
+- **Local nav** (desktop, every page except Overview): section name and its sibling pages.
+- **Below 1024 px**: menu button opens a full-screen navigation sheet (filter, recents, collapsible
+  sections); a jump bar selects any page. Launch pad, pause and running jobs move into the account
+  menu.
+- Content scrolls under the chrome inside `.at-main-scroll`, centred, 1320 px maximum.
+- Navigation is role-filtered from `nav/routes.ts`; single-key shortcuts, `⌘K`/`Ctrl-K`,
+  `⌘⌥L`/`Ctrl-Alt-L` and `?` stay.
 
 ## Page archetypes
 
-| Role | Apple analogue | Ship on | Template component |
-|---|---|---|---|
-| Product hero | Product landing | Overview | `ui/templates/DashboardHero.tsx` |
-| Instrument / Ops console | Tech specs / Diagnostics | Observatory, Metrics, Ceph, Maintenance, DR | `ui/templates/DashboardHero.tsx` |
-| Catalog index / Timeline | Store browse / Activity feed | Volumes, Snapshots, Backups, Activity, Audit, Alerts, Jobs, Access, … | `ui/templates/ListPage.tsx` |
-| Reference (settings) | Preference pane | Settings | `ui/templates/SettingsPage.tsx` |
-| Reference (docs) | Spec sheet | ApiDocs | `ui/templates/DocsPage.tsx` |
-| Detail | Configurator | PoolDetail, PlanDetail | `ui/templates/DetailPage.tsx` |
+| Role | Ship on | Template component |
+|---|---|---|
+| Product hero (`hero`) | Overview | `ui/templates/DashboardHero.tsx` |
+| Ops console | Observatory, Metrics, Ceph, Maintenance, DR | `ui/templates/DashboardHero.tsx` |
+| Index / Timeline | Volumes, Snapshots, Backups, Activity, Audit, Alerts, Jobs, Access, … | `ui/templates/ListPage.tsx` |
+| Reference (settings) | Settings | `ui/templates/SettingsPage.tsx` |
+| Reference (docs) | ApiDocs | `ui/templates/DocsPage.tsx` |
+| Detail | PoolDetail, PlanDetail | `ui/templates/DetailPage.tsx` |
 
 Template components are the single source of truth for each archetype's layout — a page and this
 table must not drift; update both together.
 
-## Emptiness & motion
+Feature tiles belong to Overview and similar summary surfaces. Index pages lead with a headline and
+one line of state, then go straight to the table.
 
-- Naked `0` is banned — fill hint + action inside a shop empty box.
-- Swipe rails + page enter; respect `prefers-reduced-motion`.
+## Graphics
+
+- Graphics are first-class: a capacity ring, a throughput chart, one square per OSD.
+- **Never invent data to draw one.** No placeholder series, padded cells or demo values. Unknown
+  reads as "—"; a chart without enough measurements says so (`ui/ThroughputChart.tsx` leaves out
+  the first sample, which has no rate).
+- Each has a text equivalent (`aria-label`, legend or list).
+- Decorative art is `aria-hidden` and carries no data (sign-in layers).
+- Server strings are rendered as text, never with `dangerouslySetInnerHTML`.
+
+## Emptiness and motion
+
+- A bare `0` gets a hint and an action.
+- Entrance and scroll reveal are short and subtle (`a-rise`, `.a-reveal`), and everything stops under
+  `prefers-reduced-motion`. Do not leave transforms on containers that hold popovers.

@@ -4,16 +4,16 @@ import { describe, expect, it } from "vitest";
 import { depth, depthWidth } from "./depth";
 
 describe("depth", () => {
-  it("maps occupancy onto the bathymetric ramp", () => {
+  it("maps occupancy onto the fill-level ramp", () => {
     expect(depth(0).cls).toBe("dp1");
-    expect(depth(39).name).toBe("shoal");
-    expect(depth(40).name).toBe("shelf");
-    expect(depth(60).name).toBe("slope");
-    expect(depth(75).name).toBe("deep");
-    expect(depth(90).name).toBe("abyssal");
+    expect(depth(39).name).toBe("low");
+    expect(depth(40).name).toBe("moderate");
+    expect(depth(60).name).toBe("elevated");
+    expect(depth(75).name).toBe("high");
+    expect(depth(90).name).toBe("critical");
     expect(depth(100).cls).toBe("dp5");
   });
-  it("clamps null/NaN to shoal", () => {
+  it("clamps null/NaN to the lowest level", () => {
     expect(depth(null).cls).toBe("dp1");
     expect(depth(undefined).cls).toBe("dp1");
   });

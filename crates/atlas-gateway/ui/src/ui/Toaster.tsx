@@ -20,25 +20,17 @@ export function Toaster() {
     };
   }, []);
   return (
-    // Clears page edge.
-    <div className="fixed right-4 bottom-4 z-60 flex flex-col gap-2 w-[300px]">
+    <div className="at-toaster" role="status" aria-live="polite">
       {items.map((t) => (
-        <div
-          key={t.id}
-          className="at-glass px-3.5 py-2.5 flex items-center gap-2.5 text-sm animate-fade-in"
-          style={{
-            borderRadius: 14,
-            borderLeft: `3px solid ${t.kind === "ok" ? "#30D69E" : t.kind === "err" ? "#E23B3B" : "#38BDF8"}`,
-          }}
-        >
+        <div key={t.id} className={`at-glass at-toast-item ${t.kind}`}>
           {t.kind === "ok" ? (
-            <CheckCircle2 size={16} className="text-success shrink-0" />
+            <CheckCircle2 size={17} aria-hidden />
           ) : t.kind === "err" ? (
-            <XCircle size={16} className="text-danger shrink-0" />
+            <XCircle size={17} aria-hidden />
           ) : (
-            <Info size={16} className="text-sky-400 shrink-0" />
+            <Info size={17} aria-hidden />
           )}
-          <span className="min-w-0">{t.msg}</span>
+          <span className="min-w-0 break-words">{t.msg}</span>
         </div>
       ))}
     </div>

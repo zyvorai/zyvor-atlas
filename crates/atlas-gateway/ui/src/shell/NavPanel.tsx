@@ -84,7 +84,7 @@ export function NavSectionLinks({
                   className={({ isActive }) => cx(linkClass(isActive), compact && "is-compact")}
                   onClick={onNavigate}
                 >
-                  <NavAppIcon icon={m.icon} section={m.section} size={iconSize} />
+                  <NavAppIcon icon={m.icon} size={iconSize} />
                   {!compact && <span>{m.label}</span>}
                   {!compact && m.shortcut ? <kbd className="at-control-kbd">{m.shortcut}</kbd> : null}
                 </NavLink>
@@ -128,7 +128,7 @@ export function NavRecents({
             className={({ isActive }) => linkClass(isActive)}
             onClick={onNavigate}
           >
-            <NavAppIcon icon={mod.icon} section={mod.section} size={16} />
+            <NavAppIcon icon={mod.icon} size={16} />
             <span>{r.label}</span>
           </NavLink>
         );

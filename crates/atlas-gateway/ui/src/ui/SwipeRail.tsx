@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useRef, useState, type ReactNode } from 
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { cx } from "../lib/format";
 
-/** Horizontal scroll-snap gallery (Apple shop feature strip). */
+/** Horizontal scroll-snap gallery of tiles. */
 export function SwipeRail({
   children,
   className,
@@ -87,7 +87,7 @@ export function SwipeRail({
   );
 }
 
-/** Apple shop-style selection tile (config / storage choice). */
+/** Selection tile (one of a set of choices). */
 export function SelectTile({
   title,
   hint,

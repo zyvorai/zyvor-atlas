@@ -1,0 +1,269 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Overview feature-tile grid. Page-specific: nothing outside views/Overview.tsx uses these.
+ */
+
+@layer components {
+  .ov-more {
+    min-height: 44px;
+    font-size: 17px;
+  }
+
+  .ov-grid {
+    display: grid;
+    grid-template-columns: repeat(12, minmax(0, 1fr));
+    gap: var(--a-s4);
+    margin-bottom: var(--a-s8);
+  }
+  .ov-tile {
+    position: relative;
+    display: flex;
+    flex-direction: column;
+    min-width: 0;
+    padding: clamp(20px, 2.4vw, 32px);
+    border-radius: var(--a-radius-lg);
+    background: var(--a-surface);
+    box-shadow: var(--a-shadow);
+  }
+  .ov-capacity {
+    grid-column: span 6;
+    grid-row: span 2;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--a-s5);
+    text-align: center;
+    animation: a-rise 0.8s var(--a-ease) 0.05s backwards;
+  }
+  .ov-io {
+    grid-column: span 6;
+    gap: var(--a-s4);
+    animation: a-rise 0.8s var(--a-ease) 0.14s backwards;
+  }
+  .ov-osds {
+    grid-column: span 6;
+    gap: var(--a-s3);
+  }
+  .ov-stat {
+    grid-column: span 3;
+    gap: var(--a-s3);
+    min-height: 190px;
+  }
+
+  .ov-headline {
+    margin: 0;
+    font-size: clamp(30px, 3.6vw, 44px);
+    font-weight: 700;
+    letter-spacing: -0.028em;
+    line-height: 1.08;
+  }
+  .ov-lede {
+    margin: calc(var(--a-s5) * -1 + 6px) 0 0;
+    color: var(--a-ink-2);
+    font-size: 17px;
+  }
+  .ov-tile-title {
+    margin: 0;
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: -0.016em;
+  }
+
+  /* The title button covers its whole tile; other controls in the tile sit above it. */
+  .ov-open {
+    display: inline-flex;
+    align-items: center;
+    gap: 2px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: inherit;
+    font: inherit;
+    text-align: left;
+    cursor: pointer;
+  }
+  .ov-open svg {
+    flex: 0 0 auto;
+    color: var(--a-blue);
+    transition: transform 0.3s var(--a-ease);
+  }
+  .ov-open::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: var(--a-radius-lg);
+  }
+  .ov-open:focus-visible {
+    outline: none;
+  }
+  .ov-open:focus-visible::after {
+    outline: 2px solid var(--a-blue);
+    outline-offset: 2px;
+  }
+  .ov-tile:hover .ov-open svg {
+    transform: translateX(3px);
+  }
+  .ov-tile .a-link,
+  .ov-osd-grid li {
+    position: relative;
+    z-index: 1;
+  }
+
+  .ov-number {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    column-gap: 4px;
+    margin-top: auto;
+    font-size: clamp(36px, 4vw, 52px);
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .ov-slash {
+    padding: 0 2px;
+    color: var(--a-ink-2);
+    font-weight: 300;
+  }
+  .ov-note {
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+
+  /* ── Capacity ring ── */
+  .ov-ring {
+    width: min(320px, 100%);
+    height: auto;
+  }
+  .ov-ring circle {
+    fill: none;
+    stroke-width: 22;
+  }
+  .ov-ring .track {
+    stroke: var(--a-surface-3);
+  }
+  .ov-ring .value {
+    stroke: var(--a-blue);
+    stroke-linecap: round;
+    animation: ov-sweep 1.2s var(--a-ease) 0.2s backwards;
+  }
+  .ov-ring.warn .value {
+    stroke: var(--a-warn);
+  }
+  .ov-ring.fail .value {
+    stroke: var(--a-fail);
+  }
+  .ov-ring .figure {
+    fill: var(--a-ink);
+    font-size: 54px;
+    font-weight: 700;
+    letter-spacing: -0.035em;
+  }
+  .ov-ring .caption {
+    fill: var(--a-ink-2);
+    font-size: 15px;
+  }
+  @keyframes ov-sweep {
+    from {
+      stroke-dashoffset: var(--ov-circ);
+    }
+  }
+
+  .ov-figures {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: var(--a-s3) var(--a-s7);
+    margin: 0;
+  }
+  .ov-figures dt {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: var(--a-ink-2);
+    font-size: 12.5px;
+  }
+  .ov-figures dd {
+    margin: 2px 0 0;
+    font-size: 21px;
+    font-weight: 600;
+    letter-spacing: -0.018em;
+    font-variant-numeric: tabular-nums;
+  }
+  .ov-figures dd small,
+  .ov-figures dd.sub {
+    color: var(--a-ink-2);
+    font-size: 12.5px;
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+  .ov-io .ov-figures {
+    justify-content: flex-start;
+  }
+  .ov-io .ov-figures dt {
+    justify-content: flex-start;
+  }
+  .ov-key {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+  }
+  .ov-key.used {
+    background: var(--a-blue);
+  }
+  .ov-key.free {
+    background: var(--a-surface-3);
+  }
+
+  /* ── OSD grid: one square per OSD. Shape differs as well as colour. ── */
+  .ov-osd-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 5px;
+    max-height: 132px;
+    margin: 0;
+    padding: 0;
+    overflow: auto;
+    list-style: none;
+  }
+  .ov-osd-grid li {
+    width: 22px;
+    height: 22px;
+    border-radius: 6px;
+    background: var(--a-ok);
+  }
+  .ov-osd-grid li.out {
+    border: 5px solid var(--a-warn);
+    background: transparent;
+  }
+  .ov-osd-grid li.down {
+    border-radius: 50%;
+    background: var(--a-fail);
+  }
+
+  @media (max-width: 1100px) {
+    .ov-capacity,
+    .ov-io,
+    .ov-osds {
+      grid-column: span 12;
+      grid-row: auto;
+    }
+    .ov-stat {
+      grid-column: span 6;
+    }
+  }
+  @media (max-width: 560px) {
+    .ov-grid {
+      gap: var(--a-s3);
+    }
+    .ov-stat {
+      min-height: 160px;
+      padding: var(--a-s4);
+    }
+    .ov-figures {
+      column-gap: var(--a-s5);
+    }
+  }
+}

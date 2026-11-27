@@ -1,19 +1,18 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Atlas shell: Apple.com top nav only — no vertical icon rail, no dock, no suite links.
-import { useEffect, useMemo, useRef, useState } from "react";
+// Atlas shell: slim translucent global nav with section flyouts, a section local nav, and a
+// full-screen navigation sheet on narrow viewports.
+import { useEffect, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import {
   Archive,
   Bell,
   Camera,
-  ChevronDown,
+  CircleUserRound,
   Cloud,
   HardDrive as HardDriveIcon,
-  KeyRound,
   LayoutGrid,
-  LayoutTemplate,
   Loader2,
   LogOut,
   Menu,
@@ -29,22 +28,22 @@ import {
   modulesForRole,
   navLabelForPath,
   shortcutTargets,
-  topOverflowBySection,
-  topPrimaryModules,
 } from "../nav/routes";
 import { useNavGroups } from "../nav/useNavGroups";
 import { NavFilter, NavSectionLinks, NavRecents } from "./NavPanel";
 import { MobileJumpNav } from "./MobileJumpNav";
+import { LocalNav, PrimaryNav } from "./SectionNav";
 import { LaunchPad } from "./LaunchPad";
 import { filterNavRecents } from "../lib/navRecents";
 import { roleLabel, ROLE_ADMIN, ROLE_OPERATOR } from "../lib/auth";
 import { http, isUnauthorized } from "../api/client";
 import { useAlerts, useCephHealthRollup, useClusters, useJobs } from "../api/hooks";
 import { useUi } from "../store/ui";
-import { THEME_OPTIONS, themeTitle } from "../lib/themes";
 import { cx } from "../lib/format";
 import { onSendPrompt } from "../lib/prompts";
 import { Button, Field, Modal } from "../ui/kit";
+import { ThemeMenu } from "../ui/ThemeMenu";
+import { useDismiss } from "../ui/useDismiss";
 
 function Clock() {
   const [t, setT] = useState(new Date());
@@ -53,99 +52,9 @@ function Clock() {
     return () => clearInterval(id);
   }, []);
   return (
-    <span className="mono" style={{ fontSize: 12, color: "var(--at-ink-3)" }}>
+    <span className="at-theme-hint mono">
       {t.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
     </span>
-  );
-}
-
-function TopSectionMenu({
-  label,
-  items,
-  active,
-}: {
-  label: string;
-  items: { id: string; label: string; path: string }[];
-  active: boolean;
-}) {
-  const [open, setOpen] = useState(false);
-  const [pos, setPos] = useState<{ top: number; left: number } | null>(null);
-  const btnRef = useRef<HTMLButtonElement>(null);
-  const panelRef = useRef<HTMLDivElement>(null);
-
-  const place = () => {
-    const btn = btnRef.current;
-    if (!btn) return;
-    const r = btn.getBoundingClientRect();
-    const panelW = 220;
-    let left = r.left + r.width / 2 - panelW / 2;
-    left = Math.max(8, Math.min(left, window.innerWidth - panelW - 8));
-    setPos({ top: r.bottom + 8, left });
-  };
-
-  useEffect(() => {
-    if (!open) return;
-    place();
-    const onPtr = (e: PointerEvent) => {
-      const t = e.target as Node;
-      if (btnRef.current?.contains(t) || panelRef.current?.contains(t)) return;
-      setOpen(false);
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") setOpen(false);
-    };
-    const onReposition = () => place();
-    document.addEventListener("pointerdown", onPtr);
-    document.addEventListener("keydown", onKey);
-    window.addEventListener("resize", onReposition);
-    window.addEventListener("scroll", onReposition, true);
-    return () => {
-      document.removeEventListener("pointerdown", onPtr);
-      document.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", onReposition);
-      window.removeEventListener("scroll", onReposition, true);
-    };
-  }, [open]);
-
-  if (!items.length) return null;
-  return (
-    <div className="at-top-menu">
-      <button
-        ref={btnRef}
-        type="button"
-        className={cx("at-top-link at-top-menu-btn", active && "on", open && "open")}
-        aria-expanded={open}
-        aria-haspopup="menu"
-        onClick={() => setOpen((v) => !v)}
-      >
-        {label}
-        <ChevronDown size={12} strokeWidth={2.5} aria-hidden />
-      </button>
-      {open &&
-        pos &&
-        createPortal(
-          <div
-            ref={panelRef}
-            className="at-top-menu-panel"
-            role="menu"
-            style={{ position: "fixed", top: pos.top, left: pos.left, right: "auto", transform: "none" }}
-          >
-            {items.map((m) => (
-              <NavLink
-                key={m.id}
-                to={m.path}
-                end={m.path === "/"}
-                role="menuitem"
-                className={({ isActive }) => cx("at-top-menu-item", isActive && "on")}
-                onClick={() => setOpen(false)}
-              >
-                {m.label}
-              </NavLink>
-            ))}
-          </div>,
-          document.body,
-        )}
-    </div>
   );
 }
 
@@ -219,16 +128,13 @@ function MenuBar({
                       : String(h).toUpperCase();
 
   const [tokenOpen, setTokenOpen] = useState(false);
-  const [jobsOpen, setJobsOpen] = useState(false);
-  const [bellOpen, setBellOpen] = useState(false);
-  const [themeOpen, setThemeOpen] = useState(false);
-  const [acctOpen, setAcctOpen] = useState(false);
+  const [panel, setPanel] = useState<"jobs" | "bell" | "account" | null>(null);
+  const toggle = (p: "jobs" | "bell" | "account") => setPanel((v) => (v === p ? null : p));
+  const trayRef = useDismiss<HTMLDivElement>(panel !== null, () => setPanel(null));
   const token = useUi((s) => s.token);
   const role = useUi((s) => s.role);
   const roleLevel = useUi((s) => s.roleLevel);
   const setToken = useUi((s) => s.setToken);
-  const theme = useUi((s) => s.theme);
-  const setTheme = useUi((s) => s.setTheme);
   const paused = useUi((s) => s.paused);
   const togglePaused = useUi((s) => s.togglePaused);
   const [draft, setDraft] = useState(token);
@@ -239,247 +145,185 @@ function MenuBar({
     if (tokenOpen) setDraft(token);
   }, [tokenOpen, token]);
   const nav = useNavigate();
-  const loc = useLocation();
-  const primary = useMemo(() => topPrimaryModules(roleLevel), [roleLevel]);
-  const overflow = useMemo(() => topOverflowBySection(roleLevel), [roleLevel]);
-  const activeMod = activeModuleFromPath(loc.pathname);
+  const go = (path: string) => {
+    nav(path);
+    setPanel(null);
+  };
 
   return (
     <header className="at-rail">
-      <div className="at-rail-brand">
-        <button
-          type="button"
-          className="at-iconbtn at-menu-burger"
-          title="Open navigation"
-          aria-label="Open navigation"
-          onClick={onOpenNav}
-        >
-          <Menu size={16} strokeWidth={2} />
-        </button>
-
-        <NavLink to="/" end className="at-mark" title="Atlas — Storage Center" aria-label="Atlas — Storage Center">
-          <span className="at-brand-logo" aria-hidden>
-            <img src="/zyvor-mark.svg" alt="" width={18} height={18} className="at-zyvor-mark" />
-          </span>
-          <span className="at-brand-name">Atlas</span>
-        </NavLink>
-      </div>
-
-      <nav className="at-top-nav" aria-label="Primary">
-        {primary.map((m) => (
-          <NavLink
-            key={m.id}
-            to={m.path}
-            end={m.path === "/"}
-            className={({ isActive }) => cx("at-top-link", isActive && "on")}
+      <div className="at-rail-inner">
+        <div className="at-rail-brand">
+          <button
+            type="button"
+            className="at-iconbtn at-menu-burger"
+            title="Open navigation"
+            aria-label="Open navigation"
+            onClick={onOpenNav}
           >
-            {m.label}
+            <Menu size={18} strokeWidth={2} aria-hidden />
+          </button>
+
+          <NavLink to="/" end className="at-mark" title="Atlas — Storage Center" aria-label="Atlas — Storage Center">
+            <span className="at-brand-logo" aria-hidden>
+              <img src="/zyvor-mark.svg" alt="" width={16} height={16} />
+            </span>
+            <span className="at-brand-name">Atlas</span>
           </NavLink>
-        ))}
-        {overflow.map((g) => (
-          <TopSectionMenu
-            key={g.sec}
-            label={g.short}
-            items={g.items}
-            active={activeMod?.section === g.sec && !activeMod.topPrimary}
-          />
-        ))}
-      </nav>
+        </div>
 
-      <div className="at-rail-actions">
-        <div className="at-rail-tray">
-          <button
-            type="button"
-            className="at-iconbtn"
-            title="Launch pad — ⌘⌥L"
-            aria-label="Open launch pad"
-            onClick={onLaunchPad}
-          >
-            <LayoutGrid size={16} strokeWidth={2} />
-          </button>
+        <PrimaryNav />
 
-          <button
-            type="button"
-            className="at-iconbtn"
-            title="Search — ⌘K / Ctrl+K"
-            aria-label="Search pools, volumes, hosts"
-            onClick={onSpotlight}
-          >
-            <Search size={16} strokeWidth={2} />
-          </button>
-
-          <div className="relative">
-            <button
-              type="button"
-              className="at-iconbtn at-look-btn"
-              title={`Look & feel: ${themeTitle(theme)}`}
-              aria-label={`Look & feel — ${themeTitle(theme)}. Choose Night or Day.`}
-              aria-expanded={themeOpen}
-              aria-haspopup="menu"
-              onClick={() => setThemeOpen((v) => !v)}
-            >
-              <LayoutTemplate size={16} strokeWidth={2} />
-            </button>
-            {themeOpen && (
-              <div className="at-theme-menu" role="menu" aria-label="Look and feel" style={{ right: 0 }}>
-                <div className="at-theme-menu-label">Look &amp; feel</div>
-                {THEME_OPTIONS.map((opt) => (
-                  <button
-                    key={opt.id}
-                    type="button"
-                    role="menuitem"
-                    className={cx("at-theme-item", theme === opt.id && "on")}
-                    onClick={() => {
-                      setTheme(opt.id);
-                      setThemeOpen(false);
-                    }}
-                  >
-                    <span>{opt.title}</span>
-                    <span className="at-theme-hint">{opt.hint}</span>
-                  </button>
-                ))}
-              </div>
-            )}
-          </div>
-
-          {runningJobs.length > 0 && (
+        <div className="at-rail-actions" ref={trayRef}>
+          <div className="at-rail-tray">
             <button
               type="button"
               className="at-iconbtn"
-              title={`${runningJobs.length} job(s) running`}
-              onClick={() => {
-                setJobsOpen((v) => !v);
-                setBellOpen(false);
-              }}
+              title="Search — ⌘K / Ctrl+K"
+              aria-label="Search pools, volumes, hosts"
+              onClick={onSpotlight}
             >
-              <Loader2 size={16} className="animate-spin" strokeWidth={2} />
+              <Search size={16} strokeWidth={2} aria-hidden />
             </button>
-          )}
 
-          <button
-            type="button"
-            className="at-iconbtn relative"
-            title="Alerts"
-            aria-label="Open alerts"
-            onClick={() => {
-              setBellOpen((v) => !v);
-              setJobsOpen(false);
-            }}
-          >
-            <Bell size={16} strokeWidth={2} />
-            {(openAlerts?.length || 0) > 0 && (
-              <span className="at-badge">{Math.min(99, openAlerts!.length)}</span>
+            <button
+              type="button"
+              className="at-iconbtn at-desk-only"
+              title="Launch pad — ⌘⌥L"
+              aria-label="Open launch pad"
+              onClick={onLaunchPad}
+            >
+              <LayoutGrid size={16} strokeWidth={2} aria-hidden />
+            </button>
+
+            <div className="contents" onClickCapture={() => setPanel(null)}>
+              <ThemeMenu />
+            </div>
+
+            {runningJobs.length > 0 && (
+              <button
+                type="button"
+                className="at-iconbtn at-desk-only"
+                title={`${runningJobs.length} job(s) running`}
+                aria-label={`${runningJobs.length} job(s) running`}
+                aria-expanded={panel === "jobs"}
+                onClick={() => toggle("jobs")}
+              >
+                <Loader2 size={16} className="animate-spin" strokeWidth={2} aria-hidden />
+              </button>
             )}
-          </button>
 
-          <button
-            type="button"
-            className="at-iconbtn"
-            title={paused ? "Resume live telemetry" : "Pause live telemetry"}
-            aria-pressed={paused}
-            onClick={togglePaused}
-          >
-            {paused ? <Play size={16} strokeWidth={2} /> : <Pause size={16} strokeWidth={2} />}
-          </button>
+            <button
+              type="button"
+              className="at-iconbtn"
+              title="Alerts"
+              aria-label="Open alerts"
+              aria-expanded={panel === "bell"}
+              onClick={() => toggle("bell")}
+            >
+              <Bell size={16} strokeWidth={2} aria-hidden />
+              {(openAlerts?.length || 0) > 0 && (
+                <span className="at-badge">{Math.min(99, openAlerts!.length)}</span>
+              )}
+            </button>
 
-          <button
-            type="button"
-            className={cx("at-health", healthClass)}
-            title={healthWhy || healthLabel}
-            onClick={() => nav("/ceph")}
-          >
-            <span className="dot" />
-            {healthLabel}
-          </button>
+            <button
+              type="button"
+              className="at-iconbtn at-desk-only"
+              title={paused ? "Resume live telemetry" : "Pause live telemetry"}
+              aria-label={paused ? "Resume live telemetry" : "Pause live telemetry"}
+              aria-pressed={paused}
+              onClick={togglePaused}
+            >
+              {paused ? <Play size={16} strokeWidth={2} aria-hidden /> : <Pause size={16} strokeWidth={2} aria-hidden />}
+            </button>
 
-          <div className="relative">
+            <button
+              type="button"
+              className={cx("at-health", healthClass)}
+              title={healthWhy || healthLabel}
+              onClick={() => nav("/ceph")}
+            >
+              <span className="dot" aria-hidden />
+              <span className="at-health-label">{healthLabel}</span>
+            </button>
+
             <button
               type="button"
               className="at-iconbtn"
               title="Account"
-              aria-expanded={acctOpen}
-              onClick={() => setAcctOpen((v) => !v)}
+              aria-label="Account"
+              aria-expanded={panel === "account"}
+              onClick={() => toggle("account")}
             >
-              <KeyRound size={16} strokeWidth={2} />
+              <CircleUserRound size={17} strokeWidth={2} aria-hidden />
             </button>
-            {acctOpen && (
-              <div className="at-theme-menu" role="menu" aria-label="Control Center" style={{ right: 0 }}>
-                <div className="at-theme-menu-label">Control Center</div>
-                <div className="at-theme-item" style={{ cursor: "default" }}>
-                  <span>{roleLabel(role)}</span>
-                  <Clock />
-                </div>
-                <button type="button" className="at-theme-item" onClick={() => { onLaunchPad(); setAcctOpen(false); }}>
-                  Launch pad
-                </button>
-                {roleLevel >= ROLE_ADMIN && (
-                  <button type="button" className="at-theme-item" onClick={() => { nav("/settings"); setAcctOpen(false); }}>
-                    <SettingsIcon size={14} /> Settings
-                  </button>
-                )}
-                <button type="button" className="at-theme-item" onClick={() => { setTokenOpen(true); setAcctOpen(false); }}>
-                  Auth token…
-                </button>
-                <button
-                  type="button"
-                  className="at-theme-item"
-                  onClick={() => {
-                    useUi.getState().signOut();
-                    setAcctOpen(false);
-                  }}
-                >
-                  <LogOut size={14} /> Sign out
-                </button>
-              </div>
-            )}
           </div>
-        </div>
-      </div>
 
-      {jobsOpen && (
-        <div className="at-theme-menu at-theme-menu-wide at-rail-flyout" role="dialog" aria-label="Running jobs">
-          <div className="at-theme-menu-label">Running jobs</div>
-          {runningJobs.slice(0, 8).map((j) => (
-            <button
-              key={j.id}
-              type="button"
-              className="at-theme-item"
-              onClick={() => {
-                nav("/jobs");
-                setJobsOpen(false);
-              }}
-            >
-              <span className="truncate">{j.job_type}</span>
-              <span className="mono" style={{ fontSize: 11, color: "var(--at-ink-4)" }}>
-                {j.progress_percent ?? 0}%
-              </span>
-            </button>
-          ))}
-        </div>
-      )}
-      {bellOpen && (
-        <div className="at-theme-menu at-theme-menu-wide at-rail-flyout" role="dialog" aria-label="Open alerts">
-          <div className="at-theme-menu-label">Open alerts</div>
-          {(openAlerts || []).slice(0, 8).map((a) => (
-            <button
-              key={a.id}
-              type="button"
-              className="at-theme-item"
-              onClick={() => {
-                nav("/alerts");
-                setBellOpen(false);
-              }}
-            >
-              <span className="truncate">{a.title}</span>
-            </button>
-          ))}
-          {!openAlerts?.length && (
-            <div className="at-theme-item" style={{ cursor: "default" }}>
-              No open alerts.
+          {panel === "account" && (
+            <div className="at-theme-menu at-rail-flyout" role="menu" aria-label="Control Center">
+              <div className="at-theme-menu-label">Control Center</div>
+              <div className="at-theme-item">
+                <span>{roleLabel(role)}</span>
+                <Clock />
+              </div>
+              <button type="button" className="at-theme-item" onClick={() => { onLaunchPad(); setPanel(null); }}>
+                Launch pad
+              </button>
+              <button type="button" className="at-theme-item" onClick={() => { togglePaused(); setPanel(null); }}>
+                {paused ? "Resume live telemetry" : "Pause live telemetry"}
+              </button>
+              {runningJobs.length > 0 && (
+                <button type="button" className="at-theme-item" onClick={() => go("/jobs")}>
+                  Running jobs ({runningJobs.length})
+                </button>
+              )}
+              {roleLevel >= ROLE_ADMIN && (
+                <button type="button" className="at-theme-item" onClick={() => go("/settings")}>
+                  <span>Settings</span>
+                  <SettingsIcon size={14} aria-hidden />
+                </button>
+              )}
+              <button type="button" className="at-theme-item" onClick={() => { setTokenOpen(true); setPanel(null); }}>
+                Auth token…
+              </button>
+              <button
+                type="button"
+                className="at-theme-item"
+                onClick={() => {
+                  useUi.getState().signOut();
+                  setPanel(null);
+                }}
+              >
+                <span>Sign out</span>
+                <LogOut size={14} aria-hidden />
+              </button>
+            </div>
+          )}
+          {panel === "jobs" && (
+            <div className="at-theme-menu at-theme-menu-wide at-rail-flyout" role="dialog" aria-label="Running jobs">
+              <div className="at-theme-menu-label">Running jobs</div>
+              {runningJobs.slice(0, 8).map((j) => (
+                <button key={j.id} type="button" className="at-theme-item" onClick={() => go("/jobs")}>
+                  <span className="truncate">{j.job_type}</span>
+                  <span className="at-theme-hint mono">{j.progress_percent ?? 0}%</span>
+                </button>
+              ))}
+            </div>
+          )}
+          {panel === "bell" && (
+            <div className="at-theme-menu at-theme-menu-wide at-rail-flyout" role="dialog" aria-label="Open alerts">
+              <div className="at-theme-menu-label">Open alerts</div>
+              {(openAlerts || []).slice(0, 8).map((a) => (
+                <button key={a.id} type="button" className="at-theme-item" onClick={() => go("/alerts")}>
+                  <span className="truncate">{a.title}</span>
+                </button>
+              ))}
+              {!openAlerts?.length && <div className="at-theme-item">No open alerts.</div>}
             </div>
           )}
         </div>
-      )}
+      </div>
 
       <Modal
         open={tokenOpen}
@@ -500,7 +344,7 @@ function MenuBar({
           </>
         }
       >
-        <div className="text-sm text-muted-foreground mb-2">
+        <div className="text-sm text-muted-foreground mb-3">
           Optional JWT override. Console login already mints a session token.
         </div>
         <Field
@@ -550,8 +394,8 @@ function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void
       >
         <div className="at-drawer-head">
           <span className="at-drawer-title">Navigate</span>
-          <button type="button" className="at-iconbtn" aria-label="Close navigation" onClick={onClose}>
-            <X size={16} />
+          <button type="button" className="at-iconbtn" aria-label="Close navigation" autoFocus onClick={onClose}>
+            <X size={18} aria-hidden />
           </button>
         </div>
         <div className="at-drawer-body">
@@ -666,11 +510,12 @@ function Spotlight({ open, onClose }: { open: boolean; onClose: () => void }) {
   };
   return (
     <div className="at-scrim" onMouseDown={close}>
-      <div className="at-palette" role="dialog" aria-label="Command palette" onMouseDown={(e) => e.stopPropagation()}>
+      <div className="at-palette" role="dialog" aria-modal="true" aria-label="Command palette" onMouseDown={(e) => e.stopPropagation()}>
         <input
           autoFocus
           className="at-palette-input"
           placeholder="Go to, create, or ask…"
+          aria-label="Search"
           value={q}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
@@ -684,7 +529,7 @@ function Spotlight({ open, onClose }: { open: boolean; onClose: () => void }) {
             else if (e.key === "Escape") close();
           }}
         />
-        <div style={{ maxHeight: "46vh", overflow: "auto", padding: "6px 0" }}>
+        <div className="at-palette-list">
           {items.map((it, i) => (
             <button
               key={`${it.path}-${it.label}-${i}`}
@@ -693,15 +538,13 @@ function Spotlight({ open, onClose }: { open: boolean; onClose: () => void }) {
               onMouseEnter={() => setSel(i)}
               onClick={() => go(i)}
             >
-              <it.icon size={16} style={{ color: "var(--at-cyan)", opacity: 0.85 }} />
+              <it.icon size={16} aria-hidden />
               <span className="flex-1 truncate">{it.label}</span>
               <span className="k">{it.sub}</span>
             </button>
           ))}
           {!items.length && (
-            <div style={{ padding: "24px", textAlign: "center", color: "var(--at-ink-4)", fontSize: 13 }}>
-              No matches.
-            </div>
+            <div className="at-loading">No matches.</div>
           )}
         </div>
       </div>
@@ -799,19 +642,28 @@ export function Shell() {
     }
   }, []);
 
+  const active = activeModuleFromPath(loc.pathname);
+  const hasLocalNav = !!active && active.id !== "overview";
+
   return (
-    <div className="at-app h-full flex flex-col overflow-hidden">
-      <MenuBar
-        onSpotlight={() => setSpot(true)}
-        onOpenNav={() => setNavOpen(true)}
-        onLaunchPad={() => setLaunchPad(true)}
-      />
-      <MobileJumpNav />
-      <div className="at-main flex-1 min-h-0">
+    <div className={cx("at-app", hasLocalNav && "has-localnav")}>
+      <a className="a-skip" href="#atlas-main">
+        Skip to content
+      </a>
+      <div className="at-chrome">
+        <MenuBar
+          onSpotlight={() => setSpot(true)}
+          onOpenNav={() => setNavOpen(true)}
+          onLaunchPad={() => setLaunchPad(true)}
+        />
+        <LocalNav />
+        <MobileJumpNav />
+      </div>
+      <main id="atlas-main" className="at-main" tabIndex={-1}>
         <div key={loc.pathname} className="at-main-scroll">
           <Outlet />
         </div>
-      </div>
+      </main>
       <Spotlight open={spotOpen} onClose={() => setSpot(false)} />
       <LaunchPad open={launchPadOpen} onClose={() => setLaunchPad(false)} />
       <MobileNavDrawer open={navOpen} onClose={() => setNavOpen(false)} />
@@ -821,7 +673,7 @@ export function Shell() {
           {SHORTCUTS.map(([k, d]) => (
             <div key={k} className="flex items-center justify-between text-sm">
               <span className="text-muted-foreground">{d}</span>
-              <kbd className="at-kbd mono" style={{ marginLeft: 0 }}>{k}</kbd>
+              <kbd className="at-kbd">{k}</kbd>
             </div>
           ))}
         </div>

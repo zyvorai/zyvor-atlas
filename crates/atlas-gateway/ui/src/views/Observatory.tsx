@@ -15,7 +15,7 @@ import {
 import { history, onHistory, recordSummary, seed } from "../store/history";
 import { depth, depthWidth } from "../lib/depth";
 import { fmtBytes, fmtBytesOpt, fmtForecastFill, fmtPct, fmtSi } from "../lib/format";
-import { Echogram } from "../ui/Echogram";
+import { ThroughputChart } from "../ui/ThroughputChart";
 import { DashboardHero, DashboardModule } from "../ui/templates/DashboardHero";
 import IoHeatmap from "./IoHeatmap";
 import { navCrumbs } from "../nav/routes";
@@ -36,7 +36,7 @@ const bcol = (t: string) => (t === "nfs" ? "#34D399" : t === "zfs" ? "#FBBF24" :
 function canvasInk() {
   const s = getComputedStyle(document.documentElement);
   const v = (n: string, fb: string) => s.getPropertyValue(n).trim() || fb;
-  const day = document.documentElement.dataset.uiShell === "day" || document.documentElement.dataset.uiShell === "apple-lite";
+  const day = document.documentElement.dataset.theme === "light";
   return {
     day,
     ink: v("--at-ink", day ? "#1d1d1f" : "#eaf6ff"),
@@ -385,7 +385,7 @@ export default function Observatory() {
         <div className="at-panel" style={{ padding: "18px 20px 14px" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 24, flexWrap: "wrap", marginBottom: 12 }}>
             <div>
-              <div className="at-caption">Client IO echogram</div>
+              <div className="at-caption">Client I/O</div>
               <div className="at-io-split" style={{ marginTop: 6 }}>
                 <div>
                   <div className="at-val md" style={{ color: "var(--d1)" }}>
@@ -412,7 +412,7 @@ export default function Observatory() {
               <div className="at-sub">{forecastLine || "Usage steady — no near-term fill"}</div>
             </div>
           </div>
-          <Echogram wide readOps={io?.read_ops_total || 0} writeOps={io?.write_ops_total || 0} hist={hist} />
+          <ThroughputChart wide hist={hist} />
         </div>
       </DashboardModule>
 
