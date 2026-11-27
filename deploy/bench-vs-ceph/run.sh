@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 #
 # Runs the fio workloads on one system's mount (see common.sh for the contract). One system at a time:
 # both share one disk, so this takes $BENCH_ROOT/bench.lock exclusively and refuses to start while the

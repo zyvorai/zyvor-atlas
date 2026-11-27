@@ -20,6 +20,7 @@ duplicated.
 - **[RUSTFS.md](RUSTFS.md)** — history of the now-removed first-party RustFS integration; Ceph RGW is the default object backend today.
 - **[DEDUP_ESTIMATE.md](DEDUP_ESTIMATE.md)** — what dedup would save on a Ceph or ZFS pool, before you enable anything: methods, reading the result, limits.
 - **[NATIVE_DATA_REDUCTION.md](NATIVE_DATA_REDUCTION.md)** — atlas-native LZ4 compression and extent deduplication: what they do, the savings report, limits.
+- **[NATIVE_VS_CEPH.md](NATIVE_VS_CEPH.md)** — gap analysis: what atlas-native lacks before it could replace Ceph.
 - **[WORM.md](WORM.md)** — retention-locked snapshots, S3 object retention and the ransomware assessment/protect flow.
 - **[CHECKPOINTS.md](CHECKPOINTS.md)** — `atlasctl checkpoint seal`: snapshot, lock and prune finished training checkpoints (DCP, Megatron-LM, Orbax layouts).
 - **[IO_EBPF.md](IO_EBPF.md)** — `atlas-io`, the optional observe-first eBPF storage I/O sensor.

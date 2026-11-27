@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Copyright (c) 2026 ZyvorAI Labs Private Limited.
-# SPDX-License-Identifier: LicenseRef-Zyvor-Production-1.0
+# SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 """Markdown comparison of run.sh result sets.
 
 Usage: report.py <label>=<results/tag/system> [<label>=<dir> ...]
