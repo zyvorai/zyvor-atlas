@@ -22,6 +22,14 @@ not production-supported.
   **M** 1-2 months, **L** 3-6 months, **XL** more.
 - No performance comparison is made. None has been measured.
 
+## Changed since the basis commit
+
+The tables below describe `9c2aba1e`. Later work on the same branch:
+
+- **A1 (block device):** `atlas-native-ublk` exists ([NATIVE_UBLK](NATIVE_UBLK.md)). It has not been run against a Linux kernel.
+- **A2 (small writes):** opt-in delta writes exist ([NATIVE_DELTA_WRITES](NATIVE_DELTA_WRITES.md)). No performance has been measured.
+- **A3 (stale block reads):** block data reads now run a read barrier, and the read lease is granted only from a confirmed ReadIndex. Tested in process, not on a real multi-host partition.
+
 ## Top blockers
 
 1. New data keeps landing on the same nodes (*inferred* from code); no live add, drain or rebalance
