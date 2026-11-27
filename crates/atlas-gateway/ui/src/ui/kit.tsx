@@ -119,8 +119,15 @@ export function Field(props: React.InputHTMLAttributes<HTMLInputElement>) {
 export function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
   return <select {...props} className={cx("field", props.className)} />;
 }
-export function Label({ children }: { children: React.ReactNode }) {
-  return <div className="section-label mb-1 mt-3">{children}</div>;
+export function Label({ children, htmlFor }: { children: React.ReactNode; htmlFor?: string }) {
+  const className = "section-label block mb-1 mt-3";
+  return htmlFor ? (
+    <label className={className} htmlFor={htmlFor}>
+      {children}
+    </label>
+  ) : (
+    <div className={className}>{children}</div>
+  );
 }
 
 export function PageHeader({
@@ -415,6 +422,7 @@ export function FormModal({
 }) {
   const [vals, setVals] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
+  const idBase = useId();
   useEffect(() => {
     onValuesChange?.(vals);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -504,10 +512,13 @@ export function FormModal({
     >
       {fields.map((f) => (
         <div key={f.name}>
-          <Label>{f.label}</Label>
+          {/* A tile group names itself (radiogroup); every other control is labelled. */}
+          <Label htmlFor={f.options && f.options.length > 0 && f.options.length <= 8 ? undefined : `${idBase}-${f.name}`}>
+            {f.label}
+          </Label>
           {f.options ? (
             f.options.length === 0 ? (
-              <Select value="" disabled>
+              <Select id={`${idBase}-${f.name}`} value="" disabled>
                 <option value="">{f.hint || `No ${f.label.toLowerCase()} available`}</option>
               </Select>
             ) : f.options.length <= 8 ? (
@@ -526,7 +537,11 @@ export function FormModal({
                 ))}
               </div>
             ) : (
-              <Select value={vals[f.name] ?? ""} onChange={(e) => set(f.name, e.target.value)}>
+              <Select
+                id={`${idBase}-${f.name}`}
+                value={vals[f.name] ?? ""}
+                onChange={(e) => set(f.name, e.target.value)}
+              >
                 {f.options.map((o) => (
                   <option key={o.value} value={o.value}>
                     {o.label}
@@ -536,6 +551,7 @@ export function FormModal({
             )
           ) : (
             <Field
+              id={`${idBase}-${f.name}`}
               type={f.type || "text"}
               min={f.min}
               placeholder={f.placeholder}

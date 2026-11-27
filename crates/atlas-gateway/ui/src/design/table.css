@@ -89,6 +89,11 @@
   font: inherit;
   cursor: pointer;
 }
+/* Identifiers and figures stay on one line; wide tables scroll sideways instead. */
+.at-tbl td.mono,
+.at-tbl span.mono {
+  white-space: nowrap;
+}
 .at-row-actions {
   display: flex;
   justify-content: flex-end;

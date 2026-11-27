@@ -1,20 +1,46 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Overview: a health headline, a grid of feature tiles, then pools, activity and clusters.
-// Every number and shape here comes from the gateway; anything unknown reads as "—" or says so.
+// Overview: a health headline, the cluster itself, a grid of feature tiles, then pools, activity
+// and clusters. Every number and shape comes from the gateway; anything unknown says so.
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useNavigate } from "react-router-dom";
 import { ChevronRight } from "lucide-react";
-import { useAlerts, useCephOsdDf, useClusters, useForecast, useHistory, useOsds, usePools, useSummary } from "../api/hooks";
+import {
+  useAlerts,
+  useBackendsSummary,
+  useCephDf,
+  useCephOsdDf,
+  useClusters,
+  useForecast,
+  useHistory,
+  useOsds,
+  usePools,
+  useSummary,
+} from "../api/hooks";
 import type { Health } from "../api/types";
-import { history, onHistory, recordSummary, seed } from "../store/history";
-import { depth, depthWidth } from "../lib/depth";
+import {
+  CapacityRing,
+  ClusterHero,
+  EmptyState,
+  HealthIndicator,
+  PoolUsageBars,
+  TrendChart,
+  capacityFromSummary,
+  formatBytesPerSecond,
+  replicaSizesFromPools,
+  throughputSeries,
+  topologyFromOsds,
+} from "../graphics";
+import { history, iopsMaxGapMs, iopsTrend, onHistory, recordSummary, seed } from "../store/history";
+import { depth } from "../lib/depth";
+import { poolFill, poolUsage } from "../lib/poolUsage";
 import { sendPrompt } from "../lib/prompts";
-import { cx, fmtBytes, fmtBytesOpt, fmtForecastFill, fmtPct, fmtSi, healthKind, num } from "../lib/format";
-import { Badge } from "../ui/kit";
-import { ThroughputChart } from "../ui/ThroughputChart";
+import { fmtBytes, fmtBytesOpt, fmtForecastFill, fmtSi, num } from "../lib/format";
 import { DashboardHero, DashboardModule } from "../ui/templates/DashboardHero";
 import "./Overview.css";
+
+/** Capacity turns amber and red at the same points as lib/depth.ts. */
+const FILL = { warnAt: 75, failAt: 90 };
 
 const HEADLINE: Record<Health, string> = {
   ok: "Storage is healthy.",
@@ -31,38 +57,6 @@ function worstHealth(values: (Health | undefined)[]): Health {
 }
 
 const dash = (n: number | null | undefined) => (typeof n === "number" ? num(n) : "—");
-
-function CapacityRing({ pct }: { pct: number | null }) {
-  const r = 104;
-  const circ = 2 * Math.PI * r;
-  const tone = pct == null || pct < 75 ? "" : pct < 90 ? "warn" : "fail";
-  return (
-    <svg
-      className={cx("ov-ring", tone)}
-      viewBox="0 0 240 240"
-      role="img"
-      aria-label={pct == null ? "Capacity not surveyed" : `${pct} percent of capacity used`}
-    >
-      <circle className="track" cx="120" cy="120" r={r} />
-      {pct != null && pct > 0 && (
-        <circle
-          className="value"
-          cx="120"
-          cy="120"
-          r={r}
-          transform="rotate(-90 120 120)"
-          style={{ strokeDasharray: circ, strokeDashoffset: circ * (1 - pct / 100), ["--ov-circ" as string]: circ }}
-        />
-      )}
-      <text className="figure" x="120" y="128" textAnchor="middle">
-        {pct == null ? "—" : `${pct}%`}
-      </text>
-      <text className="caption" x="120" y="156" textAnchor="middle">
-        {pct == null ? "not surveyed" : "used"}
-      </text>
-    </svg>
-  );
-}
 
 function Stat({
   label,
@@ -99,10 +93,12 @@ export default function Overview() {
   const { data: s } = useSummary();
   const { data: clusters } = useClusters();
   const { data: pools } = usePools();
-  const { data: osds } = useOsds();
+  const { data: osds, isLoading: osdsLoading } = useOsds();
   const { data: osdDf } = useCephOsdDf();
   const { data: alerts } = useAlerts("open");
   const { data: forecast } = useForecast();
+  const { data: cephDf } = useCephDf();
+  const { data: backends } = useBackendsSummary();
   const io = s?.client_io;
   const rc = s?.recovery;
   const recovering = rc ? (rc.pg_recovering || 0) + (rc.pg_backfilling || 0) : null;
@@ -115,7 +111,10 @@ export default function Overview() {
   useEffect(() => {
     if (s) recordSummary(s);
   }, [s]);
-  const hist = history();
+  const samples = history();
+  const iops = iopsTrend(samples);
+  const lastRead = iops[0].points.at(-1)?.v;
+  const lastWrite = iops[1].points.at(-1)?.v;
 
   const osdRows = useMemo(() => {
     const byNum: Record<number, { used: number; cap: number }> = {};
@@ -131,23 +130,23 @@ export default function Overview() {
   }, [osds, osdDf]);
 
   const hasSurvey = (s?.raw_capacity_bytes ?? 0) > 0;
-  const usedPct = hasSurvey ? fmtPct(s?.used_capacity_percent) : null;
   const health = worstHealth((clusters || []).map((c) => c.health));
   const hostCount = new Set(osdRows.map((o) => o.host).filter(Boolean)).size;
 
-  const poolRows = useMemo(() => {
-    return (pools || [])
-      .map((p) => {
-        const known = p.used_bytes != null || p.max_bytes != null;
-        const used = p.used_bytes || 0;
-        const total = (p.max_bytes || 0) + used;
-        const pct = total > 0 ? (used / total) * 100 : 0;
-        return { ...p, known, used, total, pct };
-      })
-      .sort((a, b) => b.pct - a.pct);
-  }, [pools]);
+  const poolRows = useMemo(
+    () => poolUsage(pools, { clusters, backends, cephDf }),
+    [pools, clusters, backends, cephDf],
+  );
+  // The fullest pool whose fill level is actually known.
+  const fullest = useMemo(() => {
+    let best: { name: string; pct: number } | undefined;
+    for (const p of poolRows ?? []) {
+      const pct = poolFill(p);
+      if (pct != null && (!best || pct > best.pct)) best = { name: p.name, pct };
+    }
+    return best;
+  }, [poolRows]);
 
-  const fullest = poolRows[0];
   const forecastLine = fmtForecastFill(forecast?.days_to_full, forecast?.growth_bytes_per_day);
 
   const summaryLine: ReactNode[] = [];
@@ -185,10 +184,6 @@ export default function Overview() {
       </span>,
     );
   }
-
-  const osdUp = osdRows.filter((o) => o.up).length;
-  const osdIn = osdRows.filter((o) => o.in_cluster).length;
-  const osdTotal = osdRows.length;
 
   const ledger: { key: string; t: string; cls: string; body: ReactNode }[] = [];
   for (const a of (alerts || []).slice(0, 4)) {
@@ -252,90 +247,60 @@ export default function Overview() {
         </>
       }
     >
+      <ClusterHero
+        className="ov-cluster"
+        clusterName={
+          clusters?.length === 1 ? clusters[0].name : (clusters?.length ?? 0) > 1 ? "All clusters" : undefined
+        }
+        nodes={topologyFromOsds(osdRows.length ? osdRows : osds)}
+        loading={osdsLoading}
+        health={clusters?.length ? health : undefined}
+        replicaSizes={replicaSizesFromPools(pools)}
+        rebuilding={!!recovering}
+      />
+
       <div className="ov-grid">
         <section className="ov-tile ov-capacity" aria-labelledby="ov-capacity-title">
           <h2 id="ov-capacity-title" className="ov-headline">
             Capacity
           </h2>
-          <p className="ov-lede">{forecastLine || (hasSurvey ? "No near-term fill projected." : "Waiting on cluster capacity discovery.")}</p>
-          <CapacityRing pct={usedPct} />
-          <dl className="ov-figures">
-            <div>
-              <dt>
-                <span className="ov-key used" aria-hidden />
-                Used
-              </dt>
-              <dd>{hasSurvey ? fmtBytesOpt(s?.used_capacity_bytes) : "—"}</dd>
-            </div>
-            <div>
-              <dt>
-                <span className="ov-key free" aria-hidden />
-                Free
-              </dt>
-              <dd>{hasSurvey ? fmtBytesOpt(s?.available_capacity_bytes) : "—"}</dd>
-            </div>
-            <div>
-              <dt>Raw</dt>
-              <dd>{hasSurvey ? fmtBytesOpt(s?.raw_capacity_bytes) : "—"}</dd>
-            </div>
-          </dl>
+          <p className="ov-lede">
+            {forecastLine || (hasSurvey ? "No near-term fill projected." : "Waiting on cluster capacity discovery.")}
+          </p>
+          <CapacityRing {...capacityFromSummary(s)} {...FILL} label="Raw capacity" size={280} loading={!s} />
         </section>
 
         <section className="ov-tile ov-io" aria-labelledby="ov-io-title">
-          <h2 id="ov-io-title" className="ov-tile-title">
-            Throughput
+          <h2 id="ov-io-title" className="ov-headline">
+            Performance
           </h2>
-          <ThroughputChart hist={hist} />
+          <TrendChart
+            title="Client throughput"
+            series={throughputSeries(serverHist)}
+            formatValue={formatBytesPerSecond}
+          />
+          <div className="ov-iops">
+            <div className="at-sub" aria-hidden>
+              IOPS, recent
+            </div>
+            <TrendChart title="Client IOPS" variant="sparkline" series={iops} maxGapMs={iopsMaxGapMs(samples)} />
+          </div>
           <dl className="ov-figures">
             <div>
-              <dt>Read, total</dt>
+              <dt>Read now</dt>
               <dd>
-                {io ? fmtSi(io.read_ops_total) : "—"} <small>ops</small>
+                {typeof lastRead === "number" ? num(Math.round(lastRead)) : "—"} <small>IOPS</small>
               </dd>
-              <dd className="sub">{io ? fmtBytes(io.read_bytes_total) : "—"}</dd>
+              <dd className="sub">{io ? `${fmtSi(io.read_ops_total)} ops · ${fmtBytes(io.read_bytes_total)}` : "—"}</dd>
             </div>
             <div>
-              <dt>Written, total</dt>
+              <dt>Write now</dt>
               <dd>
-                {io ? fmtSi(io.write_ops_total) : "—"} <small>ops</small>
+                {typeof lastWrite === "number" ? num(Math.round(lastWrite)) : "—"} <small>IOPS</small>
               </dd>
-              <dd className="sub">{io ? fmtBytes(io.write_bytes_total) : "—"}</dd>
+              <dd className="sub">{io ? `${fmtSi(io.write_ops_total)} ops · ${fmtBytes(io.write_bytes_total)}` : "—"}</dd>
             </div>
           </dl>
-        </section>
-
-        <section className="ov-tile ov-osds a-reveal" aria-labelledby="ov-osd-title">
-          <h2 id="ov-osd-title" className="ov-tile-title">
-            <button type="button" className="ov-open" onClick={() => nav("/ceph")}>
-              OSDs
-              <ChevronRight size={16} aria-hidden />
-            </button>
-          </h2>
-          <div className="ov-number">
-            {osdTotal ? osdUp : "—"}
-            {osdTotal ? <span className="at-unit">of {osdTotal} up</span> : null}
-          </div>
-          {osdTotal ? (
-            <>
-              <ul className="ov-osd-grid" aria-label="OSD states">
-                {osdRows.map((o) => {
-                  const state = !o.up ? "down" : o.in_cluster ? "up" : "out";
-                  const label = `osd.${o.osd_num ?? o.id} · ${state === "out" ? "up, out of cluster" : state}`;
-                  return (
-                    <li key={o.id} className={state} title={label}>
-                      <span className="sr-only">{label}</span>
-                    </li>
-                  );
-                })}
-              </ul>
-              <div className="ov-note">
-                {osdIn} in cluster
-                {osdTotal - osdUp > 0 ? ` · ${osdTotal - osdUp} down` : ""}
-              </div>
-            </>
-          ) : (
-            <div className="ov-note">No OSDs reported.</div>
-          )}
         </section>
 
         <Stat label="Volumes" value={dash(s?.volumes)} onOpen={() => nav("/volumes")}>
@@ -395,37 +360,20 @@ export default function Overview() {
         </Stat>
       </div>
 
-      <DashboardModule title="Pools" note={`${poolRows.length} pool${poolRows.length === 1 ? "" : "s"}, fullest first`} className="a-reveal">
-        <div className="at-panel">
-          {poolRows.length === 0 && <div className="at-muted-row">No pools discovered yet.</div>}
-          {poolRows.map((p) => {
-            const d = depth(p.pct);
-            return (
-              <button key={p.id} type="button" className="at-basin" onClick={() => nav(`/pools/${p.id}`)}>
-                <div className="at-basin-id">
-                  <div className="at-basin-name">
-                    {p.name}
-                    <span className="at-tag">{p.kind || "pool"}</span>
-                  </div>
-                  <div className="at-trough">
-                    {p.known && <span className={`at-level ${d.cls}`} style={{ width: depthWidth(p.pct) }} />}
-                  </div>
-                </div>
-                <div className="at-basin-read">
-                  {p.known ? fmtBytes(p.used) : "—"}
-                  <small>of {p.known ? fmtBytes(p.total) : "—"}</small>
-                </div>
-                <div className={`at-basin-pct ${d.cls}`}>{p.known ? `${Math.round(p.pct)}%` : "—"}</div>
-              </button>
-            );
-          })}
+      <DashboardModule
+        title="Pools"
+        note={poolRows ? `${poolRows.length} pool${poolRows.length === 1 ? "" : "s"}, fullest first` : undefined}
+        className="a-reveal"
+      >
+        <div className="at-panel ov-pools">
+          <PoolUsageBars pools={poolRows} loading={!pools} onSelect={(p) => nav(`/pools/${p.id}`)} {...FILL} />
         </div>
       </DashboardModule>
 
       <div className="at-2col">
         <DashboardModule title="Activity" note="Alerts and forecasts" className="a-reveal">
           <div className="at-panel at-ledger">
-            {ledger.length === 0 && <div className="at-muted-row">No recent exceptions.</div>}
+            {ledger.length === 0 && <EmptyState art="alert" title="No recent exceptions" compact />}
             {ledger.map((e) => (
               <div key={e.key} className="at-entry">
                 <time>{e.t}</time>
@@ -458,9 +406,7 @@ export default function Overview() {
                           </button>
                         </td>
                         <td>
-                          <Badge kind={healthKind(c.health)} dot>
-                            {c.health}
-                          </Badge>
+                          <HealthIndicator health={c.health} />
                         </td>
                         <td className="mono">{fmtBytesOpt(c.raw_capacity_bytes)}</td>
                         <td className="mono">{fmtBytesOpt(c.used_capacity_bytes)}</td>
@@ -470,7 +416,7 @@ export default function Overview() {
                 </table>
               </div>
             ) : (
-              <div className="at-muted-row">No clusters.</div>
+              <EmptyState art="cluster" title="No clusters" compact />
             )}
           </div>
         </DashboardModule>

@@ -27,22 +27,16 @@
     box-shadow: var(--a-shadow);
   }
   .ov-capacity {
-    grid-column: span 6;
-    grid-row: span 2;
+    grid-column: span 5;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--a-s5);
+    gap: var(--a-s4);
     text-align: center;
     animation: a-rise 0.8s var(--a-ease) 0.05s backwards;
   }
   .ov-io {
-    grid-column: span 6;
+    grid-column: span 7;
     gap: var(--a-s4);
     animation: a-rise 0.8s var(--a-ease) 0.14s backwards;
-  }
-  .ov-osds {
-    grid-column: span 6;
-    gap: var(--a-s3);
   }
   .ov-stat {
     grid-column: span 3;
@@ -58,7 +52,7 @@
     line-height: 1.08;
   }
   .ov-lede {
-    margin: calc(var(--a-s5) * -1 + 6px) 0 0;
+    margin: calc(var(--a-s3) * -1) 0 var(--a-s2);
     color: var(--a-ink-2);
     font-size: 17px;
   }
@@ -103,8 +97,7 @@
   .ov-tile:hover .ov-open svg {
     transform: translateX(3px);
   }
-  .ov-tile .a-link,
-  .ov-osd-grid li {
+  .ov-tile .a-link {
     position: relative;
     z-index: 1;
   }
@@ -129,45 +122,6 @@
   .ov-note {
     color: var(--a-ink-2);
     font-size: 13px;
-  }
-
-  /* ── Capacity ring ── */
-  .ov-ring {
-    width: min(320px, 100%);
-    height: auto;
-  }
-  .ov-ring circle {
-    fill: none;
-    stroke-width: 22;
-  }
-  .ov-ring .track {
-    stroke: var(--a-surface-3);
-  }
-  .ov-ring .value {
-    stroke: var(--a-blue);
-    stroke-linecap: round;
-    animation: ov-sweep 1.2s var(--a-ease) 0.2s backwards;
-  }
-  .ov-ring.warn .value {
-    stroke: var(--a-warn);
-  }
-  .ov-ring.fail .value {
-    stroke: var(--a-fail);
-  }
-  .ov-ring .figure {
-    fill: var(--a-ink);
-    font-size: 54px;
-    font-weight: 700;
-    letter-spacing: -0.035em;
-  }
-  .ov-ring .caption {
-    fill: var(--a-ink-2);
-    font-size: 15px;
-  }
-  @keyframes ov-sweep {
-    from {
-      stroke-dashoffset: var(--ov-circ);
-    }
   }
 
   .ov-figures {
@@ -201,54 +155,16 @@
   }
   .ov-io .ov-figures {
     justify-content: flex-start;
+    margin-top: auto;
   }
   .ov-io .ov-figures dt {
     justify-content: flex-start;
   }
-  .ov-key {
-    width: 8px;
-    height: 8px;
-    border-radius: 50%;
-  }
-  .ov-key.used {
-    background: var(--a-blue);
-  }
-  .ov-key.free {
-    background: var(--a-surface-3);
-  }
-
-  /* ── OSD grid: one square per OSD. Shape differs as well as colour. ── */
-  .ov-osd-grid {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 5px;
-    max-height: 132px;
-    margin: 0;
-    padding: 0;
-    overflow: auto;
-    list-style: none;
-  }
-  .ov-osd-grid li {
-    width: 22px;
-    height: 22px;
-    border-radius: 6px;
-    background: var(--a-ok);
-  }
-  .ov-osd-grid li.out {
-    border: 5px solid var(--a-warn);
-    background: transparent;
-  }
-  .ov-osd-grid li.down {
-    border-radius: 50%;
-    background: var(--a-fail);
-  }
 
   @media (max-width: 1100px) {
     .ov-capacity,
-    .ov-io,
-    .ov-osds {
+    .ov-io {
       grid-column: span 12;
-      grid-row: auto;
     }
     .ov-stat {
       grid-column: span 6;
@@ -265,5 +181,29 @@
     .ov-figures {
       column-gap: var(--a-s5);
     }
+  }
+}
+
+/* Placement of the shared graphics. Unlayered, because graphics.css is. */
+.ag-hero.ov-cluster {
+  margin-bottom: var(--a-s4);
+  border: none;
+  border-radius: var(--a-radius-lg);
+  box-shadow: var(--a-shadow);
+}
+.ov-pools .ag-pools {
+  padding: var(--a-s2) var(--a-s5);
+}
+.ov-iops {
+  min-height: 62px;
+}
+/* On a phone the tile padding moves inward so two hosts still fit side by side. */
+@media (max-width: 430px) {
+  .ag-hero.ov-cluster {
+    padding-inline: 1px;
+  }
+  .ov-cluster .ag-hero-head,
+  .ov-cluster .ag-legend {
+    padding-inline: 14px;
   }
 }

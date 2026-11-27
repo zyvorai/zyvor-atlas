@@ -327,7 +327,9 @@ export default function Volumes() {
                   </th>
                   <th>Class</th>
                   <th>PVC / RBD</th>
-                  <th />
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>

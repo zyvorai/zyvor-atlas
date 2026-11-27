@@ -78,15 +78,19 @@ export function NavSectionLinks({
                   key={m.id}
                   to={m.path}
                   end={m.path === "/"}
-                  title={m.label}
-                  aria-label={m.label}
+                  title={compact ? m.label : undefined}
+                  aria-label={compact ? m.label : undefined}
                   data-label={m.label}
                   className={({ isActive }) => cx(linkClass(isActive), compact && "is-compact")}
                   onClick={onNavigate}
                 >
                   <NavAppIcon icon={m.icon} size={iconSize} />
                   {!compact && <span>{m.label}</span>}
-                  {!compact && m.shortcut ? <kbd className="at-control-kbd">{m.shortcut}</kbd> : null}
+                  {!compact && m.shortcut ? (
+                    <kbd className="at-control-kbd" aria-hidden>
+                      {m.shortcut}
+                    </kbd>
+                  ) : null}
                 </NavLink>
               ))}
             {showSectionHeaders && groupIdx < groups.length - 1 && !closed ? (
@@ -122,8 +126,6 @@ export function NavRecents({
             key={r.id}
             to={mod.path}
             end={mod.path === "/"}
-            title={r.label}
-            aria-label={r.label}
             data-label={r.label}
             className={({ isActive }) => linkClass(isActive)}
             onClick={onNavigate}

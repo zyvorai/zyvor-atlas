@@ -10,7 +10,7 @@
 
 /* ── Theme-independent ── */
 :root {
-  --a-font: -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --a-font: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, system-ui, sans-serif;
   --a-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
 
   --a-radius: 18px;
@@ -71,10 +71,10 @@
   --a-on-blue: #ffffff;
 
   --a-ok: #18752f;
-  --a-warn: #8f5200;
+  --a-warn: #a64f00;
   --a-fail: #c4161c;
   --a-ok-wash: rgba(24, 117, 47, 0.09);
-  --a-warn-wash: rgba(143, 82, 0, 0.1);
+  --a-warn-wash: rgba(166, 79, 0, 0.09);
   --a-fail-wash: rgba(196, 22, 28, 0.08);
   --a-on-fail: #ffffff;
   /* Second chart series (the first is --a-blue). Never an interaction colour. */

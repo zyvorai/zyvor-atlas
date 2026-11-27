@@ -22,13 +22,26 @@ describe("Overview", () => {
     expect(container).not.toBeEmptyDOMElement();
   });
 
-  it("draws no capacity, throughput or OSDs it has not been given", async () => {
+  it("draws no capacity, throughput or disks it has not been given", async () => {
     renderView(<Overview />);
-    await flushQueries();
-    expect(screen.getByRole("img", { name: "Capacity not surveyed" })).toBeInTheDocument();
-    expect(screen.getByText(/Collecting samples/)).toBeInTheDocument();
-    expect(screen.getByText("No OSDs reported.")).toBeInTheDocument();
-    expect(screen.queryByRole("list", { name: "OSD states" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("img", { name: /Capacity not reported/ })).toBeInTheDocument();
+    expect(await screen.findByText("No disks reported")).toBeInTheDocument();
+    expect(await screen.findByText("Not enough samples yet")).toBeInTheDocument();
+    expect(screen.getByText("Client IOPS: not enough samples")).toBeInTheDocument();
+  });
+
+  it("takes a Ceph pool's fill from ceph df, not from used / max", async () => {
+    const data: Record<string, unknown> = {
+      "/clusters": [{ id: "c1", backend_id: "bkd_ceph_lab", name: "lab", health: "ok" }],
+      "/pools": [
+        { id: "pool_1", cluster_id: "c1", name: "rbd", kind: "rbd", used_bytes: 900, max_bytes: 1000, health: "ok" },
+      ],
+      "/ceph/df": { pools: [{ id: 1, name: "rbd", stats: { stored: 300, max_avail: 1000, percent_used: 0.23 } }] },
+    };
+    vi.spyOn(http, "get").mockImplementation(((url: string) => Promise.resolve({ data: data[url] ?? [] })) as never);
+    renderView(<Overview />);
+    expect(await screen.findByText("23%")).toBeInTheDocument();
+    expect(screen.queryByText("90%")).not.toBeInTheDocument();
   });
 
   it("shows alert titles as text, never as markup", async () => {

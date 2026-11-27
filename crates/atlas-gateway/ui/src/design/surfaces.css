@@ -170,6 +170,15 @@
   flex: 1;
 }
 
+/* Panels that follow one another keep their distance; flex stacks space them with gap. */
+.at-panel + .at-panel,
+.at-panel + .at-instrs {
+  margin-top: var(--a-stack-gap);
+}
+.at-stack > .at-panel + .at-panel,
+.at-stack > .at-panel + .at-instrs {
+  margin-top: 0;
+}
 .at-stack {
   display: flex;
   flex-direction: column;
@@ -557,60 +566,6 @@
   width: 8px;
   height: 8px;
   border-radius: 50%;
-}
-
-/* ── Throughput chart ── */
-.a-chart svg {
-  display: block;
-  width: 100%;
-  height: 150px;
-}
-.a-chart.wide svg {
-  height: 180px;
-}
-.a-chart .grid-line {
-  stroke: var(--a-line);
-  stroke-width: 1;
-  vector-effect: non-scaling-stroke;
-}
-.a-chart .line {
-  fill: none;
-  stroke-width: 2;
-  stroke-linejoin: round;
-  stroke-linecap: round;
-  vector-effect: non-scaling-stroke;
-}
-.a-chart .line.read {
-  stroke: var(--a-blue);
-}
-.a-chart .line.write {
-  stroke: var(--a-series-2);
-}
-.a-chart .area {
-  fill: var(--a-blue);
-  opacity: 0.12;
-}
-.a-chart-legend {
-  display: flex;
-  flex-wrap: wrap;
-  gap: var(--a-s2) var(--a-s5);
-  margin-top: var(--a-s3);
-}
-.a-chart-legend .peak {
-  margin-left: auto;
-  color: var(--a-ink-2);
-  font-size: 12.5px;
-}
-.a-chart-empty {
-  display: grid;
-  place-items: center;
-  min-height: 150px;
-  padding: var(--a-s5);
-  border-radius: var(--a-radius-sm);
-  background: var(--a-surface-2);
-  color: var(--a-ink-2);
-  font-size: 13px;
-  text-align: center;
 }
 
 /* ── Horizontal gallery ── */

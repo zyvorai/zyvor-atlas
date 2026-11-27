@@ -28,7 +28,7 @@ console: **tables stay dense, legible and fast.**
 | `design/overlays.css` | Menus, modal, slide-over, toasts, command palette, launch pad. |
 | `design/shell.css` | Global nav, flyouts, local nav, mobile sheet, page canvas. |
 | `views/<Page>.css` | Page-specific rules only, wrapped in `@layer components`, imported by that page, with a page prefix (`ov-`, `lg-`). |
-| `graphics/` | Reusable graphics components. They read the tokens below. |
+| `graphics/` | The graphics components (see its README). They fetch nothing and read only the tokens below. Their stylesheet is unlayered, so a page adjusting their placement does it with unlayered rules. |
 
 Do not add a second override layer on top of these. Change the rule where it lives.
 
@@ -110,12 +110,20 @@ one line of state, then go straight to the table.
 
 ## Graphics
 
-- Graphics are first-class: a capacity ring, a throughput chart, one square per OSD.
+- Graphics are first-class and come from `ui/src/graphics`: `ClusterHero`, `CapacityRing`,
+  `PoolUsageBars`, `TrendChart`, `HealthIndicator`, `EmptyState`, `SpotIllustration`. Use them
+  before drawing anything new.
 - **Never invent data to draw one.** No placeholder series, padded cells or demo values. Unknown
-  reads as "—"; a chart without enough measurements says so (`ui/ThroughputChart.tsx` leaves out
-  the first sample, which has no rate).
-- Each has a text equivalent (`aria-label`, legend or list).
-- Decorative art is `aria-hidden` and carries no data (sign-in layers).
+  reads as words or "—".
+- **Pool fill levels go through `lib/poolUsage.ts`.** `StoragePool.max_bytes` is available space on
+  Ceph (and the real driver counts replicas in `used_bytes`) but total size on the other drivers, so
+  never divide `used_bytes` by `max_bytes` in a page. Ceph levels come from `/ceph/df`.
+- `CapacityRing` and `PoolUsageBars` default to 70 / 85 %; pass `warnAt={75} failAt={90}` so they
+  agree with the colour law above.
+- Live IOPS come from the client history buffer (`iopsTrend` in `store/history.ts`), which leaves out
+  the first sample because it has no rate.
+- Each graphic has a text equivalent (`aria-label`, legend or list). Decorative art is
+  `aria-hidden`.
 - Server strings are rendered as text, never with `dangerouslySetInnerHTML`.
 
 ## Emptiness and motion

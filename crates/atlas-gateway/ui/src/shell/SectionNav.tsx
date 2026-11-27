@@ -4,6 +4,7 @@
 // section's own local nav underneath. The narrow-viewport equivalents are MobileJumpNav and the
 // navigation sheet in Shell.tsx.
 import { useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { NavLink, useLocation } from "react-router-dom";
 import { ChevronDown } from "lucide-react";
 import { activeModuleFromPath, navSections, type NavModule, type SectionId } from "../nav/routes";
@@ -141,7 +142,10 @@ export function PrimaryNav() {
           );
         })}
       </nav>
-      {open ? <div className="at-flyout-scrim" aria-hidden onPointerDown={close} /> : null}
+      {/* Outside the header: its backdrop filter would trap a fixed element inside it. */}
+      {open
+        ? createPortal(<div className="at-flyout-scrim" aria-hidden onPointerDown={close} />, document.body)
+        : null}
     </>
   );
 }
@@ -171,17 +175,17 @@ export function LocalNav() {
   );
   if (!active || active.id === OVERVIEW_ID || !group) return null;
   return (
-    <div className="at-localnav">
+    <nav className="at-localnav" aria-label={`${group.short} pages`}>
       <div className="at-localnav-inner">
         <span className="at-localnav-title">{group.short}</span>
-        <nav className="at-localnav-links" aria-label={`${group.short} pages`}>
+        <div className="at-localnav-links">
           {group.items.map((m) => (
             <NavLink key={m.id} to={m.path} className={({ isActive }) => (isActive ? "on" : "")}>
               {m.label}
             </NavLink>
           ))}
-        </nav>
+        </div>
       </div>
-    </div>
+    </nav>
   );
 }

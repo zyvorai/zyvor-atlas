@@ -144,7 +144,11 @@ export function Table<T>({
                   )}
                 </th>
               ))}
-              {actions && <th />}
+              {actions && (
+                <th>
+                  <span className="sr-only">Actions</span>
+                </th>
+              )}
             </tr>
           </thead>
           <tbody>

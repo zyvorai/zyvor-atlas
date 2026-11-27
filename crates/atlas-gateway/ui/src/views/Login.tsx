@@ -5,6 +5,7 @@ import { useEffect, useState, type FormEvent, useMemo } from "react";
 import { ArrowRight, ChevronLeft, CircleAlert, Eye, EyeOff, Loader2 } from "lucide-react";
 import { useUi } from "../store/ui";
 import { API_BASE, clearToasts } from "../api/client";
+import { SpotIllustration } from "../graphics";
 import { ThemeMenu } from "../ui/ThemeMenu";
 import "./Login.css";
 
@@ -12,29 +13,6 @@ const PRODUCT = "Atlas";
 const REMEMBER_USER_KEY = "atlas.login-remember-user";
 const REMEMBER_FLAG_KEY = "atlas.login-remember";
 const DEFAULT_USER = "admin";
-
-/** Decorative: three stacked storage layers. Carries no data. */
-function LayerArt() {
-  return (
-    <svg className="lg-art" viewBox="0 0 240 170" aria-hidden focusable="false">
-      <defs>
-        <linearGradient id="lg-top" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" className="stop-a" />
-          <stop offset="1" className="stop-b" />
-        </linearGradient>
-      </defs>
-      {[2, 1, 0].map((i) => (
-        <g key={i} className={`layer layer-${i}`}>
-          <path className="side" d={`M24 ${52 + i * 30}v10q0 5 7 9l78 40q11 5 22 0l78-40q7-4 7-9V${52 + i * 30}z`} />
-          <path
-            className="face"
-            d={`M109 ${12 + i * 30}q11-5 22 0l78 40q14 7 0 14l-78 40q-11 5-22 0l-78-40q-14-7 0-14z`}
-          />
-        </g>
-      ))}
-    </svg>
-  );
-}
 
 function LoginError({ message }: { message: string }) {
   return (
@@ -191,7 +169,7 @@ export function Login() {
 
       <main className="lg-main">
         <div className="lg-hero">
-          <LayerArt />
+          <SpotIllustration kind="pool" size={200} className="lg-art" />
           <h1 className="lg-title">Atlas.</h1>
           <p className="lg-tagline">Volumes, pools and protection on one storage control plane.</p>
         </div>
@@ -258,7 +236,12 @@ export function Login() {
             </form>
           ) : (
             <form key="password" onSubmit={go} autoComplete="on" aria-label="Password" className="lg-form">
-              <button type="button" onClick={handleBack} className="lg-identity" aria-label="Change account">
+              <button
+                type="button"
+                onClick={handleBack}
+                className="lg-identity"
+                aria-label={`Change account from ${username.trim()}`}
+              >
                 <ChevronLeft size={16} aria-hidden />
                 <span className="truncate">{username.trim()}</span>
               </button>

@@ -12,10 +12,10 @@ import {
   usePools,
   useSummary,
 } from "../api/hooks";
-import { history, onHistory, recordSummary, seed } from "../store/history";
+import { history, iopsMaxGapMs, iopsTrend, onHistory, recordSummary, seed } from "../store/history";
 import { depth, depthWidth } from "../lib/depth";
 import { fmtBytes, fmtBytesOpt, fmtForecastFill, fmtPct, fmtSi } from "../lib/format";
-import { ThroughputChart } from "../ui/ThroughputChart";
+import { TrendChart } from "../graphics";
 import { DashboardHero, DashboardModule } from "../ui/templates/DashboardHero";
 import IoHeatmap from "./IoHeatmap";
 import { navCrumbs } from "../nav/routes";
@@ -412,7 +412,7 @@ export default function Observatory() {
               <div className="at-sub">{forecastLine || "Usage steady — no near-term fill"}</div>
             </div>
           </div>
-          <ThroughputChart wide hist={hist} />
+          <TrendChart title="Client IOPS" series={iopsTrend(hist)} maxGapMs={iopsMaxGapMs(hist)} />
         </div>
       </DashboardModule>
 

@@ -77,7 +77,7 @@ export default function Sources() {
         )}
       />
 
-      <div className="at-panel" style={{ marginTop: 0 }}>
+      <div className="at-panel">
         <div className="at-panel-bar">
           <span className="at-caption">Live verification matrix</span>
           <span className="grow" />

@@ -217,7 +217,7 @@ function MenuBar({
               type="button"
               className="at-iconbtn"
               title="Alerts"
-              aria-label="Open alerts"
+              aria-label={openAlerts?.length ? `Open alerts: ${Math.min(99, openAlerts.length)}` : "Open alerts"}
               aria-expanded={panel === "bell"}
               onClick={() => toggle("bell")}
             >
@@ -261,7 +261,7 @@ function MenuBar({
           </div>
 
           {panel === "account" && (
-            <div className="at-theme-menu at-rail-flyout" role="menu" aria-label="Control Center">
+            <div className="at-theme-menu at-rail-flyout" role="dialog" aria-label="Control Center">
               <div className="at-theme-menu-label">Control Center</div>
               <div className="at-theme-item">
                 <span>{roleLabel(role)}</span>
@@ -385,7 +385,7 @@ function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void
 
   return createPortal(
     <div className="at-drawer-scrim" onMouseDown={onClose}>
-      <aside
+      <div
         className="at-drawer"
         role="dialog"
         aria-modal="true"
@@ -413,7 +413,7 @@ function MobileNavDrawer({ open, onClose }: { open: boolean; onClose: () => void
             onNavigate={onClose}
           />
         </div>
-      </aside>
+      </div>
     </div>,
     document.body,
   );

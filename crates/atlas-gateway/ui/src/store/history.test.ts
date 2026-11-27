@@ -85,3 +85,23 @@ describe("history buffer", () => {
     expect(last.writeIops).toBeGreaterThan(0);
   });
 });
+
+describe("IOPS series", () => {
+  const sample = (t: number, readIops: number) => ({ t, readIops, writeIops: 0, usedPct: 0, usedBytes: 0 });
+
+  it("leaves out the first sample, which has no rate", async () => {
+    const { iopsTrend } = await import("./history");
+    const [read] = iopsTrend([sample(0, 0), sample(60_000, 5), sample(120_000, 7)]);
+    expect(read.points).toEqual([
+      { t: 60_000, v: 5 },
+      { t: 120_000, v: 7 },
+    ]);
+  });
+
+  it("bridges the gateway's sampling interval but not a longer silence", async () => {
+    const { iopsMaxGapMs } = await import("./history");
+    expect(iopsMaxGapMs([sample(0, 0), sample(6_000, 1)])).toBe(150_000);
+    const everyFiveMinutes = [0, 1, 2, 3].map((i) => sample(i * 300_000, 1));
+    expect(iopsMaxGapMs([...everyFiveMinutes, sample(906_000, 1)])).toBe(900_000);
+  });
+});
