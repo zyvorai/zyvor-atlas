@@ -1,0 +1,54 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Access: the role list and token result. Used only by Access.tsx.
+ */
+
+@layer components {
+  .ac-pair {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: start;
+    gap: var(--a-stack-gap);
+  }
+  @media (max-width: 1100px) {
+    .ac-pair {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  /* The grid gap separates the pair; panels must not add their own sibling margin. */
+  .ac-pair > .at-panel + .at-panel {
+    margin-top: 0;
+  }
+  .at-form-grid.ac-form {
+    gap: var(--a-s1);
+  }
+  .at-form-grid.ac-form > div:last-child {
+    margin-top: var(--a-s3);
+  }
+  .ac-role {
+    flex: 1;
+    min-width: 0;
+  }
+  .ac-role-name {
+    font-weight: 600;
+  }
+  .ac-note {
+    margin: 0;
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .field.ac-role-select {
+    width: auto;
+    height: 30px;
+    font-size: 12.5px;
+  }
+  .ac-result {
+    padding: var(--a-s4) var(--a-s5) var(--a-s5);
+  }
+  .ac-token {
+    display: flex;
+    flex-direction: column;
+    gap: var(--a-s3);
+  }
+}

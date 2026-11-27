@@ -11,12 +11,14 @@ import { navCrumbs } from "../../nav/routes";
 import { del } from "../../ui/confirm";
 import { Table } from "../../ui/Table";
 import { fmtBytes } from "../../lib/format";
+import { EmptyState } from "../../graphics";
 import { ENGINE_VERIFICATION } from "../../lib/engineVerification";
+import "./Sources.css";
 
 const STAGES = ["discover", "full-load", "validate", "cdc", "cutover"] as const;
 const STAGE_LABEL: Record<(typeof STAGES)[number], string> = {
   discover: "Discover",
-  "full-load": "Full-load",
+  "full-load": "Full load",
   validate: "Validate",
   cdc: "CDC",
   cutover: "Cutover",
@@ -26,88 +28,110 @@ const stateKind = (s: string) =>
   s === "discovered" ? "success" : s === "error" ? "danger" : s === "discovering" ? "warning" : "neutral";
 
 export default function Sources() {
-  const { data } = useSources();
+  const { data, isError } = useSources();
   const inv = useInvalidate();
   const refetch = () => inv("db-sources");
   const [create, setCreate] = useState(false);
   const [detail, setDetail] = useState<MigrationSource | null>(null);
   const n = data?.length || 0;
 
+  const register = (
+    <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
+      <Plus size={14} /> Register source
+    </button>
+  );
+
   return (
     <ListPage
+      className="at-stack"
       crumbs={navCrumbs("cloud-databases")}
-      eyebrow="DATABRIDGE · INDEX"
-      title="Cloud Databases"
+      eyebrow="Migration sources"
+      title="Cloud databases"
       state={
-        n
-          ? `${n} source database${n === 1 ? "" : "s"} — discover schema before migrating.`
-          : "No sources yet. Register AWS RDS/Aurora or GCP Cloud SQL to begin."
+        !data
+          ? isError
+            ? "Could not load sources."
+            : "Loading sources…"
+          : n
+            ? `${n} source database${n === 1 ? "" : "s"}. Discover a schema before you migrate.`
+            : "No sources yet. Register a cloud database to begin."
       }
-      actions={
-        <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-          <Plus size={14} /> Register source
-        </button>
-      }
+      actions={register}
     >
-      <Table
-        soundings
-        panelTitle="Source index"
-        rows={data}
-        rowKey={(r) => r.id}
-        empty="No sources yet."
-        emptyCta={
-          <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-            <Plus size={14} /> Register source
-          </button>
-        }
-        cols={[
-          { h: "Name", f: (r) => r.name, mono: true },
-          { h: "Engine", f: (r) => <Badge kind="info">{r.kind}</Badge> },
-          { h: "Cloud", f: (r) => r.cloud },
-          { h: "Endpoint", f: (r) => <span className="mono" style={{ color: "var(--at-ink-4)" }}>{r.endpoint || "—"}</span> },
-          { h: "Tables", f: (r) => r.discovered?.tables?.length ?? "—" },
-          { h: "State", f: (r) => <Badge kind={stateKind(r.state)} dot>{r.state}</Badge> },
-        ]}
-        actions={(r) => (
-          <>
-            <Button size="sm" icon={Search} onClick={() => submitJob("post", `/databridge/sources/${r.id}/discover`, null, "discover source", refetch).catch(() => {})}>Discover</Button>
-            <Button size="sm" onClick={() => setDetail(r)}>Schema</Button>
-            <Button size="sm" variant="danger" onClick={() => del(`source ${r.name}`, async () => { await submit("delete", `/databridge/sources/${r.id}`, null, "delete source"); refetch(); })}>Del</Button>
-          </>
-        )}
-      />
+      {data && !data.length ? (
+        <div className="at-panel">
+          <h2 className="sr-only">Sources</h2>
+          <EmptyState art="volume" title="No sources yet" description="Add AWS RDS, Aurora, Cloud SQL or any reachable server.">
+            {register}
+          </EmptyState>
+        </div>
+      ) : (
+        <Table
+          soundings
+          panelTitle="Sources"
+          rows={data}
+          rowKey={(r) => r.id}
+          cols={[
+            { h: "Name", f: (r) => r.name, mono: true },
+            { h: "Engine", f: (r) => <Badge kind="info">{r.kind}</Badge> },
+            { h: "Cloud", f: (r) => r.cloud },
+            { h: "Endpoint", f: (r) => <span className="mono text-muted-foreground">{r.endpoint || "—"}</span> },
+            { h: "Tables", f: (r) => r.discovered?.tables?.length ?? "—" },
+            { h: "State", f: (r) => <Badge kind={stateKind(r.state)} dot>{r.state}</Badge> },
+          ]}
+          actions={(r) => (
+            <>
+              <Button size="sm" icon={Search} onClick={() => submitJob("post", `/databridge/sources/${r.id}/discover`, null, "discover source", refetch).catch(() => {})}>Discover</Button>
+              <Button size="sm" onClick={() => setDetail(r)}>Schema</Button>
+              <Button size="sm" variant="danger" onClick={() => del(`source ${r.name}`, async () => { await submit("delete", `/databridge/sources/${r.id}`, null, "delete source"); refetch(); })}>Delete</Button>
+            </>
+          )}
+        />
+      )}
 
-      <div className="at-panel">
+      <section className="at-panel" aria-labelledby="db-verify-title">
         <div className="at-panel-bar">
-          <span className="at-caption">Live verification matrix</span>
+          <h2 id="db-verify-title" className="at-caption">Verified on live databases</h2>
           <span className="grow" />
-          <span className="at-sub" style={{ margin: 0 }}>fake path covers all engines end-to-end · docs/DATABRIDGE.md</span>
+          <span className="db-verify-hint">Demo mode covers every engine. See docs/DATABRIDGE.md.</span>
         </div>
-        <div className="at-verify-table">
-          <div className="at-verify-row at-verify-head">
-            <span>Engine</span>
-            {STAGES.map((s) => (
-              <span key={s}>{STAGE_LABEL[s]}</span>
-            ))}
-            <span>Notes</span>
-          </div>
-          {ENGINE_VERIFICATION.map((e) => (
-            <div key={e.engine} className="at-verify-row">
-              <span className="mono">{e.engine}</span>
-              {STAGES.map((s) => (
-                <span key={s} className="at-verify-cell" title={e.live.includes(s) ? "Verified live" : "Not yet verified live"}>
-                  {e.live.includes(s) ? (
-                    <Check size={13} style={{ color: "var(--at-ok)" }} />
-                  ) : (
-                    <span style={{ color: "var(--at-ink-4)" }}>—</span>
-                  )}
-                </span>
+        {/* Focusable so the keyboard can scroll the matrix sideways on narrow screens. */}
+        <div className="overflow-x-auto" role="region" aria-label="Verification matrix" tabIndex={0}>
+          <table className="at-tbl db-verify" aria-labelledby="db-verify-title">
+            <thead>
+              <tr>
+                <th scope="col">Engine</th>
+                {STAGES.map((s) => (
+                  <th key={s} scope="col" className="db-verify-stage">{STAGE_LABEL[s]}</th>
+                ))}
+                <th scope="col">Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              {ENGINE_VERIFICATION.map((e) => (
+                <tr key={e.engine}>
+                  <th scope="row" className="mono">{e.engine}</th>
+                  {STAGES.map((s) => {
+                    const live = e.live.includes(s);
+                    const label = live ? "Verified live" : "Not yet verified live";
+                    return (
+                      <td key={s} className="db-verify-stage" title={label}>
+                        {live ? (
+                          <Check size={15} className="db-verify-yes" aria-hidden />
+                        ) : (
+                          <span className="text-muted-foreground" aria-hidden>—</span>
+                        )}
+                        <span className="sr-only">{label}</span>
+                      </td>
+                    );
+                  })}
+                  <td className="db-verify-note">{e.note}</td>
+                </tr>
               ))}
-              <span className="at-sub" style={{ margin: 0 }}>{e.note}</span>
-            </div>
-          ))}
+            </tbody>
+          </table>
         </div>
-      </div>
+      </section>
 
       <FormModal open={create} onClose={() => setCreate(false)} title="Register source database" submitLabel="Register"
         fields={[
@@ -142,11 +166,12 @@ function SchemaBrowser({ source, onClose }: { source: MigrationSource | null; on
   if (!source) return null;
   const d = source.discovered;
   return (
-    <SlideOver open={!!source} onClose={onClose} title={<span className="mono">{source.name} · schema</span>} width={620}>
+    <SlideOver open={!!source} onClose={onClose} title={<><span className="mono">{source.name}</span> schema</>} width={620}>
       {!d || !d.tables?.length ? (
-        <div className="text-muted-foreground text-sm">
-          No schema discovered yet. Run <b>Discover</b> on this source first.
-        </div>
+        <>
+          <h2 className="sr-only">Schema</h2>
+          <EmptyState art="volume" title="No schema yet" description="Run Discover on this source first." />
+        </>
       ) : (
         <>
           <div className="flex gap-4 mb-3 text-sm">

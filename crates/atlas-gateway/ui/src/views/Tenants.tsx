@@ -10,9 +10,30 @@ import { navCrumbs } from "../nav/routes";
 import { del } from "../ui/confirm";
 import { Table } from "../ui/Table";
 import { fmtBytes, num } from "../lib/format";
+import { depth, depthWidth } from "../lib/depth";
+import { EmptyState } from "../graphics";
+import { formatPercent } from "../graphics/format";
+import "./Tenants.css";
+
+/** How much of its storage limit a tenant uses. Without a limit there is no level to draw. */
+function QuotaUse({ used, max }: { used: number; max: number }) {
+  if (!max) return <span className="text-muted-foreground">No limit</span>;
+  const pct = (used / max) * 100;
+  const level = depth(pct).cls;
+  const word = level === "dp5" ? "Nearly full" : level === "dp4" ? "Filling up" : null;
+  return (
+    <span className="tn-use">
+      <span className={`at-mini ${level}`} aria-hidden>
+        <i style={{ width: depthWidth(pct) }} />
+      </span>
+      <span>{formatPercent(pct)}</span>
+      {word && <span className={`tn-flag ${level}`}>{word}</span>}
+    </span>
+  );
+}
 
 export default function Tenants() {
-  const { data } = useTenants();
+  const { data, isError } = useTenants();
   const inv = useInvalidate();
   const [quota, setQuota] = useState<TenantQuota | null>(null);
   const [drill, setDrill] = useState<TenantQuota | null>(null);
@@ -20,40 +41,51 @@ export default function Tenants() {
   return (
     <ListPage
       crumbs={navCrumbs("tenants")}
-      eyebrow="GOVERNANCE · INDEX"
+      eyebrow="Quotas and policy"
       title="Tenants"
       state={
-        n
-          ? `${n} tenant${n === 1 ? "" : "s"} — capacity quotas and intent→placement overrides.`
-          : "No tenants yet. Quotas and policy overrides appear once tenants register usage."
+        !data
+          ? isError
+            ? "Could not load tenants."
+            : "Loading tenants…"
+          : n
+            ? `${n} tenant${n === 1 ? "" : "s"}. Set capacity quotas and placement overrides.`
+            : "No tenants yet. They appear once usage is registered."
       }
     >
-      <Table
-        soundings
-        panelTitle="Tenant index"
-        rows={data}
-        rowKey={(t) => t.tenant_id}
-        empty="No tenants yet."
-        cols={[
-          { h: "Tenant", f: (t) => t.tenant_id, mono: true },
-          { h: "Used", f: (t) => fmtBytes(t.used_bytes) },
-          { h: "Volumes", f: (t) => num(t.volume_count) },
-          { h: "Max bytes", f: (t) => (t.max_bytes ? fmtBytes(t.max_bytes) : "∞") },
-          { h: "Max vols", f: (t) => t.max_volumes || "∞" },
-        ]}
-        actions={(t) => (
-          <>
-            <Button size="sm" onClick={() => setQuota(t)}>Quota</Button>
-            <Button size="sm" onClick={() => setDrill(t)}>Policies</Button>
-          </>
-        )}
-      />
+      {data && !data.length ? (
+        <div className="at-panel">
+          <h2 className="sr-only">Quotas</h2>
+          <EmptyState art="pool" title="No tenants yet" description="Quotas and policy overrides appear once tenants register usage." />
+        </div>
+      ) : (
+        <Table
+          soundings
+          panelTitle="Quotas"
+          rows={data}
+          rowKey={(t) => t.tenant_id}
+          cols={[
+            { h: "Tenant", f: (t) => t.tenant_id, mono: true },
+            { h: "Used", f: (t) => fmtBytes(t.used_bytes) },
+            { h: "Storage limit", f: (t) => (t.max_bytes ? fmtBytes(t.max_bytes) : "No limit") },
+            { h: "Quota used", f: (t) => <QuotaUse used={t.used_bytes} max={t.max_bytes} /> },
+            { h: "Volumes", f: (t) => num(t.volume_count) },
+            { h: "Volume limit", f: (t) => t.max_volumes || "No limit" },
+          ]}
+          actions={(t) => (
+            <>
+              <Button size="sm" onClick={() => setQuota(t)}>Quota</Button>
+              <Button size="sm" onClick={() => setDrill(t)}>Policies</Button>
+            </>
+          )}
+        />
+      )}
 
       {quota && (
-        <FormModal open onClose={() => setQuota(null)} title={`Quota — ${quota.tenant_id}`} submitLabel="Save"
+        <FormModal open onClose={() => setQuota(null)} title={`Quota for ${quota.tenant_id}`} submitLabel="Save"
           fields={[
-            { name: "max_bytes", label: "Max bytes (0=∞)", type: "number", value: String(quota.max_bytes), min: 0 },
-            { name: "max_volumes", label: "Max volumes (0=∞)", type: "number", value: String(quota.max_volumes), min: 0 },
+            { name: "max_bytes", label: "Max bytes (0 for no limit)", type: "number", value: String(quota.max_bytes), min: 0 },
+            { name: "max_volumes", label: "Max volumes (0 for no limit)", type: "number", value: String(quota.max_volumes), min: 0 },
           ]}
           onSubmit={(v) => submit("put", `/tenants/${quota.tenant_id}/quota`, { max_bytes: +v.max_bytes, max_volumes: +v.max_volumes }, "quota set", () => inv("tenants"))} />
       )}
@@ -70,7 +102,7 @@ function PolicyDrawer({ tenant, onClose }: { tenant: TenantQuota | null; onClose
   const [am, setAm] = useState("ReadWriteMany");
   if (!tenant) return null;
   return (
-    <SlideOver open={!!tenant} onClose={onClose} title={`Policies — ${tenant.tenant_id}`} width={520}>
+    <SlideOver open={!!tenant} onClose={onClose} title={`Policies for ${tenant.tenant_id}`} width={520}>
       <div className="at-stack">
         <Table
           soundings
@@ -83,19 +115,28 @@ function PolicyDrawer({ tenant, onClose }: { tenant: TenantQuota | null; onClose
             { h: "Access", f: (p) => p.access_mode },
           ]}
           actions={(p) => (
-            <Button size="sm" variant="danger" onClick={() => del(`override ${p.intent}`, async () => { await submit("delete", `/tenants/${id}/policies/${p.intent}`, null, "delete override"); refetch(); })}>Del</Button>
+            <Button size="sm" variant="danger" onClick={() => del(`override ${p.intent}`, async () => { await submit("delete", `/tenants/${id}/policies/${p.intent}`, null, "delete override"); refetch(); })}>Delete</Button>
           )}
-          empty="No overrides — falls back to the built-in catalog."
+          empty="No overrides. The built-in catalog applies."
         />
         <div className="at-panel">
           <div className="at-panel-bar">
-            <span className="at-caption">Add override</span>
+            <h2 className="at-caption">Add override</h2>
           </div>
           <div className="at-form-grid">
-            <div className="grid grid-cols-3 gap-2">
-              <input className="field" placeholder="intent" value={intent} onChange={(e) => setIntent(e.target.value)} />
-              <input className="field" placeholder="storage class" value={sc} onChange={(e) => setSc(e.target.value)} />
-              <input className="field" placeholder="access mode" value={am} onChange={(e) => setAm(e.target.value)} />
+            <div className="tn-fields">
+              <label>
+                <span className="section-label">Intent</span>
+                <input className="field" placeholder="intent" value={intent} onChange={(e) => setIntent(e.target.value)} />
+              </label>
+              <label>
+                <span className="section-label">Storage class</span>
+                <input className="field" placeholder="storage class" value={sc} onChange={(e) => setSc(e.target.value)} />
+              </label>
+              <label>
+                <span className="section-label">Access mode</span>
+                <input className="field" placeholder="access mode" value={am} onChange={(e) => setAm(e.target.value)} />
+              </label>
             </div>
             <div>
               <button

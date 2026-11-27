@@ -1,0 +1,13 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Migration plans: readiness score cell. Used only by Plans.tsx.
+ */
+
+@layer components {
+  .db-score {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--a-s2);
+  }
+}

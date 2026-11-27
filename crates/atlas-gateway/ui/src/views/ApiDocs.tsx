@@ -8,19 +8,19 @@ import { DocsPage, type DocsRow, type DocsSection } from "../ui/templates/DocsPa
 
 const SECTIONS: { title: string; items: DocsRow[] }[] = [
   {
-    title: "Meta",
+    title: "Service",
     items: [
-      { method: "GET", path: "/health", note: "Liveness-ish health" },
-      { method: "GET", path: "/readyz", note: "Deep readiness (SQLite + driver)" },
+      { method: "GET", path: "/health", note: "Basic health check" },
+      { method: "GET", path: "/readyz", note: "Deep readiness: database and driver" },
       { method: "GET", path: "/version", note: "Gateway build identity" },
-      { method: "GET", path: "/metrics", note: "Prometheus text (unauthenticated)" },
+      { method: "GET", path: "/metrics", note: "Prometheus text, same auth as the API" },
     ],
   },
   {
-    title: "Auth & governance",
+    title: "Auth and governance",
     items: [
       { method: "POST", path: "/api/atlas/v1/auth/login", note: "Console username/password → JWT" },
-      { method: "POST", path: "/api/atlas/v1/auth/token", note: "Mint scoped service-account JWT" },
+      { method: "POST", path: "/api/atlas/v1/auth/tokens", note: "Mint scoped service-account JWT (admin)" },
       { method: "GET", path: "/api/atlas/v1/auth/users", note: "List console users (admin)" },
       { method: "GET", path: "/api/atlas/v1/tenants", note: "Tenants, quotas, policies" },
     ],
@@ -42,7 +42,7 @@ const SECTIONS: { title: string; items: DocsRow[] }[] = [
       { method: "POST", path: "/api/atlas/v1/volumes", note: "Create volume → job" },
       { method: "DELETE", path: "/api/atlas/v1/volumes/{id}", note: "Delete volume → job" },
       { method: "POST", path: "/api/atlas/v1/volumes/{id}/expand", note: "Expand → job" },
-      { method: "POST", path: "/api/atlas/v1/snapshots", note: "Create snapshot → job" },
+      { method: "POST", path: "/api/atlas/v1/volumes/{id}/snapshots", note: "Create snapshot → job" },
       { method: "GET", path: "/api/atlas/v1/jobs/{id}", note: "Job status" },
     ],
   },
@@ -129,25 +129,26 @@ export default function ApiDocs() {
           <TerminalPane title="error.json" chrome>
             {colorizeJson(`{\n  "error": {\n    "code": "not_found",\n    "message": "volume missing"\n  }\n}`)}
           </TerminalPane>
-          <p style={{ marginTop: 14 }}>
+          <p className="mt-3.5">
             gRPC on <code className="at-terminal-inline">ATLAS_GRPC_ADDR</code> (default{" "}
-            <code className="at-terminal-inline">:5111</code>, lab NodePort <strong>30512</strong>) — service{" "}
-            <code className="at-terminal-inline">atlas.v1.AtlasStorage</code>. Product ownership: see{" "}
-            <Link to="/access">Access</Link> tokens and repo <code className="at-terminal-inline">docs/PRODUCTS.md</code>.
+            <code className="at-terminal-inline">:5111</code>, lab NodePort <strong>30512</strong>), service{" "}
+            <code className="at-terminal-inline">atlas.v1.AtlasStorage</code>. For product ownership, see{" "}
+            <Link to="/access" className="a-link">Access</Link> tokens and{" "}
+            <code className="at-terminal-inline">docs/PRODUCTS.md</code>.
           </p>
         </>
       ),
     },
-    { title: "gRPC · AtlasStorage", rows: GRPC },
+    { title: "gRPC service AtlasStorage", rows: GRPC },
     ...SECTIONS.map((sec) => ({ title: sec.title, rows: sec.items })),
   ];
 
   return (
     <DocsPage
       crumbs={navCrumbs("api-docs")}
-      eyebrow="CONSOLE · REFERENCE"
-      title="API Docs"
-      state="Curated Atlas REST + gRPC map for operators and product integrators. Full examples live in the repo docs/API.md."
+      eyebrow="Reference"
+      title="API docs"
+      state="The main REST and gRPC endpoints. Full examples are in docs/API.md."
       sections={sections}
     />
   );

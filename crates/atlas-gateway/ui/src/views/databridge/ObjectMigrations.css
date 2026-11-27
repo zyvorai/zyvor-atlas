@@ -1,0 +1,22 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Object migrations: progress and error cells. Used only by ObjectMigrations.tsx.
+ */
+
+@layer components {
+  .om-progress {
+    display: flex;
+    align-items: center;
+    gap: var(--a-s2);
+    white-space: nowrap;
+  }
+  .om-error {
+    display: inline-block;
+    min-width: 160px;
+    max-width: 280px;
+    color: var(--a-fail);
+    white-space: normal;
+    overflow-wrap: anywhere;
+  }
+}
