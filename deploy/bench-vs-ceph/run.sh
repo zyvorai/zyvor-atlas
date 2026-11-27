@@ -20,7 +20,7 @@ case "$SYSTEM" in ceph) OTHER=atlas ;; atlas) OTHER=ceph ;; *) echo "unknown sys
 [[ "$TAG" =~ ^[A-Za-z0-9_-]+$ ]] || { echo "tag must be [A-Za-z0-9_-]+" >&2; exit 2; }
 
 case "${PROFILE:-quick}" in
-  quick) : "${SIZE_MB:=4096}" "${RAMP:=15}" "${RUNTIME:=60}" "${REPEATS:=1}" ;;
+  quick) : "${SIZE_MB:=1024}" "${RAMP:=15}" "${RUNTIME:=60}" "${REPEATS:=1}" ;;
   full) : "${SIZE_MB:=8192}" "${RAMP:=30}" "${RUNTIME:=180}" "${REPEATS:=3}" ;;
   *) echo "PROFILE must be quick or full" >&2; exit 2 ;;
 esac
@@ -61,6 +61,17 @@ disk_sectors() { awk -v d="$DISK" '$3 == d {print $6, $10}' /proc/diskstats; } #
   echo "commit=$(cat "$HERE/COMMIT" 2>/dev/null || echo unknown)"
   env | grep -E '^ATLAS_(EXTENT_BYTES|DELTA)' || true
 } >"$OUT/env.txt"
+
+# Settings the system itself reports, so a result set says what it measured.
+case "$SYSTEM" in
+  atlas) inct cat /srv/bench/settings.txt >"$OUT/settings.txt" || true ;;
+  ceph)
+    # atlas-native's first scrub is a day away during a run; keep Ceph's out of the way too.
+    inct timeout 60 ceph osd set noscrub
+    inct timeout 60 ceph osd set nodeep-scrub
+    inct timeout 60 ceph config dump >"$OUT/settings.txt" || true
+    ;;
+esac
 
 # Drop the page cache of this system's own server files (never the whole host's).
 evict() {
