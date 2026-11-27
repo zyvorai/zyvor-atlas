@@ -1,0 +1,110 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Ceph page. Nothing outside views/Ceph.tsx uses these.
+ */
+
+@layer components {
+  /* The tile's tight figure spacing does not suit a badge. */
+  .ceph-state .badge {
+    letter-spacing: 0;
+  }
+  .ceph-nowrap {
+    white-space: nowrap;
+  }
+  .ceph-level.dp4 {
+    color: var(--a-warn);
+  }
+  .ceph-level.dp5 {
+    color: var(--a-fail);
+  }
+  .ceph-check {
+    min-width: 0;
+    color: var(--a-ink-2);
+    font-size: 13px;
+    overflow-wrap: anywhere;
+  }
+
+  .ceph-pgs {
+    padding: var(--a-s4) var(--a-s5);
+  }
+  .ceph-pg-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--a-s2);
+  }
+  .ceph-pg.ok {
+    background: var(--a-ok);
+  }
+  .ceph-pg.warn {
+    background: var(--a-warn);
+  }
+  .ceph-pg.fail {
+    background: var(--a-fail);
+  }
+  /* Shape as well as colour: clean is round, degraded square, down a diamond. */
+  .ceph-pg-key {
+    width: 8px;
+    height: 8px;
+    border-radius: 2px;
+  }
+  .ceph-pg-key.ok {
+    border-radius: 50%;
+  }
+  .ceph-pg-key.fail {
+    transform: rotate(45deg);
+  }
+
+  .ceph-tree {
+    padding: var(--a-s3) var(--a-s5) var(--a-s4);
+    font-size: 12.5px;
+  }
+  .ceph-branch {
+    display: flex;
+    align-items: center;
+    gap: var(--a-s2);
+    min-height: 30px;
+    padding: 0;
+    border: none;
+    background: transparent;
+    color: var(--a-ink);
+    font: inherit;
+    cursor: pointer;
+  }
+  .ceph-branch svg,
+  .ceph-type,
+  .ceph-meta {
+    color: var(--a-ink-2);
+  }
+  .ceph-children {
+    margin-left: var(--a-s5);
+  }
+  .ceph-osd {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--a-s2) var(--a-s3);
+    padding: 4px 0;
+  }
+  .ceph-osd-name {
+    width: 72px;
+  }
+  .ceph-osd .at-mini {
+    width: 96px;
+  }
+
+  .ceph-pools {
+    min-height: 120px;
+  }
+}
+
+/* Placement of the shared graphics. Unlayered, because graphics.css is. */
+.ag-hero.ceph-hero {
+  margin-bottom: var(--a-s4);
+  border: none;
+  border-radius: var(--a-radius-lg);
+  box-shadow: var(--a-shadow);
+}
+.ceph-pools .ag-pools {
+  padding: var(--a-s2) var(--a-s5);
+}

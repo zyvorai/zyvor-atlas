@@ -1,14 +1,16 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Compact read/light-write Centers: Policies, Backends, Kubernetes, Cluster, Metrics.
+// Compact read/light-write pages: Policies, Backends, Kubernetes, Cluster, Metrics.
 import { useNavigate } from "react-router-dom";
 import { submit } from "../api/client";
 import {
   useBackends,
   useBackendsSummary,
+  useCephDf,
   useCephMetrics,
   useCephOsdDf,
   useClusters,
+  useHistory,
   useInvalidate,
   useNodes,
   useOsds,
@@ -16,12 +18,30 @@ import {
   usePools,
   useStorageClasses,
 } from "../api/hooks";
+import {
+  ClusterHero,
+  EmptyState,
+  HealthIndicator,
+  PoolUsageBars,
+  TrendChart,
+  formatBytesPerSecond,
+  iopsSeries,
+  replicaSizesFromPools,
+  throughputSeries,
+  topologyFromOsds,
+  type PoolUsage,
+} from "../graphics";
 import { Badge } from "../ui/kit";
+import { DashboardModule } from "../ui/templates/DashboardHero";
 import { ListPage } from "../ui/templates/ListPage";
 import { navCrumbs } from "../nav/routes";
 import { Table } from "../ui/Table";
-import { depth, depthWidth } from "../lib/depth";
-import { fmtBytes, fmtBytesOpt, fmtPct, healthKind } from "../lib/format";
+import { poolFill, poolUsage } from "../lib/poolUsage";
+import { fmtBytesOpt, healthKind } from "../lib/format";
+import "./Simple.css";
+
+/** Capacity turns amber and red at the same points as lib/depth.ts. */
+const FILL = { warnAt: 75, failAt: 90 };
 
 export function Policies() {
   const { data } = usePolicies();
@@ -29,7 +49,7 @@ export function Policies() {
   return (
     <ListPage
       crumbs={navCrumbs("policies")}
-      eyebrow="GOVERNANCE · INDEX"
+      eyebrow="Governance"
       title="Policies"
       state={
         n
@@ -48,7 +68,7 @@ export function Policies() {
           { h: "StorageClass", f: (p) => p.storage_class, mono: true },
           { h: "Access", f: (p) => p.access_mode },
           { h: "Volume mode", f: (p) => p.volume_mode },
-          { h: "Description", f: (p) => <span style={{ color: "var(--at-ink-3)" }}>{p.description}</span> },
+          { h: "Description", f: (p) => <span className="sm-muted">{p.description}</span> },
         ]}
       />
     </ListPage>
@@ -67,10 +87,22 @@ export function Backends() {
   const { data: summary } = useBackendsSummary();
   const inv = useInvalidate();
   const n = data?.length || 0;
+  const totals = new Map((summary || []).map((b) => [b.backend_id, b]));
+  // Backends report a total, so used / total is a real fill level. 0 of 0 means "not surveyed".
+  const bars: PoolUsage[] = (summary || []).map((b) => {
+    const total = b.raw_capacity_bytes || 0;
+    const used = b.used_capacity_bytes;
+    return {
+      id: b.backend_id,
+      name: `${b.backend_type} · ${b.backend_id}`,
+      usedBytes: total > 0 || used > 0 ? used : null,
+      capacityBytes: total > 0 ? total : null,
+    };
+  });
   return (
     <ListPage
       crumbs={navCrumbs("backends")}
-      eyebrow="INFRASTRUCTURE · OPS"
+      eyebrow="Infrastructure"
       title="Backends"
       state={
         n
@@ -91,45 +123,15 @@ export function Backends() {
         </button>
       }
     >
-
-      <div className="at-mod">
-        <div className="at-modhead">
-          <span className="at-modtitle">Capacity soundings</span>
-          <span className="at-modnote">{(summary || []).length} backends</span>
-        </div>
-        <div className="at-panel">
-          {(summary || []).map((b) => {
-            const pct = b.raw_capacity_bytes > 0 ? (b.used_capacity_bytes / b.raw_capacity_bytes) * 100 : 0;
-            const d = depth(pct);
-            return (
-              <button key={b.backend_id} type="button" className="at-basin" style={{ cursor: "default" }}>
-                <div className="at-basin-id">
-                  <div className="at-basin-name">
-                    <span className="mono">{b.backend_type?.toUpperCase?.() || b.backend_type}</span>
-                    <span className="at-tag">{d.name.toUpperCase()}</span>
-                    <span className="at-tag" style={{ opacity: 0.7 }}>
-                      {b.mode}
-                    </span>
-                  </div>
-                  <div className="at-trough">
-                    <i className={`at-level ${d.cls}`} style={{ width: depthWidth(pct) }} />
-                  </div>
-                </div>
-                <div className="at-basin-read">
-                  {fmtBytes(b.used_capacity_bytes)} of {fmtBytes(b.raw_capacity_bytes)}
-                  <div style={{ fontSize: 11, color: "var(--at-ink-4)", marginTop: 4 }}>
-                    {b.clusters} cluster(s) · {b.volumes} volume(s)
-                  </div>
-                </div>
-                <div className={`at-basin-pct ${d.cls} fg`}>{fmtPct(pct)}%</div>
-              </button>
-            );
-          })}
-          {!summary?.length && (
-            <div style={{ padding: 24, color: "var(--at-ink-4)", fontSize: 13 }}>No capacity summary yet.</div>
+      <DashboardModule title="Capacity" note={summary ? `${summary.length} backends` : undefined}>
+        <div className="at-panel sm-bars">
+          {bars.length ? (
+            <PoolUsageBars label="Backend capacity" pools={bars} {...FILL} />
+          ) : (
+            <EmptyState art="cluster" title="No capacity summary yet" compact />
           )}
         </div>
-      </div>
+      </DashboardModule>
 
       <Table
         soundings
@@ -142,6 +144,8 @@ export function Backends() {
           { h: "Name", f: (b) => b.name },
           { h: "Type", f: (b) => <Badge kind={BACKEND_KIND[b.backend_type] || "neutral"}>{b.backend_type}</Badge> },
           { h: "Mode", f: (b) => b.mode },
+          { h: "Clusters", f: (b) => totals.get(b.id)?.clusters },
+          { h: "Volumes", f: (b) => totals.get(b.id)?.volumes },
           { h: "Status", f: (b) => <Badge kind={b.status === "active" ? "success" : "neutral"}>{b.status}</Badge> },
         ]}
       />
@@ -155,7 +159,7 @@ export function Kubernetes() {
   return (
     <ListPage
       crumbs={navCrumbs("kubernetes")}
-      eyebrow="INFRASTRUCTURE · OPS"
+      eyebrow="Infrastructure"
       title="Kubernetes"
       state={
         n
@@ -177,7 +181,7 @@ export function Kubernetes() {
           { h: "Binding", f: (s) => s.volume_binding_mode || "—" },
           {
             h: "Default",
-            f: (s) => (s.is_default ? <Badge kind="success">yes</Badge> : <span style={{ color: "var(--at-ink-4)" }}>—</span>),
+            f: (s) => (s.is_default ? <Badge kind="success">yes</Badge> : <span className="sm-muted">—</span>),
           },
         ]}
       />
@@ -190,16 +194,24 @@ export function Cluster() {
   const { data: clusters } = useClusters();
   const { data: nodes } = useNodes();
   const { data: pools } = usePools();
-  const { data: osds } = useOsds();
+  const { data: osds, isLoading: osdsLoading } = useOsds();
+  const { data: backends } = useBackendsSummary();
+  const { data: cephDf } = useCephDf();
   const primary = clusters?.[0];
+  // What `max_bytes` means differs per driver, so the table shows poolUsage's reading of it.
+  const usage = new Map((poolUsage(pools, { clusters, backends, cephDf }) ?? []).map((u) => [u.id, u]));
+  const counts = [
+    pools ? `${pools.length} pool${pools.length === 1 ? "" : "s"}` : null,
+    osds ? `${osds.length} OSD${osds.length === 1 ? "" : "s"}` : null,
+  ].filter(Boolean);
   return (
     <ListPage
       crumbs={navCrumbs("cluster")}
-      eyebrow="INFRASTRUCTURE · OPS"
+      eyebrow="Infrastructure"
       title="Cluster"
       state={
         primary
-          ? `${primary.name} · health ${primary.health} · ${pools?.length || 0} pools · ${osds?.length || 0} OSDs.`
+          ? `${[primary.name, `health ${primary.health}`, ...counts].join(" · ")}.`
           : "Waiting on cluster inventory…"
       }
       actions={
@@ -208,11 +220,21 @@ export function Cluster() {
         </button>
       }
     >
+      <DashboardModule title="Disks">
+        <ClusterHero
+          className="sm-hero"
+          clusterName={clusters?.length === 1 ? clusters[0].name : (clusters?.length ?? 0) > 1 ? "All clusters" : undefined}
+          nodes={topologyFromOsds(osds)}
+          loading={osdsLoading}
+          replicaSizes={replicaSizesFromPools(pools)}
+        />
+      </DashboardModule>
+
       <div className="at-instrs">
         <div className="at-instr">
           <div className="at-caption">Health</div>
-          <div className="at-val md" style={{ textTransform: "uppercase" }}>
-            {primary?.health || "—"}
+          <div className="at-val md">
+            {primary ? <HealthIndicator health={primary.health} size="lg" /> : "—"}
           </div>
           <div className="at-delta mono">{primary?.name || "—"}</div>
         </div>
@@ -229,7 +251,7 @@ export function Cluster() {
         <div className="at-instr">
           <div className="at-caption">OSDs</div>
           <div className="at-val md">{osds?.length ?? "—"}</div>
-          <div className="at-delta">{nodes?.length || 0} node(s)</div>
+          <div className="at-delta">{nodes ? `${nodes.length} node${nodes.length === 1 ? "" : "s"}` : "—"}</div>
         </div>
       </div>
 
@@ -265,8 +287,17 @@ export function Cluster() {
           cols={[
             { h: "Name", f: (p) => p.name, mono: true },
             { h: "Kind", f: (p) => p.kind },
-            { h: "Used", f: (p) => fmtBytesOpt(p.used_bytes) },
-            { h: "Max", f: (p) => fmtBytesOpt(p.max_bytes) },
+            { h: "Used", f: (p) => fmtBytesOpt(usage.get(p.id)?.usedBytes) },
+            { h: "Total", f: (p) => fmtBytesOpt(usage.get(p.id)?.capacityBytes) },
+            { h: "Available", f: (p) => fmtBytesOpt(usage.get(p.id)?.availableBytes) },
+            {
+              h: "Fill",
+              f: (p) => {
+                const u = usage.get(p.id);
+                const pct = u ? poolFill(u) : null;
+                return pct == null ? "—" : `${Math.round(pct)}%`;
+              },
+            },
             { h: "Health", f: (p) => <Badge kind={healthKind(p.health)} dot>{p.health}</Badge> },
           ]}
         />
@@ -292,12 +323,13 @@ export function Cluster() {
 export function Metrics() {
   const { data } = useCephMetrics();
   const { data: osdDf } = useCephOsdDf();
+  const { data: history, isLoading: historyLoading } = useHistory();
   const n = data?.length || 0;
   const avg = osdDf?.summary?.average_utilization;
   return (
     <ListPage
       crumbs={navCrumbs("metrics")}
-      eyebrow="OBSERVABILITY · INDEX"
+      eyebrow="Observability"
       title="Metrics"
       state={
         n
@@ -305,6 +337,22 @@ export function Metrics() {
           : "Ceph-native metrics stream — waiting on samples."
       }
     >
+      <DashboardModule title="Client I/O" note="Last hour">
+        <div className="at-2col">
+          <div className="at-panel sm-chart">
+            <TrendChart
+              title="Client throughput"
+              series={throughputSeries(history)}
+              formatValue={formatBytesPerSecond}
+              loading={historyLoading}
+            />
+          </div>
+          <div className="at-panel sm-chart">
+            <TrendChart title="Client IOPS" series={iopsSeries(history)} loading={historyLoading} />
+          </div>
+        </div>
+      </DashboardModule>
+
       <Table
         soundings
         panelTitle="Metric samples"
@@ -314,7 +362,7 @@ export function Metrics() {
         cols={[
           { h: "Name", f: (m) => m.name, mono: true },
           { h: "Value", f: (m) => String(m.value), mono: true },
-          { h: "Labels", f: (m) => <span className="mono" style={{ color: "var(--at-ink-4)" }}>{JSON.stringify(m.labels || {})}</span> },
+          { h: "Labels", f: (m) => <span className="mono sm-muted">{JSON.stringify(m.labels || {})}</span> },
         ]}
       />
     </ListPage>

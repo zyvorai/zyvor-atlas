@@ -1,0 +1,75 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Activity timeline (views/Activity.tsx).
+ */
+
+@layer components {
+  .act-count,
+  .act-meta {
+    color: var(--a-ink-2);
+    font-size: 11.5px;
+  }
+  .act-count {
+    font-size: 13px;
+  }
+  .act-list {
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .act-row {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--a-s3);
+    padding: var(--a-row-y) var(--a-s5);
+    border-bottom: 1px solid var(--a-line);
+  }
+  .act-row:last-child {
+    border-bottom: none;
+  }
+  .act-icon {
+    flex: 0 0 auto;
+    margin-top: 3px;
+    color: var(--a-ink-2);
+  }
+  .act-body {
+    flex: 1;
+    min-width: 0;
+  }
+  .act-head {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--a-s2);
+  }
+  .act-head .act-meta {
+    overflow-wrap: anywhere;
+  }
+  .act-title {
+    font-weight: 500;
+  }
+  .act-detail {
+    margin-top: 4px;
+    color: var(--a-ink-2);
+    font-size: 12.5px;
+  }
+  .act-when {
+    flex: 0 0 auto;
+    text-align: right;
+  }
+  @media (max-width: 640px) {
+    .act-row {
+      flex-wrap: wrap;
+      padding-inline: var(--a-s4);
+    }
+    .act-body {
+      flex-basis: calc(100% - 32px);
+    }
+    .act-when {
+      width: 100%;
+      padding-left: 28px;
+      text-align: left;
+    }
+  }
+}

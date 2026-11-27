@@ -6,12 +6,14 @@
 import { useState } from "react";
 import { submitJob } from "../api/client";
 import { useCephNodeDevices, useInvalidate, useJobs, useNodes, usePools, useZfsDevices } from "../api/hooks";
+import { PoolUsageBars, poolUsageFromPools } from "../graphics";
 import { Badge, FormModal, type FormField } from "../ui/kit";
 import { Table } from "../ui/Table";
 import { ListPage } from "../ui/templates/ListPage";
 import { navCrumbs } from "../nav/routes";
 import MacDisks from "./MacDisks";
-import { fmtBytes, stateKind, timeAgo } from "../lib/format";
+import { fmtBytes, healthKind, stateKind, timeAgo } from "../lib/format";
+import "./Disks.css";
 
 const JOB_TYPES = new Set([
   "zfs.pool.create_from_device",
@@ -146,6 +148,20 @@ export default function Disks({ embedded = false }: { embedded?: boolean }) {
   const content = (
     <>
       <MacDisks />
+      {zpools.length > 0 && (
+        <section className="at-panel dsk-usage">
+          <div className="at-panel-bar">
+            <h2 className="at-caption">ZFS pool capacity</h2>
+          </div>
+          {/* A zpool reports its total size, so used / total is a real fill level. */}
+          <PoolUsageBars
+            label="ZFS pool capacity"
+            pools={poolUsageFromPools(zpools, "total")}
+            warnAt={75}
+            failAt={90}
+          />
+        </section>
+      )}
       <Table
         soundings
         panelTitle="ZFS pools on this host"
@@ -154,16 +170,13 @@ export default function Disks({ embedded = false }: { embedded?: boolean }) {
         empty="No ZFS pools."
         cols={[
           { h: "Pool", f: (p) => p.name, mono: true },
-          { h: "Health", f: (p) => <Badge kind={stateKind(p.health)} dot>{p.health}</Badge> },
-          {
-            h: "",
-            f: (p) => (
-              <button type="button" className="at-btn danger" onClick={() => setDestroyPool(p.name)}>
-                Destroy…
-              </button>
-            ),
-          },
+          { h: "Health", f: (p) => <Badge kind={healthKind(p.health)} dot>{p.health}</Badge> },
         ]}
+        actions={(p) => (
+          <button type="button" className="at-btn danger compact" onClick={() => setDestroyPool(p.name)}>
+            Destroy…
+          </button>
+        )}
       />
 
       <Table
@@ -249,11 +262,11 @@ export default function Disks({ embedded = false }: { embedded?: boolean }) {
 
   if (embedded) {
     return (
-      <div>
-        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
+      <div className="at-stack">
+        <div className="dsk-embedded-actions">
           <button type="button" className="at-btn danger" onClick={() => setOpen(true)}>
-          Provision device…
-        </button>
+            Provision device…
+          </button>
         </div>
         {content}
       </div>
@@ -263,9 +276,10 @@ export default function Disks({ embedded = false }: { embedded?: boolean }) {
   return (
     <ListPage
       crumbs={navCrumbs("disks")}
-      eyebrow="INFRASTRUCTURE · OPS"
+      eyebrow="Infrastructure"
+      className="at-stack"
       title="Disks"
-      state="Format a raw disk as a ZFS pool or a Ceph OSD. Irreversible — wipes the target device."
+      state="Format a raw disk as a ZFS pool or a Ceph OSD. This wipes the target device and cannot be undone."
       actions={
         <button type="button" className="at-btn danger" onClick={() => setOpen(true)}>
           Provision device…

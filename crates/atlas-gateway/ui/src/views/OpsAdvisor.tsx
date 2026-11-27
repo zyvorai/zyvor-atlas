@@ -1,6 +1,6 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Ops Advisor — explainable AI posture and read-only runbooks. No action execution by design.
+// Ops Advisor — explainable AI risk assessment and read-only runbooks. No action execution by design.
 import { useState, type FormEvent } from "react";
 import {
   AlertTriangle,
@@ -10,14 +10,15 @@ import {
   Eye,
   LockKeyhole,
   RefreshCw,
-  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import { apiError, http } from "../api/client";
 import type { AdvisorMode, AdvisorResponse, AnomaliesResponse, IncidentsResponse, WhatIfResponse } from "../api/types";
 import { navCrumbs } from "../nav/routes";
-import { Badge, Button, RadialGauge } from "../ui/kit";
+import { EmptyState } from "../graphics";
+import { Badge, Button } from "../ui/kit";
 import { DashboardHero } from "../ui/templates/DashboardHero";
+import "./OpsAdvisor.css";
 
 const PROMPTS = [
   "What should the storage team handle first?",
@@ -29,6 +30,30 @@ function riskKind(level: AdvisorResponse["risk_level"]) {
   if (level === "critical") return "danger" as const;
   if (level === "high" || level === "moderate") return "warning" as const;
   return "success" as const;
+}
+
+/** The advisor's 0-100 score. Its colour follows the level the gateway reports, not the number. */
+function RiskMeter({ score, level }: { score: number; level: AdvisorResponse["risk_level"] }) {
+  const value = Math.max(0, Math.min(100, score));
+  return (
+    <div
+      className={`adv-meter ${riskKind(level)}`}
+      role="meter"
+      aria-label="Risk score"
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value}
+      aria-valuetext={`${score} of 100, ${level} risk`}
+    >
+      <div>
+        <span className="adv-score">{score}</span>
+        <span className="at-unit">/ 100 risk score</span>
+      </div>
+      <div className="adv-track">
+        <i style={{ width: `${value}%` }} />
+      </div>
+    </div>
+  );
 }
 
 function modeLabel(mode: AdvisorResponse["mode"]) {
@@ -117,12 +142,12 @@ export default function OpsAdvisor() {
     <DashboardHero
       className="at-stack"
       crumbs={navCrumbs("ops-advisor")}
-      eyebrow="OBSERVABILITY · EXPLAINABLE AI"
+      eyebrow="Observability"
       title="Ops Advisor"
       state={
         result
-          ? `${result.risk_level} risk · ${result.actions.length} prioritized step${result.actions.length === 1 ? "" : "s"} · advisory only`
-          : "Ask Atlas to correlate capacity, recovery, alerts, forecasts, and recent job failures."
+          ? `${result.risk_level[0].toUpperCase()}${result.risk_level.slice(1)} risk · ${result.actions.length} prioritized step${result.actions.length === 1 ? "" : "s"} · advisory only`
+          : "Ask about capacity, recovery, alerts, forecasts and recent job failures."
       }
       actions={
         result ? (
@@ -135,53 +160,54 @@ export default function OpsAdvisor() {
       <form className="at-panel" onSubmit={analyze}>
         <div className="at-panel-bar">
           <BrainCircuit size={16} aria-hidden />
-          <span className="at-caption">Ask about the live storage posture</span>
+          <h2 className="at-caption">Ask about your storage</h2>
           <span className="grow" />
           <Badge kind="info">No autonomous actions</Badge>
         </div>
-        <div style={{ padding: 18, display: "grid", gap: 14 }}>
+        <div className="adv-form">
           <textarea
-            className="field"
+            className="field adv-question"
             rows={3}
             maxLength={512}
             value={question}
             aria-label="Advisor question"
             placeholder="What should the storage team handle first?"
             onChange={(e) => setQuestion(e.target.value)}
-            style={{ width: "100%", resize: "vertical" }}
           />
-          <div className="at-chips" style={{ padding: 0, margin: 0 }}>
+          <div className="at-chips adv-chips">
             {PROMPTS.map((prompt) => (
               <button
                 key={prompt}
                 className={`at-chip${question === prompt ? " on" : ""}`}
                 type="button"
+                aria-pressed={question === prompt}
                 onClick={() => setQuestion(prompt)}
               >
                 {prompt}
               </button>
             ))}
           </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <div className="at-chips" style={{ padding: 0, margin: 0 }} aria-label="Analysis mode">
+          <div className="adv-toolbar">
+            <div className="at-chips adv-chips" role="group" aria-label="Analysis mode">
               {(["local", "auto", "llm"] as AdvisorMode[]).map((value) => (
                 <button
                   key={value}
                   className={`at-chip${mode === value ? " on" : ""}`}
                   type="button"
+                  aria-pressed={mode === value}
                   onClick={() => setMode(value)}
                 >
                   {value === "llm" ? "LLM" : value[0].toUpperCase() + value.slice(1)}
                 </button>
               ))}
             </div>
-            <span className="at-sub" style={{ margin: 0, flex: 1 }}>
+            <span className="adv-grow adv-note">
               {mode === "local"
                 ? "Telemetry stays inside Atlas."
                 : "Aggregate telemetry may be sent to the configured model endpoint."}
             </span>
             <Button type="submit" variant="primary" icon={Sparkles} loading={loading} disabled={!question.trim()}>
-              Analyze posture
+              Analyze
             </Button>
           </div>
         </div>
@@ -189,7 +215,7 @@ export default function OpsAdvisor() {
 
       {error ? (
         <div className="at-panel" role="alert">
-          <div className="at-list-row" style={{ color: "var(--at-fail)" }}>
+          <div className="at-list-row at-fail">
             <AlertTriangle size={17} aria-hidden />
             <span>{error}</span>
           </div>
@@ -197,37 +223,34 @@ export default function OpsAdvisor() {
       ) : null}
 
       {!result && !error ? (
-        <div className="at-panel">
-          <div className="at-list-row">
-            <ShieldCheck size={18} style={{ color: "var(--at-ok)" }} aria-hidden />
-            <div>
-              <div className="at-val" style={{ fontSize: 15 }}>Atlas remains the authority</div>
-              <p className="at-sub" style={{ margin: "4px 0 0" }}>
-                The model can summarize evidence, but it cannot change the risk score, rewrite the runbook, or execute storage operations.
-              </p>
-            </div>
-          </div>
-        </div>
+        <section className="at-panel">
+          <h2 className="sr-only">About this advisor</h2>
+          <EmptyState
+            art="chart"
+            title="Advice only"
+            description="A model can summarize the evidence, but it cannot change the risk score, rewrite the runbook or run storage operations."
+          />
+        </section>
       ) : null}
 
       {result ? (
         <>
           <div className="at-panel">
             <div className="at-panel-bar">
-              <span className="at-caption">Current assessment</span>
+              <h2 className="at-caption">Current assessment</h2>
               <Badge kind={riskKind(result.risk_level)} dot>{result.risk_level}</Badge>
               <Badge kind="neutral">{modeLabel(result.mode)}</Badge>
               <span className="grow" />
               <Badge kind="success"><LockKeyhole size={12} /> advisory only</Badge>
             </div>
-            <div style={{ padding: 20, display: "flex", alignItems: "center", gap: 24, flexWrap: "wrap" }}>
-              <RadialGauge pct={result.risk_score} size={132} label="RISK SCORE" />
-              <div style={{ flex: "1 1 360px" }}>
-                <div className="at-val md" style={{ textTransform: "capitalize" }}>{result.risk_level} risk</div>
-                <p className="at-sub" style={{ margin: "8px 0 0", maxWidth: 760 }}>{result.summary}</p>
+            <div className="adv-assessment">
+              <RiskMeter score={result.risk_score} level={result.risk_level} />
+              <div className="adv-summary">
+                <div className="at-val md adv-level">{result.risk_level} risk</div>
+                <p className="adv-copy">{result.summary}</p>
                 {result.warnings.map((warning) => (
-                  <div key={warning} style={{ color: "var(--at-warn)", marginTop: 10, fontSize: 13 }}>
-                    <AlertTriangle size={14} style={{ display: "inline", marginRight: 6 }} />{warning}
+                  <div key={warning} className="adv-warning">
+                    <AlertTriangle size={14} aria-hidden />{warning}
                   </div>
                 ))}
               </div>
@@ -236,23 +259,23 @@ export default function OpsAdvisor() {
 
           <div className="at-panel">
             <div className="at-panel-bar">
-              <span className="at-caption">Correlated incidents</span>
+              <h2 className="at-caption">Correlated incidents</h2>
               <span className="grow" />
               <Badge kind={incidents?.count ? "warning" : "success"}>{incidents?.count ?? 0} active</Badge>
             </div>
             {incidents?.incidents.length ? incidents.incidents.map((incident) => (
-              <div className="at-list-row" key={incident.id} style={{ alignItems: "flex-start" }}>
+              <div className="at-list-row" key={incident.id}>
                 <Badge kind={incident.severity === "critical" ? "danger" : incident.severity === "warning" ? "warning" : "neutral"} dot>
                   {incident.severity}
                 </Badge>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <div className="adv-grow">
+                  <div className="adv-line">
                     <strong>{incident.title}</strong>
                     <Badge kind="info">{Math.round(incident.confidence * 100)}% correlation</Badge>
-                    <span className="mono" style={{ fontSize: 11 }}>{incident.category.replaceAll("_", " ")}</span>
+                    <span className="mono adv-small">{incident.category.replaceAll("_", " ")}</span>
                   </div>
-                  <p className="at-sub" style={{ margin: "5px 0 8px" }}>{incident.likely_cause}</p>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  <p className="adv-copy">{incident.likely_cause}</p>
+                  <div className="adv-line">
                     {incident.signals.map((signal) => (
                       <Badge key={`${signal.source}-${signal.resource_id}-${signal.title}`} kind="neutral">
                         {signal.source} · {signal.title}
@@ -262,7 +285,7 @@ export default function OpsAdvisor() {
                 </div>
               </div>
             )) : (
-              <div className="at-list-row" style={{ color: "var(--at-ok)" }}>
+              <div className="at-list-row at-ok">
                 <CheckCircle2 size={17} aria-hidden /> No related active signals were found.
               </div>
             )}
@@ -270,13 +293,14 @@ export default function OpsAdvisor() {
 
           <div className="at-panel">
             <div className="at-panel-bar">
-              <span className="at-caption">Telemetry anomalies · 6-hour window</span>
-              <div className="at-chips" style={{ padding: 0, margin: 0 }} aria-label="Anomaly sensitivity">
+              <h2 className="at-caption">Telemetry anomalies · 6-hour window</h2>
+              <div className="at-chips adv-chips" role="group" aria-label="Anomaly sensitivity">
                 {["3", "3.5", "5"].map((value) => (
                   <button
                     key={value}
                     type="button"
                     className={`at-chip${sensitivity === value ? " on" : ""}`}
+                    aria-pressed={sensitivity === value}
                     onClick={() => changeSensitivity(value)}
                     disabled={refreshingAnomalies}
                     title="Lower values detect smaller deviations"
@@ -291,33 +315,33 @@ export default function OpsAdvisor() {
               </Badge>
             </div>
             {anomalies?.warnings.map((warning) => (
-              <div className="at-list-row" key={warning} style={{ color: "var(--at-warn)" }}>
+              <div className="at-list-row at-warn" key={warning}>
                 <AlertTriangle size={16} aria-hidden /> {warning}
               </div>
             ))}
             {anomalies?.anomalies.length ? anomalies.anomalies.map((anomaly) => (
-              <div className="at-list-row" key={anomaly.id} style={{ alignItems: "flex-start" }}>
+              <div className="at-list-row" key={anomaly.id}>
                 <Badge kind={anomaly.severity === "critical" ? "danger" : "warning"} dot>
                   {anomaly.severity}
                 </Badge>
-                <div style={{ flex: 1 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+                <div className="adv-grow">
+                  <div className="adv-line">
                     <strong>{anomaly.label}</strong>
                     <Badge kind="info">score {anomaly.score.toFixed(1)}</Badge>
-                    <span className="mono" style={{ fontSize: 11 }}>{anomaly.change_percent >= 0 ? "+" : ""}{anomaly.change_percent.toFixed(1)}%</span>
+                    <span className="mono adv-small">{anomaly.change_percent >= 0 ? "+" : ""}{anomaly.change_percent.toFixed(1)}%</span>
                   </div>
-                  <p className="at-sub" style={{ margin: "5px 0 8px" }}>{anomaly.explanation}</p>
-                  <code className="mono" style={{ fontSize: 11.5 }}>{anomaly.inspect}</code>
+                  <p className="adv-copy">{anomaly.explanation}</p>
+                  <code className="adv-code">{anomaly.inspect}</code>
                 </div>
               </div>
             )) : anomalies?.warnings.length ? null : (
-              <div className="at-list-row" style={{ color: "var(--at-ok)" }}>
+              <div className="at-list-row at-ok">
                 <CheckCircle2 size={17} aria-hidden /> No statistically significant upward deviations detected.
               </div>
             )}
             {anomalies ? (
               <div className="at-list-row">
-                <span className="at-sub" style={{ margin: 0 }}>
+                <span className="adv-note">
                   {anomalies.sample_count} samples · {anomalies.telemetry_status} telemetry
                   {anomalies.latest_sample_age_minutes != null ? ` · latest ${anomalies.latest_sample_age_minutes} min ago` : ""}
                   {` · median/MAD baseline · sensitivity ${anomalies.sensitivity}`}
@@ -351,67 +375,67 @@ export default function OpsAdvisor() {
 
           <div className="at-panel">
             <div className="at-panel-bar">
-              <span className="at-caption">Prioritized runbook</span>
+              <h2 className="at-caption">Prioritized runbook</h2>
               <span className="grow" />
               <Badge kind="neutral">read-only inspection</Badge>
             </div>
             {result.actions.map((action, index) => (
-              <div className="at-list-row" key={`${action.priority}-${action.title}`} style={{ alignItems: "flex-start" }}>
+              <div className="at-list-row" key={`${action.priority}-${action.title}`}>
                 <Badge kind={action.priority === 1 ? "danger" : action.priority <= 3 ? "warning" : "neutral"}>
                   P{action.priority}
                 </Badge>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontWeight: 650 }}>{index + 1}. {action.title}</div>
-                  <p className="at-sub" style={{ margin: "4px 0 8px" }}>{action.rationale}</p>
-                  <code className="mono" style={{ fontSize: 11.5 }}>{action.inspect}</code>
+                <div className="adv-grow">
+                  <h3 className="adv-step">{index + 1}. {action.title}</h3>
+                  <p className="adv-copy">{action.rationale}</p>
+                  <code className="adv-code">{action.inspect}</code>
                 </div>
-                <Eye size={16} style={{ color: "var(--at-ink-4)", marginTop: 2 }} aria-label="Inspect only" />
+                <Eye size={16} className="adv-eye" role="img" aria-label="Inspect only" />
               </div>
             ))}
           </div>
 
           <form className="at-panel" onSubmit={simulate}>
             <div className="at-panel-bar">
-              <span className="at-caption">What-if capacity simulator</span>
+              <h2 className="at-caption">What-if capacity simulator</h2>
               <span className="grow" />
               <Badge kind="info">no inventory changes</Badge>
             </div>
-            <div style={{ padding: 18, display: "grid", gap: 16 }}>
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+            <div className="adv-form">
+              <div className="adv-fields">
                 <label>
                   <span className="at-caption">Capacity to add · TiB</span>
-                  <input className="field" type="number" min="0" step="0.1" value={capacityTib} onChange={(e) => setCapacityTib(e.target.value)} style={{ width: "100%", marginTop: 6 }} />
+                  <input className="field" type="number" min="0" step="0.1" value={capacityTib} onChange={(e) => setCapacityTib(e.target.value)} />
                 </label>
                 <label>
                   <span className="at-caption">Daily growth · GiB</span>
-                  <input className="field" type="number" min="0" step="0.1" value={growthGib} onChange={(e) => setGrowthGib(e.target.value)} style={{ width: "100%", marginTop: 6 }} />
+                  <input className="field" type="number" min="0" step="0.1" value={growthGib} onChange={(e) => setGrowthGib(e.target.value)} />
                 </label>
                 <label>
                   <span className="at-caption">Horizon · days</span>
-                  <input className="field" type="number" min="1" max="365" value={horizon} onChange={(e) => setHorizon(e.target.value)} style={{ width: "100%", marginTop: 6 }} />
+                  <input className="field" type="number" min="1" max="365" value={horizon} onChange={(e) => setHorizon(e.target.value)} />
                 </label>
               </div>
-              <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
-                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13 }}>
+              <div className="adv-toolbar">
+                <label className="adv-check">
                   <input type="checkbox" checked={clearAlerts} onChange={(e) => setClearAlerts(e.target.checked)} /> Assume alerts resolved
                 </label>
-                <label style={{ display: "flex", alignItems: "center", gap: 7, fontSize: 13 }}>
+                <label className="adv-check">
                   <input type="checkbox" checked={clearRecovery} onChange={(e) => setClearRecovery(e.target.checked)} /> Assume recovery complete
                 </label>
                 <span className="grow" />
                 <Button type="submit" icon={Sparkles} loading={simulating}>Simulate</Button>
               </div>
-              {simulationError ? <div role="alert" style={{ color: "var(--at-fail)" }}>{simulationError}</div> : null}
+              {simulationError ? <div role="alert" className="at-fail">{simulationError}</div> : null}
               {simulation ? (
-                <div style={{ display: "grid", gap: 14 }}>
-                  <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 22, flexWrap: "wrap" }}>
-                    <div style={{ textAlign: "center" }}>
+                <div className="adv-result">
+                  <div className="adv-compare">
+                    <div>
                       <div className="at-caption">Baseline</div>
                       <div className="at-val md">{simulation.baseline.risk_score}</div>
                       <Badge kind={riskKind(simulation.baseline.risk_level)}>{simulation.baseline.risk_level}</Badge>
                     </div>
-                    <ArrowRight size={24} style={{ color: simulation.risk_delta < 0 ? "var(--at-ok)" : "var(--at-warn)" }} aria-hidden />
-                    <div style={{ textAlign: "center" }}>
+                    <ArrowRight size={24} className={simulation.risk_delta < 0 ? "at-ok" : "at-warn"} aria-hidden />
+                    <div>
                       <div className="at-caption">Projected · {simulation.horizon_days}d</div>
                       <div className="at-val md">{simulation.projected.risk_score}</div>
                       <Badge kind={riskKind(simulation.projected.risk_level)}>{simulation.projected.risk_level}</Badge>
@@ -420,8 +444,8 @@ export default function OpsAdvisor() {
                       {simulation.risk_delta > 0 ? "+" : ""}{simulation.risk_delta} risk
                     </Badge>
                   </div>
-                  <div className="at-list-row">
-                    <span className="at-sub" style={{ margin: 0 }}>
+                  <div className="adv-note">
+                    <span>
                       Projected utilization <strong>{simulation.projected.capacity_used_percent.toFixed(1)}%</strong>
                       {simulation.projected.days_to_full == null ? " · no meaningful fill date" : ` · ${simulation.projected.days_to_full.toFixed(1)} days to full`}
                     </span>
@@ -432,8 +456,8 @@ export default function OpsAdvisor() {
           </form>
 
           <div className="at-panel">
-            <div className="at-panel-bar"><span className="at-caption">Safety boundary</span></div>
-            <div className="at-list-row" style={{ color: "var(--at-ok)" }}>
+            <div className="at-panel-bar"><h2 className="at-caption">Safety boundary</h2></div>
+            <div className="at-list-row at-ok">
               <CheckCircle2 size={17} aria-hidden />
               <span>Advisor response confirms <span className="mono">can_execute: {String(result.can_execute)}</span>. Every proposed step points to a read-only inspection endpoint.</span>
             </div>

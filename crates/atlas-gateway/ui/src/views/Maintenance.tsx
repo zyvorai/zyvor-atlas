@@ -10,6 +10,7 @@ import { navCrumbs } from "../nav/routes";
 import { Table } from "../ui/Table";
 import { confirmThen } from "../ui/confirm";
 import { timeAgo } from "../lib/format";
+import "./Maintenance.css";
 
 export default function Maintenance() {
   const inv = useInvalidate();
@@ -23,7 +24,7 @@ export default function Maintenance() {
     <DashboardHero
       className="at-stack"
       crumbs={navCrumbs("maintenance")}
-      eyebrow="INFRASTRUCTURE · OPS"
+      eyebrow="Infrastructure"
       title="Maintenance"
       state={
         pre
@@ -39,35 +40,35 @@ export default function Maintenance() {
       <div className="at-instrs">
         <div className="at-instr">
           <div className="at-caption">Pre-flight</div>
-          <div className="at-val md" style={{ textTransform: "uppercase" }}>
-            {pre ? (pre.ready ? "ready" : "blocked") : "—"}
+          <div className={`at-val md ${pre ? (pre.ready ? "at-ok" : "at-warn") : ""}`}>
+            {pre ? (pre.ready ? "Ready" : "Blocked") : "—"}
           </div>
-          <div className="at-delta mono">{pre?.checks?.length ?? 0} checks</div>
+          <div className="at-delta mono">{pre ? `${pre.checks?.length ?? 0} checks` : "—"}</div>
         </div>
         <div className="at-instr">
           <div className="at-caption">Job engine</div>
-          <div className="at-val md" style={{ textTransform: "uppercase" }}>
-            {maint ? (paused ? "paused" : "running") : "—"}
+          <div className={`at-val md ${paused ? "at-warn" : ""}`}>
+            {maint ? (paused ? "Paused" : "Running") : "—"}
           </div>
-          <div className="at-delta">{paused ? "new jobs queue" : "dispatching"}</div>
+          <div className="at-delta">{maint ? (paused ? "new jobs queue" : "dispatching") : "—"}</div>
         </div>
         <div className="at-instr">
           <div className="at-caption">Backends</div>
           <div className="at-val md">{backends?.length ?? "—"}</div>
           <div className="at-delta mono">
-            {(backends || []).filter((b) => b.cordoned).length} cordoned
+            {backends ? `${backends.filter((b) => b.cordoned).length} cordoned` : "—"}
           </div>
         </div>
         <div className="at-instr">
           <div className="at-caption">Orphans</div>
           <div className="at-val md">{orphans?.count ?? "—"}</div>
-          <div className="at-delta">backup GC</div>
+          <div className="at-delta">backups without a source volume</div>
         </div>
       </div>
 
       <div className="at-panel">
         <div className="at-panel-bar">
-          <span className="at-caption">Upgrade pre-flight</span>
+          <h2 className="at-caption">Upgrade pre-flight</h2>
           <span className="grow" />
           {pre && (
             <Badge kind={pre.ready ? "success" : "warning"} dot>
@@ -77,36 +78,36 @@ export default function Maintenance() {
         </div>
         {pre?.blockers?.length ? (
           pre.blockers.map((b, i) => (
-            <div key={`b-${i}`} className="at-list-row" style={{ color: "var(--at-warn)" }}>
-              <AlertTriangle size={16} style={{ flexShrink: 0, marginTop: 2 }} />
-              <span style={{ flex: 1 }}>{b}</span>
+            <div key={`b-${i}`} className="at-list-row at-warn">
+              <AlertTriangle size={16} className="mnt-icon" aria-hidden />
+              <span className="mnt-grow">{b}</span>
             </div>
           ))
-        ) : (
-          <div className="at-list-row" style={{ color: "var(--at-ok)" }}>
-            <CheckCircle2 size={16} style={{ flexShrink: 0 }} />
+        ) : pre?.ready ? (
+          <div className="at-list-row at-ok">
+            <CheckCircle2 size={16} className="mnt-icon" aria-hidden />
             <span>Safe to upgrade.</span>
           </div>
-        )}
+        ) : null}
         {(pre?.checks ?? []).map((c) => (
-          <div key={c.check} className="at-list-row" style={{ alignItems: "center" }}>
+          <div key={c.check} className="at-list-row mnt-check">
             <Badge kind={c.ok ? "success" : "warning"} dot>
               {c.ok ? "ok" : "blocked"}
             </Badge>
-            <span className="mono" style={{ fontSize: 12.5, color: "var(--at-ink)" }}>{c.check}</span>
-            <span className="at-sub" style={{ margin: 0, flex: 1 }}>{c.detail}</span>
+            <span className="mono mnt-id">{c.check}</span>
+            <span className="mnt-note mnt-grow">{c.detail}</span>
           </div>
         ))}
         {!pre && (
           <div className="at-list-row">
-            <span className="at-sub" style={{ margin: 0 }}>Loading pre-flight…</span>
+            <span className="mnt-note">Loading pre-flight…</span>
           </div>
         )}
       </div>
 
       <div className="at-panel">
         <div className="at-panel-bar">
-          <span className="at-caption">Job engine</span>
+          <h2 className="at-caption">Job engine</h2>
           {maint && (
             <Badge kind={paused ? "warning" : "success"} dot>
               {paused ? "paused" : "running"}
@@ -132,8 +133,8 @@ export default function Maintenance() {
           )}
         </div>
         <div className="at-list-row">
-          <p className="at-sub" style={{ margin: 0 }}>
-            While paused, new jobs stay <span className="mono">queued</span> and drain when resumed — quiesce the system before maintenance.
+          <p className="mnt-note">
+            While paused, new jobs stay <span className="mono">queued</span> and run when you resume. Pause before maintenance.
           </p>
         </div>
       </div>
@@ -163,7 +164,7 @@ export default function Maintenance() {
         panelTitle={
           <>
             Orphan backups{" "}
-            <Badge kind={orphans?.count ? "warning" : "neutral"}>{orphans?.count ?? 0}</Badge>
+            {orphans && <Badge kind={orphans.count ? "warning" : "neutral"}>{orphans.count}</Badge>}
           </>
         }
         rows={orphans?.orphan_backups}

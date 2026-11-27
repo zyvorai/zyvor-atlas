@@ -1,0 +1,45 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Disaster recovery (views/DR.tsx).
+ */
+
+@layer components {
+  .dr-plane .badge {
+    letter-spacing: 0;
+  }
+  /* One line of actions per mirror; a narrow screen scrolls the table sideways. */
+  .dr-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 4px;
+  }
+  .dr-note {
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .dr-check {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .dr-id {
+    font-size: 12px;
+  }
+  .dr-grow {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+  .dr-form {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    align-items: end;
+    gap: var(--a-s3);
+    padding: var(--a-s3) var(--a-s5) var(--a-s5);
+  }
+  .dr-submit {
+    justify-self: start;
+  }
+  .at-btn.dr-submit {
+    min-height: var(--a-field-h);
+  }
+}

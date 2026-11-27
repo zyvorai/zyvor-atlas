@@ -11,25 +11,34 @@ import { Table } from "../ui/Table";
 import { confirmThen } from "../ui/confirm";
 import { stateKind, timeAgo } from "../lib/format";
 
+const FILTERS = [
+  { value: "", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "resolved", label: "Resolved" },
+];
+
 export default function Alerts() {
   const [state, setState] = useState("");
   const { data } = useAlerts(state || undefined);
   const inv = useInvalidate();
-  const open = (data || []).filter((a) => a.state === "open").length;
-  const crit = (data || []).filter((a) => a.severity === "critical").length;
+  const openRows = (data || []).filter((a) => a.state === "open");
+  const open = openRows.length;
+  const crit = openRows.filter((a) => a.severity === "critical").length;
   return (
     <ListPage
       crumbs={navCrumbs("alerts")}
-      eyebrow="OBSERVABILITY · LEDGER"
+      eyebrow="Observability"
       title="Alerts"
       state={
-        data
-          ? crit
-            ? `${crit} critical · ${open} open — acknowledge or silence before capacity work.`
-            : open
-              ? `${open} open alert${open === 1 ? "" : "s"} across health, capacity, and recovery.`
-              : "No open alerts — estate quiet."
-          : "Loading alert ledger…"
+        !data
+          ? "Loading alerts…"
+          : state === "resolved"
+            ? `${data.length} resolved alert${data.length === 1 ? "" : "s"}.`
+            : crit
+              ? `${crit} critical · ${open} open. Acknowledge or silence before capacity work.`
+              : open
+                ? `${open} open alert${open === 1 ? "" : "s"} across health, capacity and recovery.`
+                : "No open alerts."
       }
       actions={
         <button
@@ -37,20 +46,26 @@ export default function Alerts() {
           className="at-btn"
           onClick={() => submit("post", "/alerts/evaluate", null, "evaluated", () => inv("alerts")).catch(() => {})}
         >
-          <PlayCircle size={14} /> Evaluate
+          <PlayCircle size={14} aria-hidden /> Evaluate
         </button>
       }
     >
       <div className="at-chips">
-        {(["", "open", "resolved"] as const).map((s) => (
-          <button key={s || "all"} type="button" className={`at-chip${state === s ? " on" : ""}`} onClick={() => setState(s)}>
-            {s || "All"}
+        {FILTERS.map((f) => (
+          <button
+            key={f.value || "all"}
+            type="button"
+            className={`at-chip${state === f.value ? " on" : ""}`}
+            aria-pressed={state === f.value}
+            onClick={() => setState(f.value)}
+          >
+            {f.label}
           </button>
         ))}
       </div>
       <Table
         soundings
-        panelTitle="Alert ledger"
+        panelTitle="Alert list"
         rows={data}
         rowKey={(a) => a.id}
         empty="No alerts match this filter."

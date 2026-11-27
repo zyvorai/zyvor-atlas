@@ -1,0 +1,31 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Policies, Backends, Kubernetes, Cluster and Metrics (views/Simple.tsx).
+ */
+
+@layer components {
+  .sm-muted {
+    color: var(--a-ink-2);
+  }
+  .sm-bars {
+    min-height: 120px;
+  }
+  .sm-chart {
+    padding: var(--a-s5);
+  }
+  /* The grid spaces the two panels; the shared sibling margin would offset the second. */
+  .sm-chart.at-panel + .sm-chart.at-panel {
+    margin-top: 0;
+  }
+}
+
+/* Placement of the shared graphics. Unlayered, because graphics.css is. */
+.ag-hero.sm-hero {
+  border: none;
+  border-radius: var(--a-radius-lg);
+  box-shadow: var(--a-shadow);
+}
+.sm-bars .ag-pools {
+  padding: var(--a-s2) var(--a-s5);
+}

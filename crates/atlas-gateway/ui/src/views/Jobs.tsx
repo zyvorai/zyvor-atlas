@@ -8,12 +8,22 @@ import { ListPage } from "../ui/templates/ListPage";
 import { navCrumbs } from "../nav/routes";
 import { Table } from "../ui/Table";
 import { stateKind, timeAgo } from "../lib/format";
+import "./Jobs.css";
 
-function Bar({ pct, kind }: { pct: number; kind: string }) {
-  const c = kind === "failed" ? "#E23B3B" : kind === "succeeded" ? "#30D69E" : "#38BDF8";
+function Bar({ pct, state, label }: { pct: number; state: string; label: string }) {
+  const value = Math.max(0, Math.min(100, pct || 0));
   return (
-    <div className="w-28 h-1.5 rounded-full overflow-hidden" style={{ background: "var(--at-line)" }}>
-      <div className="h-full rounded-full" style={{ width: `${Math.min(100, pct || 0)}%`, background: c }} />
+    <div
+      className="jobs-bar"
+      data-state={state}
+      role="progressbar"
+      aria-label={`${label} progress`}
+      aria-valuemin={0}
+      aria-valuemax={100}
+      aria-valuenow={value}
+      title={`${value}%`}
+    >
+      <i style={{ width: `${value}%` }} />
     </div>
   );
 }
@@ -28,20 +38,22 @@ export default function Jobs() {
   return (
     <ListPage
       crumbs={navCrumbs("jobs")}
-      eyebrow="OBSERVE · TIMELINE"
+      eyebrow="Observability"
       title="Jobs"
       state={
         live.length
-          ? `${live.length} live this session · ${n} recent — open a row for Terminal result.`
+          ? `${live.length} live this session · ${n} recent. Select a job to see its result.`
           : running
-            ? `${running} in flight · ${n} recent on the job engine.`
+            ? `${running} in progress · ${n} recent.`
             : n
-              ? `${n} recent job${n === 1 ? "" : "s"} — click a row for Terminal detail.`
-              : "No jobs yet. Provisioning and day-2 ops appear here as they run."
+              ? `${n} recent job${n === 1 ? "" : "s"}. Select one to see its result.`
+              : data
+                ? "No jobs yet. Provisioning and day-2 operations appear here as they run."
+                : "Loading jobs…"
       }
     >
       {live.length > 0 && (
-        <div style={{ marginBottom: 16 }}>
+        <div className="jobs-live">
           <Table
             soundings
             panelTitle="Live · this session"
@@ -50,7 +62,7 @@ export default function Jobs() {
             cols={[
               { h: "Job", f: (j) => j.label },
               { h: "State", f: (j) => <Badge kind={stateKind(j.state)} dot>{j.state}</Badge> },
-              { h: "Progress", f: (j) => <Bar pct={j.progress} kind={j.state} /> },
+              { h: "Progress", f: (j) => <Bar pct={j.progress} state={j.state} label={j.label} /> },
               { h: "ID", f: (j) => j.id, mono: true },
             ]}
           />
@@ -67,7 +79,7 @@ export default function Jobs() {
           { h: "ID", f: (j) => <Copyable text={j.id} />, mono: true },
           { h: "Type", f: (j) => j.job_type, mono: true, sortKey: (j) => j.job_type },
           { h: "State", f: (j) => <Badge kind={stateKind(j.state)} dot>{j.state}</Badge>, sortKey: (j) => j.state },
-          { h: "Progress", f: (j) => <Bar pct={j.progress_percent} kind={j.state} /> },
+          { h: "Progress", f: (j) => <Bar pct={j.progress_percent} state={j.state} label={j.id} /> },
           { h: "Error", f: (j) => <span className="text-danger">{j.error || ""}</span> },
           { h: "When", f: (j) => <span className="text-muted-foreground">{timeAgo(j.updated_at || j.created_at)}</span>, sortKey: (j) => j.updated_at || j.created_at || "" },
         ]}
@@ -78,19 +90,19 @@ export default function Jobs() {
           <div className="at-stack text-sm">
             <div className="at-panel">
               <div className="at-panel-bar">
-                <span className="at-caption">Detail</span>
+                <h2 className="at-caption">Detail</h2>
               </div>
-              <div className="grid grid-cols-2 gap-px" style={{ background: "var(--at-line)" }}>
+              <dl className="jobs-detail">
                 <Kv k="Type" v={sel.job_type} mono />
                 <Kv k="State" v={sel.state} />
                 <Kv k="By" v={sel.requested_by} mono />
                 <Kv k="Progress" v={`${sel.progress_percent ?? 0}%`} />
                 <Kv k="Created" v={timeAgo(sel.created_at)} />
                 <Kv k="Updated" v={timeAgo(sel.updated_at)} />
-              </div>
+              </dl>
             </div>
             {sel.error && (
-              <TerminalPane title="stderr" variant="error">
+              <TerminalPane title="Error" variant="error">
                 {sel.error}
               </TerminalPane>
             )}
@@ -106,9 +118,9 @@ export default function Jobs() {
 
 function Kv({ k, v, mono }: { k: string; v?: string; mono?: boolean }) {
   return (
-    <div style={{ padding: "10px 14px", background: "var(--at-shelf)" }}>
-      <div className="at-caption">{k}</div>
-      <div className={mono ? "mono" : ""} style={{ marginTop: 4, color: "var(--at-ink)" }}>{v || "—"}</div>
+    <div>
+      <dt>{k}</dt>
+      <dd className={mono ? "mono" : undefined}>{v || "—"}</dd>
     </div>
   );
 }

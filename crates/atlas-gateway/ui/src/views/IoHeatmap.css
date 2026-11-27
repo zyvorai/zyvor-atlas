@@ -1,0 +1,81 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Latency heatmap (views/IoHeatmap.tsx).
+ */
+
+@layer components {
+  .hm {
+    display: flex;
+    flex-direction: column;
+    gap: var(--a-s3);
+    padding: var(--a-s4) var(--a-s5);
+  }
+  .hm-note {
+    margin: 0;
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .hm-legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--a-s2) var(--a-s5);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+    color: var(--a-ink-2);
+    font-size: 12.5px;
+  }
+  .hm-legend li {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .hm-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--a-s2) var(--a-s3);
+  }
+  .hm-name {
+    display: flex;
+    flex: 0 0 160px;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    overflow-wrap: anywhere;
+  }
+  .hm-cells {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2px;
+  }
+  /* A track per minute; the bar inside rises with the latency band, so colour is not the only cue. */
+  .hm-cell {
+    position: relative;
+    display: inline-block;
+    width: 14px;
+    height: 18px;
+    overflow: hidden;
+    border-radius: 3px;
+    background: var(--a-surface-3);
+  }
+  .hm-cell::after {
+    content: "";
+    position: absolute;
+    inset: auto 0 0 0;
+    height: 0;
+    background: var(--a-blue);
+  }
+  .hm-cell[data-band="fast"]::after {
+    height: 35%;
+  }
+  .hm-cell[data-band="slow"]::after {
+    height: 65%;
+    background: var(--a-warn);
+  }
+  .hm-cell[data-band="slower"]::after {
+    height: 100%;
+    background: var(--a-fail);
+  }
+}
