@@ -214,15 +214,13 @@ connection that carries one, so upgrade every replica before relying on barriers
 
 ReadIndex stays the linearizable barrier. The leader may skip the next quorum round while a
 [`ReadLease`](../crates/atlas-native/src/read_lease.rs) from the last successful one is still
-valid (`RaftServer::read_barrier` / `RaftNode::leased_read`). Two events grant it, and only on
-the leader:
+valid (`RaftServer::read_barrier` / `RaftNode::leased_read`). One event grants it, and only on
+the leader: a `read_barrier` that finished (the leader's own ReadIndex, confirmed by a quorum). The
+check-quorum round grants nothing: its answers can be almost an election timeout old, so a
+just-partitioned leader could have taken a lease while its successor was already being elected.
 
-- a `read_barrier` that finished (the leader's own ReadIndex, confirmed by a quorum);
-- the leader's check-quorum round, once a majority has answered within an election timeout and
-  this term has a committed entry.
-
-The lease lasts one quarter of the minimum election timeout on the caller's monotonic clock
-(default tick 50 ms and election minimum 10 ticks is 125 ms). A local read uses it only when
+The lease lasts one quarter of the minimum election timeout, counted from when that ReadIndex was
+**sent**, on the caller's monotonic clock (default tick 50 ms and election minimum 10 ticks is 125 ms). A local read uses it only when
 all of these hold: the deadline is still ahead, the node is still leader, the term is the term
 recorded at grant, the commit index is still that index, and the index has been applied. A
 commit that moves the index, or a term change (step-down, a campaign, becoming leader), drops
@@ -235,8 +233,10 @@ monotonic clock is not wildly slow. It is not a measurement of clock skew betwee
 
 `read_lease` unit-tests grant, expiry at the deadline, and invalidation when the term or index
 advances, including that a follower miss is unconditional. `tests/raft.rs`
-(`read_lease_grants_after_quorum_and_drops_on_expiry_or_commit`) drives a one-node leader:
-check-quorum grants, the injected clock expires the lease, and a committed write drops it.
+(`read_lease_needs_a_read_index_and_drops_on_expiry_or_commit`) drives a one-node leader:
+check-quorum grants nothing, the injected clock expires a granted lease, and a committed write
+drops it. Counting the lease from the send time in `RaftServer::read_barrier` has no test of its
+own.
 
 `tests/raft_tcp.rs` runs a real 3-server cluster over localhost: election and replication, follower
 redirect, and leader shutdown, failover and rejoin from disk. `tests/raft_groups.rs` runs three

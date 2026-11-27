@@ -802,8 +802,9 @@ impl RaftNode {
         Some(lease.index())
     }
 
-    /// Records a leader lease covering `index` after a confirmed ReadIndex or a check-quorum
-    /// round. Refuses unless this node is leader, the clock is enabled, `index` is the current
+    /// Records a leader lease covering `index` after a confirmed ReadIndex. The caller's lease
+    /// clock must read the time the ReadIndex was *sent*: the quorum proof is only that fresh.
+    /// Refuses unless this node is leader, the clock is enabled, `index` is the current
     /// commit index of this term, and that index is applied. Returns whether a lease is held.
     pub fn grant_read_lease(&mut self, index: u64) -> bool {
         if self.lease_tick_ms == 0 || !self.is_leader() || index != self.commit_index {
@@ -934,9 +935,8 @@ impl RaftNode {
                 if !self.membership.has_quorum(&active) {
                     return self.become_follower(self.hard.term, None);
                 }
-                // The majority answered within an election timeout. That is the leader proof a
-                // read lease needs; a later commit drops it again.
-                self.grant_read_lease(self.commit_index);
+                // No read lease from this round: its answers may be almost an election timeout
+                // old, and a majority cut off since then can already have elected a new leader.
             }
             self.heartbeat_elapsed += 1;
             if self.heartbeat_elapsed >= self.cfg.heartbeat_ticks {

@@ -664,6 +664,8 @@ impl RaftServer {
             return Ok(index);
         }
         let mut asked: Option<(u64, Instant)> = None;
+        // When the ReadIndex that succeeds was sent, on the lease clock.
+        let mut sent_ms = lease_now_ms();
         let index = loop {
             if self.shared.stop.load(Ordering::SeqCst) {
                 return Err(RaftError::Shutdown);
@@ -689,6 +691,7 @@ impl RaftServer {
                 });
             }
             if asked.is_none() {
+                sent_ms = lease_now_ms();
                 match node.read_index() {
                     Ok(id) => asked = Some((id, now)),
                     // No leader known yet: an election may be under way.
@@ -723,8 +726,11 @@ impl RaftServer {
                 .map_err(|_| RaftError::Shutdown)?
                 .0;
         }
-        node.observe_lease_now(lease_now_ms());
+        // The lease runs from the send, not from now: a slow round must not stretch it past the
+        // earliest moment another leader could have been elected.
+        node.observe_lease_now(sent_ms);
         node.grant_read_lease(index);
+        node.observe_lease_now(lease_now_ms());
         Ok(index)
     }
 

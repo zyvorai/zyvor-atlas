@@ -3,9 +3,10 @@
 
 //! A short leader lease for linearizable metadata reads.
 //!
-//! After the leader confirms a quorum (a successful ReadIndex, or its check-quorum round) it may
-//! serve later local reads without another barrier, until the monotonic deadline or until a write
-//! advances the term or the commit index. Followers do not use it: they cannot see a commit that
+//! After the leader confirms a quorum with a successful ReadIndex it may serve later local reads
+//! without another barrier, until a deadline counted from when that ReadIndex was sent, or until a
+//! write advances the term or the commit index. The check-quorum round grants nothing: its answers
+//! can be almost an election timeout old. Followers do not use it: they cannot see a commit that
 //! happened on the leader after the lease was taken. The sans-IO node stores one of these; the
 //! clock is supplied by the caller so tests do not sleep.
 //!

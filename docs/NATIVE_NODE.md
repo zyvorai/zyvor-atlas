@@ -20,10 +20,9 @@ client, and "Atlas gateway" below for how the gateway drives it.
   answered by any replica after a read barrier, so they include every write completed before the
   request; a replica that cannot reach a leader answers 503. `?stale=1` skips the barrier and
   returns whatever the replica has applied, which can be arbitrarily old (a restarted replica starts
-  from its last checkpoint). The volume list (`GET /v1/volumes`) has no barrier. The barrier has one
-  known hole: a leader holds a read lease granted by the check-quorum round, so a leader that was
-  just partitioned can answer for up to a quarter of the election timeout after its successor has
-  committed writes.
+  from its last checkpoint). The volume list (`GET /v1/volumes`) has no barrier. A leader may skip
+  the quorum round under a read lease (`docs/NATIVE_METADATA.md`, "Leader-lease reads"), which
+  relies on its monotonic clock not running much slow.
 
 A typical small cluster runs metadata and data roles on the same three hosts, or three metadata
 nodes plus N data nodes. `replicas` must not exceed the number of data nodes; with one spare data

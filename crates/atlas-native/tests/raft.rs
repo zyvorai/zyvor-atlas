@@ -637,20 +637,26 @@ fn an_isolated_leader_never_confirms_a_read() {
 }
 
 #[test]
-fn read_lease_grants_after_quorum_and_drops_on_expiry_or_commit() {
+fn read_lease_needs_a_read_index_and_drops_on_expiry_or_commit() {
     let mut c = Cluster::new(1, 0);
     let l = c.elect();
     let index = c.node(&l).commit_index();
     assert!(index > 0 && c.node(&l).applied_index() >= index);
     assert!(c.node(&l).read_lease().is_none());
 
-    // Check-quorum on the leader grants. The clock is injected; tick does not move it.
-    // election minimum is 10 ticks, so the 10th tick is the quorum round.
+    // The check-quorum round grants nothing: its answers can be too old. The clock is injected;
+    // tick does not move it. The election minimum is 10 ticks, so the 10th tick is the round.
     let start = 10_000u64;
     c.node_mut(&l).configure_read_lease_clock(50, start);
     assert!(c.node(&l).leased_read().is_none());
     c.run(10);
-    assert_eq!(c.node(&l).leased_read(), Some(c.node(&l).commit_index()));
+    assert!(
+        c.node(&l).read_lease().is_none(),
+        "check-quorum must not grant"
+    );
+    let confirmed = c.node(&l).commit_index();
+    assert!(c.node_mut(&l).grant_read_lease(confirmed));
+    assert_eq!(c.node(&l).leased_read(), Some(confirmed));
 
     let ttl = c.node(&l).read_lease_ttl_ms();
     assert_eq!(ttl, 125);

@@ -149,18 +149,10 @@ sudo ATLAS_UBLK_LIVE=yes deploy/native/ublk-live-check.sh \
     target/release/atlas-native-node target/release/atlas-native-ublk
 ```
 
-### Known gap in the read barrier
+### What the read barrier relies on
 
-The read guarantee is only as good as the engine's read barrier, and that has a hole. A leader may
-skip the quorum round while it holds a read lease, and the check-quorum round grants one
-(`RaftNode::tick` in `crates/atlas-native/src/raft.rs`) on acknowledgements that can be almost an
-election timeout old. A leader that was just partitioned can therefore take a lease while the other
-voters are electing a successor, and answer reads from it for up to a quarter of the election
-timeout (125 ms with the default tick) after the new leader committed writes.
-
-This was reproduced with a throwaway test on the sans-I/O `RaftNode` (not committed): the cut-off
-leader, still believing it led, granted a local read at index 3 after the new leader had applied
-index 5. It was not reproduced through HTTP or the block device. A client reaches it only if it
-reads from the old leader inside that window after having a write acknowledged by the new one. The
-fix belongs in the Raft code (grant a lease only from a quorum answer to a round whose send time
-bounds the lease, not from the check-quorum round).
+A leader may skip the quorum round while it holds a read lease, granted only by a ReadIndex it
+confirmed with a quorum and counted from when that ReadIndex was sent. An earlier version also
+granted one from the check-quorum round, which let a just-partitioned leader answer stale reads for
+a short window; that grant is removed. The lease is safe only if the leader's monotonic clock does
+not run much slow. Partition behaviour has not been tested through HTTP or the block device.
