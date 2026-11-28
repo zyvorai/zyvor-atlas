@@ -2,11 +2,13 @@
 # SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 #
 # Ceph side of the atlas-native vs CephFS benchmark: the upstream release image (daemons and
-# ceph-fuse are already in it) plus fio. Built by ceph-up.sh.
+# ceph-fuse are already in it) plus fio, and git, tar and python3 with the rados bindings for the
+# agent profile. Built by ceph-up.sh.
 ARG BASE
 FROM ${BASE}
-RUN dnf install -y --setopt=install_weak_deps=False fio ceph-fuse \
+RUN dnf install -y --setopt=install_weak_deps=False fio ceph-fuse git-core tar python3 python3-rados \
     && dnf clean all \
-    && rpm -q ceph-osd ceph-mon ceph-mgr ceph-mds ceph-fuse fio fuse3-libs
+    && rpm -q ceph-osd ceph-mon ceph-mgr ceph-mds ceph-fuse fio fuse3-libs git-core tar python3-rados \
+    && python3 -c 'import rados'
 COPY --chmod=0755 ceph-entry.sh /usr/local/bin/ceph-entry.sh
 ENTRYPOINT ["/usr/local/bin/ceph-entry.sh"]

@@ -137,6 +137,9 @@ create_osd() {
     # write, so the file behaves as closely to a raw device as a file can.
     log "osd.$id: writing $OSD_GB GiB block file"
     dd if=/dev/zero of="$dir/block" bs=16M count=$((OSD_GB * 64)) oflag=direct conv=fsync status=none
+  elif [ "$PREFILL" = sparse ]; then
+    # On tmpfs: only what is written takes memory.
+    truncate -s "${OSD_GB}G" "$dir/block"
   else
     fallocate -l "${OSD_GB}G" "$dir/block"
   fi

@@ -8,7 +8,10 @@
 #
 # Usage: ceph-up.sh
 #   CEPH_OSD_GB=40     size of each of the three OSD block files (at most 42)
-#   CEPH_PREFILL=1     write the block files with zeros first (about 15 min on one HDD); 0 = fallocate
+#   CEPH_PREFILL=1     write the block files with zeros first (about 15 min on one HDD); 0 = fallocate;
+#                      sparse = truncate, the only choice on tmpfs (BENCH_TMPFS_GB), where it is the
+#                      default and BlueStore picks its own device class
+#   BENCH_CEPH_IMAGE   image name (default localhost/<prefix>-ceph:<release>)
 #   CEPH_UP_TIMEOUT=2700
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -17,13 +20,20 @@ HERE="$(cd "$(dirname "$0")" && pwd)"
 
 CEPH_RELEASE=v20.2.5
 CEPH_OSD_GB="${CEPH_OSD_GB:-40}"
-CEPH_PREFILL="${CEPH_PREFILL:-1}"
+if [ -n "${BENCH_TMPFS_GB:-}" ]; then
+  CEPH_PREFILL="${CEPH_PREFILL:-sparse}"
+  [ "$CEPH_PREFILL" = sparse ] || { echo "CEPH_PREFILL must be sparse on tmpfs" >&2; exit 2; }
+else
+  CEPH_PREFILL="${CEPH_PREFILL:-1}"
+fi
 CEPH_UP_TIMEOUT="${CEPH_UP_TIMEOUT:-2700}"
 CT="$(container_name ceph)"
 UPSTREAM="quay.io/ceph/ceph:$CEPH_RELEASE"
 BASE="localhost/atlas-bench-ceph-base:$CEPH_RELEASE"
-IMAGE="localhost/atlas-bench-ceph:$CEPH_RELEASE"
+IMAGE="${BENCH_CEPH_IMAGE:-localhost/$BENCH_NAME_PREFIX-ceph:$CEPH_RELEASE}"
 DATA="$BENCH_ROOT/data/ceph"
+# What a running container must have been started with, beyond its image.
+RUN_SIG="${BENCH_TMPFS_GB:-}${BENCH_FIXTURES:-}"
 # Health checks that do not stop the benchmark. BLUESTORE_SLOW_OP_ALERT reports slow disk operations
 # (latency on a loaded HDD, kept for 24 h), not a data or redundancy problem. It is printed if present.
 BENIGN='["BLUESTORE_SLOW_OP_ALERT"]'
@@ -52,20 +62,21 @@ if [ "$(pm image inspect -f '{{index .Labels "atlas.bench.src"}}' "$IMAGE" 2>/de
 fi
 
 running() { [ "$(pm inspect -f '{{.State.Running}}' "$CT" 2>/dev/null || true)" = true ]; }
-current() { [ "$(pm inspect -f '{{index .Config.Labels "atlas.bench.src"}}' "$CT" 2>/dev/null || true)" = "$SRC_HASH" ]; }
+label() { pm inspect -f "{{index .Config.Labels \"$1\"}}" "$CT" 2>/dev/null || true; }
+current() { [ "$(label atlas.bench.src)" = "$SRC_HASH" ] && [ "$(label atlas.bench.run)" = "$RUN_SIG" ]; }
 
 if running && current; then
   echo "$CT is already running; checking it"
 else
   pm rm -f --ignore -t 60 "$CT" >/dev/null
-  mkdir -p "$DATA"
-  if [ ! -f "$DATA/ceph/bootstrapped" ]; then
+  bench_mounts ceph
+  if [ -z "${BENCH_TMPFS_GB:-}" ] && [ ! -f "$DATA/ceph/bootstrapped" ]; then
     free_gb=$(($(df --output=avail -B1G "$DATA" | tail -1)))
     need_gb=$((CEPH_OSD_GB * 3 + 50))
     [ "$free_gb" -ge "$need_gb" ] || { echo "need $need_gb GiB free under $DATA, have $free_gb" >&2; exit 1; }
   fi
   pm run -d --name "$CT" --hostname atlas-bench-ceph --network none --stop-timeout 60 \
-    "${BENCH_RUN_ARGS[@]}" -v "$DATA:/srv/bench" \
+    "${BENCH_RUN_ARGS[@]}" "${BENCH_MOUNT_ARGS[@]}" --label "atlas.bench.run=$RUN_SIG" \
     -e "CEPH_OSD_GB=$CEPH_OSD_GB" -e "CEPH_PREFILL=$CEPH_PREFILL" "$IMAGE" >/dev/null
 fi
 
@@ -108,9 +119,16 @@ done
 
 # BlueStore sits on files: make sure it detected the disk under them as rotational on every OSD, which
 # selects the HDD variants of its settings (deferred writes, cache, shard layout).
-inct bash -c 'set -o pipefail; ceph osd metadata -f json | jq -e "length == 3 and all(.[];
-  .osd_objectstore == \"bluestore\" and .bluestore_bdev_type == \"hdd\" and .rotational == \"1\")"' >/dev/null ||
-  fail "an OSD is not BlueStore with HDD settings (ceph osd metadata)"
+if [ -z "${BENCH_TMPFS_GB:-}" ]; then
+  inct bash -c 'set -o pipefail; ceph osd metadata -f json | jq -e "length == 3 and all(.[];
+    .osd_objectstore == \"bluestore\" and .bluestore_bdev_type == \"hdd\" and .rotational == \"1\")"' >/dev/null ||
+    fail "an OSD is not BlueStore with HDD settings (ceph osd metadata)"
+else
+  inct bash -c 'set -o pipefail; ceph osd metadata -f json | jq -e "length == 3 and all(.[];
+    .osd_objectstore == \"bluestore\")"' >/dev/null || fail "an OSD is not BlueStore (ceph osd metadata)"
+  inct bash -c 'ceph osd metadata -f json |
+    jq -r ".[] | \"osd.\(.id) on tmpfs: bdev_type=\(.bluestore_bdev_type) rotational=\(.rotational)\""'
+fi
 
 inct bash -c 'set -euo pipefail
   mountpoint -q /mnt/bench

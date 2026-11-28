@@ -3,9 +3,10 @@
 #
 # Runtime image of the atlas-native benchmark container (atlas-up.sh). The build context holds the
 # release binaries atlas-up.sh compiled in Dockerfile.native's builder image, plus atlas-entry.sh.
-# Same Debian base as Dockerfile.native's runtime stage.
+# Same Debian base as Dockerfile.native's runtime stage. git, tar and python3 are for the agent
+# profile.
 FROM docker.io/library/debian:bookworm-slim@sha256:734a72b3d6142a71993b4bc580ca01d8ca687f77a2c422d96a961d3376b179bc
-RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl jq fuse3 fio \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl jq fuse3 fio git tar python3 \
     && rm -rf /var/lib/apt/lists/*
 COPY atlas-native-node atlas-native-mount atlas-entry.sh /usr/local/bin/
 RUN chmod 0755 /usr/local/bin/atlas-native-node /usr/local/bin/atlas-native-mount /usr/local/bin/atlas-entry.sh \
