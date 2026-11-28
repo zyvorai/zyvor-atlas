@@ -67,6 +67,47 @@ impl Histogram {
     }
 }
 
+/// Upper bounds of the finite buckets of every [`SizeHistogram`].
+pub const SIZE_BUCKETS: [u64; 9] = [1, 2, 4, 8, 16, 32, 64, 128, 256];
+
+/// A distribution of small counts (the size of a batch) over [`SIZE_BUCKETS`].
+#[derive(Debug, Default)]
+pub struct SizeHistogram {
+    /// Observations per bucket, not cumulative; the last one is `+Inf`.
+    buckets: [AtomicU64; SIZE_BUCKETS.len() + 1],
+    sum: AtomicU64,
+}
+
+/// One look at a [`SizeHistogram`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SizeSnapshot {
+    /// Per bucket, not cumulative.
+    pub buckets: [u64; SIZE_BUCKETS.len() + 1],
+    pub sum: u64,
+}
+
+impl SizeSnapshot {
+    /// Observations in all.
+    pub fn count(&self) -> u64 {
+        self.buckets.iter().sum()
+    }
+}
+
+impl SizeHistogram {
+    pub fn observe(&self, size: u64) {
+        let bucket = SIZE_BUCKETS.partition_point(|le| *le < size);
+        self.buckets[bucket].fetch_add(1, Ordering::Relaxed);
+        self.sum.fetch_add(size, Ordering::Relaxed);
+    }
+
+    pub fn snapshot(&self) -> SizeSnapshot {
+        SizeSnapshot {
+            buckets: std::array::from_fn(|i| self.buckets[i].load(Ordering::Relaxed)),
+            sum: self.sum.load(Ordering::Relaxed),
+        }
+    }
+}
+
 #[derive(Debug, Default)]
 pub struct PromText {
     out: String,
@@ -123,6 +164,26 @@ impl PromText {
         }
         let sum = Duration::from_nanos(h.sum_ns).as_secs_f64();
         self.sample(&format!("{name}_sum"), labels, sum);
+        self.sample(&format!("{name}_count"), labels, below)
+    }
+
+    /// One series of a `histogram` family of counts: cumulative buckets, sum and count.
+    pub fn size_histogram(
+        &mut self,
+        name: &str,
+        labels: &[(&str, &str)],
+        h: &SizeSnapshot,
+    ) -> &mut Self {
+        let bucket = format!("{name}_bucket");
+        let bounds = SIZE_BUCKETS.iter().map(|le| le.to_string());
+        let mut below = 0;
+        for (le, n) in bounds.chain(["+Inf".to_string()]).zip(h.buckets) {
+            below += n;
+            let mut with_le = labels.to_vec();
+            with_le.push(("le", &le));
+            self.sample(&bucket, &with_le, below);
+        }
+        self.sample(&format!("{name}_sum"), labels, h.sum);
         self.sample(&format!("{name}_count"), labels, below)
     }
 
@@ -250,6 +311,30 @@ mod tests {
         assert!(text.contains("# TYPE atlas_x gauge\natlas_x 3\n"));
         assert!(text.contains(r#"atlas_y_total{peer="a\"b\\c\nd"} 7"#));
     }
+    #[test]
+    fn size_histograms_count_a_bound_into_its_bucket() {
+        let h = SizeHistogram::default();
+        for n in [1, 3, 4, 1000] {
+            h.observe(n);
+        }
+        assert_eq!((h.snapshot().count(), h.snapshot().sum), (4, 1008));
+        let mut p = PromText::new();
+        p.family("atlas_n", "histogram", "N.")
+            .size_histogram("atlas_n", &[], &h.snapshot());
+        let text = p.finish();
+        for line in [
+            "atlas_n_bucket{le=\"1\"} 1",
+            "atlas_n_bucket{le=\"2\"} 1",
+            "atlas_n_bucket{le=\"4\"} 3",
+            "atlas_n_bucket{le=\"256\"} 3",
+            "atlas_n_bucket{le=\"+Inf\"} 4",
+            "atlas_n_sum 1008",
+            "atlas_n_count 4",
+        ] {
+            assert!(text.lines().any(|l| l == line), "{line} not in:\n{text}");
+        }
+    }
+
     #[test]
     fn histograms_bucket_cumulatively_and_merge_as_one_family() {
         let h = Histogram::default();

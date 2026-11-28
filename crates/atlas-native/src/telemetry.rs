@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use crate::metrics::Histogram;
+use crate::metrics::{Histogram, SizeHistogram};
 
 #[derive(Debug, Default)]
 pub struct NativeIoCounters {
@@ -30,6 +30,8 @@ pub struct NativeIoCounters {
     pub fold_read: Histogram,
     pub fold_write: Histogram,
     pub fold_commit: Histogram,
+    /// Folds in each `FoldCells` command that reached the log.
+    pub fold_batch: SizeHistogram,
     /// Where a delta write's time goes: placing its bytes on the replicas, and getting them
     /// committed (the wait for a delta command included). Failed attempts count.
     pub delta_replicate: Histogram,

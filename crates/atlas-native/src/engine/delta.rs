@@ -16,12 +16,14 @@ use std::{
 
 use super::{
     combiner::{Combiner, Outcome},
+    fold_batch::{Rewrite, MAX_FOLD_BATCH},
     folder::{Folds, MAX_FOLD_CONCURRENCY},
     now_ns, Meta, NativeEngine, NativeError, Target, READ_PARALLELISM,
 };
 use crate::{
     metadata::{
-        Catalog, DeltaCell, DeltaItem, DeltaTarget, ExtentId, ExtentRef, MetaCommand, MetaError,
+        Catalog, CellFold, DeltaCell, DeltaItem, DeltaTarget, ExtentId, ExtentRef, MetaCommand,
+        MetaError,
     },
     namespace::InodeKind,
     raft::{RaftError, CAP_DELTA},
@@ -63,6 +65,10 @@ pub struct DeltaConfig {
     /// Cells a node folds at once, over all its metadata groups: the bound on background
     /// folding. At most [`MAX_FOLD_CONCURRENCY`].
     pub fold_concurrency: usize,
+    /// Most folds one command carries. The folders hand each rewritten cell to a committer that
+    /// proposes whatever is waiting, so folds share Raft rounds. 1: every folder commits its own
+    /// fold. At most [`MAX_FOLD_BATCH`].
+    pub fold_batch_cells: usize,
     /// How long an idle folder waits before looking for due cells again; also the pause between
     /// early reclaim passes, and the first pause after a failed fold.
     pub fold_interval_ms: u64,
@@ -89,6 +95,7 @@ impl Default for DeltaConfig {
             fold_after_deltas: 8,
             fold_after_ms: 5_000,
             fold_concurrency: 4,
+            fold_batch_cells: 32,
             fold_interval_ms: 200,
             fold_cells_per_pass: 8,
             gc_grace_ms: if test { 0 } else { 10_000 },
@@ -97,6 +104,11 @@ impl Default for DeltaConfig {
 }
 
 impl DeltaConfig {
+    /// Whether folds are to be committed in batches: never with delta writes off.
+    pub(super) fn batches(&self) -> bool {
+        self.enabled && self.fold_batch_cells > 1
+    }
+
     pub fn validate(&self) -> Result<(), NativeError> {
         let invalid = |m: &str| Err(NativeError::Invalid(format!("delta_writes: {m}")));
         if self.max_bytes == 0 {
@@ -114,6 +126,11 @@ impl DeltaConfig {
         if !(1..=MAX_FOLD_CONCURRENCY).contains(&self.fold_concurrency) {
             return invalid(&format!(
                 "fold_concurrency must be between 1 and {MAX_FOLD_CONCURRENCY}"
+            ));
+        }
+        if !(1..=MAX_FOLD_BATCH).contains(&self.fold_batch_cells) {
+            return invalid(&format!(
+                "fold_batch_cells must be between 1 and {MAX_FOLD_BATCH}"
             ));
         }
         Ok(())
@@ -163,6 +180,12 @@ pub enum DeltaPoint {
     BeforePropose,
     /// The batch is proposed and may not be applied.
     Proposed,
+    /// A fold's new base is on the data nodes; nothing is proposed.
+    FoldReplicated,
+    /// A batch of folds is about to be proposed.
+    FoldBeforePropose,
+    /// The batch of folds is proposed and may not be applied.
+    FoldProposed,
 }
 
 type Hook = Arc<dyn Fn(DeltaPoint) + Send + Sync>;
@@ -517,16 +540,25 @@ impl NativeEngine {
         Ok(out)
     }
 
-    /// Folds one cell's deltas into a new base. `Ok(false)` if there was nothing to fold or the
-    /// cell changed before the fold could commit. Deltas appended meanwhile stay on the new
-    /// base. Needs no write lock: the commit is a compare-and-swap.
+    /// Folds one cell's deltas into a new base and commits it on its own. `Ok(false)` if there
+    /// was nothing to fold or the cell changed before the fold could commit. Deltas appended
+    /// meanwhile stay on the new base. Needs no write lock: the commit is a compare-and-swap.
     pub(super) fn fold_cell(&self, key: &DeltaCell) -> Result<bool, NativeError> {
+        match self.rewrite_cell(key)? {
+            Some(rewrite) => self.commit_rewrite(&rewrite),
+            None => Ok(false),
+        }
+    }
+
+    /// A fold up to its commit: reads the cell and writes its new content to the data nodes.
+    /// `None`: there is nothing to fold.
+    pub(super) fn rewrite_cell(&self, key: &DeltaCell) -> Result<Option<Rewrite<'_>>, NativeError> {
         let fence = self.term_fence()?;
         let target = target_of(&key.target);
         // A cell or file that is gone has nothing to fold.
         let view = self.with_catalog(|c| target.cell_view(c, key.cell).ok().flatten())?;
         let Some(view) = view.filter(|v| !v.deltas.is_empty()) else {
-            return Ok(false);
+            return Ok(None);
         };
         let telemetry = &self.telemetry;
         let read = telemetry
@@ -534,26 +566,49 @@ impl NativeEngine {
             .time(|| self.read_view(view, Some(&target)));
         let (view, content) = read?;
         if view.deltas.is_empty() {
-            return Ok(false);
+            return Ok(None);
         }
         let alloc = self.lease(fence)?;
         let mut extent = telemetry
             .fold_write
             .time(|| self.place_extent(&content, fence, &alloc))?;
         extent.logical_offset = key.cell;
+        self.delta_point(DeltaPoint::FoldReplicated);
+        Ok(Some(Rewrite {
+            fold: CellFold {
+                cell: key.clone(),
+                base: view.base.id,
+                consumed: view.deltas.into_iter().map(|(_, e)| e.id).collect(),
+                extent,
+            },
+            fence,
+            alloc,
+        }))
+    }
+
+    /// Commits one rewritten cell as a command of its own, and settles its space.
+    pub(super) fn commit_rewrite(&self, rewrite: &Rewrite) -> Result<bool, NativeError> {
+        let CellFold {
+            cell,
+            base,
+            consumed,
+            extent,
+        } = rewrite.fold.clone();
+        let deltas = consumed.len();
         let cmd = MetaCommand::FoldCell {
-            cell: key.clone(),
-            base: view.base.id.clone(),
-            consumed: view.deltas.iter().map(|(_, e)| e.id.clone()).collect(),
+            cell,
+            base,
+            consumed,
             extent,
         };
+        let telemetry = &self.telemetry;
         match telemetry
             .fold_commit
-            .time(|| self.commit(cmd, Some(fence)))
-            .inspect_err(|e| alloc.settle(e))
+            .time(|| self.commit(cmd, Some(rewrite.fence)))
+            .inspect_err(|e| rewrite.alloc.settle(e))
         {
             Ok(()) => {
-                telemetry.delta_folded(view.deltas.len());
+                telemetry.delta_folded(deltas);
                 Ok(true)
             }
             Err(e) if is_rejected(&e) => {

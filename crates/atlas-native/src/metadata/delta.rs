@@ -55,6 +55,16 @@ pub struct DeltaItem {
     pub now_ns: i64,
 }
 
+/// One compare-and-swap fold of a batch ([`super::MetaCommand::FoldCells`]): the fields of a
+/// [`super::MetaCommand::FoldCell`].
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct CellFold {
+    pub cell: DeltaCell,
+    pub base: ExtentId,
+    pub consumed: Vec<ExtentId>,
+    pub extent: ExtentRef,
+}
+
 /// Cell lists, keyed by cell offset, as volume and file records hold them.
 pub type DeltaMap = BTreeMap<u64, Vec<DeltaRef>>;
 
@@ -115,7 +125,7 @@ fn fs_range(fs: &str, inos: RangeInclusive<u64>) -> RangeInclusive<DeltaCell> {
 }
 
 /// A cell as the catalog has it: its base extent, the end of its volume or file, and its deltas.
-struct CellState {
+pub(crate) struct CellState {
     base: Option<ExtentId>,
     size: u64,
     deltas: Vec<DeltaRef>,
@@ -284,18 +294,16 @@ impl Catalog {
         Ok(())
     }
 
-    /// Compare-and-swap fold: `extent` becomes the cell's base and the `consumed` deltas go,
-    /// provided the base is still `base` and `consumed` is still the start of the cell's list.
-    /// Deltas appended since stay on top. The content is unchanged, so neither times nor usage
-    /// move.
-    pub(crate) fn fold_cell(
-        &mut self,
+    /// Whether a fold would apply now: the base is still `base`, `consumed` is still the start
+    /// of the cell's delta list, and `extent` is a new extent that can replace the base. Returns
+    /// the cell as it is. Changes nothing.
+    pub(crate) fn check_fold(
+        &self,
         key: &DeltaCell,
         base: &str,
         consumed: &[ExtentId],
         extent: &ExtentRef,
-        gc: &mut Vec<ExtentId>,
-    ) -> Result<(), MetaError> {
+    ) -> Result<CellState, MetaError> {
         extent.check()?;
         let changed = || {
             MetaError::Invalid(format!(
@@ -324,6 +332,59 @@ impl Catalog {
                 extent.id, key.cell
             )));
         }
+        Ok(state)
+    }
+
+    /// Compare-and-swap fold: `extent` becomes the cell's base and the `consumed` deltas go,
+    /// provided the base is still `base` and `consumed` is still the start of the cell's list.
+    /// Deltas appended since stay on top. The content is unchanged, so neither times nor usage
+    /// move.
+    pub(crate) fn fold_cell(
+        &mut self,
+        key: &DeltaCell,
+        base: &str,
+        consumed: &[ExtentId],
+        extent: &ExtentRef,
+        gc: &mut Vec<ExtentId>,
+    ) -> Result<(), MetaError> {
+        let state = self.check_fold(key, base, consumed, extent)?;
+        self.apply_fold(state, key, base, consumed, extent, gc)
+    }
+
+    /// Several folds in the order listed, each its own compare-and-swap: one whose check fails
+    /// against the catalog as the folds before it left it is skipped, the rest apply. Only the
+    /// catalog decides, so every replica skips the same ones.
+    pub(crate) fn fold_cells(
+        &mut self,
+        folds: &[CellFold],
+        gc: &mut Vec<ExtentId>,
+    ) -> Result<(), MetaError> {
+        if folds.is_empty() {
+            return Err(MetaError::Invalid("empty fold batch".into()));
+        }
+        for f in folds {
+            match self.check_fold(&f.cell, &f.base, &f.consumed, &f.extent) {
+                Ok(state) => {
+                    self.apply_fold(state, &f.cell, &f.base, &f.consumed, &f.extent, gc)?
+                }
+                // Not a property of the command: other replicas may well read their store.
+                Err(e @ MetaError::Store(_)) => return Err(e),
+                Err(_) => {}
+            }
+        }
+        Ok(())
+    }
+
+    /// The change a fold makes, once [`Self::check_fold`] has returned `state` for it.
+    fn apply_fold(
+        &mut self,
+        state: CellState,
+        key: &DeltaCell,
+        base: &str,
+        consumed: &[ExtentId],
+        extent: &ExtentRef,
+        gc: &mut Vec<ExtentId>,
+    ) -> Result<(), MetaError> {
         let rest: Vec<DeltaRef> = state.deltas[consumed.len()..].to_vec();
         let remaining = rest.len() as u32;
         let set = |extents: &mut BTreeMap<u64, ExtentId>, deltas: &mut DeltaMap| {

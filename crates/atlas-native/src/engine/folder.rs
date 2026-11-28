@@ -2,12 +2,14 @@
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 //! Folding many cells (`docs/NATIVE_DELTA_WRITES.md`, "How folding works"): which cell to fold
 //! next, keeping two folds off the same cell, the pool of threads that folds in the background,
-//! and the early reclaim that runs beside it.
+//! and the early reclaim that runs beside it. The pool's commits are batched by
+//! [`super::fold_batch`].
 //!
-//! Every fold goes through a [`Claim`] on its cell. A claim holder never waits for the write
-//! lock or for a second claim, so a snapshot may wait for a claim while it holds the write lock.
-//! The catalog's compare-and-swap is what keeps data right; claims only keep two folds from
-//! doing the same work, and let a snapshot wait for a fold instead of being refused.
+//! Every fold goes through a [`Claim`] on its cell, held until the fold has ended. Nothing that
+//! a held claim depends on (its folder, the queue it waits in, the committer) waits for the
+//! write lock or for a second claim, so a snapshot may wait for a claim while it holds the write
+//! lock. The catalog's compare-and-swap is what keeps data right; claims only keep two folds
+//! from doing the same work, and let a snapshot wait for a fold instead of being refused.
 
 use std::{
     collections::{BinaryHeap, HashMap, HashSet, VecDeque},
@@ -21,7 +23,10 @@ use std::{
     time::{Duration, Instant},
 };
 
-use super::{Meta, NativeEngine, NativeError};
+use super::{
+    fold_batch::{commit_queue, FoldQueue},
+    Meta, NativeEngine, NativeError,
+};
 use crate::{gc::GcStats, metadata::DeltaCell, raft::RaftError};
 
 /// Upper bound of `delta_writes.fold_concurrency`. Each fold in progress holds a whole cell in
@@ -281,7 +286,7 @@ pub(crate) fn nap(time: Duration, stop: &AtomicBool) {
 }
 
 /// The pause after `failures` failed folds in a row.
-fn backoff(interval: Duration, failures: u32) -> Duration {
+pub(super) fn backoff(interval: Duration, failures: u32) -> Duration {
     let doubled = 1u32 << failures.saturating_sub(1).min(16);
     interval
         .saturating_mul(doubled)
@@ -289,24 +294,59 @@ fn backoff(interval: Duration, failures: u32) -> Duration {
 }
 
 /// Folds the due cells of `engines` (the metadata groups of one node) on
-/// `delta_writes.fold_concurrency` threads, so at most that many folds run at once over all of
-/// them, until `stop` is set. Returns once the folds in progress have ended. A folder with
-/// nothing to do looks again after `fold_interval_ms`; one whose fold failed pauses, longer each
-/// time it fails again. `done` hears of every fold attempted, and whether it succeeded.
+/// `delta_writes.fold_concurrency` threads, so at most that many cells are being rewritten at
+/// once over all of them, until `stop` is set. Returns once the folds in progress have ended. An
+/// engine that batches its folds (`fold_batch_cells` above 1, delta writes on) also gets a
+/// committer thread; the folders hand it each rewritten cell and go on, and it holds at most
+/// twice `fold_batch_cells` folds. A folder with nothing to do looks again after
+/// `fold_interval_ms`; one whose fold failed pauses, longer each time it fails again, and so do
+/// all of them for an engine whose batches fail. `done` hears of every fold attempted, and
+/// whether it did not fail.
 ///
-/// The settings are those of the first engine.
-pub fn run_folders(engines: &[&NativeEngine], stop: &AtomicBool, done: impl Fn(bool) + Sync) {
+/// The pool's settings are those of the first engine.
+pub fn run_folders<'e>(
+    engines: &[&'e NativeEngine],
+    stop: &AtomicBool,
+    done: impl Fn(bool) + Sync,
+) {
     let Some(first) = engines.first() else {
         return;
     };
     let cfg = &first.cfg.delta_writes;
     let interval = Duration::from_millis(cfg.fold_interval_ms);
+    let queues: Vec<Option<FoldQueue<'e>>> = engines
+        .iter()
+        .map(|e| {
+            let c = &e.cfg.delta_writes;
+            c.batches()
+                .then(|| FoldQueue::new(c.fold_batch_cells, cfg.fold_concurrency))
+        })
+        .collect();
     thread::scope(|s| {
-        for i in 0..cfg.fold_concurrency {
+        for (&engine, queue) in engines.iter().zip(&queues) {
+            let Some(queue) = queue else {
+                continue;
+            };
             let done = &done;
             let spawned = thread::Builder::new()
+                .name("atlas-fold-commit".into())
+                .spawn_scoped(s, move || commit_queue(engine, queue, interval, done));
+            if spawned.is_err() {
+                // The folders then commit their own folds.
+                queue.close();
+                done(false);
+            }
+        }
+        for i in 0..cfg.fold_concurrency {
+            let (done, queues) = (&done, &queues);
+            // Counted off however the folder ends, also if it never starts.
+            let producer = Producer(queues);
+            let spawned = thread::Builder::new()
                 .name(format!("atlas-fold-{i}"))
-                .spawn_scoped(s, move || folder(engines, i, interval, stop, done));
+                .spawn_scoped(s, move || {
+                    let _producer = producer;
+                    folder(engines, queues, i, interval, stop, done)
+                });
             if spawned.is_err() {
                 done(false);
             }
@@ -314,9 +354,31 @@ pub fn run_folders(engines: &[&NativeEngine], stop: &AtomicBool, done: impl Fn(b
     });
 }
 
+/// One folder's place among those the committers wait for.
+struct Producer<'q, 'e>(&'q [Option<FoldQueue<'e>>]);
+
+impl Drop for Producer<'_, '_> {
+    fn drop(&mut self) {
+        for queue in self.0.iter().flatten() {
+            queue.producer_done();
+        }
+    }
+}
+
+/// What one turn of a folder did.
+enum Turn {
+    /// Nothing was due.
+    Idle,
+    /// A rewritten cell went to the committer, which reports how it ends.
+    Handed,
+    /// A fold ran to its end here.
+    Ended,
+}
+
 /// One thread of [`run_folders`], taking the engines in turn from `at`.
-fn folder(
-    engines: &[&NativeEngine],
+fn folder<'e>(
+    engines: &[&'e NativeEngine],
+    queues: &[Option<FoldQueue<'e>>],
     mut at: usize,
     interval: Duration,
     stop: &AtomicBool,
@@ -324,25 +386,34 @@ fn folder(
 ) {
     let mut failures = 0u32;
     while !stop.load(Ordering::SeqCst) {
-        let mut folded = None;
+        let mut turn = None;
         for _ in 0..engines.len() {
-            let engine = engines[at % engines.len()];
+            let i = at % engines.len();
+            let (engine, queue) = (engines[i], queues[i].as_ref());
             at = at.wrapping_add(1);
+            // Its commits failed lately: nothing new for it yet.
+            if queue.is_some_and(FoldQueue::held) {
+                continue;
+            }
             // A panic must not take the folder with it. The claim and the space the fold held
             // are released as it unwinds.
-            match catch_unwind(AssertUnwindSafe(|| engine.fold_next())) {
-                Ok(Ok(None)) | Ok(Err(NativeError::Raft(RaftError::NotLeader { .. }))) => continue,
-                Ok(Ok(Some(_))) => folded = Some(true),
-                Ok(Err(_)) | Err(_) => folded = Some(false),
+            match catch_unwind(AssertUnwindSafe(|| engine.fold_turn(queue))) {
+                Ok(Ok(Turn::Idle)) | Ok(Err(NativeError::Raft(RaftError::NotLeader { .. }))) => {
+                    continue
+                }
+                Ok(Ok(ran)) => turn = Some(Ok(ran)),
+                Ok(Err(_)) | Err(_) => turn = Some(Err(())),
             }
             break;
         }
-        match folded {
-            Some(true) => {
+        match turn {
+            Some(Ok(turn)) => {
                 failures = 0;
-                done(true);
+                if matches!(turn, Turn::Ended) {
+                    done(true);
+                }
             }
-            Some(false) => {
+            Some(Err(())) => {
                 failures = failures.saturating_add(1);
                 done(false);
                 nap(backoff(interval, failures), stop);
@@ -459,6 +530,35 @@ impl NativeEngine {
         match self.next_fold(false)? {
             Some((key, _claim)) => self.fold_cell(&key).map(Some),
             None => Ok(None),
+        }
+    }
+
+    /// Rewrites the most urgent cell due that no other fold has, and hands it to `queue` to be
+    /// committed with others. Without a queue, or while a batch may not be proposed, the fold is
+    /// committed here.
+    fn fold_turn<'a>(&'a self, queue: Option<&FoldQueue<'a>>) -> Result<Turn, NativeError> {
+        if !self.folding()? {
+            return Ok(Turn::Idle);
+        }
+        let Some((key, claim)) = self.next_fold(false)? else {
+            return Ok(Turn::Idle);
+        };
+        let queue = match queue {
+            Some(queue) if self.fold_batch_supported()? => queue,
+            _ => {
+                self.fold_cell(&key)?;
+                return Ok(Turn::Ended);
+            }
+        };
+        let Some(rewrite) = self.rewrite_cell(&key)? else {
+            return Ok(Turn::Ended);
+        };
+        match queue.push(rewrite, claim) {
+            None => Ok(Turn::Handed),
+            Some((rewrite, _claim)) => {
+                self.commit_rewrite(&rewrite)?;
+                Ok(Turn::Ended)
+            }
         }
     }
 

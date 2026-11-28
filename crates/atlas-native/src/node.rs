@@ -2066,6 +2066,11 @@ mod tests {
             let got = cfg(Some(serde_json::json!({ "fold_concurrency": folders }))).unwrap();
             assert_eq!(got.validate().is_ok(), ok, "fold_concurrency {folders}");
         }
+        assert_eq!(on.fold_batch_cells, 32);
+        for (cells, ok) in [(0, false), (1, true), (256, true), (257, false)] {
+            let got = cfg(Some(serde_json::json!({ "fold_batch_cells": cells }))).unwrap();
+            assert_eq!(got.validate().is_ok(), ok, "fold_batch_cells {cells}");
+        }
         assert!(cfg(Some(serde_json::json!({ "enable": true }))).is_err());
         let bad = serde_json::json!({ "max_pending_bytes": 10, "fold_headroom_bytes": 10 });
         assert!(cfg(Some(bad)).unwrap().validate().is_err());
