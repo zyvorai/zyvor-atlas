@@ -295,13 +295,15 @@ fn a_single_voter_commits_only_after_its_sync() {
     c.begin_sync(&l);
     c.power_loss(&l);
     c.restart(&l);
-    assert!(!c.has(&c.elect(), "a"), "never durable, never committed");
+    let again = c.elect();
+    assert!(!c.has(&again, "a"), "never durable, never committed");
     let index = c.node_mut(&l).propose(create("b")).unwrap();
     c.sync(&l);
     assert_eq!(c.node(&l).commit_index(), index);
     c.power_loss(&l);
     c.restart(&l);
-    assert!(c.has(&c.elect(), "b"));
+    let again = c.elect();
+    assert!(c.has(&again, "b"));
 }
 
 #[test]
