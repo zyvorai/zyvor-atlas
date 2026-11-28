@@ -1399,15 +1399,16 @@ fn batches_wait_until_every_metadata_node_decodes_them() {
 
     c.capabilities.clear();
     c.restart("m3");
+    // Before writing: until then the writes may rewrite their cells.
+    until("a leader that batches", || {
+        c.live()
+            .any(|(_, m)| m.engine.fold_batch_supported().unwrap_or(false))
+    });
     for cell in 0..6 {
         let at = cell * GRID + 80;
         c.on_leader("", |e| e.write_file("f", ino, at as u64, &[4; 8]));
         a.1[at..at + 8].fill(4);
     }
-    until("a leader that batches", || {
-        c.live()
-            .any(|(_, m)| m.engine.fold_batch_supported().unwrap_or(false))
-    });
     drain_and_converge(&c, ino, &a.1);
     assert!(batches(&c) > 0);
 }

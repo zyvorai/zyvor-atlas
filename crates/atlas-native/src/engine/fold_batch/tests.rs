@@ -121,10 +121,9 @@ fn only_an_undecided_batch_keeps_its_space() {
     for undecided in [false, true] {
         let td = tempfile::tempdir().unwrap();
         let e = engine(td.path());
-        // A free cell-sized range on every node.
-        e.write("v", 3 * GRID as u64, &[2; GRID]).unwrap();
-        e.gc_once().unwrap();
         e.write("v", 8, &[2; 8]).unwrap();
+        // Then a free cell-sized range on every node.
+        e.write("v", 3 * GRID as u64, &[2; GRID]).unwrap();
         e.gc_once().unwrap();
         let free = e.lease(0).unwrap().take("n1", 0, GRID as u64).unwrap();
         let mut rewrites = [rewrite(&e, 0)];
