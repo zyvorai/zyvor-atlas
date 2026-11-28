@@ -374,3 +374,63 @@ Smaller cells do not make delta writes beat Ceph here. A change that folds more 
 not need to rewrite whole cells, would be needed.
 
 What to change next is proposed in [NATIVE_DELTA_REDESIGN](NATIVE_DELTA_REDESIGN.md).
+
+## Measured: parallel folding, three alternating rounds (2026-11-28)
+
+Commit `865eee02`, `fold_concurrency` 4. Ceph, 1 MiB cells and 128 KiB cells in turn, three rounds
+of each, 20 minutes of 4 KiB random writes at queue depth 32. One shared host, three replicas on
+one 7,200 rpm disk. Medians of the three rounds, with the range in brackets. Result sets:
+`/data/atlas-bench/results/gate1-*` on the benchmark host.
+
+| | Ceph | 1 MiB cells | 128 KiB cells |
+|---|---:|---:|---:|
+| Write IOPS | 38.0 (37.8 to 42.4) | 23.6 (22.4 to 26.3) | 37.9 (36.1 to 41.9) |
+| p99 write latency (ms) | 1317 (1267 to 1351) | 3137 (2668 to 3305) | 2089 (2055 to 2164) |
+| Longest write (s) | 1.7 to 2.8 | 4.1 to 4.9 | 10.6 to 12.1 |
+| Disk MiB written during the long run | 2854 | 14444 | 4742 |
+| Deltas unfolded at the end | n/a | 7 to 10% | 35 to 38% |
+| Folds a second, last 10 minutes | n/a | 3.5 to 4.5 | about 7 |
+| Raft elections during the long run | n/a | 0, 0, 0 | 5, 3, 6 |
+| 1 MiB sequential read afterwards (MiB/s), see below | 102 | 250 (125 to 258) | 2.4 (2.1 to 2.7) |
+| 4 MiB crc32c write and read-back | passed | passed | passed |
+
+**Neither atlas-native case meets the [target](NATIVE_DELTA_REDESIGN.md#target).**
+
+- 1 MiB cells fail write IOPS and p99 latency. The pending-delta backlog was judged not growing in
+  two rounds and growing in the third (a trend of +244 over 10 minutes against 144 tolerated).
+- 128 KiB cells fail write IOPS (37.9 against 38.0, level within the spread between rounds), p99
+  latency, the backlog in all three rounds (it grew by 5,000 to 6,000 deltas in the last 10
+  minutes) and sequential read.
+- No run recorded a failed workload, a delta fallback or a rejected fold.
+- **The sequential read figures are not a fair comparison, including the one the gate passed.** The
+  data set is 32 files of 32 MiB and atlas-native's file devices read through the page cache. With
+  1 MiB cells the disk supplied about 1.1 GiB during a job in which `fio` read 7.3 to 15 GiB, so
+  most of it came from memory. Ceph read about 4.7 GiB from disk while `fio` read about 6 GiB.
+  A larger data set, or reading with a cold cache, is needed before any read claim.
+- Host load during the long run was higher with atlas-native (median 1-minute load 32 to 40) than
+  with Ceph (about 22). The load includes the system under test.
+- Compared with the earlier single runs with serial folding: write IOPS are about the same, the
+  128 KiB backlog fell from 82% to about 37%, and 1 MiB p99 fell from 3808 to a median of 3137 ms.
+  Those were different sessions with one run each.
+
+Means over the long run (range of the three rounds):
+
+| Time (ms) | 1 MiB cells | 128 KiB cells |
+|---|---:|---:|
+| Data device sync | 141 to 157 | 143 to 157 |
+| Raft log sync | 125 to 135 | 94 to 113 |
+| Delta write: replicate the data | 554 to 874 | 398 to 437 |
+| Delta write: commit | 307 to 429 | 265 to 308 |
+| Fold: read | 213 to 355 | 51 to 64 |
+| Fold: write | 359 to 466 | 265 to 275 |
+| Fold: commit | 224 to 330 | 186 to 228 |
+| Deltas consumed per fold | 5.6 to 5.8 | 3.3 to 3.6 |
+
+*Inferred:* with 128 KiB cells a fold took about 0.5 to 0.55 s and four ran at once, which is the
+observed 7 folds a second. At about 3.5 deltas a fold, keeping up with 37 writes a second needs
+about 11. Whether batching commits closes that gap depends on folder threads not waiting for them;
+more folder threads would also take more disk time from writes. Neither has been measured.
+
+The elections and the stalls of over 10 seconds both appeared only with 128 KiB cells. No cause has
+been established.
+
