@@ -183,7 +183,7 @@ Effort L. Gain here: **no** from sharding; request merging is the same idea as g
 |---|---|---|---|---|
 | R12 | io_uring ([Jasny et al., VLDB'26][iouring]) | NVMe and fast NICs. `fsync` runs on fallback worker threads; consumer SSDs stay dominated by millisecond `fsync`; linking write and `fsync` did not help | Backend exists (`io-uring` feature), never produced a result here. S to measure | **No** for durable writes on HDD |
 | R13 | FUSE: [passthrough][fusepass], [io_uring transport][fuseuring], [RFUSE, FAST'24][rfuse]; cost study [FAST'17][tofuse] (-83% to +6% against ext4 by workload and device) | BranchFS: passthrough reads 7,236 MB/s against 1,655 normal and 8,800 native | Passthrough needs a local backing file and `CAP_SYS_ADMIN`; RFUSE needs its own kernel driver; [writeback cache is documented][fuseio] as generally unsuitable for network file systems. M-L | **No** while the disk is the limit. Only keep-cache (R11) is cheap |
-| R14 | [ublk][ublk] block devices, with zero-copy options | Kernel documentation | `atlas-native-ublk` exists, never run against a kernel ([NATIVE_UBLK](NATIVE_UBLK.md)). S to run | **No** speed gain on files; needed for block volumes, which is a different goal |
+| R14 | [ublk][ublk] block devices, with zero-copy options | Kernel documentation | `atlas-native-ublk` exists; functional checks passed on kernel 7.0 on 2026-11-28, speed not measured ([NATIVE_UBLK](NATIVE_UBLK.md)) | **No** speed gain on files; needed for block volumes, which is a different goal |
 
 ### Hardware-dependent work
 

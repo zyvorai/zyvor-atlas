@@ -26,7 +26,7 @@ not production-supported.
 
 The tables below describe `9c2aba1e`. Later work on the same branch:
 
-- **A1 (block device):** `atlas-native-ublk` exists ([NATIVE_UBLK](NATIVE_UBLK.md)). It has not been run against a Linux kernel.
+- **A1 (block device):** `atlas-native-ublk` exists ([NATIVE_UBLK](NATIVE_UBLK.md)), experimental: its functional checks passed on one lab host (kernel 7.0, cluster on localhost, 2026-11-28). No multi-host, memory-pressure or performance verification, and no CSI block volumes.
 - **A2 (small writes):** opt-in delta writes exist ([NATIVE_DELTA_WRITES](NATIVE_DELTA_WRITES.md)), measured there: faster than Ceph in one 60 s test, slower over 20 minutes.
 - **A3 (stale block reads):** block data reads now run a read barrier, and the read lease is granted only from a confirmed ReadIndex. Tested in process, not on a real multi-host partition.
 
