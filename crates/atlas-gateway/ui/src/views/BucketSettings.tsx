@@ -22,7 +22,8 @@ interface Raw {
   text: string;
 }
 
-/** One proxied call; never throws on an HTTP error status — callers interpret 404 as "not configured". */
+/** One proxied call. Resolves on any HTTP status so callers can read the store's error body; a 401
+ * rejects, so the client's interceptor ends the session as it does everywhere else. */
 async function call(method: string, url: string, body?: string, contentType?: string): Promise<Raw> {
   const r = await http.request({
     method,
@@ -31,7 +32,7 @@ async function call(method: string, url: string, body?: string, contentType?: st
     headers: body !== undefined && contentType ? { "Content-Type": contentType } : undefined,
     responseType: "text",
     transformResponse: [(d: unknown) => d],
-    validateStatus: () => true,
+    validateStatus: (status) => status !== 401,
   });
   return { status: r.status, text: typeof r.data === "string" ? r.data : "" };
 }
@@ -48,6 +49,32 @@ function errText(r: Raw): string {
   } catch {
     return r.text.slice(0, 160) || `HTTP ${r.status}`;
   }
+}
+
+/** A 404 from the object store means "never configured". A 404 that is Atlas's own JSON envelope
+ * (unknown bucket or credentials secret), or that says the bucket is gone, is a failure. */
+const notConfigured = (r: Raw) =>
+  r.status === 404 && !r.text.trimStart().startsWith("{") && !r.text.includes("<Code>NoSuchBucket</Code>");
+
+/** Reads a subresource: its body, or `null` when it was never configured. Throws on anything else, so
+ * a failed read is never shown as an empty or private bucket. */
+async function read(url: string): Promise<string | null> {
+  const r = await call("GET", url);
+  if (ok(r)) return r.text;
+  if (notConfigured(r)) return null;
+  throw new Error(errText(r));
+}
+
+function ReadError({ what, message, onRetry }: { what: string; message: string; onRetry: () => void }) {
+  return (
+    <div className="at-table-error" role="alert">
+      <span>Couldn&apos;t read {what}.</span>
+      <span className="detail mono">{message}</span>
+      <Button size="sm" onClick={onRetry}>
+        Retry
+      </Button>
+    </div>
+  );
 }
 
 const s3Url = (id: string, sub: string) => `/buckets/${encodeURIComponent(id)}/subresource?${sub}`;
@@ -106,6 +133,7 @@ export const buildLifecycle = (rules: string[]) =>
 export default function BucketSettings({ bucket, onClose }: { bucket: StorageBucket | null; onClose: () => void }) {
   const [tab, setTab] = useState<TabName>("Versioning");
   const [versioning, setVersioning] = useState<string | null>(null);
+  const [versioningError, setVersioningError] = useState<string | null>(null);
   const id = bucket ? bucket.id : "";
   const name = bucket ? bucket.bucket_name || bucket.name || bucket.id : "";
 
@@ -113,10 +141,12 @@ export default function BucketSettings({ bucket, onClose }: { bucket: StorageBuc
     if (!id) return;
     try {
       const r = await call("GET", s3Url(id, "versioning"));
-      setVersioning(ok(r) ? firstText(parseXml(r.text), "Status") || "Unversioned" : "Unknown");
+      if (!ok(r)) throw new Error(errText(r));
+      setVersioning(firstText(parseXml(r.text), "Status") || "Unversioned");
+      setVersioningError(null);
     } catch (e) {
       setVersioning("Unknown");
-      toast(`versioning: ${apiError(e)}`, "err");
+      setVersioningError(apiError(e));
     }
   }, [id]);
 
@@ -130,13 +160,16 @@ export default function BucketSettings({ bucket, onClose }: { bucket: StorageBuc
   const close = () => {
     setTab("Versioning");
     setVersioning(null);
+    setVersioningError(null);
     onClose();
   };
 
   return (
     <SlideOver open={!!bucket} onClose={close} title={<span className="mono">{name} · settings</span>} width={620}>
       <Tabs tabs={[...tabs]} value={tabs.includes(tab) ? tab : "Versioning"} onChange={(t) => setTab(t as TabName)} />
-      {tab === "Versioning" && <VersioningTab id={id} status={versioning} onChanged={loadVersioning} />}
+      {tab === "Versioning" && (
+        <VersioningTab id={id} status={versioning} error={versioningError} onChanged={loadVersioning} />
+      )}
       {tab === "Object Lock" && <ObjectLockTab id={id} />}
       {tab === "Lifecycle" && <LifecycleTab bucketId={id} />}
       {tab === "Access" && <AccessTab id={id} bucket={name} />}
@@ -147,7 +180,17 @@ export default function BucketSettings({ bucket, onClose }: { bucket: StorageBuc
 
 // ---------------------------------------------------------------- versioning
 
-function VersioningTab({ id, status, onChanged }: { id: string; status: string | null; onChanged: () => void }) {
+function VersioningTab({
+  id,
+  status,
+  error,
+  onChanged,
+}: {
+  id: string;
+  status: string | null;
+  error: string | null;
+  onChanged: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const set = async (next: "Enabled" | "Suspended") => {
     setBusy(true);
@@ -163,8 +206,10 @@ function VersioningTab({ id, status, onChanged }: { id: string; status: string |
       setBusy(false);
     }
   };
+  const unknown = status === null || status === "Unknown";
   return (
     <div>
+      {error && <ReadError what="versioning" message={error} onRetry={onChanged} />}
       <p className="bs-status">
         Status:{" "}
         <Badge kind={status === "Enabled" ? "success" : status === "Suspended" ? "warning" : "neutral"} dot>
@@ -176,7 +221,7 @@ function VersioningTab({ id, status, onChanged }: { id: string; status: string |
         marker). Suspending stops creating new versions but keeps the existing ones.
       </p>
       <div className="flex gap-2">
-        <Button variant="primary" loading={busy} disabled={status === "Enabled"} onClick={() => set("Enabled")}>
+        <Button variant="primary" loading={busy} disabled={unknown || status === "Enabled"} onClick={() => set("Enabled")}>
           Enable
         </Button>
         <Button loading={busy} disabled={status !== "Enabled"} onClick={() => set("Suspended")}>
@@ -197,43 +242,49 @@ function ObjectLockTab({ id }: { id: string }) {
   const [error, setError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
-    if (!id) return;
-    const r = await call("GET", s3Url(id, "object-lock"));
-    if (!ok(r)) {
-      setEnabled(false);
+    try {
+      const xml = await read(s3Url(id, "object-lock"));
+      const doc = xml === null ? null : parseXml(xml);
+      setEnabled(doc !== null && firstText(doc, "ObjectLockEnabled") === "Enabled");
+      setMode((doc && firstText(doc, "Mode")) || "GOVERNANCE");
+      setDays(doc ? firstText(doc, "Days") : "");
       setError(null);
-      return;
+    } catch (e) {
+      setEnabled(null);
+      setError(apiError(e));
     }
-    const doc = parseXml(r.text);
-    const isEnabled = firstText(doc, "ObjectLockEnabled") === "Enabled";
-    setEnabled(isEnabled);
-    setMode(firstText(doc, "Mode") || "GOVERNANCE");
-    setDays(firstText(doc, "Days"));
-    setError(null);
   }, [id]);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount: the loader's state updates are the result of the request, not a render loop
     load();
-  }, [id, load]);
+  }, [load]);
 
   const save = async (clearRule: boolean) => {
     setBusy(true);
-    const rule =
-      !clearRule && days.trim()
-        ? `<Rule><DefaultRetention><Mode>${mode}</Mode><Days>${escapeXml(days.trim())}</Days></DefaultRetention></Rule>`
-        : "";
-    const body = `<ObjectLockConfiguration xmlns="${S3_NS}"><ObjectLockEnabled>Enabled</ObjectLockEnabled>${rule}</ObjectLockConfiguration>`;
-    const r = await call("PUT", s3Url(id, "object-lock"), body, "application/xml");
-    setBusy(false);
-    if (ok(r)) {
+    try {
+      const rule =
+        !clearRule && days.trim()
+          ? `<Rule><DefaultRetention><Mode>${mode}</Mode><Days>${escapeXml(days.trim())}</Days></DefaultRetention></Rule>`
+          : "";
+      const body = `<ObjectLockConfiguration xmlns="${S3_NS}"><ObjectLockEnabled>Enabled</ObjectLockEnabled>${rule}</ObjectLockConfiguration>`;
+      const r = await call("PUT", s3Url(id, "object-lock"), body, "application/xml");
+      if (!ok(r)) throw new Error(errText(r));
       toast(clearRule ? "default retention cleared" : "default retention set", "ok");
-      load();
-    } else {
-      toast(`object lock: ${errText(r)}`, "err");
+      await load();
+    } catch (e) {
+      toast(`object lock: ${apiError(e)}`, "err");
+    } finally {
+      setBusy(false);
     }
   };
 
+  const retry = () => {
+    setError(null);
+    load();
+  };
+
+  if (error) return <ReadError what="Object Lock" message={error} onRetry={retry} />;
   if (enabled === null) return <div className="bs-note">Loading…</div>;
   if (!enabled) {
     return (
@@ -243,8 +294,9 @@ function ObjectLockTab({ id }: { id: string }) {
         </p>
         <div className="bs-note">
           Object Lock (versioned, write-once-read-many retention) can only be turned on when a bucket is
-          created. This bucket was not created with it. Create a new bucket with "Object Lock" enabled if
-          you need WORM retention.
+          created, and this bucket does not have it. This console&apos;s create form does not offer it; a
+          new bucket gets it through the API (<code>POST /buckets</code> with{" "}
+          <code>&quot;object_lock&quot;: true</code>).
         </div>
       </div>
     );
@@ -254,7 +306,6 @@ function ObjectLockTab({ id }: { id: string }) {
       <p className="bs-status">
         Object Lock: <Badge kind="warning" dot>enabled</Badge>
       </p>
-      {error && <div className="bs-note">{error}</div>}
       <div className="at-caption">Default retention (applied to new objects with no explicit retention)</div>
       <div className="bs-retention">
         <select className="field" aria-label="Retention mode" value={mode} onChange={(e) => setMode(e.target.value)}>
@@ -285,6 +336,7 @@ function ObjectLockTab({ id }: { id: string }) {
 
 function LifecycleTab({ bucketId }: { bucketId: string }) {
   const [rules, setRules] = useState<LifecycleRule[] | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [id, setId] = useState("");
   const [prefix, setPrefix] = useState("");
   const [days, setDays] = useState("");
@@ -293,12 +345,13 @@ function LifecycleTab({ bucketId }: { bucketId: string }) {
 
   const load = useCallback(async () => {
     try {
-      const r = await call("GET", s3Url(bucketId, "lifecycle"));
-      setRules(ok(r) ? parseLifecycle(r.text) : []);
-      if (!ok(r) && r.status !== 404) toast(`lifecycle: ${errText(r)}`, "err");
+      const xml = await read(s3Url(bucketId, "lifecycle"));
+      setRules(xml === null ? [] : parseLifecycle(xml));
+      setError(null);
     } catch (e) {
-      setRules([]);
-      toast(`lifecycle: ${apiError(e)}`, "err");
+      // Saving replaces the whole configuration, so unread rules must never look like "no rules".
+      setRules(null);
+      setError(apiError(e));
     }
   }, [bucketId]);
   useEffect(() => {
@@ -340,6 +393,12 @@ function LifecycleTab({ bucketId }: { bucketId: string }) {
     <div>
       <Table
         rows={rules ?? undefined}
+        error={!!error}
+        errorDetail={error ?? undefined}
+        onRetry={() => {
+          setError(null);
+          load();
+        }}
         rowKey={(r) => r.id + r.raw.length}
         cols={[
           { h: "ID", f: (r) => r.id || "—", mono: true },
@@ -362,7 +421,7 @@ function LifecycleTab({ bucketId }: { bucketId: string }) {
         <input className="field" type="number" min={1} placeholder="expire current versions after (days)" aria-label="Expire current versions after (days)" value={days} onChange={(e) => setDays(e.target.value)} />
         <input className="field" type="number" min={1} placeholder="expire noncurrent versions after (days, optional)" aria-label="Expire noncurrent versions after (days)" value={ncDays} onChange={(e) => setNcDays(e.target.value)} />
         <div>
-          <Button variant="primary" loading={busy} onClick={add}>
+          <Button variant="primary" loading={busy} disabled={rules === null} onClick={add}>
             Add rule
           </Button>
         </div>
@@ -416,34 +475,43 @@ function isPublicRead(policyText: string): boolean {
 
 function AccessTab({ id, bucket }: { id: string; bucket: string }) {
   const [text, setText] = useState("");
-  const [configured, setConfigured] = useState<boolean | null>(null);
+  // What the store holds: `undefined` until it has been read, `null` when there is no policy.
+  const [policy, setPolicy] = useState<string | null | undefined>(undefined);
+  const [error, setError] = useState<string | null>(null);
   const [confirmPublic, setConfirmPublic] = useState(false);
   const [busy, setBusy] = useState(false);
 
   const load = useCallback(async () => {
     try {
-      const r = await call("GET", s3Url(id, "policy"));
-      if (ok(r)) {
-        setConfigured(true);
-        try {
-          setText(JSON.stringify(JSON.parse(r.text), null, 2));
-        } catch {
-          setText(r.text);
-        }
-      } else {
-        setConfigured(false);
-        setText("");
-        if (r.status !== 404) toast(`policy: ${errText(r)}`, "err");
+      const raw = await read(s3Url(id, "policy"));
+      let shown = raw ?? "";
+      try {
+        if (raw !== null) shown = JSON.stringify(JSON.parse(raw), null, 2);
+      } catch {
+        // Not JSON: show what the store returned.
       }
+      setPolicy(raw);
+      setText(shown);
+      setError(null);
     } catch (e) {
-      setConfigured(false);
-      toast(`policy: ${apiError(e)}`, "err");
+      setPolicy(undefined);
+      setError(apiError(e));
     }
   }, [id]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount: the loader's state updates are the result of the request, not a render loop
     load();
   }, [load]);
+  const unread = policy === undefined;
+  const access = unread
+    ? error
+      ? "unknown"
+      : "…"
+    : policy === null
+      ? "private"
+      : isPublicRead(policy)
+        ? "public read"
+        : "custom policy";
 
   const put = async (json: string) => {
     setBusy(true);
@@ -476,18 +544,30 @@ function AccessTab({ id, bucket }: { id: string; bucket: string }) {
 
   return (
     <div>
+      {error && (
+        <ReadError
+          what="the bucket policy"
+          message={error}
+          onRetry={() => {
+            setError(null);
+            load();
+          }}
+        />
+      )}
       <p className="bs-status">
         Access:{" "}
-        <Badge kind={configured ? "warning" : "success"} dot>
-          {configured === null ? "…" : configured ? (isPublicRead(text) ? "public read" : "custom policy") : "private"}
+        <Badge kind={unread ? "neutral" : policy === null ? "success" : "warning"} dot>
+          {access}
         </Badge>
       </p>
       <div className="bs-actions bs-gap">
-        <Button loading={busy} onClick={makePrivate}>
+        <Button loading={busy} disabled={unread} onClick={makePrivate}>
           Private
         </Button>
         {!confirmPublic ? (
-          <Button onClick={() => setConfirmPublic(true)}>Public read…</Button>
+          <Button disabled={unread} onClick={() => setConfirmPublic(true)}>
+            Public read…
+          </Button>
         ) : (
           <Button variant="danger" loading={busy} onClick={() => put(publicReadPolicy(bucket))}>
             Confirm: make every object world-readable
@@ -499,10 +579,11 @@ function AccessTab({ id, bucket }: { id: string; bucket: string }) {
         aria-label="Bucket policy JSON"
         placeholder='Bucket policy JSON (empty = private). Example: {"Version":"2012-10-17","Statement":[...]}'
         value={text}
+        disabled={unread}
         onChange={(e) => setText(e.target.value)}
       />
       <div className="bs-actions">
-        <Button variant="primary" loading={busy} disabled={!text.trim()} onClick={() => put(text)}>
+        <Button variant="primary" loading={busy} disabled={unread || !text.trim()} onClick={() => put(text)}>
           Apply policy
         </Button>
       </div>
@@ -549,27 +630,42 @@ export function parseVersions(text: string): ObjectVersion[] {
 
 function VersionsTab({ id }: { id: string }) {
   const [rows, setRows] = useState<ObjectVersion[] | null>(null);
+  const [truncated, setTruncated] = useState(false);
+  const [error, setError] = useState<string | null>(null);
   const load = useCallback(async () => {
     try {
       const r = await call("GET", s3Url(id, "versions"));
       if (!ok(r)) throw new Error(errText(r));
       setRows(parseVersions(r.text));
+      setTruncated(firstText(parseXml(r.text), "IsTruncated") === "true");
+      setError(null);
     } catch (e) {
-      setRows([]);
-      toast(`versions: ${e instanceof Error ? e.message : String(e)}`, "err");
+      setRows(null);
+      setTruncated(false);
+      setError(apiError(e));
     }
   }, [id]);
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch-on-mount: the loader's state updates are the result of the request, not a render loop
     load();
   }, [load]);
+  const reload = () => {
+    setError(null);
+    load();
+  };
   return (
     <div>
       <div className="bs-actions bs-gap">
-        <Button onClick={load}>Refresh</Button>
+        <Button onClick={reload}>Refresh</Button>
       </div>
+      {truncated && (
+        <p className="bs-note">Only the first page of versions is shown; the object store has more.</p>
+      )}
       <Table
         rows={rows ?? undefined}
+        error={!!error}
+        errorDetail={error ?? undefined}
+        onRetry={reload}
         rowKey={(v) => `${v.key}@${v.versionId}${v.deleteMarker ? "#dm" : ""}`}
         cols={[
           { h: "Key", f: (v) => v.key, mono: true },
