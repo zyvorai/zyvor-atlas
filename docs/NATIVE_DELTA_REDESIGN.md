@@ -2,7 +2,8 @@
 <!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Delta writes: redesign plan
 
-**Status (2026-11-28): phases 0 to 2 approved; none implemented yet. Phases 3 and 4 are not approved.**
+**Status (2026-11-28): phases 0 to 2 approved; phase 0 has a [first result](#phase-0-results).
+Phases 3 and 4 are not approved.**
 
 ## The problem
 
@@ -62,6 +63,18 @@ session, median of three 20-minute runs:
 
 One comparison pair takes about 70 minutes of host time, so three take about 3.5 hours.
 
+```
+ROUNDS=3 CASES="ceph atlas-delta" STEADY_ONLY=1 STEADY_SECS=1200 deploy/bench-vs-ceph/compare.sh <tag>
+```
+
+`gate.py` (run by `compare.sh`, or by hand on the result sets) prints PASS, FAIL or UNKNOWN; anything
+missing, failed or short of three alternating rounds is never a PASS. It reads the target this way:
+medians for IOPS, p99 and the sequential read; the backlog and `fio` checks must hold in **every**
+atlas round. "Not growing" allows a rise (end against start, or trend, over the last 600 s) of up to
+1% of the delta writes taken then, and a backlog within 10% of a configured limit fails.
+`ATLAS_DELTA_EXTRA` adds settings to `delta_writes` in the delta cases, and `atlas-delta-128k` is the
+128 KiB-cell case.
+
 ## Phase 0: measure
 
 No change in engine behaviour.
@@ -76,6 +89,66 @@ No change in engine behaviour.
 
 **Decision point:** if the disk ceiling for three synced files is close to what both systems
 already do, no fold design will raise the write rate much. Go to phase 4 or stop.
+
+## Phase 0 results
+
+### Disk ceiling (2026-11-28, one probe session)
+
+`deploy/bench-vs-ceph/disk-probe.sh`. One logical write is 4 KiB written to three files, each write
+followed by `fdatasync` (buffered `pwrite`, as `FileDevice` does it). fio 3.33 in a container
+limited to 12 GB and 10 CPUs; files on the benchmark disk (WDC WD10EZEX, 7,200 rpm, XFS, kernel
+7.0.0-44, `mq-deadline`). 2 rounds of 25 s per case after a 5 s ramp. fio counted 430,839 writes and
+430,839 `fdatasync` calls, and an `strace` check before measuring found every write synced on its own
+file. The probe held the benchmark lock; the shared host's other services kept running (1-minute load
+2.4 at the start). In 20 s samples the disk took 25 writes a second just before the probe and 3 just
+after. Raw results: `/data/atlas-bench/results/probe1/disk-probe` on the benchmark host.
+
+fio cannot make one write wait for three parallel ones, so there are two stand-ins: **chain** (each
+writer writes and syncs the three files one after another) and **fanout** (the same number of writers
+on each file, independently; the slowest file's rate is quoted, an optimistic figure). atlas-native
+writes replicas in parallel, which is neither. Neither bounds the other.
+
+Logical writes a second (median of the 2 rounds):
+
+| writers | appending: chain | appending: fanout | in place, random: chain | in place, random: fanout | in place, sequential: chain | in place, sequential: fanout |
+|---:|---:|---:|---:|---:|---:|---:|
+| 1 | 8.3 | 9.6 | 37.6 | 41.2 | 38.2 | 37.3 |
+| 8 | 45.1 | 68.6 | 60.9 | 63.0 | 163 | 301 |
+| 32 | 76.4 | 115 | 82.5 | 81.4 | 318 | 249 |
+| 128 | 143 | 120 | 96.4 | 93.2 | 250 | 221 |
+
+- "Appending": the three files start empty and grow, writers taking interleaved slots at the end.
+  "In place": three 2 GiB files written in full beforehand.
+- The two rounds were within 10% of each other except appending fanout at 128 writers (143 and 98)
+  and at 1 writer (10.2 and 8.9), and sequential chain at 8 (174 and 153).
+- At 32 writers, appending, the median `fdatasync` took 126 ms (chain) and 250 ms (fanout).
+- The kernel treats the drive's cache as write-through and had sent it no flush commands. A lone
+  sequential in-place sync took 6 ms (median, chain), which suggests writes do reach the platter.
+  The drive's own cache setting was not read.
+
+### What it means for the decision point
+
+The systems did 38 (Ceph) and 39 (delta writes, 128 KiB cells) writes a second at queue depth 32, so
+the row to compare is 32 writers: **76 to 115 appending, 2 to 3 times what either system did.**
+
+- That is not "close", so the disk alone does not send the plan to phase 4 or a stop. Phases 1 and 2
+  can go ahead.
+- It is **inconclusive** about whether they can win. The probe is only the foreground data writes. A
+  real write also needs the metadata log syncs, and folding, GC and reads share the same disk.
+- A rough estimate, not a measurement: keeping up in the 128 KiB run needed about 11 folds a second,
+  or 33 more synced writes (of 128 KiB, not the 4 KiB probed) on top of 3 x 39 = 117 foreground ones.
+  About 150 a second compares with the 230 to 360 synced 4 KiB appends (all files together) the
+  probe reached at 32 writers, before metadata syncs and fold reads. The margin may be small.
+- For phases 3 and 4: preallocated files helped when writes stayed sequential (249 to 318 logical
+  writes a second at 32 writers, 2.2 to 4.2 times appending in the same model). Random in-place writes
+  synced one by one (81 to 83) did no better than appending. With one writer, a sync took 42 ms
+  appending and 6 ms writing sequentially in place (median, chain). Phase 3 would sync an in-place
+  batch once per device, which this probe did not measure.
+- Not covered: files as large and old as a long run leaves them, runs longer than 30 s, other write
+  sizes, and any other disk or host.
+
+The rest of phase 0 (sync and fold metrics, the repeat 20-minute runs, elections against disk
+stalls) has no results here yet.
 
 ## Phase 1: fold in parallel
 
