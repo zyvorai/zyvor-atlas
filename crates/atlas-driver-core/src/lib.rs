@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use atlas_api_types::{
     CloneSnapshotRequest, CreateSnapshotRequest, CreateSnapshotResult, CreateVolumeRequest,
     CreateVolumeResult, DedupEstimate, DedupEstimateOptions, DeleteSnapshotRequest,
-    DeleteVolumeRequest, DiscoveryResult, ExpandVolumeRequest, MetricSample, StorageHealth, StoragePool, StorageVolume,
+    DeleteVolumeRequest, DiscoveryResult, ExpandVolumeRequest, FsChangesPage, MetricSample,
+    StorageHealth, StoragePool, StorageVolume,
 };
 
 pub mod dedup;
@@ -94,6 +95,17 @@ pub trait StorageDriver: Send + Sync {
         _native_volume_id: &str,
     ) -> Result<Vec<serde_json::Value>, DriverError> {
         Err(DriverError::NotImplemented("filesystem_activity"))
+    }
+    /// One page of at most `limit` paths a filesystem volume created, modified, deleted or renamed
+    /// since the snapshot it was cloned from. Read-only, metadata only. `cursor` continues an
+    /// earlier listing.
+    async fn filesystem_changes(
+        &self,
+        _native_volume_id: &str,
+        _cursor: Option<&str>,
+        _limit: u32,
+    ) -> Result<FsChangesPage, DriverError> {
+        Err(DriverError::NotImplemented("filesystem_changes"))
     }
     /// Compression and sharing savings of the whole backend, as the JSON the node reports
     /// (`extents`, `compressed_extents`, `shared_extents`, `logical_bytes`, `referenced_bytes`,

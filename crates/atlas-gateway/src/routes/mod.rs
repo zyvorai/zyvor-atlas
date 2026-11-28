@@ -314,6 +314,10 @@ pub fn router(state: AppState) -> Router {
             get(workspaces::get_workspace).delete(workspaces::discard_workspace),
         )
         .route("/workspaces/{id}/reset", post(workspaces::reset_workspace))
+        .route(
+            "/workspaces/{id}/changes",
+            get(workspaces::workspace_changes),
+        )
         .route("/snapshots", get(list_snapshots))
         .route("/snapshots/{id}", axum::routing::delete(delete_snapshot))
         .route("/snapshots/{id}/lock", post(lock_snapshot))

@@ -398,6 +398,17 @@ enum Command {
     },
     /// GET /api/atlas/v1/native/reduction  (atlas-native compression and sharing savings)
     NativeReduction,
+    /// GET /api/atlas/v1/workspaces/{id}/changes  (paths a filesystem workspace changed since its
+    /// base snapshot; metadata only)
+    WorkspaceChanges {
+        id: String,
+        /// `next_cursor` of the previous page.
+        #[arg(long)]
+        cursor: Option<String>,
+        /// Changes per page, 1 to 10000 (default 1000).
+        #[arg(long)]
+        limit: Option<u32>,
+    },
     /// GET /api/atlas/v1/pools/{id}/dedup-estimate  (what dedup would save; reads data, admin only)
     DedupEstimate {
         pool_id: String,
@@ -1244,6 +1255,25 @@ async fn main() -> Result<()> {
             Some(serde_json::json!({ "retain_secs": retain_secs })),
         ),
         Command::NativeReduction => ("GET", "/api/atlas/v1/native/reduction".to_string(), None),
+        Command::WorkspaceChanges { id, cursor, limit } => {
+            let mut params = Vec::new();
+            if let Some(c) = cursor {
+                params.push(format!("cursor={c}"));
+            }
+            if let Some(l) = limit {
+                params.push(format!("limit={l}"));
+            }
+            let qs = if params.is_empty() {
+                String::new()
+            } else {
+                format!("?{}", params.join("&"))
+            };
+            (
+                "GET",
+                format!("/api/atlas/v1/workspaces/{id}/changes{qs}"),
+                None,
+            )
+        }
         Command::DedupEstimate { pool_id, max_bytes, max_secs, background: true } => (
             "POST",
             format!("/api/atlas/v1/pools/{pool_id}/dedup-estimate"),

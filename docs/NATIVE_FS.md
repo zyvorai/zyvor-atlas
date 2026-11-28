@@ -52,6 +52,7 @@ All routes need the API token (and client certificate where configured), like th
 | `GET /v1/fs-snapshots` | `{"snapshots": [{id, fs_id, name, created_ns, inodes}]}`. |
 | `DELETE /v1/fs-snapshots/{id}` | 204. |
 | `POST /v1/fs-snapshots/{id}/clone` | `{"name", "id"?}` → 201 `{"id"}` of the new filesystem. |
+| `GET /v1/fs/{fs}/changes?cursor=&limit=` | Paths a clone created, modified, deleted or renamed since its snapshot (see "What changed"). Leader only. |
 | `GET /v1/fs/{fs}/inodes/{ino}` | Attributes: `{ino, kind, mode, uid, gid, nlink, size, blocks, rdev, atime_ns, mtime_ns, ctime_ns}`. |
 | `POST /v1/fs/{fs}/inodes/{ino}/attr` | Any of `{mode, uid, gid, size, atime_ns, mtime_ns}` → attributes. |
 | `GET /v1/fs/{fs}/inodes/{dir}/lookup?name=` | Attributes of the entry (`name` percent-encoded; `.` is the directory, `..` its parent). |
@@ -457,8 +458,8 @@ block source), `state`, `used_bytes`, `over_cap` and `remaining_secs`.
   `workspace.discard`, `workspace.expire`).
 
 The same operations are MCP tools for agents (`list_workspaces`, `get_workspace`, and the guarded
-two-phase `create_workspace`, `reset_workspace`, `discard_workspace`); see [MCP.md](MCP.md). There is
-no `atlasctl` command for workspaces yet.
+two-phase `create_workspace`, `reset_workspace`, `discard_workspace`); see [MCP.md](MCP.md). The only
+`atlasctl` command for workspaces is `workspace-changes` (below).
 
 Tested over the fixture driver through the gateway (`crates/atlas-gateway/tests/workspaces.rs`,
 `mcp_workspaces.rs`): create, write, reset and discard with the source untouched, TTL expiry GC,
@@ -467,6 +468,96 @@ process, SQLite), stale `creating` rows, tenant isolation and roles. The fixture
 files, so a filesystem workspace is not written through the gateway in these tests (a block source is,
 through `/volumes/{id}/data`); filesystem snapshot and clone themselves are tested against live
 in-process nodes in `crates/atlas-driver-native/tests/nodes.rs`. Not run against a lab cluster.
+
+### What changed
+
+"What did this agent change?" lists the paths of a filesystem workspace that differ from the snapshot
+it was cloned from. It is read-only and carries metadata only: no file contents, no symlink targets,
+no extended attribute names or values.
+
+```text
+GET /api/atlas/v1/workspaces/{id}/changes?limit=1000&cursor=<next_cursor>
+atlasctl workspace-changes <id> [--limit N] [--cursor C]
+MCP: workspace_changes {workspace_id, cursor?, limit?}     (read-only; 200 per page, at most 1000)
+```
+
+It has the checks of `GET /workspaces/{id}`: any role of the workspace's tenant; another tenant gets
+404. The workspace must be `active` and a filesystem (a block volume has no paths: 400). The answer:
+
+```json
+{"workspace_id": "ws_…", "volume_id": "vol_native_fs_…", "base_snapshot_id": "snap_native_fs_…",
+ "as_of_index": 812, "computed_unix_ms": 1790000000000, "total": 3,
+ "summary": {"created": 1, "modified": 1, "deleted": 0, "renamed": 1},
+ "changes": [
+   {"path": "/out/report.md", "change": "created", "type": "file", "ino": 41, "size": 5120,
+    "replaced": false, "object_in_both": false},
+   {"path": "/src/lib.rs", "change": "modified", "type": "file", "changed": ["content", "size", "mtime", "ctime"],
+    "ino": 12, "size": 900, "replaced": false, "object_in_both": true},
+   {"path": "/src/new", "change": "renamed", "from": "/src/old", "type": "dir", "ino": 7,
+    "replaced": false, "object_in_both": true}],
+ "next_cursor": null}
+```
+
+How to read it:
+
+- `path` is a path in the workspace, except for `deleted`, where it is a path in the base snapshot.
+  `from` is always a path in the base snapshot.
+- A renamed directory stands for everything under it: unchanged descendants are not listed. What did
+  change under it is listed, with new paths for what the workspace has and old paths for deletions.
+- Renames are told by identity, not by guessing from contents: a clone keeps its snapshot's inode
+  numbers and numbers are never reused. A rename is reported when one object lost exactly one name
+  and gained exactly one. With several names lost or gained (hard links) the pairing cannot be known,
+  so they are `deleted` and `created` entries with `object_in_both: true`. A link plus an unlink of
+  the same object ends in the same state as a rename and is reported as one. Copy-then-delete is a
+  creation and a deletion.
+- `modified` with `replaced: true`: the path existed, and now holds a different object (an editor
+  saving through a temporary file, a rebuilt directory). `previous_type` is set if the type changed.
+  A rename over an existing path is `renamed` with `replaced: true`.
+- `changed` lists `content`, `size`, `mode`, `owner`, `xattrs`, `links`, `mtime`, `atime`, `ctime`.
+  `content` means data was written or cut: the bytes may be equal to the old ones (they are not
+  read). `ctime` alone means the inode was touched and ended up as it was, for example a rename and
+  back.
+- Directories are listed as modified only for `mode`, `owner` and `xattrs`. A directory's times and
+  size follow its entries, which are listed themselves; a `touch` of a directory, or a file created
+  and removed again, leaves no entry.
+- It is the net difference between two states, not a history: intermediate versions do not appear.
+
+Consistency and cost. The metadata leader computes the listing from what is committed at one instant
+(`as_of_index`). A mount that has not yet flushed (write-back before `close` or `fsync`) can be ahead
+of it. The catalog lock is held to take a view of the live tree (cheap once checkpointed; right after
+a clone, before the first checkpoint, it copies one reference per inode) and to copy the snapshot's
+inode references 1024 at a time; the comparison runs outside it. Time and memory are linear in the
+size of both trees, not in the number of changes, even when nothing changed. Later pages are served
+from the kept result and describe the same instant. A cursor expires after 5 minutes, when newer
+listings push it out (2 kept per filesystem, 8 and 200000 changes per node process), on a restart or
+leader change, and after a reset; start again without a cursor. A listing is refused with 409, never
+cut short, over 1,000,000 inodes or 2,000,000 directory entries in either tree, 100,000 changes,
+16 MiB of paths, or 8 s; a node computes at most two at once (others get 503). It is also refused if
+the base snapshot has been deleted. None of these limits has been measured on large trees.
+
+Not there: **commit back or merge into the source.** The listing is a report; nothing applies it.
+Doing so safely would need at least:
+
+1. A three-way comparison. The source keeps changing after the snapshot, so base, source and
+   workspace have to be compared. A source snapshot and a clone share inode numbers only up to the
+   fork: objects created on either side afterwards can get the same number and mean different things,
+   so identity-based comparison needs an object id that is unique across filesystems.
+2. Conflict rules for edit/edit, edit/delete, rename/rename, a directory moved into a subtree the
+   other side moved, type changes and name collisions, with a way to report conflicts and choose.
+3. One atomic apply in the replicated catalog (a new command that re-checks every precondition at
+   apply time and changes all or nothing), in bounded size, with extents shared from the workspace
+   rather than copied, quota accounting, activity records and recall of client cache leases. Source
+   and workspace must be in the same metadata group.
+4. Handling of what a path list does not carry: hard link sets, ACLs and other attributes, open files
+   and locks on the source, and retention-locked data.
+5. Authorisation of its own: it writes to the source, which no workspace operation does today, and
+   would need a pre-merge snapshot, audit, and the two-phase confirmation of the other MCP writes.
+
+Tested: the classification against a model that replays each listing over the base tree (300 random
+workloads, in memory and paged from the store, plus rename, hard link, attribute-only, symlink and
+replacement cases), the engine (paging, cursors, reopen, concurrent renames, deleted snapshot,
+refusals), the driver against in-process nodes, and the REST route and MCP tool for tenant isolation
+and against one in-process node. Not run on a lab cluster or through a FUSE mount; not measured.
 
 ## NFS
 

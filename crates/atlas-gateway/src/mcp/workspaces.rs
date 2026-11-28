@@ -3,14 +3,15 @@
 //! Agent workspace tools: an instant, isolated, disposable copy of an atlas-native volume or
 //! filesystem for one agent run (docs/NATIVE_FS.md#agent-workspaces).
 //!
-//! `list_workspaces` and `get_workspace` are read-only. `create_workspace`, `reset_workspace` and
-//! `discard_workspace` are guarded writes: listed only with `ATLAS_MCP_WRITE_ENABLE=1`, two-phase with
-//! a single-use token bound to the caller and the exact arguments (see `write.rs`), and executed
-//! through the REST handlers so role, tenant and quota checks are theirs. Reset and discard only ever
-//! touch a workspace's own clone (and the snapshot Atlas took for it), never the source volume, and a
-//! non-admin may only reset or discard a workspace they created themselves.
+//! `list_workspaces`, `get_workspace` and `workspace_changes` are read-only. `create_workspace`,
+//! `reset_workspace` and `discard_workspace` are guarded writes: listed only with
+//! `ATLAS_MCP_WRITE_ENABLE=1`, two-phase with a single-use token bound to the caller and the exact
+//! arguments (see `write.rs`), and executed through the REST handlers so role, tenant and quota
+//! checks are theirs. Reset and discard only ever touch a workspace's own clone (and the snapshot
+//! Atlas took for it), never the source volume, and a non-admin may only reset or discard a
+//! workspace they created themselves.
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::{Extension, Json};
 use rmcp::{
     handler::server::wrapper::{Json as ToolJson, Parameters},
@@ -25,16 +26,31 @@ use serde_json::{json, Value};
 use super::write::{audit, gate, write_guard, Gate, TOKEN_TTL_SECS};
 use super::{actor_from, internal_error, rest, AtlasMcp};
 use crate::auth::{require_tenant, Actor, ROLE_ADMIN};
-use crate::routes::workspaces::{self, CreateWorkspaceBody};
+use crate::routes::workspaces::{self, ChangesQuery, CreateWorkspaceBody};
 
 const CREATE_WORKSPACE: &str = "create_workspace";
 const RESET_WORKSPACE: &str = "reset_workspace";
 const DISCARD_WORKSPACE: &str = "discard_workspace";
+/// A smaller page than REST's, by default and at most, so one answer fits an agent's context.
+const DEFAULT_MCP_CHANGES: u32 = 200;
+const MAX_MCP_CHANGES: u32 = 1000;
 
 #[derive(Debug, Deserialize, JsonSchema)]
 struct WorkspaceIdArgs {
     /// Workspace id, as returned by `create_workspace` or `list_workspaces`.
     workspace_id: String,
+}
+
+#[derive(Debug, Deserialize, JsonSchema)]
+struct WorkspaceChangesArgs {
+    /// Workspace id, as returned by `create_workspace` or `list_workspaces`.
+    workspace_id: String,
+    /// `next_cursor` of the previous page; omit for the first page of a new listing.
+    #[serde(default)]
+    cursor: Option<String>,
+    /// Changes per page, 1 to 1000 (default 200).
+    #[serde(default)]
+    limit: Option<u32>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
@@ -116,6 +132,42 @@ impl AtlasMcp {
                 State(self.state.clone()),
                 Extension(actor),
                 Path(args.workspace_id),
+            )
+            .await,
+        )
+    }
+
+    #[tool(
+        description = "What did this workspace change? Lists the paths of an atlas-native filesystem \
+                        workspace that were created, modified, deleted or renamed since the snapshot \
+                        it was cloned from, in path order, with a summary. Paths and metadata only, \
+                        never file contents. Deleted paths and a rename's `from` are paths in the \
+                        snapshot; a renamed directory stands for everything under it. Pass \
+                        next_cursor for the next page of the same listing. Read-only: nothing is \
+                        committed back to the source. The caller's tenant must own the workspace."
+    )]
+    async fn workspace_changes(
+        &self,
+        Parameters(args): Parameters<WorkspaceChangesArgs>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<ToolJson<Value>, McpError> {
+        let actor = actor_from(&context)?;
+        let limit = args.limit.unwrap_or(DEFAULT_MCP_CHANGES);
+        if !(1..=MAX_MCP_CHANGES).contains(&limit) {
+            return Err(McpError::invalid_params(
+                format!("limit must be between 1 and {MAX_MCP_CHANGES}"),
+                None,
+            ));
+        }
+        rest(
+            workspaces::workspace_changes(
+                State(self.state.clone()),
+                Extension(actor),
+                Path(args.workspace_id),
+                Query(ChangesQuery {
+                    cursor: args.cursor,
+                    limit: Some(limit),
+                }),
             )
             .await,
         )

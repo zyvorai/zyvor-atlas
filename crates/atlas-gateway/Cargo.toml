@@ -87,6 +87,9 @@ tonic-prost-build = "0.14"
 
 [dev-dependencies]
 atlas-mac-agent = { workspace = true }
+# tests/workspace_changes.rs runs the gateway against an in-process atlas-native node.
+atlas-native = { workspace = true }
+tempfile = { workspace = true }
 reqwest = { workspace = true }
 atlas-common = { workspace = true }
 atlas-inventory = { workspace = true }

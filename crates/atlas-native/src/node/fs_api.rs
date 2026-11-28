@@ -15,7 +15,10 @@ use super::{
     body_json, cache_leases::Change, client_id, query_u64, read_range, MetaGroup, NodeShared,
 };
 use crate::{
-    engine::{DirectCommit, LockRequest, NativeEngine, NativeError, NewNode, ObjectKind, DEFAULT_DIFF_LIMIT},
+    engine::{
+        DirectCommit, LockRequest, NativeEngine, NativeError, NewNode, ObjectKind,
+        DEFAULT_CHANGES_LIMIT, DEFAULT_DIFF_LIMIT,
+    },
     http::{Request, Response},
     leases::{LockKind, Session},
     namespace::{FsQuota, ReplicaInode, SetAttr, XattrMode},
@@ -203,6 +206,21 @@ fn fs_route(
             200,
             &json!({ "interval_secs": crate::activity::INTERVAL_SECS, "samples": e.fs_activity.samples(fs) }),
         )),
+        // Paths changed since the snapshot the filesystem was cloned from; leader only.
+        ("GET", ["v1", "fs", fs, "changes"]) => {
+            let limit = match req.query.get("limit") {
+                Some(l) => l.parse().map_err(|_| {
+                    NativeError::Invalid("query parameter limit must be an integer".into())
+                })?,
+                None => DEFAULT_CHANGES_LIMIT,
+            };
+            e.ensure_leader()?;
+            let cursor = req.query.get("cursor").map(String::as_str);
+            Ok(Response::json(
+                200,
+                &json!(e.fs_changes(fs, cursor, limit)?),
+            ))
+        }
         ("GET", ["v1", "fs", fs, "statfs"]) => Ok(Response::json(200, &json!(e.fs_statfs(fs)?))),
         ("GET", ["v1", "fs", fs, "quota"]) => Ok(Response::json(
             200,

@@ -24,8 +24,8 @@ use async_trait::async_trait;
 use atlas_api_types::{
     CloneSnapshotRequest, CreateSnapshotRequest, CreateSnapshotResult, CreateVolumeRequest,
     CreateVolumeResult, DeleteSnapshotRequest, DeleteVolumeRequest, DiscoveryResult,
-    ExpandVolumeRequest, Health, MetricSample, StorageCluster, StorageHealth, StoragePool,
-    StorageVolume, VolumeKind,
+    ExpandVolumeRequest, FsChangesPage, Health, MetricSample, StorageCluster, StorageHealth,
+    StoragePool, StorageVolume, VolumeKind,
 };
 use atlas_driver_core::{DriverError, StorageDriver};
 use serde::Deserialize;
@@ -163,6 +163,12 @@ pub trait NativeApi: Send + Sync {
     ) -> Result<String, DriverError>;
     async fn delete_fs_snapshot(&self, id: &str) -> Result<(), DriverError>;
     async fn fs_activity(&self, fs_id: &str) -> Result<Vec<serde_json::Value>, DriverError>;
+    async fn fs_changes(
+        &self,
+        fs_id: &str,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<FsChangesPage, DriverError>;
     async fn reduction(&self) -> Result<serde_json::Value, DriverError>;
     async fn lock_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError>;
     async fn lock_fs_snapshot(&self, id: &str, retain_secs: u64) -> Result<u64, DriverError>;
@@ -588,6 +594,20 @@ impl<A: NativeApi> StorageDriver for NativeDriver<A> {
             NativeRef::Filesystem(id) => self.api.fs_activity(id).await,
             NativeRef::Volume(_) => Err(DriverError::Backend(
                 "invalid: activity is tracked for filesystem volumes only".into(),
+            )),
+        }
+    }
+
+    async fn filesystem_changes(
+        &self,
+        native_volume_id: &str,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<FsChangesPage, DriverError> {
+        match native_volume_ref(native_volume_id) {
+            NativeRef::Filesystem(id) => self.api.fs_changes(id, cursor, limit).await,
+            NativeRef::Volume(_) => Err(DriverError::Backend(
+                "invalid: changes are listed for filesystem volumes only".into(),
             )),
         }
     }
