@@ -1308,7 +1308,7 @@ class Runner:
             raise lib.VerifyError("large files read back differently: " + str([i for i in range(count) if found[i] != digests[i]]))
         if sorted(os.listdir(directory)) != sorted(f"large{i}" for i in range(count)):
             raise lib.VerifyError(f"unexpected entries after the renames: {os.listdir(directory)}")
-        record["notes"].append(f"{count} files of {mib} MiB, one after another; client remounted and server caches dropped")
+        record["notes"].append(f"{count} files of {mib} MiB, one after another; client remounted before the read")
         if problems:
             raise lib.Incomplete("cold read not established: " + "; ".join(problems))
 
