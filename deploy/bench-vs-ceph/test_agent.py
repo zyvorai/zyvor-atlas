@@ -396,6 +396,19 @@ class ItemStateTest(unittest.TestCase):
         self.assertEqual(lib.item_state({"status": "great"}, "G", "atlas")[0], "incomplete")
         self.assertEqual(lib.item_state({"status": "failed"}, "G", "atlas")[0], "failed")
 
+    def test_reads_from_tmpfs_are_never_called_cold(self):
+        class System:
+            def evict_caches(self):
+                return []
+
+        r = object.__new__(agent_run.Runner)
+        r.system, r.floor, r.plan = System(), False, {"tmpfs_gb": 0}
+        self.assertEqual(r.drop_server_caches(), [])
+        r.plan = {"tmpfs_gb": 4}
+        self.assertIn("tmpfs", r.drop_server_caches()[0])
+        r.floor = True  # the floor stays on the host's disk
+        self.assertEqual(r.drop_server_caches(), [])
+
     def test_runner_classifies_what_a_step_ends_in(self):
         class System:
             retries = 0

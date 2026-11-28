@@ -834,6 +834,13 @@ class Runner:
         value, _, stable = self.stable_space(15, 180, 5)
         return value, stable
 
+    def drop_server_caches(self):
+        """Why a following read would not be cold, as far as it is known; empty if it is."""
+        problems = self.system.evict_caches()
+        if self.plan.get("tmpfs_gb") and not self.floor:
+            problems.append("server data is on tmpfs, whose pages cannot be dropped")
+        return problems
+
     def settle(self):
         # The floor too: a reflink copy would otherwise first write back the source's dirty pages.
         run(["sync", "-f", self.system.server_dir])
@@ -1170,7 +1177,7 @@ class Runner:
             lower = base or (shared[0] if shared else None)
             if lower is not None:
                 self.remount_lower(views, lower)  # the lower layer's client must be cold too
-            problems = self.system.evict_caches()
+            problems = self.drop_server_caches()
             self.read_pass(views, source, "cold", record)
             self.read_pass(views, source, "warm", record)
             self.edit_pass(views, record)
@@ -1292,7 +1299,7 @@ class Runner:
         m["write_s"] = time.monotonic() - t0
         m["write_mibs"] = count * mib / m["write_s"]
         mount.remount()
-        problems = self.system.evict_caches()
+        problems = self.drop_server_caches()
         t0 = time.monotonic()
         found = [lib.sha256_file(os.path.join(directory, f"large{i}")) for i in range(count)]
         m["read_s"] = time.monotonic() - t0
