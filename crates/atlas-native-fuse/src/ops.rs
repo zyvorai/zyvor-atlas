@@ -28,6 +28,7 @@ use crate::{
     client::{encode, Body, Client, Error, Retry},
     direct_write::{DirectWriter, DirectWrites},
     handles::Handles,
+    keepcache::{KeepCache, KeepCacheStats, Observed, Verdict},
     locks::{Conflict, Locks, Recall},
     pipeline::{Pipeline, SendRun},
     writeback::{Dirty, WriteBack},
@@ -60,12 +61,16 @@ struct Losses {
     attrs: Arc<Mutex<TtlCache<u64, Attr>>>,
     readahead: Arc<Mutex<TtlCache<u64, Window>>>,
     hook: Arc<OnceLock<LostHook>>,
+    keep: Option<Arc<KeepCache>>,
 }
 
 impl Losses {
     /// Drops everything cached about a file after a send to it failed: caches here and,
     /// through the hook, the kernel's, which holds the bytes it was told were written.
     fn forget(&self, ino: u64) {
+        if let Some(k) = &self.keep {
+            k.changed(ino);
+        }
         if let Ok(mut c) = self.attrs.lock() {
             c.remove(&ino);
         }
@@ -91,6 +96,10 @@ impl Losses {
         );
         self.forget(ino);
         self.handles.fail(ino, errno);
+        // Again: an open that began since `forget` must not have missed the failure.
+        if let Some(k) = &self.keep {
+            k.changed(ino);
+        }
     }
 }
 
@@ -121,6 +130,10 @@ pub struct OpsConfig {
     /// Write whole extents straight to the data nodes ([`DirectWrites`]); the metadata leader
     /// only leases and commits. Everything it can't do goes through the leader as before.
     pub direct_writes: Option<DirectWrites>,
+    /// Let a read-only open keep the file data the kernel cached for an earlier one when the
+    /// cluster says the file has not changed ([`crate::keepcache`]). Costs one request per such
+    /// open, and every data read waits for a read barrier.
+    pub keep_cache: bool,
 }
 
 impl OpsConfig {
@@ -168,6 +181,7 @@ impl Default for OpsConfig {
             lock_waiters: 3,
             cache_leases: false,
             direct_writes: None,
+            keep_cache: false,
         }
     }
 }
@@ -219,7 +233,13 @@ pub struct Ops {
     /// Whole-extent writes straight to the data nodes, when enabled.
     direct_writer: Option<Arc<DirectWriter>>,
     locks: Arc<Locks>,
+    /// Which opens may keep the kernel's cache, with `keep_cache`.
+    keep: Option<Arc<KeepCache>>,
 }
+
+/// Extended attribute of the mount's root that reads its keep-cache counters (JSON), with
+/// `keep_cache`. Answered by the mount, not stored, and not listed.
+pub const KEEP_CACHE_XATTR: &str = "user.atlas.keep_cache";
 
 /// Prefix of the names open-but-unlinked files are parked under; hidden from listings.
 pub const HIDDEN_PREFIX: &str = ".atlas_hidden_";
@@ -298,11 +318,13 @@ impl Ops {
             Duration::ZERO
         })));
         let handles = Arc::new(Handles::default());
+        let keep = cfg.keep_cache.then(|| Arc::new(KeepCache::default()));
         let losses = Losses {
             handles: handles.clone(),
             attrs: attrs.clone(),
             readahead: readahead.clone(),
             hook: Arc::default(),
+            keep: keep.clone(),
         };
         let pipeline = (cfg.writeback_parallel > 0 && cfg.writeback_bytes > 0).then(|| {
             let send: SendRun = {
@@ -325,6 +347,7 @@ impl Ops {
             Pipeline::new(cfg.writeback_parallel, send)
         });
         Self {
+            keep,
             locks,
             pipeline,
             client,
@@ -515,9 +538,73 @@ impl Ops {
         self.handles.open(ino, writable)
     }
 
+    /// Whether the open that made `handle`, read-only and through the page cache, may keep the
+    /// data the kernel already caches for the file. Always false without `keep_cache`; any doubt
+    /// (the cluster does not answer, a loss is unreported) is false too.
+    pub fn open_keeps_cache(&self, handle: u64) -> bool {
+        let Some(keep) = &self.keep else {
+            return false;
+        };
+        let Ok(ino) = self.handles.ino(handle) else {
+            return false;
+        };
+        let mark = keep.begin(ino);
+        let observed = if self.handles.unsynced(ino).is_err() {
+            Observed::LostWrites
+        } else {
+            self.content_tag(ino)
+        };
+        let verdict = keep.decide(ino, handle, mark, observed);
+        tracing::debug!(ino, ?verdict, "open");
+        let kept = verdict == Verdict::Kept;
+        if !kept {
+            // The kernel is about to refill: not from data read before this open. After
+            // `decide`, so a read in flight cannot store its window afterwards.
+            self.drop_readahead(ino);
+        }
+        kept
+    }
+
+    /// The cluster's content tag of `ino` as of now, from any replica after a read barrier: a
+    /// follower behind, or a leader that has been replaced without knowing, cannot answer with
+    /// an older one. Not retried: without it the open only drops its cache.
+    fn content_tag(&self, ino: u64) -> Observed {
+        let path = self.path(&format!("/inodes/{ino}/content-tag?barrier=1"));
+        match self.client.json_once(Method::GET, &path) {
+            Ok(v) => match v["tag"].as_str() {
+                Some(t) => Observed::Tag(t.to_string()),
+                None => Observed::Uncacheable,
+            },
+            Err(e) => {
+                tracing::debug!(ino, error = %e, "no content tag");
+                Observed::Unavailable
+            }
+        }
+    }
+
+    /// A request arrived on `handle`: its open has returned to the kernel.
+    pub fn confirm_open(&self, handle: u64) {
+        if let Some(keep) = &self.keep {
+            keep.confirm(handle);
+        }
+    }
+
+    /// Opens that kept or dropped the kernel's cache, with `keep_cache`.
+    pub fn keep_cache_stats(&self) -> Option<KeepCacheStats> {
+        self.keep.as_ref().map(|k| k.stats())
+    }
+
+    /// This mount is changing the data of `ino`.
+    fn local_change(&self, ino: u64) {
+        if let Some(keep) = &self.keep {
+            keep.changed(ino);
+        }
+    }
+
     /// `fsync`/`fdatasync` of a handle: sends the file's buffered writes, waits for them, and
     /// reports a loss this handle has not been told of by an earlier fsync.
     pub fn fsync(&self, handle: u64) -> Result<(), Errno> {
+        self.confirm_open(handle);
         // Read before waiting, so overlapping calls on one handle report the same loss.
         let (ino, from) = self.handles.sync_from(handle)?;
         self.drain(ino)?;
@@ -528,6 +615,7 @@ impl Ops {
     /// [`Self::fsync`] and, if the handle can write, reports a loss since it was opened that
     /// its fsync has not. The report stays due to a later fsync.
     pub fn close(&self, handle: u64) -> Result<(), Errno> {
+        self.confirm_open(handle);
         self.drain(self.handles.ino(handle)?)?;
         self.handles.report_close(handle)
     }
@@ -536,6 +624,10 @@ impl Ops {
     /// (a loss here stays due to later openers, as the kernel ignores this call's result)
     /// and, on the file's last handle, removes it if it was unlinked while open.
     pub fn release(&self, handle: u64) -> Result<(), Errno> {
+        // Not a confirmation: the kernel releases an open it failed to finish, too.
+        if let Some(keep) = &self.keep {
+            keep.forget_handle(handle);
+        }
         let ino = self.handles.ino(handle)?;
         let sent = self.drain_checked(ino);
         if self.handles.release(handle)? {
@@ -690,6 +782,11 @@ impl Ops {
     }
 
     pub fn getxattr(&self, ino: u64, name: &str) -> Result<Vec<u8>, Errno> {
+        if ino == atlas_native::ROOT_INO && name == KEEP_CACHE_XATTR {
+            if let Some(stats) = self.keep_cache_stats() {
+                return serde_json::to_vec(&stats).map_err(|_| libc::EIO);
+            }
+        }
         self.client
             .request(
                 Method::GET,
@@ -870,6 +967,7 @@ impl Ops {
     }
 
     pub fn setattr(&self, ino: u64, attr: SetAttr) -> Result<Attr, Errno> {
+        self.local_change(ino);
         self.drop_readahead(ino);
         if let Some(size) = attr.size {
             // Bytes buffered below the new size must reach the file before it is cut.
@@ -923,14 +1021,34 @@ impl Ops {
         } else {
             len
         };
+        let epoch = self.fill_epoch(ino);
         let data = self.fetch(ino, offset, want)?;
         let out = data[..len.min(data.len())].to_vec();
         if want > len {
             if let Ok(mut r) = self.readahead.lock() {
-                r.put(ino, (offset, Arc::new(data)));
+                // Not if it was read before a change, or before an open that dropped the
+                // cache: it must not be served after either.
+                if self.fill_epoch(ino) == epoch {
+                    r.put(ino, (offset, Arc::new(data)));
+                }
             }
         }
         Ok(out)
+    }
+
+    fn fill_epoch(&self, ino: u64) -> u64 {
+        self.keep.as_ref().map_or(0, |k| k.fill_epoch(ino))
+    }
+
+    /// The query suffix of a data or layout request. With `keep_cache`, data stays cached past
+    /// this open, so it must be no older than the tag compared at the next one: any replica
+    /// answers after a read barrier, never a leader that does not know it has been replaced.
+    fn barrier(&self) -> &'static str {
+        if self.keep.is_some() {
+            "&barrier=1"
+        } else {
+            ""
+        }
     }
 
     fn fetch(&self, ino: u64, offset: u64, len: usize) -> Result<Vec<u8>, Errno> {
@@ -956,7 +1074,10 @@ impl Ops {
                     .client
                     .request(
                         Method::GET,
-                        &self.path(&format!("/inodes/{ino}/data?offset={at}&len={want}")),
+                        &self.path(&format!(
+                            "/inodes/{ino}/data?offset={at}&len={want}{}",
+                            self.barrier()
+                        )),
                         Body::Empty,
                         Retry::Idempotent,
                     )
@@ -982,7 +1103,10 @@ impl Ops {
         let layout: FileLayout = self
             .call(
                 Method::GET,
-                &format!("/inodes/{ino}/layout?offset={offset}&len={len}"),
+                &format!(
+                    "/inodes/{ino}/layout?offset={offset}&len={len}{}",
+                    self.barrier()
+                ),
                 Body::Empty,
                 Retry::Idempotent,
             )
@@ -1126,6 +1250,8 @@ impl Ops {
             return Err(libc::EROFS);
         }
         let ino = self.handles.ino(handle)?;
+        // Even if refused below: the kernel's pages may hold the bytes.
+        self.local_change(ino);
         if mode != WriteMode::Mapped {
             self.handles.refuse_write(handle)?;
         }
@@ -1157,6 +1283,7 @@ impl Ops {
     /// Fails if a run sent in this call that carries any of `data`'s range could not be
     /// stored. A failed run of other bytes is only recorded: `data` stays buffered.
     fn buffer(&self, ino: u64, offset: u64, data: &[u8]) -> Result<usize, Errno> {
+        self.local_change(ino);
         self.drop_readahead(ino);
         let end = offset + data.len() as u64;
         // Runs are queued under the lock, so runs of one inode queue in write order.
@@ -1183,6 +1310,7 @@ impl Ops {
     }
 
     fn send_through(&self, ino: u64, offset: u64, data: &[u8]) -> Result<usize, Errno> {
+        self.local_change(ino);
         self.drop_readahead(ino);
         self.drain_checked(ino)?;
         let run = Dirty {

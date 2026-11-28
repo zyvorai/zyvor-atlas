@@ -191,6 +191,17 @@ impl Client {
         serde_json::from_slice(&b).map_err(|e| Error::Decode(format!("{path}: {e}")))
     }
 
+    /// One pass over the endpoints, without waiting or retrying: for a question whose answer
+    /// the caller can do without.
+    pub fn json_once(&self, method: Method, path: &str) -> Result<Value, Error> {
+        match self.round(&method, path, &Body::Empty, Retry::Idempotent, &mut false) {
+            Round::Done(b) => {
+                serde_json::from_slice(&b).map_err(|e| Error::Decode(format!("{path}: {e}")))
+            }
+            Round::Failed(e) | Round::Again(e) => Err(e),
+        }
+    }
+
     fn round(
         &self,
         method: &Method,
