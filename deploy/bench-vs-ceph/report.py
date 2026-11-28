@@ -26,6 +26,8 @@ def sides_of(job):
 
 def parse(path):
     """One repeat's metrics, or None if fio reported a failure or did no I/O."""
+    if path.with_suffix(".failed").exists():
+        return None
     try:
         text = path.read_text()
         job = json.loads(text[text.index("{") :])["jobs"][0]

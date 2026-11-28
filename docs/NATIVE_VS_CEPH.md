@@ -27,7 +27,7 @@ not production-supported.
 The tables below describe `9c2aba1e`. Later work on the same branch:
 
 - **A1 (block device):** `atlas-native-ublk` exists ([NATIVE_UBLK](NATIVE_UBLK.md)). It has not been run against a Linux kernel.
-- **A2 (small writes):** opt-in delta writes exist ([NATIVE_DELTA_WRITES](NATIVE_DELTA_WRITES.md)). No performance has been measured.
+- **A2 (small writes):** opt-in delta writes exist ([NATIVE_DELTA_WRITES](NATIVE_DELTA_WRITES.md)), with one short measurement there.
 - **A3 (stale block reads):** block data reads now run a read barrier, and the read lease is granted only from a confirmed ReadIndex. Tested in process, not on a real multi-host partition.
 
 ## Top blockers

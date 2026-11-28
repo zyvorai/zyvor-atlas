@@ -9,6 +9,7 @@
 # Usage: run.sh <system> <tag>      system: ceph | atlas; tag names the result set
 #   PROFILE=quick|full (default quick)   STEADY_SECS=0 (extra long 4k random-write run)
 #   SIZE_MB RAMP RUNTIME REPEATS override the profile.
+#   STEADY_ONLY=1   layout, the long run (STEADY_SECS) and what follows it; skips the other workloads.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
@@ -25,6 +26,8 @@ case "${PROFILE:-quick}" in
   *) echo "PROFILE must be quick or full" >&2; exit 2 ;;
 esac
 STEADY_SECS="${STEADY_SECS:-0}"
+STEADY_ONLY="${STEADY_ONLY:-0}"
+[ "$STEADY_ONLY" != 1 ] || [ "$STEADY_SECS" -gt 0 ] || { echo "STEADY_ONLY=1 needs STEADY_SECS" >&2; exit 2; }
 FILES=32
 FILE_MB=$((SIZE_MB / FILES))
 
@@ -99,6 +102,8 @@ fio_run() {
   after="$(disk_sectors)"
   echo "$name $rep $(($(date +%s) - t0)) $before $after $(awk '{print $1}' /proc/loadavg)" >>"$OUT/disk.txt"
   if [ "$rc" -ne 0 ]; then
+    # fio still writes figures when interrupted; this tells report.py not to trust them.
+    echo "$rc" >"$OUT/$name.$rep.failed"
     echo "FAILED $name repeat $rep (fio exit $rc): $(tail -3 "$OUT/$name.$rep.err")" >&2
     FAILED=1
   else
@@ -128,14 +133,16 @@ measure() {
   done
 }
 
-measure seqread-1m-fresh "${ONE[@]}" --rw=read --bs=1m --file_service_type=sequential
-measure randread-4k-qd32-fresh "${MANY[@]}" --rw=randread --bs=4k
-for bs in 4k 64k; do
-  measure "randwrite-$bs-qd1" "${ONE[@]}" --rw=randwrite --bs="$bs" --sync=1 --file_service_type=random
-  measure "randwrite-$bs-qd32" "${MANY[@]}" --rw=randwrite --bs="$bs" --sync=1
-done
-measure randrw70-4k-qd32 "${MANY[@]}" --rw=randrw --rwmixread=70 --bs=4k --sync=1
-measure seqwrite-1m "${ONE[@]}" --rw=write --bs=1m --sync=1 --file_service_type=sequential
+if [ "$STEADY_ONLY" != 1 ]; then
+  measure seqread-1m-fresh "${ONE[@]}" --rw=read --bs=1m --file_service_type=sequential
+  measure randread-4k-qd32-fresh "${MANY[@]}" --rw=randread --bs=4k
+  for bs in 4k 64k; do
+    measure "randwrite-$bs-qd1" "${ONE[@]}" --rw=randwrite --bs="$bs" --sync=1 --file_service_type=random
+    measure "randwrite-$bs-qd32" "${MANY[@]}" --rw=randwrite --bs="$bs" --sync=1
+  done
+  measure randrw70-4k-qd32 "${MANY[@]}" --rw=randrw --rwmixread=70 --bs=4k --sync=1
+  measure seqwrite-1m "${ONE[@]}" --rw=write --bs=1m --sync=1 --file_service_type=sequential
+fi
 if [ "$STEADY_SECS" -gt 0 ]; then
   fio_run steady-randwrite-4k-qd32 1 "$STEADY_SECS" "${MANY[@]}" --rw=randwrite --bs=4k --sync=1 \
     --log_avg_msec=10000 --write_iops_log=/srv/bench/steady
@@ -144,7 +151,9 @@ fi
 measure randread-4k-qd32-after "${MANY[@]}" --rw=randread --bs=4k
 measure seqread-1m-after "${ONE[@]}" --rw=read --bs=1m --file_service_type=sequential
 
-for rep in $(seq 1 "$REPEATS"); do
+SMALL_REPEATS=$REPEATS
+[ "$STEADY_ONLY" != 1 ] || SMALL_REPEATS=0
+for rep in $(seq 1 "$SMALL_REPEATS"); do
   inct mkdir -p "$DIR/small.$rep"
   fio_run smallfile-create-4k "$rep" 0 --directory="$DIR/small.$rep" --numjobs=8 --nrfiles=250 --filesize=4k \
     --rw=write --bs=4k --create_on_open=1 --openfiles=1 --file_service_type=sequential --fsync_on_close=1

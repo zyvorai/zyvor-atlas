@@ -167,3 +167,33 @@ Not verified:
 - the order in which truncate takes its fence and reads the catalog during a failover has no
   test of its own;
 - long runs, large catalogs, and behaviour near a full device.
+
+## Measured: one quick run against Ceph (2026-11-28)
+
+`deploy/bench-vs-ceph/compare.sh`, commit `598a6b31`, one shared host, one spinning disk, three
+copies for both systems, CephFS (Ceph 20.2.5, ceph-fuse) against atlas-native FUSE. 1 GiB data set,
+15 s ramp, **60 s per test, a single run**. IOPS:
+
+| Test | Ceph | atlas-native, mode off | atlas-native, delta writes |
+|---|---:|---:|---:|
+| 4 KiB random write, queue depth 32 | 38.7 | 3.8 | 56.9 |
+| 64 KiB random write, queue depth 32 | 50.1 | 3.8 | 47.2 |
+| 4 KiB mixed 70/30, queue depth 32 | 100.3 | 12.9 | 83.3 |
+| 4 KiB random write, queue depth 1 | 7.8 | 4.2 | 4.0 |
+| 64 KiB random write, queue depth 1 | 5.6 | 3.7 | 4.2 |
+| 1 MiB sequential write | 4.6 | 4.1 | 3.6 |
+| 4 KiB file create | 26.5 | 4.2 | 4.9 |
+
+- Delta writes led Ceph only on the 4 KiB queue-depth-32 test. Ceph led or was level everywhere else
+  in this table.
+- **This is not steady state.** After the mixed test, 3,830 deltas in 663 cells were still waiting to
+  be folded.
+- Folding continued into the later tests: 1 MiB sequential reads after the random writes fell to
+  92 MiB/s against 376 MiB/s with the mode off, while about 700 MiB was written to the disk during
+  that read.
+- **Read results are not comparable** and are left out: the data set fits in memory, atlas-native
+  data nodes read through the page cache, and its random read rates are beyond what the disk can do.
+- Whole-disk write counters (which include other work on the host) suggest delta writes put roughly
+  two to three times more on disk per 4 KiB operation than Ceph, before the backlog is folded.
+- Ceph's integrity check was interrupted (an oversized first version) and did not run to completion.
+  Both atlas-native runs passed a 4 MiB crc32c write and read-back.
