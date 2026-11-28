@@ -166,6 +166,7 @@ fn without_batching_each_fold_is_a_command_of_its_own() {
     assert_eq!(e.commit_rewrites(&rewrites), [FoldEnd::Folded; 2]);
     assert_eq!(e.applied_index().unwrap(), applied + 2);
     assert_eq!(e.telemetry.fold_batch.snapshot().count(), 0);
+    drop(rewrites);
     e.cfg.delta_writes.fold_batch_cells = 32;
     e.cfg.delta_writes.enabled = false;
     assert!(!e.fold_batch_supported().unwrap());
