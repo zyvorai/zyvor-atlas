@@ -157,16 +157,16 @@ Covered by tests:
 
 Not verified:
 
-- **performance**: nothing was measured, and none of the defaults are tuned;
-- a kernel FUSE mount (`fio --verify`, `git clone` with `fsck`), NFS, SMB, S3 or CSI with the
-  mode on;
+- **performance** beyond the two single runs below; none of the defaults are tuned;
+- a kernel FUSE mount with the mode on beyond the benchmark runs below and their 4 MiB `fio`
+  verify (no `git clone` with `fsck`); NFS, SMB, S3 or CSI with the mode on;
 - a deployed or multi-host cluster, real disks under load, power loss, or killing processes: the
   "leader killed" tests halt a Raft replica inside one test process;
 - an older build in the same cluster: the gate and the data-node fallback were not run against
   one (a current node advertising no capability stands in), and no upgrade or downgrade was run;
 - the order in which truncate takes its fence and reads the catalog during a failover has no
   test of its own;
-- long runs, large catalogs, and behaviour near a full device.
+- runs longer than 20 minutes, large catalogs, and behaviour near a full device.
 
 ## Measured: one quick run against Ceph (2026-11-28)
 
@@ -197,3 +197,32 @@ copies for both systems, CephFS (Ceph 20.2.5, ceph-fuse) against atlas-native FU
   two to three times more on disk per 4 KiB operation than Ceph, before the backlog is folded.
 - Ceph's integrity check was interrupted (an oversized first version) and did not run to completion.
   Both atlas-native runs passed a 4 MiB crc32c write and read-back.
+
+## Measured: 20 minutes of 4 KiB random writes (2026-11-28)
+
+`PROFILE=quick STEADY_ONLY=1 STEADY_SECS=1200 CASES="ceph atlas-delta"`, commit `f3b3e359`, same
+host and 1 GiB data set, queue depth 32, a single run.
+
+| | Ceph | atlas-native, delta writes |
+|---|---:|---:|
+| Mean write IOPS over 1200 s | 37.8 | 23.8 |
+| p50 / p99 write latency | 868 / 1334 ms | 994 / 3808 ms |
+| MiB written to the disk during the test | 2,836 | 4,080 |
+| 1 MiB sequential read afterwards | 103 MiB/s | 5.1 MiB/s |
+| 4 KiB random read afterwards, queue depth 32 | 145 IOPS | 797 IOPS |
+| p99 of that random read | 434 ms | 1019 ms |
+| 4 MiB crc32c write and read-back | passed | passed |
+
+- **The short-run lead does not last.** Over 20 minutes Ceph completed about 1.6 times as many
+  writes as delta writes, with a much shorter latency tail.
+- Delta writes slowed sharply after roughly the second minute. The time log of this run is too
+  coarse (a whole number per job) to give a curve; `run.sh` now logs every completion instead.
+- The likely reason is that folding competes with new writes for the one disk. 348 MiB was still
+  being written during the 60 s sequential read afterwards. Node metrics were not captured, so
+  backlog, fold counts and fallbacks for this run are unknown.
+- The random read figures are partly served from memory and are not a fair comparison.
+- Today's atlas-native (mode off) was not run for 20 minutes. In the short run it managed 3.8 IOPS.
+- The host is shared; load was high during both runs (higher at the end of the delta run).
+
+**Conclusion:** on this host, atlas-native with delta writes does not beat Ceph at sustained small
+random writes. It is not ready to be enabled by default.

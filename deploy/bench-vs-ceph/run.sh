@@ -9,6 +9,7 @@
 # Usage: run.sh <system> <tag>      system: ceph | atlas; tag names the result set
 #   PROFILE=quick|full (default quick)   STEADY_SECS=0 (extra long 4k random-write run)
 #   SIZE_MB RAMP RUNTIME REPEATS override the profile.
+#   The long run leaves steady_per_minute.txt (its last minute may be partial).
 #   STEADY_ONLY=1   layout, the long run (STEADY_SECS) and what follows it; skips the other workloads.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -145,8 +146,13 @@ if [ "$STEADY_ONLY" != 1 ]; then
 fi
 if [ "$STEADY_SECS" -gt 0 ]; then
   fio_run steady-randwrite-4k-qd32 1 "$STEADY_SECS" "${MANY[@]}" --rw=randwrite --bs=4k --sync=1 \
-    --log_avg_msec=10000 --write_iops_log=/srv/bench/steady
-  inct sh -c 'cat /srv/bench/steady_iops*.log' >"$OUT/steady_iops.log" || true
+    --write_lat_log=/srv/bench/steady
+  # One line per completed write (all jobs together), then completions per second for each minute.
+  # An averaged IOPS log is useless here: per job it is a whole number near 1.
+  inct sh -c 'cat /srv/bench/steady_clat*.log' >"$OUT/steady_clat.log" || true
+  awk -F, '{ m = int($1 / 60000) + 1; n[m]++; if (m > last) last = m }
+    END { print "minute iops"; for (m = 1; m <= last; m++) printf "%d %.1f\n", m, n[m] / 60 }' \
+    "$OUT/steady_clat.log" >"$OUT/steady_per_minute.txt"
 fi
 measure randread-4k-qd32-after "${MANY[@]}" --rw=randread --bs=4k
 measure seqread-1m-after "${ONE[@]}" --rw=read --bs=1m --file_service_type=sequential
