@@ -43,6 +43,8 @@ fn empty_replica(fs: &str, name: &str, extent_bytes: u64, now_ns: i64) -> FsMeta
         usage: Some(super::FsUsage::default()),
         quota: None,
         replica: Some(ReplicaState::default()),
+        // Stamped by whoever inserts it.
+        incarnation: 0,
     }
 }
 
@@ -70,10 +72,9 @@ impl Catalog {
             }
             return Err(MetaError::Exists(format!("filesystem {fs}")));
         }
-        self.filesystems.insert(
-            fs.to_string(),
-            empty_replica(fs, name, extent_bytes, now_ns),
-        );
+        let mut empty = empty_replica(fs, name, extent_bytes, now_ns);
+        empty.incarnation = self.next_incarnation();
+        self.filesystems.insert(fs.to_string(), empty);
         Ok(())
     }
 
@@ -93,6 +94,7 @@ impl Catalog {
         let mut fresh = empty_replica(fs, &f.name, f.extent_bytes.unwrap_or_default(), root_ns);
         fresh.quota = f.quota;
         fresh.next_ino = f.next_ino;
+        fresh.incarnation = self.next_incarnation();
         self.filesystems.insert(fs.to_string(), fresh);
         self.leases.forget_fs(fs);
         for inode in &old {
@@ -437,6 +439,7 @@ impl Catalog {
         tree.source_snapshot = current.source_snapshot.clone();
         tree.next_ino = tree.next_ino.max(current.next_ino);
         tree.replica = replica;
+        tree.incarnation = self.next_incarnation();
         self.share_extents(&tree.inodes)?;
         self.filesystems.insert(fs.to_string(), tree);
         self.leases.forget_fs(fs);

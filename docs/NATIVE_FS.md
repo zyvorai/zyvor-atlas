@@ -66,6 +66,7 @@ All routes need the API token (and client certificate where configured), like th
 | `DELETE /v1/fs/{fs}/inodes/{ino}/xattrs/{name}` | 204; 404 `no_attr` if unset. |
 | `GET /v1/fs/{fs}/inodes/{ino}/data?offset=N&len=M` | Raw bytes; short at end of file. |
 | `PUT /v1/fs/{fs}/inodes/{ino}/data?offset=N` | Raw body written at `offset` (extends the file) → attributes. |
+| `GET /v1/fs/{fs}/inodes/{ino}/content-tag` | `{"tag"}`: a hex string that changes with every change to the file and never comes back, or null if a client must not keep the file's data (not a regular file, a replica filesystem, more than 65536 extents and deltas). See "Keeping the page cache". |
 | `POST /v1/fs/{fs}/sessions` | `{"session", "ttl_ms", "cache"?}` (TTL 1000–300000): opens a client session, or renews it with a new TTL → `{session, ttl_ms, expires_ms}`. Session ids are client-chosen (the mount uses a UUID). `cache: true` if the session will hold cache leases. |
 | `GET /v1/fs/{fs}/sessions/{id}/recalls?wait_ms=` | `{"inos": [...]}`: cache leases the session must give back, waiting up to `wait_ms` (at most 25 s) for one. Leader only. |
 | `POST /v1/fs/{fs}/sessions/{id}/recalls/done` | `{"inos": [...]}`: the session dropped what it cached under these leases → 204. |
@@ -113,7 +114,8 @@ the background, default 4; 0 sends them in the write call), `--readahead-bytes` 
 `--max-io-bytes` (largest request, default 8 MiB; keep at or below the nodes' `max_request_bytes`),
 `--retry-secs` (default 30), `--read-only`, `--allow-other`, `--fuse-threads` (kernel request
 workers, each with its own `/dev/fuse` fd, default 4), `--session-ttl-ms` (lease of the mount's
-session, default 15000), `--cache-leases` (see Consistency), `--acl` (see "POSIX ACLs"), `--direct-reads` and `--prefer-host` (below). It runs in the
+session, default 15000), `--cache-leases` (see Consistency), `--keep-cache` (see "Keeping the
+page cache"), `--acl` (see "POSIX ACLs"), `--direct-reads` and `--prefer-host` (below). It runs in the
 foreground until `fusermount3 -u`; the mount uses `default_permissions`, so the kernel checks
 modes and ownership.
 
@@ -384,6 +386,63 @@ once, taking nothing from open handles.
   kernel worker an unlock needs. A snapshot mount grants every lock locally (nothing writes
   there). Locks need every metadata node upgraded first: an older node cannot apply them.
 - `O_DIRECT` reads and writes skip the caches; see "Direct I/O".
+- The kernel drops a file's cached data at every open, unless the mount runs with
+  `--keep-cache` (below), which keeps it only for an unchanged file.
+
+## Keeping the page cache
+
+By default the kernel discards a file's cached pages whenever the file is opened, so a file read
+many times is fetched from the cluster every time. `atlas-native-mount --keep-cache` (off by
+default) answers an open with `FOPEN_KEEP_CACHE` when the file is unchanged since the cached
+pages were read. Close-to-open consistency is the same as without it.
+
+Only opens that read through the page cache take part (`O_RDONLY` without `O_DIRECT`); every
+other open drops the cache as before. Each such open asks the cluster for the file's content tag
+and keeps the cache only if all of these hold:
+
+| Condition | Why |
+|---|---|
+| This mount recorded the tag at an earlier open that dropped the cache | everything cached since was read after that tag, so it is that content or newer |
+| The tag now equals the recorded one | a tag never comes back after a change, so there is nothing newer, hence nothing newer cached |
+| A later `read`, `close` or `fsync` arrived on a handle whose open dropped the cache | proves the kernel has finished dropping it; until then other opens drop it too |
+| This mount has not written, truncated or lost bytes of the file since | the kernel's pages may hold bytes the cluster does not |
+| No write-back loss of the file is still unreported | see "Durability and write errors" |
+| The cluster answered | otherwise the open succeeds and drops the cache |
+
+- **The tag** is a SHA-256 the metadata node computes from its catalog: the extents and pending
+  deltas the file points to, its size and times, a number that moves whenever the filesystem's
+  tree is replaced (created or cloned under a used id, a replica reverted to a snapshot) and,
+  for a snapshot, when it was taken. So a write by another mount, a truncate, a rewrite of the
+  same bytes, a restore and an inode number used again all give a new tag. Anything that touches
+  `ctime` (chmod, rename, link, extended attributes) does too, and so does the background fold of
+  delta writes: those cost one needless re-read. A replica filesystem has no tag.
+- **Freshness**: the tag and, with `--keep-cache`, every data and layout request carry
+  `?barrier=1`: whichever replica answers first applies everything committed before the request,
+  so a lagging follower or a leader that has been replaced without knowing cannot serve an older
+  tag or older data. The mount's own read-ahead window is dropped at every open that drops the
+  kernel's cache.
+- **What it does not change**: attributes and names are still cached for `--ttl-ms` (or under
+  cache leases). A descriptor already open may read pages cached before another client's write
+  or fetched after it, as without the flag; the next open settles it. Changes made behind the
+  catalog's back (in-place application of deltas, which is designed but not implemented, would
+  keep extents' identities) would have to be added to the tag.
+- **Cost**: one request per read-only open (a pass over the metadata nodes without retries; an
+  unreachable cluster delays the open by at most the connect and request timeouts), a read
+  barrier per data request (free on a leader holding its read lease, otherwise a quorum round),
+  and on the metadata node a hash over the file's extent list under the catalog read lock. The
+  mount remembers at most 65536 files; past that it forgets all of them, which only drops caches.
+  The cached pages are ordinary page cache and are evicted under memory pressure.
+- **Counters**: `getfattr -n user.atlas.keep_cache <mountpoint>` returns JSON with `kept` and
+  `dropped_first` (no record yet), `dropped_changed`, `dropped_unconfirmed`,
+  `dropped_local_change` (changed through this mount while the tag was read),
+  `dropped_uncacheable`, `dropped_unavailable` (no answer, or the file is gone) and
+  `dropped_lost_writes`. The mount logs them at unmount. The attribute is answered by the mount,
+  is not listed, and hides a real attribute of that name on the root.
+- **Upgrades**: upgrade every metadata node first. An older one has no tag route, so opens drop
+  the cache; the tree number is part of the replicated catalog, and an older node ignores it.
+- **Verification**: `deploy/native/keep-cache-lab.py` runs several mounts on a real kernel and
+  checks data and page-cache residency (`mincore(2)`) after each kind of change; `--bench`
+  times repeated reads with the flag off and on. Speed has not been measured.
 
 ## Atlas gateway
 

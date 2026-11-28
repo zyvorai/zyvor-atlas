@@ -89,6 +89,8 @@ struct FsHeader {
     quota: Option<FsQuota>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     replica: Option<ReplicaState>,
+    #[serde(default, skip_serializing_if = "crate::namespace::is_zero")]
+    incarnation: u64,
 }
 
 /// redb's own page cache, unless configured otherwise; the operating system's page cache sits
@@ -263,6 +265,7 @@ impl CatalogStore {
                 usage: h.usage,
                 quota: h.quota,
                 replica: h.replica,
+                incarnation: h.incarnation,
             };
             filesystems.insert(h.id, fs);
         }
@@ -446,6 +449,7 @@ fn write_filesystems(
             inodes: Some(f.inodes.len()),
             quota: f.quota,
             replica: f.replica.clone(),
+            incarnation: f.incarnation,
         })?;
         headers.insert(fs, header.as_slice()).map_err(err)?;
         let all;

@@ -107,6 +107,13 @@ struct Args {
     /// a change by another client recalls them first, so nothing cached is stale.
     #[arg(long)]
     cache_leases: bool,
+    /// Keep the kernel's page cache of a file from one read-only open to the next while the
+    /// cluster says the file is unchanged, instead of dropping it at every open. Each such open
+    /// asks the cluster (one request), and data reads wait for a read barrier. Counters:
+    /// `getfattr -n user.atlas.keep_cache <mountpoint>`. Needs every metadata node upgraded
+    /// (an older one only makes opens drop the cache). Off by default.
+    #[arg(long)]
+    keep_cache: bool,
     /// Enforce POSIX ACLs (`setfacl`/`getfacl`): the kernel checks them on every access, at the
     /// cost of one ACL lookup per inode it hasn't cached.
     #[arg(long)]
@@ -190,6 +197,7 @@ fn ops(args: &Args) -> Result<Ops, String> {
         session_ttl: Duration::from_millis(args.session_ttl_ms),
         lock_waiters: args.fuse_threads.saturating_sub(1),
         cache_leases: args.cache_leases,
+        keep_cache: args.keep_cache,
     };
     ops_cfg.validate()?;
     let ops = Ops::new(client, fs, ops_cfg);

@@ -18,7 +18,8 @@ use atlas_native::{
 };
 use atlas_native_fuse::{
     client::{Body, Client, ClientConfig, Retry},
-    ops::{DirectReads, Ops, OpsConfig, WriteMode},
+    keepcache::KeepCacheStats,
+    ops::{DirectReads, Ops, OpsConfig, WriteMode, KEEP_CACHE_XATTR},
 };
 use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair};
 use reqwest::Method;
@@ -2092,4 +2093,289 @@ fn real_rdma_degrades_gracefully_under_a_low_memlock_limit() {
         s.live_connections <= cap as u64 && s.requests > 0,
         "cap {cap}: {s:?}"
     );
+}
+
+// ---- Keeping the kernel's page cache ---------------------------------------------------------
+//
+// What `atlas-native-mount --keep-cache` decides at each open; the kernel side is
+// `deploy/native/keep-cache-lab.py`.
+
+fn keeping(cfg: OpsConfig) -> OpsConfig {
+    OpsConfig {
+        keep_cache: true,
+        ..cfg
+    }
+}
+
+/// A read-only open and close of `ino`: whether it kept the cache.
+fn reopen(ops: &Ops, ino: u64) -> bool {
+    let h = ops.open(ino, false).unwrap();
+    let kept = ops.open_keeps_cache(h);
+    ops.close(h).unwrap();
+    ops.release(h).unwrap();
+    kept
+}
+
+/// The next open drops the cache and the one after keeps it.
+fn refills(ops: &Ops, ino: u64, after: &str) {
+    assert!(!reopen(ops, ino), "kept after {after}");
+    assert!(reopen(ops, ino), "not kept again after {after}");
+}
+
+fn stats(ops: &Ops) -> KeepCacheStats {
+    ops.keep_cache_stats().expect("keep_cache is on")
+}
+
+fn put(ops: &Ops, ino: u64, offset: u64, data: &[u8]) {
+    ops.write(ino, offset, data).unwrap();
+    ops.flush(ino).unwrap();
+}
+
+fn post(c: &Cluster, path: &str, body: serde_json::Value) {
+    c.client()
+        .json(Method::POST, path, Body::Json(body), Retry::Idempotent)
+        .unwrap();
+}
+
+#[test]
+fn keep_cache_keeps_only_what_no_other_mount_changed() {
+    let c = Cluster::start();
+    create_fs(&c, "kc");
+    // Attributes and read-ahead live long: only the keep-cache rules can make the mount look.
+    let a = mount(
+        &c,
+        "kc",
+        keeping(OpsConfig {
+            ttl: Duration::from_secs(60),
+            ..OpsConfig::default()
+        }),
+    );
+    let b = mount(&c, "kc", OpsConfig::default());
+    let f = new_file(&b, "f");
+    let original = pattern(200_000, 1);
+    put(&b, f, 0, &original);
+
+    // Two opens before any request on the first: neither knows the old pages are gone.
+    let (h1, h2) = (a.open(f, false).unwrap(), a.open(f, false).unwrap());
+    assert!(!a.open_keeps_cache(h1));
+    assert!(!a.open_keeps_cache(h2));
+    a.confirm_open(h2);
+    assert!(reopen(&a, f));
+    assert!(reopen(&a, f));
+    a.release(h1).unwrap();
+    a.release(h2).unwrap();
+    let s = stats(&a);
+    assert_eq!(
+        (s.kept, s.dropped_first, s.dropped_unconfirmed),
+        (2, 1, 1),
+        "{s:?}"
+    );
+
+    // A window read before another mount's write is not served after the next open.
+    assert_eq!(a.read(f, 0, 4096).unwrap(), original[..4096]);
+    put(&b, f, 0, &[0xAA; 8192]);
+    refills(&a, f, "an overwrite elsewhere");
+    assert_eq!(a.read(f, 4096, 4096).unwrap(), [0xAA; 4096]);
+
+    put(&b, f, 0, &original[..8192]);
+    refills(&a, f, "the old bytes written back");
+    b.setattr(
+        f,
+        SetAttr {
+            size: Some(100),
+            ..SetAttr::default()
+        },
+    )
+    .unwrap();
+    refills(&a, f, "a truncate elsewhere");
+    put(&b, f, 100, b"appended");
+    refills(&a, f, "an append elsewhere");
+    b.setattr(
+        f,
+        SetAttr {
+            mode: Some(0o600),
+            ..SetAttr::default()
+        },
+    )
+    .unwrap();
+    refills(&a, f, "a chmod elsewhere");
+
+    // A rename over the name is another inode, never opened here.
+    let g = new_file(&b, "g");
+    put(&b, g, 0, b"the replacement");
+    b.rename(ROOT_INO, "g", ROOT_INO, "f").unwrap();
+    let other = mount(&c, "kc", keeping(OpsConfig::default()));
+    assert_eq!(other.lookup(ROOT_INO, "f").unwrap().ino, g);
+    let before = stats(&a).dropped_first;
+    refills(&a, g, "a rename over the name");
+    assert_eq!(stats(&a).dropped_first, before + 1);
+    // The replaced inode is gone: its open learns nothing and drops.
+    let before = stats(&a).dropped_unavailable;
+    assert!(!reopen(&a, f));
+    assert_eq!(stats(&a).dropped_unavailable, before + 1);
+
+    // The counters, as the mount's root answers them.
+    let v: serde_json::Value =
+        serde_json::from_slice(&a.getxattr(ROOT_INO, KEEP_CACHE_XATTR).unwrap()).unwrap();
+    assert_eq!(v["kept"], stats(&a).kept);
+    assert_eq!(b.getxattr(ROOT_INO, KEEP_CACHE_XATTR), Err(libc::ENODATA));
+    // Off: never kept, nothing counted.
+    assert!(!reopen(&b, g) && !reopen(&b, g));
+    assert_eq!(b.keep_cache_stats(), None);
+}
+
+#[test]
+fn keep_cache_drops_after_a_change_through_the_mount_itself() {
+    let c = Cluster::start();
+    create_fs(&c, "kl");
+    let a = mount(&c, "kl", keeping(OpsConfig::default()));
+    let f = new_file(&a, "f");
+    put(&a, f, 0, b"stored");
+    refills(&a, f, "the first write");
+
+    for mode in [WriteMode::Buffered, WriteMode::Direct, WriteMode::Mapped] {
+        let w = a.open(f, true).unwrap();
+        a.handle_write(w, 0, format!("{mode:?}").as_bytes(), mode)
+            .unwrap();
+        // Buffered bytes may not have reached the cluster, whose tag then still matches.
+        assert!(!reopen(&a, f), "kept during a {mode:?} write");
+        a.close(w).unwrap();
+        a.release(w).unwrap();
+        // The run may have gone since the last open: perhaps dropped once more, then kept.
+        reopen(&a, f);
+        assert!(reopen(&a, f), "not kept again after a {mode:?} write");
+    }
+    a.setattr(
+        f,
+        SetAttr {
+            size: Some(2),
+            ..SetAttr::default()
+        },
+    )
+    .unwrap();
+    refills(&a, f, "a truncate here");
+}
+
+#[test]
+fn keep_cache_is_never_kept_over_lost_write_back() {
+    let c = Cluster::start();
+    for p in PARALLEL {
+        let (a, f, _) = lossy(&c, &format!("klost{p}"), keeping(sending(p)));
+        put(&a, f, 0, b"stored");
+        refills(&a, f, "the first write");
+
+        let w = a.open(f, true).unwrap();
+        accept(&a, w);
+        // The close sends the bytes and reports the loss; no fsync has.
+        assert_eq!(a.close(w), Err(libc::EDQUOT));
+        a.release(w).unwrap();
+        let before = stats(&a).dropped_lost_writes;
+        for _ in 0..2 {
+            let h = a.open(f, false).unwrap();
+            assert!(!a.open_keeps_cache(h), "{p}");
+            a.confirm_open(h);
+            a.release(h).unwrap();
+        }
+        assert_eq!(stats(&a).dropped_lost_writes, before + 2);
+        assert_eq!(a.read(f, 0, 64).unwrap(), b"stored");
+
+        let h = a.open(f, false).unwrap();
+        assert_eq!(a.fsync(h), Err(libc::EDQUOT));
+        a.release(h).unwrap();
+        refills(&a, f, "a loss since reported");
+
+        // Reported by the writer's own fsync: the record from before the write is gone too.
+        let w = a.open(f, true).unwrap();
+        accept(&a, w);
+        assert_eq!(a.fsync(w), Err(libc::EDQUOT));
+        a.release(w).unwrap();
+        refills(&a, f, "a loss reported at once");
+    }
+}
+
+#[test]
+fn keep_cache_follows_a_leader_failover_and_a_restore() {
+    let mut c = Cluster::start();
+    create_fs(&c, "kf");
+    let a = mount(&c, "kf", keeping(OpsConfig::default()));
+    let b = mount(&c, "kf", OpsConfig::default());
+    let f = new_file(&b, "f");
+    put(&b, f, 0, b"at the snapshot");
+    refills(&a, f, "the first write");
+
+    // Every metadata node answers the same tag after a barrier, followers included.
+    let tags: Vec<String> = c
+        .endpoints()
+        .into_iter()
+        .map(|e| {
+            let mut cfg = ClientConfig::new(vec![e]);
+            cfg.token = Some(TOKEN.into());
+            Client::new(cfg)
+                .unwrap()
+                .json(
+                    Method::GET,
+                    &format!("/v1/fs/kf/inodes/{f}/content-tag?barrier=1"),
+                    Body::Empty,
+                    Retry::Idempotent,
+                )
+                .unwrap()["tag"]
+                .as_str()
+                .unwrap()
+                .to_string()
+        })
+        .collect();
+    assert_eq!(tags.len(), 3);
+    assert!(tags.windows(2).all(|t| t[0] == t[1]), "{tags:?}");
+
+    // An unchanged file is still kept under the next leader, once there is one.
+    c.kill_leader();
+    b.mknode(ROOT_INO, "elected", NodeType::File, None, 0o644, 0, 0)
+        .unwrap();
+    assert!(reopen(&a, f), "an unchanged file after a failover");
+    put(&b, f, 0, b"after failover!");
+    refills(&a, f, "a write under the new leader");
+    assert_eq!(a.read(f, 0, 64).unwrap(), b"after failover!");
+
+    // Restore by cloning a snapshot under the same id. `a` records the snapshot's state and
+    // reads newer data afterwards; the restored file equals the record in all but its tree.
+    post(&c, "/v1/fs/kf/snapshots", json!({ "id": "s", "name": "s" }));
+    reopen(&a, f);
+    assert!(reopen(&a, f));
+    put(&b, f, 0, b"newer than that");
+    assert_eq!(a.read_direct(f, 0, 64).unwrap(), b"newer than that");
+    c.client()
+        .request(Method::DELETE, "/v1/fs/kf", Body::Empty, Retry::Remove)
+        .unwrap();
+    post(
+        &c,
+        "/v1/fs-snapshots/s/clone",
+        json!({ "id": "kf", "name": "kf" }),
+    );
+    let before = stats(&a).dropped_changed;
+    refills(&a, f, "a restore under the same id");
+    assert_eq!(stats(&a).dropped_changed, before + 1);
+
+    // A snapshot mount keeps its cache.
+    let ro = mount(&c, "kf@s", keeping(OpsConfig::default()));
+    refills(&ro, f, "mounting a snapshot");
+    assert!(reopen(&ro, f));
+
+    // No metadata node answers: the open succeeds and drops.
+    c.meta.clear();
+    assert!(!reopen(&a, f));
+    assert_eq!(stats(&a).dropped_unavailable, 1);
+}
+
+#[test]
+fn keep_cache_works_with_direct_reads() {
+    let c = Cluster::start();
+    create_fs(&c, "kd");
+    let b = mount(&c, "kd", OpsConfig::default());
+    let f = new_file(&b, "f");
+    let data = pattern(300_000, 7);
+    put(&b, f, 0, &data);
+    let a = mount(&c, "kd", keeping(direct(None)));
+    refills(&a, f, "the first write");
+    assert_eq!(a.read(f, 0, data.len()).unwrap(), data);
+    assert_eq!(a.direct_fallbacks(), 0);
 }

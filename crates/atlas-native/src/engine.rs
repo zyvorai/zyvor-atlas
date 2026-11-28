@@ -38,6 +38,7 @@ use crate::{
 };
 
 mod combiner;
+mod content_tag;
 mod delta;
 mod direct;
 mod export;
