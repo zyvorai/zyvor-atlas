@@ -35,9 +35,10 @@ use crate::{
     metrics::{self, PromText},
     object::{DirObjectStore, ObjectStore},
     placement::{FailureDomain, Node, PlacementPolicy},
+    prealloc::{open_device, PreallocConfig},
     raft::{RaftConfig, RaftError, Role},
     raft_server::{RaftMux, RaftServer},
-    raw::{open_store, DeviceBackend},
+    raw::DeviceBackend,
     rebuild::{Pacer, RebuildConfig, RebuildStatus, Rebuilder},
     tls::{TlsIdentity, TlsPaths},
 };
@@ -104,6 +105,10 @@ pub struct DataNodeRole {
     /// Devices to serve, in index order. Empty: one `file` device at `<data_dir>/data/nvme0.data`.
     #[serde(default)]
     pub devices: Vec<DeviceConfig>,
+    /// Zero each `file` device ahead of its appends (`docs/NATIVE_NODE.md`,
+    /// "Preallocation"); off by default.
+    #[serde(default)]
+    pub preallocate: PreallocConfig,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -384,6 +389,12 @@ impl NodeConfig {
         if self.data_node.is_none() && self.metadata.is_none() {
             return invalid("enable at least one of data_node or metadata".into());
         }
+        if let Some(d) = &self.data_node {
+            d.preallocate.validate()?;
+            if d.preallocate.enabled && d.devices.iter().any(|d| d.backend != DeviceBackend::File) {
+                return invalid("data_node.preallocate applies to file devices only".into());
+            }
+        }
         if let Some(m) = &self.metadata {
             for (what, addr) in m.peers.values().map(|a| ("metadata.peers", a)).chain(
                 m.data_nodes
@@ -626,14 +637,17 @@ impl NativeNode {
                 };
                 let root = cfg.data_dir.join("data");
                 let devices = if role.devices.is_empty() {
-                    let device: Arc<dyn BlockStore> =
-                        Arc::new(crate::device::FileDevice::open(root.join("nvme0.data"))?);
-                    vec![device]
+                    let path = root.join("nvme0.data");
+                    let (file, prepare) = (DeviceBackend::File, &role.preallocate);
+                    vec![open_device(&path, file, &root, prepare)?]
                 } else {
                     role.devices
                         .iter()
                         .enumerate()
-                        .map(|(i, d)| open_store(&d.path, d.backend, &root.join(format!("dev{i}"))))
+                        .map(|(i, d)| {
+                            let hwm_dir = root.join(format!("dev{i}"));
+                            open_device(&d.path, d.backend, &hwm_dir, &role.preallocate)
+                        })
                         .collect::<Result<Vec<_>, _>>()?
                 };
                 let srv = DataNodeServer::start_guarded(
@@ -900,6 +914,16 @@ impl NativeNode {
     /// process should exit so its supervisor restarts it from disk.
     pub fn fatal_error(&self) -> Option<String> {
         self.shared.groups.iter().find_map(|g| g.raft.fatal_error())
+    }
+
+    /// Seals the data node's devices before the process exits without a full shutdown
+    /// (`crate::prealloc`): later appends are refused.
+    pub fn seal_devices(&self) {
+        if let Ok(d) = self.shared.data.lock() {
+            if let Some(d) = d.as_ref() {
+                d.seal_devices();
+            }
+        }
     }
 
     pub fn shutdown(&mut self) {
