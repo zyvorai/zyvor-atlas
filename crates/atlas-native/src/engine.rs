@@ -40,6 +40,7 @@ use crate::{
 mod changes;
 mod combiner;
 mod concurrent;
+mod content_tag;
 mod delta;
 mod devices;
 mod direct;

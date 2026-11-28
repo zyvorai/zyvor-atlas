@@ -174,6 +174,9 @@ Effort L. Gain here: **no** from sharding; request merging is the same idea as g
 - atlas-native: extents are immutable and carry SHA-256, which suits a node-wide cache shared by all
   mounts. Today each pod has its own mount and the page cache is dropped on open (K5). Effort S to keep the
   cache under cache leases, M for a node-wide cache. Risk: stale reads if invalidation is wrong.
+- Since: keeping the cache exists as an opt-in, `atlas-native-mount --keep-cache`, which compares a content
+  tag at each open and does not use cache leases ([NATIVE_FS](NATIVE_FS.md), "Keeping the page cache"). Its
+  speed has not been measured; there is no node-wide cache.
 - Gain here: **little**: data nodes are on the same host and already read through the page cache. It
   matters once data is remote. Phase 3 of the redesign would end extent immutability for some extents.
 

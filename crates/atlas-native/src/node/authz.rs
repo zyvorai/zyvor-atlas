@@ -170,6 +170,8 @@ const ROUTES: &[Route] = &[
     r("GET",    "v1/fs/{fs}/inodes/{ino}/data",       READ | DATA | REPL, On::Object),
     r("PUT",    "v1/fs/{fs}/inodes/{ino}/data",       DATA,        On::Object),
     r("GET",    "v1/fs/{fs}/inodes/{ino}/layout",     READ | DATA, On::Object),
+    // The same roles as `layout`: a digest of what `layout` and the attributes already show.
+    r("GET",    "v1/fs/{fs}/inodes/{ino}/content-tag", READ | DATA, On::Object),
     r("POST",   "v1/fs/{fs}/inodes/{ino}/direct-write",  DATA,     On::Object),
     r("POST",   "v1/fs/{fs}/inodes/{ino}/direct-commit", DATA,     On::Object),
     r("POST",   "v1/fs/{fs}/inodes/{ino}/direct-abort",  DATA,     On::Object),

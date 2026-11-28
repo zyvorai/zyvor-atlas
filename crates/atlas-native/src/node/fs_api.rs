@@ -573,6 +573,12 @@ fn inode_route(
             };
             Ok(Response::bytes(200, e.read_file(fs, ino, offset, len)?))
         }
+        // Whether the file's data changed since an earlier call (`atlas-native-mount
+        // --keep-cache`, which asks with `?barrier=1`); null: don't keep it.
+        ("GET", ["content-tag"]) => Ok(Response::json(
+            200,
+            &json!({ "tag": e.fs_content_tag(fs, ino)? }),
+        )),
         ("GET", ["layout"]) => {
             let (offset, len) = match read_range(sh, req) {
                 Ok(r) => r,

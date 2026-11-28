@@ -53,6 +53,15 @@ pub struct FsMeta {
     /// Set while the filesystem receives another one's changes ([`FsOp::ReplicaApply`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub replica: Option<ReplicaState>,
+    /// Moves whenever the whole tree is replaced (created, cloned, reverted to a snapshot):
+    /// the index of the command that did it, so it never repeats for one id. 0 for a tree
+    /// from before it was recorded. Part of a file's content tag.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub incarnation: u64,
+}
+
+pub(crate) fn is_zero(n: &u64) -> bool {
+    *n == 0
 }
 
 /// Where a replica filesystem stands. Clients can read a replica but not change it until it is
@@ -835,6 +844,12 @@ impl Catalog {
         Ok(())
     }
 
+    /// [`FsMeta::incarnation`] for a tree replaced by the command being applied: above every
+    /// earlier command's, and the same on every replica.
+    pub(crate) fn next_incarnation(&self) -> u64 {
+        self.applied_index + 1
+    }
+
     pub(crate) fn apply_fs(&mut self, op: &FsOp, gc: &mut Vec<ExtentId>) -> Result<(), MetaError> {
         for fs in op.client_change() {
             if self
@@ -899,6 +914,7 @@ impl Catalog {
                         usage: Some(FsUsage::default()),
                         quota: None,
                         replica: None,
+                        incarnation: self.next_incarnation(),
                     },
                 );
             }
@@ -1460,6 +1476,7 @@ impl Catalog {
                 tree.name = name.clone();
                 tree.source_snapshot = Some(snapshot_id.clone());
                 tree.replica = None;
+                tree.incarnation = self.next_incarnation();
                 self.filesystems.insert(id.clone(), tree);
             }
             FsOp::SetQuota {

@@ -156,6 +156,12 @@ fn writable(flags: i32) -> bool {
     flags & libc::O_ACCMODE != libc::O_RDONLY
 }
 
+/// Whether an open with `flags` of an existing file may keep the kernel's cached pages
+/// (`--keep-cache`): one that only reads, through the page cache.
+fn may_keep_cache(flags: i32) -> bool {
+    !writable(flags) && flags & (libc::O_DIRECT | libc::O_TRUNC) == 0
+}
+
 /// A node to create with the umask applied, and the mode before it for a parent with a default
 /// ACL (with `--acl` the kernel leaves masking to us: `FUSE_DONT_MASK`).
 fn new_node(req: &Request, n: &str, kind: NodeType, mode: u32, umask: u32) -> NewNode {
@@ -285,6 +291,9 @@ impl Filesystem for AtlasFs {
     fn destroy(&mut self) {
         if let Err(e) = self.ops.flush_all() {
             tracing::error!(errno = e, "buffered writes lost at unmount");
+        }
+        if let Some(s) = self.ops.keep_cache_stats() {
+            tracing::info!(kept = s.kept, dropped = s.dropped(), stats = ?s, "keep-cache opens");
         }
         self.ops.close_session();
     }
@@ -566,7 +575,10 @@ impl Filesystem for AtlasFs {
         }
         match self.ops.open(ino.0, writable(flags.0)) {
             Ok(h) => {
-                let (fh, open_flags) = handle(h, flags.0);
+                let (fh, mut open_flags) = handle(h, flags.0);
+                if may_keep_cache(flags.0) && self.ops.open_keeps_cache(h) {
+                    open_flags |= FopenFlags::FOPEN_KEEP_CACHE;
+                }
                 reply.opened(fh, open_flags)
             }
             Err(e) => reply.error(err(e)),
@@ -609,6 +621,7 @@ impl Filesystem for AtlasFs {
         _lock_owner: Option<LockOwner>,
         reply: ReplyData,
     ) {
+        self.ops.confirm_open(ops_handle(fh));
         let r = if fh.0 & FH_DIRECT != 0 {
             self.ops.read_direct(ino.0, offset, size as usize)
         } else {
@@ -824,5 +837,19 @@ mod open_tests {
         assert_eq!(f, FopenFlags::empty());
         assert!(writable(libc::O_WRONLY) && writable(libc::O_RDWR | libc::O_APPEND));
         assert!(!writable(libc::O_RDONLY | libc::O_DIRECT));
+    }
+
+    #[test]
+    fn only_buffered_read_only_opens_may_keep_the_cache() {
+        assert!(may_keep_cache(libc::O_RDONLY));
+        assert!(may_keep_cache(libc::O_RDONLY | libc::O_NOFOLLOW));
+        for f in [
+            libc::O_WRONLY,
+            libc::O_RDWR,
+            libc::O_RDONLY | libc::O_DIRECT,
+            libc::O_RDONLY | libc::O_TRUNC,
+        ] {
+            assert!(!may_keep_cache(f), "{f:#o}");
+        }
     }
 }

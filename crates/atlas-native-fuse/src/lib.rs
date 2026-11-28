@@ -16,6 +16,7 @@ pub mod dirs;
 pub mod fuse;
 pub mod handles;
 pub mod invalidate;
+pub mod keepcache;
 pub mod locks;
 pub mod nfs;
 pub mod ops;
