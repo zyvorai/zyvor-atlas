@@ -2,8 +2,9 @@
 <!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Delta writes: redesign plan
 
-**Status (2026-11-28): phases 0 to 2 approved; phase 0 has a [first result](#phase-0-results).
-Phases 3 and 4 are not approved.**
+**Status (2026-11-28): phases 0 to 2 approved; phase 0 has a [first result](#phase-0-results) and
+phase 1 (parallel folding, `fold_concurrency`) is implemented but not yet benchmarked. Phases 3 and
+4 are not approved.**
 
 ## The problem
 
