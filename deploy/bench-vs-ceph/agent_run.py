@@ -820,6 +820,11 @@ class Runner:
         return m
 
     def stable_space(self, quiet, timeout, interval, minimum=0.0):
+        if self.floor:
+            # The whole shared disk never holds still: one reading after a sync.
+            took, value = timed(self.system.space)
+            return value, took, True
+
         def same(a, b):
             return abs(a["bytes"] - b["bytes"]) <= MIB and abs(a.get("metadata_bytes", 0) - b.get("metadata_bytes", 0)) <= MIB
 
@@ -860,6 +865,8 @@ class Runner:
             record.update(status=lib.FAILED, detail=f"{killed} processes OOM-killed during this item. {record['detail']}")
         if self.system.retries > retries:
             record["metrics"]["leader_retries"] = self.system.retries - retries
+        if self.floor and any("space" in k or "reclaimed" in k for k in record["metrics"]):
+            record["notes"].append("floor space figures are of the whole shared filesystem, one reading each")
         record["end"] = conditions()
         self.done[item] = record["status"]
         log("item", item, record["status"], record["detail"][:300])
@@ -1221,8 +1228,7 @@ class Runner:
             for volume, snap in snapshots:
                 self.system.delete_snapshot(volume, snap)
         m["delete_s"] = time.monotonic() - t0
-        quiet = 15 if self.floor else self.cfg["stable_quiet_s"]
-        after, changed, stable = self.stable_space(quiet, self.cfg["stable_timeout_s"], 5)
+        after, changed, stable = self.stable_space(self.cfg["stable_quiet_s"], self.cfg["stable_timeout_s"], 5)
         m["stable_s"] = m["delete_s"] + changed
         m["space_before_bytes"] = before["bytes"]
         m["space_after_bytes"] = after["bytes"]
