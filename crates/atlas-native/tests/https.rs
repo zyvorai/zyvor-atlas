@@ -113,6 +113,7 @@ fn start_node(root: &Path, server: &(String, String), client_ca: &str) -> Native
         data_dir: root.join("n1"),
         http_listen: "127.0.0.1:0".parse().unwrap(),
         api_token_file: Some(root.join("token")),
+        api_tokens_file: None,
         tls: None,
         http_tls: Some(HttpTlsFiles {
             cert: root.join("http.pem"),

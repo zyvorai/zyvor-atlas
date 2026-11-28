@@ -97,6 +97,33 @@ apiToken:
   # kept across upgrades.
   existingSecret: ""
 
+# Named API tokens limited to roles and filesystems (docs/NATIVE_NODE.md, "API tokens"). The
+# apiToken above stays and remains the administrator.
+scopedTokens:
+  enabled: false
+  # The CSI, S3, NFS, SMB and replication pods use their own token instead of apiToken. When
+  # enabling on a running release, set false first, wait for the metadata pods to roll (they
+  # learn the tokens), then set true.
+  useForComponents: true
+  # Secret with one key per token name: gateway; csi-controller and csi-node (csi.enabled); s3,
+  # nfs, smb (when enabled); replicate (replication.enabled or acceptReplication); and each
+  # `extra` name. At least 16 printable characters each, all different. Empty: the chart creates
+  # "<fullname>-api-tokens" with random tokens kept across upgrades.
+  existingSecret: ""
+  # For the Atlas gateway (key `gateway`: volume lifecycle and block data). retentionUnlock lets
+  # it clear retention locks, which its two-admin unlock needs; without it only apiToken and
+  # extra tokens with retention-unlock can.
+  gateway:
+    retentionUnlock: false
+  # Issue a `replicate` token for another cluster that replicates into this one.
+  acceptReplication: false
+  # More tokens, e.g. a read-only one. Roles: read-only, data, lifecycle, replication, admin,
+  # retention-unlock. filesystems and volumes limit read-only and data tokens only.
+  extra: []
+  #  - name: backup-reader
+  #    roles: [read-only]
+  #    filesystems: [team-share]
+
 # Mutual TLS for the Raft and data-node transports. Node ids are pod names, so the certificate
 # must carry every pod name ("<fullname>-0", "<fullname>-1", ...) as a DNS SAN.
 tls:

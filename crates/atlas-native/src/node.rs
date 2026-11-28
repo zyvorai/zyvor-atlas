@@ -44,6 +44,7 @@ use crate::{
     tls::{TlsIdentity, TlsPaths},
 };
 
+mod authz;
 mod cache_leases;
 mod fs_api;
 mod health;
@@ -56,9 +57,15 @@ pub struct NodeConfig {
     pub node_id: String,
     pub data_dir: PathBuf,
     pub http_listen: SocketAddr,
-    /// File holding a bearer token required on every `/v1/*` request.
+    /// File holding a bearer token required on every `/v1/*` request. Its holder is the
+    /// administrator: it may call everything.
     #[serde(default)]
     pub api_token_file: Option<PathBuf>,
+    /// JSON list of named tokens limited to roles and, optionally, to filesystems and volumes
+    /// (`docs/NATIVE_NODE.md`, "API tokens"). With it, every `/v1/*` request needs one of
+    /// these or the `api_token_file` token.
+    #[serde(default)]
+    pub api_tokens_file: Option<PathBuf>,
     /// Mutual TLS for the Raft and data-node transports (not the HTTP endpoint).
     #[serde(default)]
     pub tls: Option<TlsFiles>,
@@ -502,7 +509,7 @@ struct TaskStats {
 
 struct NodeShared {
     id: String,
-    token: Option<String>,
+    auth: authz::ApiAuth,
     /// Caps request bodies and read lengths alike.
     max_io_bytes: usize,
     require_client_cert: bool,
@@ -625,14 +632,10 @@ impl NativeNode {
             .as_ref()
             .map(|t| TlsIdentity::from_pem_files(&t.ca, &t.cert, &t.key))
             .transpose()?;
-        let token = cfg
-            .api_token_file
-            .as_ref()
-            .map(|p| std::fs::read_to_string(p).map(|t| t.trim().to_string()))
-            .transpose()?;
-        if token.as_deref() == Some("") {
-            return Err(NativeError::Invalid("api_token_file is empty".into()));
-        }
+        let auth = authz::ApiAuth::load(
+            cfg.api_token_file.as_deref(),
+            cfg.api_tokens_file.as_deref(),
+        )?;
         let grant_key = cfg
             .grant_key_file
             .as_ref()
@@ -836,7 +839,7 @@ impl NativeNode {
 
         let shared = Arc::new(NodeShared {
             id: cfg.node_id.clone(),
-            token,
+            auth,
             max_io_bytes: cfg.max_request_bytes,
             membership_timeout: cfg
                 .metadata
@@ -1216,14 +1219,6 @@ fn data_client_auth() -> DataAuth {
     }
 }
 
-fn token_ok(expected: &str, header: Option<&String>) -> bool {
-    let Some(got) = header.and_then(|h| h.strip_prefix("Bearer ")) else {
-        return false;
-    };
-    let (a, b) = (expected.as_bytes(), got.as_bytes());
-    a.len() == b.len() && a.iter().zip(b).fold(0u8, |acc, (x, y)| acc | (x ^ y)) == 0
-}
-
 fn error_response(e: NativeError) -> Response {
     let meta = match &e {
         NativeError::Metadata(m) | NativeError::Raft(RaftError::Rejected(m)) => Some(m),
@@ -1399,12 +1394,16 @@ fn handle(sh: &NodeShared, req: Request) -> Response {
             "a client certificate signed by http_tls.client_ca is required",
         );
     }
-    if let Some(t) = &sh.token {
-        if !token_ok(t, req.headers.get("authorization")) {
-            return Response::text(401, "missing or invalid bearer token");
-        }
+    match sh.auth.admit(&req) {
+        Ok(permit) => permit.apply(api(sh, req)),
+        Err(refused) => refused,
     }
-    let segs: Vec<&str> = req.path.trim_matches('/').split('/').collect();
+}
+
+/// The `/v1` router, for requests [`authz`] admitted. Every route here must be listed in
+/// `authz::ROUTES` (a test checks).
+fn api(sh: &NodeShared, req: Request) -> Response {
+    let segs = authz::segments(&req.path);
     if let ("GET", ["v1", "status"]) = (req.method.as_str(), segs.as_slice()) {
         return status(sh);
     }
@@ -2018,6 +2017,7 @@ fn metrics(sh: &NodeShared) -> Response {
         }
         parts.push(p.finish());
     }
+    parts.extend(sh.auth.render_metrics(&sh.id));
     if let Ok(d) = sh.data.lock() {
         if let Some(m) = d.as_ref().and_then(|d| d.render_metrics().ok()) {
             parts.push(m);

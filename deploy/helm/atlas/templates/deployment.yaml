@@ -404,6 +404,9 @@ spec:
         - name: native-token
           secret:
             secretName: {{ .Values.native.tokenSecret }}
+            {{- with .Values.native.tokenSecretKey }}
+            items: [{ key: {{ . }}, path: token }]
+            {{- end }}
         {{- end }}
         {{- if and .Values.native.enabled .Values.native.tlsSecret }}
         - name: native-tls

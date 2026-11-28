@@ -42,6 +42,7 @@ impl Cluster {
             data_dir: root.join(id),
             http_listen: "127.0.0.1:0".parse().unwrap(),
             api_token_file: Some(root.join("token")),
+            api_tokens_file: None,
             tls: None,
             http_tls: None,
             data_node: None,
