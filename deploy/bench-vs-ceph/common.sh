@@ -11,6 +11,8 @@
 #                     Server data lives in $BENCH_ROOT/data/<system>, mounted at /srv/bench.
 #   run.sh <system>   runs the workloads inside that container.
 #   down.sh <system>  removes that container and its data.
+#   compare.sh <tag>  runs several cases in turn (alternating rounds with ROUNDS); gate.py judges them.
+#   disk-probe.sh     what the disk itself sustains for three synced copies (no system under test).
 
 BENCH_ROOT="${BENCH_ROOT:-/data/atlas-bench}"
 BENCH_MEM="${BENCH_MEM:-12g}"
@@ -27,10 +29,13 @@ BENCH_RUNROOT="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/atlas-bench"
 mkdir -p "$BENCH_ROOT/podman" "$BENCH_ROOT/data" "$BENCH_ROOT/results" "$BENCH_ROOT/tmp" "$BENCH_RUNROOT"
 export TMPDIR="$BENCH_ROOT/tmp"
 
-bpodman() { podman --root "$BENCH_ROOT/podman" --runroot "$BENCH_RUNROOT" "$@"; }
+# As an array too, for callers that put another command (timeout) in front of podman.
+BPODMAN=(podman --root "$BENCH_ROOT/podman" --runroot "$BENCH_RUNROOT")
+bpodman() { "${BPODMAN[@]}" "$@"; }
 
-# Resource limits and FUSE access, identical for both systems.
-BENCH_RUN_ARGS=(--memory "$BENCH_MEM" --memory-swap "$BENCH_MEM" --cpus "$BENCH_CPUS"
-  --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined --pids-limit -1)
+# Resource limits, and the FUSE access both systems need on top, identical for both.
+BENCH_LIMIT_ARGS=(--memory "$BENCH_MEM" --memory-swap "$BENCH_MEM" --cpus "$BENCH_CPUS" --pids-limit -1)
+BENCH_RUN_ARGS=("${BENCH_LIMIT_ARGS[@]}"
+  --device /dev/fuse --cap-add SYS_ADMIN --security-opt apparmor=unconfined)
 
 container_name() { echo "atlas-bench-$1"; }
