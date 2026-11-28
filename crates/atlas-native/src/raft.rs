@@ -445,6 +445,7 @@ impl RaftNode {
             }
             None => Membership::stable(cfg.peers.iter().cloned().chain([cfg.id.clone()])),
         };
+        let persisted = hard_path.exists();
         let mut node = Self {
             membership: initial.clone(),
             initial,
@@ -484,6 +485,11 @@ impl RaftNode {
             lease_now_ms: 0,
             cfg,
         };
+        // The term and vote just read may be a write whose directory sync failed, which only
+        // the cache holds. This node is about to act on them, so write them again first.
+        if persisted {
+            node.persist_hard()?;
+        }
         node.refresh_membership();
         node.reset_election_timer();
         Ok(node)

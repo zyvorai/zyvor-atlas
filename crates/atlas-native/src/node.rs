@@ -22,7 +22,7 @@ use serde_json::json;
 
 use crate::{
     data_node::{DataAuth, DataNodeServer, DataServe, RemoteDevice},
-    device::BlockStore,
+    device::{BlockStore, FailedDevice},
     ec::EcScheme,
     engine::{
         check_export_name, nap, run_folders, DeltaConfig, EngineConfig, MetaBackend, NativeEngine,
@@ -39,11 +39,13 @@ use crate::{
     raft_server::{RaftMux, RaftServer},
     raw::{open_store, DeviceBackend},
     rebuild::{Pacer, RebuildConfig, RebuildStatus, Rebuilder},
+    restart::{RestartPolicy, Restarts},
     tls::{TlsIdentity, TlsPaths},
 };
 
 mod cache_leases;
 mod fs_api;
+mod health;
 mod shards;
 mod transfers;
 
@@ -509,6 +511,8 @@ struct NodeShared {
     sessions_expired: AtomicU64,
     /// Files-only GPU/GDS capability probe taken at startup. Unverified on real GPU hardware.
     gpu_io: crate::gpu::GpuReport,
+    /// Which storage failures ask for a restart, counted in `data_dir/restarts.json`.
+    restarts: Restarts,
 }
 
 /// One metadata Raft group on this node and the engine committing through it.
@@ -575,8 +579,27 @@ impl NativeNode {
     }
 
     pub fn start_with(cfg: NodeConfig, listeners: Listeners) -> Result<Self, NativeError> {
+        Self::start_inner(cfg, listeners, None)
+    }
+
+    /// [`Self::start_with`] serving `devices` on the data node in place of the configured ones.
+    #[cfg(test)]
+    pub(crate) fn start_with_devices(
+        cfg: NodeConfig,
+        listeners: Listeners,
+        devices: Vec<Arc<dyn BlockStore>>,
+    ) -> Result<Self, NativeError> {
+        Self::start_inner(cfg, listeners, Some(devices))
+    }
+
+    fn start_inner(
+        cfg: NodeConfig,
+        listeners: Listeners,
+        injected: Option<Vec<Arc<dyn BlockStore>>>,
+    ) -> Result<Self, NativeError> {
         cfg.validate()?;
         std::fs::create_dir_all(&cfg.data_dir)?;
+        let restart_policy = RestartPolicy::from_env().map_err(NativeError::Invalid)?;
         let tls = cfg
             .tls
             .as_ref()
@@ -625,15 +648,22 @@ impl NativeNode {
                     None => TcpListener::bind(role.listen)?,
                 };
                 let root = cfg.data_dir.join("data");
-                let devices = if role.devices.is_empty() {
-                    let device: Arc<dyn BlockStore> =
-                        Arc::new(crate::device::FileDevice::open(root.join("nvme0.data"))?);
-                    vec![device]
+                let devices = if let Some(devices) = injected {
+                    devices
+                } else if role.devices.is_empty() {
+                    let path = root.join("nvme0.data");
+                    vec![open_or_failed(
+                        &path,
+                        open_store(&path, DeviceBackend::File, &root),
+                    )?]
                 } else {
                     role.devices
                         .iter()
                         .enumerate()
-                        .map(|(i, d)| open_store(&d.path, d.backend, &root.join(format!("dev{i}"))))
+                        .map(|(i, d)| {
+                            let hwm_dir = root.join(format!("dev{i}"));
+                            open_or_failed(&d.path, open_store(&d.path, d.backend, &hwm_dir))
+                        })
                         .collect::<Result<Vec<_>, _>>()?
                 };
                 let srv = DataNodeServer::start_guarded(
@@ -815,6 +845,7 @@ impl NativeNode {
                     .unwrap_or_default();
                 crate::gpu::probe(std::path::Path::new("/"), &backends)
             },
+            restarts: Restarts::new(cfg.data_dir.join("restarts.json"), restart_policy),
         });
 
         let mut loops = Vec::new();
@@ -896,10 +927,26 @@ impl NativeNode {
         self.raft_addr
     }
 
-    /// A storage error that stopped the metadata replica (e.g. a failed fsync), if any. The
-    /// process should exit so its supervisor restarts it from disk.
+    /// A storage error that stopped the metadata replica (e.g. a failed fsync), if any.
     pub fn fatal_error(&self) -> Option<String> {
         self.shared.groups.iter().find_map(|g| g.raft.fatal_error())
+    }
+
+    /// Why the process should exit so that its supervisor restarts it from disk, if it should:
+    /// a data device or a metadata replica failed for good and has restarts left
+    /// ([`crate::restart`]). `/healthz` answers 503 while this is set.
+    pub fn restart_reason(&self) -> Option<String> {
+        health::assess(&self.shared).restart_reason()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn raft(&self) -> Arc<RaftServer> {
+        self.shared.groups[0].raft.clone()
+    }
+
+    /// Replaces the restart policy read from the environment, for failures not yet decided.
+    pub fn set_restart_policy(&self, policy: RestartPolicy) {
+        self.shared.restarts.set_policy(policy);
     }
 
     pub fn shutdown(&mut self) {
@@ -1081,6 +1128,19 @@ fn expire_leases(sh: &NodeShared) {
                 sh.sessions_expired.fetch_add(n as u64, Ordering::Relaxed);
             }
         }
+    }
+}
+
+/// A device that cannot be opened because of an I/O error takes its place in the node as a
+/// failed one, so that the node's other devices and roles still run. Any other error (a bad
+/// configuration) stops the node from starting.
+fn open_or_failed(
+    path: &Path,
+    opened: Result<Arc<dyn BlockStore>, NativeError>,
+) -> Result<Arc<dyn BlockStore>, NativeError> {
+    match opened {
+        Err(NativeError::Io(e)) => Ok(Arc::new(FailedDevice::new(path, &e))),
+        other => other,
     }
 }
 
@@ -1288,7 +1348,7 @@ fn body_json(req: &Request) -> Result<serde_json::Value, Response> {
 
 fn handle(sh: &NodeShared, req: Request) -> Response {
     match (req.method.as_str(), req.path.as_str()) {
-        ("GET", "/healthz") => return Response::text(200, "ok"),
+        ("GET", "/healthz") => return health::liveness(sh),
         ("GET", "/readyz") => return readiness(sh),
         ("GET", "/metrics") => return metrics(sh),
         _ => {}
@@ -1695,6 +1755,13 @@ fn readiness(sh: &NodeShared) -> Response {
     if sh.data.lock().map(|d| d.is_none()).unwrap_or(true) && sh.groups.is_empty() {
         return Response::text(503, "no role running");
     }
+    let health = health::assess(sh);
+    if let Some(reason) = health.restart_reason() {
+        return Response::text(503, format!("restart required: {reason}"));
+    }
+    if health.no_writable_device {
+        return Response::text(503, "no data device accepts writes");
+    }
     Response::text(200, "ready")
 }
 
@@ -1762,6 +1829,9 @@ fn status(sh: &NodeShared) -> Response {
             // The rebuild controller of each group this node leads.
             "rebuild": (!rebuild.is_empty()).then_some(&rebuild),
             "data_node": data_node,
+            // Components that stay failed until a restart, and the restarts asked for.
+            "failures": health::assess(sh).failures,
+            "restarts_counted": sh.restarts.counted(),
             // Read-only probe from files at startup; no GPU I/O path exists. Unverified on GPUs.
             "gpu_io": sh.gpu_io,
         }),
@@ -1844,7 +1914,7 @@ fn metrics(sh: &NodeShared) -> Response {
             })
             .unwrap_or_default();
         type Pick = fn(&RebuildStatus) -> u64;
-        let families: [(&str, &str, &str, Pick); 7] = [
+        let families: [(&str, &str, &str, Pick); 8] = [
             (
                 "atlas_native_lost_nodes",
                 "gauge",
@@ -1852,9 +1922,15 @@ fn metrics(sh: &NodeShared) -> Response {
                 |s| s.lost_nodes.len() as u64,
             ),
             (
+                "atlas_native_failed_data_devices",
+                "gauge",
+                "Data devices whose parts the rebuild controller is moving elsewhere.",
+                |s| s.failed_devices.len() as u64,
+            ),
+            (
                 "atlas_native_degraded_extents",
                 "gauge",
-                "Extents with replicas or shards on lost nodes.",
+                "Extents with replicas or shards on lost nodes or failed devices.",
                 |s| s.degraded_extents,
             ),
             (
@@ -1907,6 +1983,7 @@ fn metrics(sh: &NodeShared) -> Response {
             parts.push(m);
         }
     }
+    parts.push(health::metrics(sh));
     Response {
         status: 200,
         content_type: "text/plain; version=0.0.4",

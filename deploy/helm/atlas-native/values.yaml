@@ -45,6 +45,15 @@ node:
   repairIntervalSecs: 300
   # How long a pod must fail every request before its extents are rebuilt on other pods.
   rebuildDelaySecs: 60
+  # A data device or metadata replica that fails a sync stays failed until the process restarts.
+  # The node then exits (and /healthz fails) to be restarted, at most failureRestarts times per
+  # component in failureWindowSecs; after that it stays up and needs an operator
+  # (docs/NATIVE_NODE.md, "Failed data syncs"). 0 restarts disables this.
+  failureRestarts: 3
+  failureWindowSecs: 3600
+  # When a failed data device asks for the restart: any (at once), last (only when no device of
+  # the pod accepts writes) or never.
+  deviceFailureRestart: any
   # Rebuild and scrub traffic caps per metadata group (bytes/s); 0 is unlimited.
   rebuildBytesPerSec: 268435456
   scrubBytesPerSec: 67108864

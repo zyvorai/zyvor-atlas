@@ -7,10 +7,11 @@
 //! fails writes, is in `tests/writeback_errors.rs`.
 
 use std::{
-    collections::BTreeMap,
+    cell::Cell,
+    collections::{BTreeMap, BTreeSet},
     fs::{self, File},
-    io,
-    net::TcpListener,
+    io::{self, Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
     os::unix::fs::MetadataExt,
     path::Path,
     sync::{
@@ -23,13 +24,20 @@ use std::{
 };
 
 use crate::{
-    device::{DeviceSync, FileDevice},
+    device::{DataSync, DeviceSync, FileDevice},
+    ec::EcScheme,
+    engine::{DirectCellDone, DirectCommit, DirectReplicaDone, NewNode},
     metadata::MetaCommand,
+    node::{
+        DataNodeRole, DataNodeSpec, DeviceConfig, Listeners, MetadataRole, NativeNode, NodeConfig,
+    },
     object::DirObjectStore,
     raw::{AlignedBuf, AlignedIo, PreadIo, RawDevice},
+    rebuild::{RebuildConfig, Rebuilder},
     wal::{Wal, WalRecord},
-    BlockStore, DataNodeServer, EngineConfig, Envelope, FailureDomain, Message, MetaBackend,
-    NativeEngine, Node, RaftConfig, RaftNode, RaftServer, RemoteDevice, TierPolicy,
+    BlockStore, DataNodeServer, DeviceBackend, DeviceRestart, EngineConfig, Envelope,
+    FailureDomain, GrantKey, Message, MetaBackend, NativeEngine, NativeError, Node, NodeType,
+    RaftConfig, RaftNode, RaftServer, RemoteDevice, RestartPolicy, TierPolicy, ROOT_INO,
 };
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -589,4 +597,868 @@ fn replicas_move_off_a_data_node_whose_device_failed() {
     );
     let status = engine.node_status();
     assert!(status[first].failures >= 1, "{status:?}");
+}
+
+const BLOCK: usize = 4096;
+
+/// One HTTP request; the status and body.
+fn http(addr: SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
+    let mut s = TcpStream::connect(addr).unwrap();
+    let head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: test\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    s.write_all(head.as_bytes()).unwrap();
+    s.write_all(body).unwrap();
+    let mut out = Vec::new();
+    s.read_to_end(&mut out).unwrap();
+    let split = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let status = std::str::from_utf8(&out[9..12]).unwrap().parse().unwrap();
+    (status, out[split + 4..].to_vec())
+}
+
+/// Three nodes in one process, each a metadata voter and a data node with one device, with
+/// three replicas.
+struct Trio {
+    td: tempfile::TempDir,
+    data_addrs: Vec<SocketAddr>,
+    raft_addrs: Vec<SocketAddr>,
+    nodes: Vec<Option<NativeNode>>,
+}
+
+impl Trio {
+    /// `syncs[i]` replaces `fdatasync` on node `i`'s device until the node is restarted.
+    fn start(syncs: [Box<dyn DeviceSync>; 3]) -> Self {
+        let td = tempfile::tempdir().unwrap();
+        let bind = || TcpListener::bind("127.0.0.1:0").unwrap();
+        let data: Vec<TcpListener> = (0..3).map(|_| bind()).collect();
+        let raft: Vec<TcpListener> = (0..3).map(|_| bind()).collect();
+        let addrs = |l: &[TcpListener]| l.iter().map(|l| l.local_addr().unwrap()).collect();
+        let mut trio = Self {
+            data_addrs: addrs(&data),
+            raft_addrs: addrs(&raft),
+            td,
+            nodes: Vec::new(),
+        };
+        for (i, ((d, r), sync)) in data.into_iter().zip(raft).zip(syncs).enumerate() {
+            let path = trio.root(i).join("data").join("nvme0.data");
+            let device = FileDevice::open_with_sync(path, sync).unwrap();
+            let node = NativeNode::start_with_devices(
+                trio.config(i),
+                Listeners {
+                    http: Some(bind()),
+                    data_node: Some(d),
+                    metadata: Some(r),
+                },
+                vec![Arc::new(device)],
+            )
+            .unwrap();
+            trio.nodes.push(Some(node));
+        }
+        trio
+    }
+
+    fn root(&self, i: usize) -> std::path::PathBuf {
+        self.td.path().join(format!("n{i}"))
+    }
+
+    fn config(&self, i: usize) -> NodeConfig {
+        let data_nodes = self
+            .data_addrs
+            .iter()
+            .enumerate()
+            .map(|(i, a)| DataNodeSpec {
+                id: format!("n{i}"),
+                addr: a.to_string(),
+                zone: None,
+                rack: None,
+                host: None,
+                free_bytes: 1 << 30,
+                devices: 1,
+            })
+            .collect();
+        NodeConfig {
+            node_id: format!("n{i}"),
+            data_dir: self.root(i),
+            http_listen: "127.0.0.1:0".parse().unwrap(),
+            api_token_file: None,
+            tls: None,
+            http_tls: None,
+            data_node: Some(DataNodeRole {
+                listen: self.data_addrs[i],
+                devices: Vec::new(),
+            }),
+            metadata: Some(MetadataRole {
+                listen: self.raft_addrs[i],
+                peers: self
+                    .raft_addrs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| (format!("n{i}"), a.to_string()))
+                    .collect(),
+                bootstrap: None,
+                data_nodes,
+                replicas: 3,
+                erasure: None,
+                erasure_min_bytes: 64 << 10,
+                compression: false,
+                dedup: false,
+                cross_group_dedup: false,
+                rebuild_delay_secs: 60,
+                rebuild_bytes_per_sec: 0,
+                scrub_bytes_per_sec: 0,
+                tiering: None,
+                extent_bytes: BLOCK,
+                tick_ms: 10,
+                proposal_timeout_ms: 3000,
+                repair_interval_secs: 0,
+                gc_interval_secs: 0,
+                groups: 1,
+                cache_inodes: crate::store::DEFAULT_CACHE_INODES,
+                store_cache_bytes: crate::store::DEFAULT_STORE_CACHE_BYTES,
+            }),
+            max_request_bytes: 1 << 20,
+            grant_key_file: None,
+        }
+    }
+
+    /// What a liveness-probing supervisor does: restarts, from disk and with the real device,
+    /// every node whose `/healthz` does not answer 200. Returns the nodes restarted.
+    fn supervise(&mut self) -> Vec<usize> {
+        let mut restarted = Vec::new();
+        for i in 0..self.nodes.len() {
+            let node = self.nodes[i].as_ref().unwrap();
+            if http(node.http_addr(), "GET", "/healthz", b"").0 == 200 {
+                continue;
+            }
+            // The process exits first: its sockets close.
+            self.nodes[i] = None;
+            let node = NativeNode::start_with(
+                self.config(i),
+                Listeners {
+                    http: Some(TcpListener::bind("127.0.0.1:0").unwrap()),
+                    data_node: Some(TcpListener::bind(self.data_addrs[i]).unwrap()),
+                    metadata: Some(TcpListener::bind(self.raft_addrs[i]).unwrap()),
+                },
+            )
+            .unwrap();
+            self.nodes[i] = Some(node);
+            restarted.push(i);
+        }
+        restarted
+    }
+
+    /// The leader's answer to a request (421 means ask another node).
+    fn on_leader(&self, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            for node in self.nodes.iter().flatten() {
+                let (status, body) = http(node.http_addr(), method, path, body);
+                if status != 421 {
+                    return (status, body);
+                }
+            }
+            assert!(Instant::now() < deadline, "no leader for {method} {path}");
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn write(&self, block: usize, byte: u8) -> u16 {
+        let path = format!("/v1/volumes/v/data?offset={}", block * BLOCK);
+        self.on_leader("PUT", &path, &[byte; BLOCK]).0
+    }
+
+    fn assert_block(&self, block: usize, byte: u8) {
+        let path = format!("/v1/volumes/v/data?offset={}&len={BLOCK}", block * BLOCK);
+        let (status, got) = self.on_leader("GET", &path, b"");
+        assert_eq!(status, 200, "block {block}");
+        assert!(got == [byte; BLOCK], "block {block} reads other bytes");
+    }
+
+    fn create_volume(&self) {
+        let body = br#"{"id":"v","name":"v","size_bytes":1048576}"#;
+        wait_for("the volume", || {
+            self.on_leader("POST", "/v1/volumes", body).0 == 201
+        });
+    }
+}
+
+/// One failed sync on one of three nodes, with three replicas: no write can have its replicas
+/// until that device is reopened, so a supervisor must be told to restart the node.
+#[test]
+fn one_failed_sync_does_not_stop_writes_for_good() {
+    let sync = FailOnce::default();
+    let mut trio = Trio::start([
+        Box::new(DataSync),
+        Box::new(sync.clone()),
+        Box::new(DataSync),
+    ]);
+    trio.create_volume();
+    wait_for("the first write", || trio.write(0, 1) == 204);
+
+    sync.arm();
+    assert_ne!(trio.write(1, 2), 204, "acknowledged without three replicas");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let (mut failed, mut restarts) = (1, Vec::new());
+    loop {
+        restarts.extend(trio.supervise());
+        if trio.write(1, 2) == 204 {
+            break;
+        }
+        failed += 1;
+        assert!(
+            Instant::now() < deadline,
+            "{failed} writes failed, nodes restarted: {restarts:?}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        restarts,
+        [1],
+        "only the node with the failed device restarts"
+    );
+    for i in 0..100 {
+        assert_eq!(
+            trio.write(2 + i, i as u8),
+            204,
+            "write {i} after the restart"
+        );
+    }
+    trio.assert_block(0, 1);
+    trio.assert_block(1, 2);
+    for i in 0..100 {
+        trio.assert_block(2 + i, i as u8);
+    }
+}
+
+/// Data nodes `n0`.. of several devices each, behind real servers, and an engine over them with
+/// three replicas.
+struct Disks {
+    td: tempfile::TempDir,
+    syncs: Vec<Vec<FailOnce>>,
+    servers: Vec<Option<DataNodeServer>>,
+    engine: NativeEngine,
+}
+
+const GRANTS: &[u8] = b"disk-failure-test-secret";
+
+impl Disks {
+    fn start(nodes: usize, devices: usize, tweak: impl FnOnce(&mut EngineConfig)) -> Self {
+        let td = tempfile::tempdir().unwrap();
+        let key = GrantKey::new(GRANTS).unwrap();
+        let (mut syncs, mut servers) = (Vec::new(), Vec::new());
+        let mut stores = Vec::new();
+        for i in 0..nodes {
+            let id = format!("n{i}");
+            let root = td.path().join(&id);
+            let mut local: Vec<Arc<dyn BlockStore>> = Vec::new();
+            let mut node_syncs = Vec::new();
+            for d in 0..devices {
+                let sync = FailOnce::default();
+                let path = root.join(format!("d{d}"));
+                let device = FileDevice::open_with_sync(path, Box::new(sync.clone())).unwrap();
+                local.push(Arc::new(device));
+                node_syncs.push(sync);
+            }
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            let server = DataNodeServer::start_devices_with(
+                id.clone(),
+                &root,
+                local,
+                listener,
+                None,
+                Some(key.clone()),
+            )
+            .unwrap();
+            let remote: Vec<Arc<dyn BlockStore>> = (0..devices)
+                .map(|d| {
+                    let device = RemoteDevice::new(server.local_addr(), WAIT)
+                        .with_grant_key(key.clone())
+                        .on_device(d);
+                    Arc::new(device) as Arc<dyn BlockStore>
+                })
+                .collect();
+            stores.push((node(&id), remote));
+            syncs.push(node_syncs);
+            servers.push(Some(server));
+        }
+        let mut cfg = EngineConfig::new(td.path().join("meta"));
+        cfg.extent_bytes = BLOCK;
+        cfg.grant_key = Some(key);
+        tweak(&mut cfg);
+        let engine = NativeEngine::open_with_devices(cfg, stores, MetaBackend::Local).unwrap();
+        engine
+            .create_volume_as("v".into(), "v", 256 * BLOCK as u64)
+            .unwrap();
+        Self {
+            td,
+            syncs,
+            servers,
+            engine,
+        }
+    }
+
+    fn write(&self, block: u64) -> Result<(), NativeError> {
+        self.engine
+            .write("v", block * BLOCK as u64, &[block as u8 + 1; BLOCK])
+    }
+
+    fn assert_reads(&self, blocks: std::ops::Range<u64>) {
+        for block in blocks {
+            let got = self.engine.read("v", block * BLOCK as u64, BLOCK).unwrap();
+            assert!(got == [block as u8 + 1; BLOCK], "block {block}");
+        }
+    }
+
+    /// Replicas on device `d` of node `n{i}`.
+    fn on(&self, i: usize, d: usize) -> usize {
+        let id = format!("n{i}");
+        self.engine
+            .extent_replicas()
+            .iter()
+            .flatten()
+            .filter(|r| r.node_id == id && r.device_index == d)
+            .count()
+    }
+
+    /// Every extent has `parts` replicas or shards, each on a different node.
+    fn assert_spread(&self, parts: usize) {
+        for replicas in self.engine.extent_replicas() {
+            let mut nodes: Vec<&str> = replicas.iter().map(|r| r.node_id.as_str()).collect();
+            nodes.sort_unstable();
+            nodes.dedup();
+            assert_eq!(
+                (replicas.len(), nodes.len()),
+                (parts, parts),
+                "{replicas:?}"
+            );
+        }
+    }
+
+    /// Restarts node `i`'s server at the same address with sound devices over the same files.
+    fn restart(&mut self, i: usize, devices: usize) {
+        let addr = {
+            let server = self.servers[i].take().unwrap();
+            server.local_addr()
+        };
+        let id = format!("n{i}");
+        let root = self.td.path().join(&id);
+        let local: Vec<Arc<dyn BlockStore>> = (0..devices)
+            .map(|d| {
+                Arc::new(FileDevice::open(root.join(format!("d{d}"))).unwrap())
+                    as Arc<dyn BlockStore>
+            })
+            .collect();
+        let listener = TcpListener::bind(addr).unwrap();
+        let key = GrantKey::new(GRANTS).unwrap();
+        let server =
+            DataNodeServer::start_devices_with(id, &root, local, listener, None, Some(key))
+                .unwrap();
+        self.servers[i] = Some(server);
+    }
+}
+
+fn settle(r: &mut Rebuilder, engine: &NativeEngine) {
+    let stop = AtomicBool::new(false);
+    for _ in 0..100 {
+        if !r.step(engine, &stop).unwrap() {
+            return;
+        }
+    }
+    panic!("the controller never went idle");
+}
+
+fn controller(delay: Duration) -> Rebuilder {
+    Rebuilder::new(RebuildConfig {
+        delay,
+        rebuild_bytes_per_sec: 0,
+        scrub_interval: Duration::ZERO,
+        scrub_bytes_per_sec: 0,
+    })
+}
+
+#[test]
+fn writes_go_on_to_a_nodes_other_device_and_repair_moves_off_the_failed_one() {
+    let c = Disks::start(3, 2, |_| {});
+    for block in 0..8 {
+        c.write(block).unwrap();
+    }
+    let before = c.on(1, 0);
+    assert!(before > 0, "nothing on the device that is to fail");
+    c.syncs[1][0].arm();
+    // Every write succeeds, the one that meets the failure included, although the back-off is
+    // the default five seconds: the node stays in use.
+    for block in 8..24 {
+        c.write(block).unwrap();
+    }
+    c.assert_spread(3);
+    assert_eq!(c.on(1, 0), before, "placed on the failed device");
+    assert_eq!(c.on(1, 1), 24 - before);
+    let status = &c.engine.node_status()[1];
+    assert!(status.up, "{status:?}");
+    assert_eq!(status.failed_devices, [0]);
+    let metrics = c.engine.render_metrics().unwrap();
+    assert!(
+        metrics.contains("atlas_native_node_failed_devices{node=\"n1\"} 1"),
+        "{metrics}"
+    );
+    c.assert_reads(0..24);
+
+    let failed = BTreeSet::from([("n1".to_string(), 0)]);
+    assert_eq!(c.engine.failed_devices(Duration::ZERO), failed);
+    let degraded = c
+        .engine
+        .degraded_extents_on(&BTreeSet::new(), &failed)
+        .unwrap();
+    assert_eq!(degraded.len(), before);
+    assert!(degraded
+        .iter()
+        .all(|d| d.lost == 0 && d.failed == 1 && d.spare == 1 && d.rebuildable()));
+    let st = c.engine.repair_once().unwrap();
+    assert_eq!(
+        (st.replicas_repaired, st.deferred, st.unrecoverable),
+        (before as u64, 0, 0)
+    );
+    assert_eq!(c.on(1, 0), 0);
+    c.assert_spread(3);
+    c.assert_reads(0..24);
+}
+
+#[test]
+fn a_write_still_needs_every_replica_and_repair_keeps_what_it_cannot_move() {
+    let mut c = Disks::start(3, 2, |cfg| cfg.node_retry_after = Duration::ZERO);
+    for block in 0..8 {
+        c.write(block).unwrap();
+    }
+    c.syncs[1][0].arm();
+    c.syncs[1][1].arm();
+    for block in [8, 9] {
+        let e = c.write(block).unwrap_err();
+        assert!(
+            matches!(
+                e,
+                NativeError::InsufficientReplicas {
+                    needed: 3,
+                    found: 2
+                }
+            ),
+            "{e}"
+        );
+    }
+    let on_n1 = c.on(1, 0) + c.on(1, 1);
+    assert_eq!(on_n1, 8);
+    // No node can take the replicas: they stay where they are, and still count.
+    let st = c.engine.repair_once().unwrap();
+    assert_eq!(
+        (st.replicas_repaired, st.deferred, st.unrecoverable),
+        (0, 8, 0)
+    );
+    c.assert_spread(3);
+    assert_eq!(c.on(1, 0) + c.on(1, 1), on_n1);
+    c.assert_reads(0..8);
+
+    // Reopened devices say they accept writes again, and are used.
+    c.restart(1, 2);
+    c.write(8).unwrap();
+    c.engine.probe_devices();
+    assert!(c.engine.failed_devices(Duration::ZERO).is_empty());
+    c.assert_spread(3);
+    c.assert_reads(0..9);
+}
+
+#[test]
+fn the_rebuild_controller_moves_off_a_device_failed_for_the_delay() {
+    let c = Disks::start(3, 2, |_| {});
+    for block in 0..8 {
+        c.write(block).unwrap();
+    }
+    let before = c.on(1, 0);
+    c.syncs[1][0].arm();
+    c.write(8).unwrap();
+    c.write(9).unwrap();
+
+    let mut patient = controller(Duration::from_secs(60));
+    settle(&mut patient, &c.engine);
+    assert_eq!(patient.status().rebuilt.replicas_repaired, 0);
+    assert_eq!(c.on(1, 0), before);
+
+    let mut now = controller(Duration::ZERO);
+    settle(&mut now, &c.engine);
+    assert_eq!(now.status().rebuilt.replicas_repaired, before as u64);
+    assert_eq!(c.on(1, 0), 0);
+    c.assert_spread(3);
+    c.assert_reads(0..10);
+}
+
+#[test]
+fn the_rebuild_controller_does_not_read_what_has_nowhere_to_go() {
+    // No back-off, so that the node (which answers) does not count as lost.
+    let c = Disks::start(3, 1, |cfg| cfg.node_retry_after = Duration::ZERO);
+    for block in 0..4 {
+        c.write(block).unwrap();
+    }
+    c.syncs[1][0].arm();
+    c.write(4).unwrap_err();
+    let mut r = controller(Duration::ZERO);
+    settle(&mut r, &c.engine);
+    let st = r.status();
+    assert_eq!(st.failed_devices, ["n1/0"]);
+    assert_eq!((st.degraded_extents, st.unrecoverable_extents), (4, 0));
+    assert_eq!(
+        (st.rebuilt.bytes_read, st.rebuilt.replicas_repaired),
+        (0, 0)
+    );
+    c.assert_spread(3);
+    c.assert_reads(0..4);
+}
+
+#[test]
+fn shards_move_off_a_failed_device() {
+    let c = Disks::start(3, 2, |cfg| {
+        cfg.erasure = Some("2+1".parse::<EcScheme>().unwrap());
+        cfg.erasure_min_bytes = 1;
+    });
+    for block in 0..8 {
+        c.write(block).unwrap();
+    }
+    let before = c.on(2, 1);
+    assert!(before > 0);
+    c.syncs[2][1].arm();
+    for block in 8..16 {
+        c.write(block).unwrap();
+    }
+    assert_eq!(c.on(2, 1), before);
+    let st = c.engine.repair_once().unwrap();
+    assert_eq!(
+        (st.replicas_repaired, st.deferred, st.unrecoverable),
+        (before as u64, 0, 0)
+    );
+    assert_eq!(c.on(2, 1), 0);
+    c.assert_spread(3);
+    c.assert_reads(0..16);
+}
+
+#[test]
+fn direct_writes_set_aside_only_the_failed_device() {
+    let c = Disks::start(3, 2, |_| {});
+    c.engine.create_fs_as("f".into(), "fs").unwrap();
+    let ino = c
+        .engine
+        .fs_mknode(
+            "f",
+            ROOT_INO,
+            NewNode {
+                name: "a".into(),
+                op_id: "op-a".into(),
+                kind: NodeType::File,
+                target: None,
+                rdev: 0,
+                mode: 0o644,
+                create_mode: None,
+                uid: 0,
+                gid: 0,
+            },
+        )
+        .unwrap()
+        .ino;
+    c.syncs[1][0].arm();
+    let data = vec![5u8; BLOCK];
+    let mut failures = 0;
+    for _ in 0..4 {
+        let lease = c
+            .engine
+            .direct_write_lease("f", ino, 0, BLOCK as u64)
+            .unwrap();
+        let (mut replicas, mut failed) = (Vec::new(), Vec::new());
+        for t in &lease.cells[0].targets {
+            let device = RemoteDevice::new(&t.endpoint, WAIT)
+                .on_device(t.device_index)
+                .in_group(t.group);
+            let written = match t.offset {
+                Some(at) => device
+                    .write_at_granted(Some(t.grant.clone()), lease.term, at, &data)
+                    .map(|()| (at, None)),
+                None => device.append_granted(Some(t.grant.clone()), lease.term, &data),
+            };
+            match written {
+                Ok((offset, receipt)) => replicas.push(DirectReplicaDone {
+                    node_id: t.node_id.clone(),
+                    device_index: t.device_index,
+                    offset,
+                    receipt,
+                }),
+                Err(_) => failed.push(t.node_id.clone()),
+            }
+        }
+        let commit = DirectCommit {
+            lease: lease.lease.clone(),
+            cells: vec![DirectCellDone {
+                logical_offset: 0,
+                checksum: crate::checksum::sha256(&data)
+                    .iter()
+                    .map(|b| format!("{b:02x}"))
+                    .collect(),
+                replicas,
+            }],
+            failed,
+        };
+        match c.engine.direct_write_commit("f", ino, commit) {
+            Ok(_) => break,
+            Err(_) => failures += 1,
+        }
+    }
+    // The first lease includes the failed device; the next one does not.
+    assert_eq!(failures, 1);
+    assert_eq!(c.engine.read_file("f", ino, 0, BLOCK).unwrap(), data);
+    let status = &c.engine.node_status()[1];
+    assert!(status.up, "the whole node was set aside: {status:?}");
+    // Every later lease avoids the failed device.
+    for _ in 0..4 {
+        let lease = c
+            .engine
+            .direct_write_lease("f", ino, 0, BLOCK as u64)
+            .unwrap();
+        for t in &lease.cells[0].targets {
+            assert!(t.node_id != "n1" || t.device_index == 1, "{t:?}");
+        }
+        c.engine.direct_write_abort(&lease.lease).unwrap();
+    }
+}
+
+/// A disk that fails every sync, after as many restarts as one likes.
+#[derive(Debug)]
+struct BadDisk;
+
+impl DeviceSync for BadDisk {
+    fn sync_data(&self, _file: &File) -> io::Result<()> {
+        Err(eio())
+    }
+}
+
+/// A node with the data role only.
+fn data_config(root: &Path, devices: Vec<DeviceConfig>) -> NodeConfig {
+    NodeConfig {
+        node_id: "d".into(),
+        data_dir: root.to_path_buf(),
+        http_listen: "127.0.0.1:0".parse().unwrap(),
+        api_token_file: None,
+        tls: None,
+        http_tls: None,
+        data_node: Some(DataNodeRole {
+            listen: "127.0.0.1:0".parse().unwrap(),
+            devices,
+        }),
+        metadata: None,
+        max_request_bytes: 1 << 20,
+        grant_key_file: None,
+    }
+}
+
+/// A data node over `d0`.. under `root`, device `i` syncing through `syncs[i]`.
+fn data_node(root: &Path, syncs: Vec<Box<dyn DeviceSync>>) -> NativeNode {
+    let devices = syncs
+        .into_iter()
+        .enumerate()
+        .map(|(i, sync)| {
+            let device = FileDevice::open_with_sync(root.join(format!("d{i}")), sync).unwrap();
+            Arc::new(device) as Arc<dyn BlockStore>
+        })
+        .collect();
+    NativeNode::start_with_devices(data_config(root, Vec::new()), Listeners::default(), devices)
+        .unwrap()
+}
+
+fn client(node: &NativeNode, device: usize) -> RemoteDevice {
+    RemoteDevice::new(node.data_node_addr().unwrap(), WAIT).on_device(device)
+}
+
+fn health(node: &NativeNode) -> (u16, u16) {
+    let get = |path| http(node.http_addr(), "GET", path, b"").0;
+    (get("/healthz"), get("/readyz"))
+}
+
+fn metrics(node: &NativeNode) -> String {
+    String::from_utf8(http(node.http_addr(), "GET", "/metrics", b"").1).unwrap()
+}
+
+#[test]
+fn a_disk_bad_for_good_gets_a_bounded_number_of_restarts() {
+    let td = tempfile::tempdir().unwrap();
+    let mut restarts = 0;
+    let node = loop {
+        let node = data_node(td.path(), vec![Box::new(BadDisk)]);
+        assert_eq!(health(&node), (200, 200));
+        assert!(client(&node, 0).append(0, b"x").is_err());
+        if node.restart_reason().is_none() {
+            break node;
+        }
+        assert_eq!(health(&node), (503, 503));
+        let m = metrics(&node);
+        assert!(
+            m.contains("atlas_native_restart_required{node=\"d\"} 1"),
+            "{m}"
+        );
+        restarts += 1;
+        assert!(restarts <= 10, "restarts without end");
+    };
+    assert_eq!(restarts, 3);
+    // Up, so that nothing restarts it again; not ready, so that someone notices.
+    assert_eq!(health(&node), (200, 503));
+    let m = metrics(&node);
+    for line in [
+        "atlas_native_restart_required{node=\"d\"} 0",
+        "atlas_native_failed_without_restart{node=\"d\",component=\"device0\"} 1",
+        "atlas_native_failure_restarts{node=\"d\",component=\"device0\"} 3",
+        "atlas_native_data_device_failed{node=\"d\",device=\"0\"} 1",
+    ] {
+        assert!(m.contains(line), "{line} is not in {m}");
+    }
+}
+
+#[test]
+fn restart_on_the_last_device_waits_until_no_device_accepts_writes() {
+    let td = tempfile::tempdir().unwrap();
+    let node = data_node(td.path(), vec![Box::new(BadDisk), Box::new(BadDisk)]);
+    node.set_restart_policy(RestartPolicy {
+        devices: DeviceRestart::Last,
+        ..RestartPolicy::default()
+    });
+    assert!(client(&node, 0).append(0, b"x").is_err());
+    assert_eq!(health(&node), (200, 200));
+    assert!(node.restart_reason().is_none());
+    assert!(client(&node, 1).append(0, b"x").is_err());
+    assert_eq!(health(&node), (503, 503));
+}
+
+#[test]
+fn by_default_one_failed_device_of_several_asks_for_a_restart() {
+    let td = tempfile::tempdir().unwrap();
+    let node = data_node(td.path(), vec![Box::new(BadDisk), Box::new(DataSync)]);
+    assert!(client(&node, 0).append(0, b"x").is_err());
+    assert_eq!(health(&node), (503, 503));
+    // The other device serves meanwhile.
+    client(&node, 1).append(0, b"y").unwrap();
+}
+
+#[test]
+fn a_node_starts_with_a_device_it_cannot_open() {
+    let td = tempfile::tempdir().unwrap();
+    // A directory cannot be opened as a device.
+    let bad = td.path().join("bad");
+    fs::create_dir(&bad).unwrap();
+    let devices = [bad, td.path().join("good")]
+        .map(|path| DeviceConfig {
+            path,
+            backend: DeviceBackend::File,
+        })
+        .to_vec();
+    let node = NativeNode::start(data_config(td.path(), devices)).unwrap();
+    node.set_restart_policy(RestartPolicy {
+        max_restarts: 0,
+        ..RestartPolicy::default()
+    });
+    assert!(client(&node, 0).append(0, b"x").is_err());
+    assert!(client(&node, 0).probe().unwrap().is_some());
+    let at = client(&node, 1).append(0, b"y").unwrap();
+    assert_eq!(client(&node, 1).read_exact_at(at, 1).unwrap(), b"y");
+    assert_eq!(health(&node), (200, 200));
+    let (_, status) = http(node.http_addr(), "GET", "/v1/status", b"");
+    let status = String::from_utf8(status).unwrap();
+    assert!(status.contains("could not be opened"), "{status}");
+    let m = metrics(&node);
+    assert!(
+        m.contains("atlas_native_failed_without_restart{node=\"d\",component=\"device0\"} 1"),
+        "{m}"
+    );
+    assert!(
+        m.contains("atlas_native_data_device_failed{node=\"d\",device=\"0\"} 1"),
+        "{m}"
+    );
+}
+
+#[test]
+fn a_failed_metadata_log_fails_liveness_until_the_node_is_restarted() {
+    let mut trio = Trio::start([Box::new(DataSync), Box::new(DataSync), Box::new(DataSync)]);
+    trio.create_volume();
+    wait_for("the first write", || trio.write(0, 1) == 204);
+    let sync = FailOnce::default();
+    trio.nodes[2]
+        .as_ref()
+        .unwrap()
+        .raft()
+        .with_node(|n| n.wal_mut().set_sync(Box::new(sync.clone())));
+    sync.arm();
+    let block = Cell::new(1);
+    wait_for("the replica to stop", || {
+        trio.write(block.get(), 1);
+        block.set(1 + block.get() % 100);
+        trio.nodes[2].as_ref().unwrap().fatal_error().is_some()
+    });
+    let node = trio.nodes[2].as_ref().unwrap();
+    assert_eq!(health(node), (503, 503));
+    let reason = node.restart_reason().unwrap();
+    assert!(reason.starts_with("metadata:"), "{reason}");
+    let m = metrics(node);
+    assert!(
+        m.contains("atlas_native_metadata_failed{node=\"n2\"} 1"),
+        "{m}"
+    );
+    assert_eq!(trio.supervise(), [2]);
+    wait_for("writes after the restart", || trio.write(0, 2) == 204);
+    trio.assert_block(0, 2);
+    assert_eq!(health(trio.nodes[2].as_ref().unwrap()).0, 200);
+}
+
+fn inode(path: &Path) -> u64 {
+    fs::metadata(path).unwrap().ino()
+}
+
+// State read back after a restart may be a write whose directory sync failed, held only by the
+// cache: it is written again (a new file) before it is relied on.
+
+#[test]
+fn a_fence_read_back_is_written_again_before_a_write_is_accepted_under_it() {
+    let td = tempfile::tempdir().unwrap();
+    let start = || {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        DataNodeServer::start("d", td.path(), listener).unwrap()
+    };
+    let server = start();
+    RemoteDevice::new(server.local_addr(), WAIT)
+        .append(5, b"x")
+        .unwrap();
+    drop(server);
+    let fence = td.path().join("fence");
+    let before = inode(&fence);
+    let server = start();
+    let device = RemoteDevice::new(server.local_addr(), WAIT);
+    device.append(5, b"y").unwrap();
+    let after = inode(&fence);
+    assert_ne!(after, before);
+    device.append(5, b"z").unwrap();
+    assert_eq!(inode(&fence), after, "written for every write");
+    assert_eq!(fs::read_to_string(&fence).unwrap(), "5");
+}
+
+#[test]
+fn a_high_water_mark_and_a_vote_read_back_are_written_again() {
+    let td = tempfile::tempdir().unwrap();
+    let mark = td.path().join("d.hwm");
+    let open = || {
+        let io = PreadIo::open(&td.path().join("d.data")).unwrap();
+        RawDevice::open(io, &mark, 0).unwrap()
+    };
+    open().append(0, b"x").unwrap();
+    let before = inode(&mark);
+    let device = open();
+    assert_ne!(inode(&mark), before);
+    drop(device);
+
+    let root = td.path().join("raft");
+    drop(single_voter(&root));
+    let state = root.join("raft_state.json");
+    let before = inode(&state);
+    let _node = RaftNode::open(RaftConfig::new("a", vec![], &root)).unwrap();
+    assert_ne!(inode(&state), before);
 }

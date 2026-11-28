@@ -117,6 +117,9 @@ pub struct PreadIo {
 impl PreadIo {
     pub fn open(path: &Path) -> io::Result<Self> {
         let (file, capacity) = open_device(path, libc::O_DSYNC)?;
+        // As for [`crate::device::FileDevice`]: read from the disk, not from pages a failed
+        // write may have left behind.
+        durable::drop_cached(path);
         Ok(Self { file, capacity })
     }
 }
@@ -222,10 +225,17 @@ impl<B: AlignedIo> RawDevice<B> {
     pub fn open(io: B, hwm_path: impl Into<PathBuf>, existing_len: u64) -> Result<Self, NativeError> {
         let hwm_path = hwm_path.into();
         let end = match std::fs::read_to_string(&hwm_path) {
-            Ok(s) => s
-                .trim()
-                .parse()
-                .map_err(|e| NativeError::Invalid(format!("corrupt high-water mark: {e}")))?,
+            Ok(s) => {
+                let mark: u64 = s
+                    .trim()
+                    .parse()
+                    .map_err(|e| NativeError::Invalid(format!("corrupt high-water mark: {e}")))?;
+                // What was read may be a mark whose directory sync failed, which only the
+                // cache holds. Space below it is about to count as handed out without another
+                // write of the mark, so make it durable first.
+                durable::write_atomic(&hwm_path, mark.to_string().as_bytes())?;
+                mark
+            }
             Err(e) if e.kind() == io::ErrorKind::NotFound => align_up(existing_len),
             Err(e) => return Err(e.into()),
         };
