@@ -10,16 +10,22 @@
 //! object's headers live in one extended attribute, valid while the file's size and mtime match
 //! what was recorded; a file changed through another protocol gets an ETag derived from its inode,
 //! size and mtime instead of an MD5.
+//!
+//! The rename publishes under the write's [`Condition`] and the destination's retention lock: the
+//! cluster applies it only if the destination is still what was judged, so both hold however many
+//! gateways write the same key.
 
 use std::{
     collections::BTreeMap,
     time::{SystemTime, UNIX_EPOCH},
 };
 
-use atlas_native::{engine::Attr, NodeType, ROOT_INO};
+use atlas_native::{engine::Attr, ConditionalRename, NodeType, RenameExpect, ROOT_INO};
 use atlas_native_fuse::ops::{Errno, Ops, HIDDEN_PREFIX};
 use s3s::crypto::{Checksum, Md5};
 use serde::{Deserialize, Serialize};
+
+use crate::tagging::{self, Tags, TAGS_XATTR};
 
 /// Names starting with this are the gateway's (and the FUSE client's) own: never valid in a key,
 /// never listed.
@@ -39,6 +45,8 @@ pub const MAX_PART_NUMBER: i32 = 10_000;
 pub const CHUNK: usize = 4 << 20;
 /// Object attributes fetched at once for a listing page.
 const LIST_PARALLELISM: usize = 8;
+/// Times a write is judged again after its key changed between the judgement and the publish.
+const PUBLISH_ATTEMPTS: usize = 16;
 
 const _: () = assert!(HIDDEN_PREFIX.len() > RESERVED_PREFIX.len());
 
@@ -66,6 +74,17 @@ pub enum StoreError {
     BadDigest,
     #[error("{0}")]
     Invalid(String),
+    #[error("{0}")]
+    PreconditionFailed(String),
+    /// The key kept changing under a write.
+    #[error("{0}")]
+    ConditionalConflict(String),
+    #[error("{0}")]
+    InvalidTag(String),
+    #[error("the metadata cluster predates conditional writes")]
+    ConditionalUnsupported,
+    #[error("not every metadata node is known to support conditional writes yet")]
+    ConditionalUnavailable,
     #[error("filesystem error (errno {0})")]
     Io(Errno),
 }
@@ -183,8 +202,46 @@ struct ObjectMeta {
 struct UploadMeta {
     key: String,
     initiated_ns: i64,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    tags: Tags,
     #[serde(flatten)]
     headers: Headers,
+}
+
+/// What a write must find at its key to take effect, judged again as it is published.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum Condition {
+    #[default]
+    Always,
+    /// `If-None-Match: *`: no object.
+    Absent,
+    /// `If-Match`: an object with this ETag.
+    Match(String),
+}
+
+impl Condition {
+    /// Judges the ETag of the object at the key (`None`: there is none).
+    fn judge(&self, current: Option<&str>) -> Result<(), StoreError> {
+        match (self, current) {
+            (Condition::Always, _) | (Condition::Absent, None) => Ok(()),
+            (Condition::Absent, Some(_)) => {
+                Err(StoreError::PreconditionFailed("the object exists".into()))
+            }
+            (Condition::Match(_), None) => Err(StoreError::NoSuchKey),
+            (Condition::Match(want), Some(have)) if want == have => Ok(()),
+            (Condition::Match(_), Some(_)) => Err(StoreError::PreconditionFailed(
+                "the object's ETag does not match".into(),
+            )),
+        }
+    }
+}
+
+/// What a write stores besides its bytes, and under what condition.
+#[derive(Debug, Clone, Default)]
+pub struct ObjectSpec {
+    pub headers: Headers,
+    pub tags: Tags,
+    pub condition: Condition,
 }
 
 #[derive(Debug, Clone)]
@@ -381,6 +438,73 @@ impl Bucket {
         Ok(())
     }
 
+    /// Judges `condition` against the object at `key` now. A write that fails here would fail at
+    /// its publish too, which judges it again.
+    pub fn check(&self, key: &str, condition: &Condition) -> Result<(), StoreError> {
+        if *condition == Condition::Always {
+            return Ok(());
+        }
+        match self.head(key) {
+            Ok(o) => condition.judge(Some(&o.etag)),
+            Err(StoreError::NoSuchKey) => condition.judge(None),
+            Err(e) => Err(e),
+        }
+    }
+
+    /// The tags stored on file or directory `ino`.
+    pub fn tags_of(&self, ino: u64) -> Result<Tags, StoreError> {
+        Ok(self.meta(ino, TAGS_XATTR)?.unwrap_or_default())
+    }
+
+    /// Stores `tags` on `ino`, replacing any there.
+    fn store_tags(&self, ino: u64, tags: &Tags) -> Result<(), StoreError> {
+        if !tags.is_empty() {
+            return self.set_meta(ino, TAGS_XATTR, tags);
+        }
+        match self.ops.removexattr(ino, TAGS_XATTR) {
+            Ok(()) | Err(libc::ENODATA) => Ok(()),
+            Err(libc::ENOENT) => Err(StoreError::NoSuchKey),
+            Err(e) => Err(io(e)),
+        }
+    }
+
+    /// The tags of the object at `key`.
+    pub fn tags(&self, key: &str) -> Result<Tags, StoreError> {
+        let o = self.head(key)?;
+        self.tags_of(o.ino)
+    }
+
+    /// Replaces the tags of the object at `key` (none removes them). Tags are not part of the
+    /// object's data, so a retention lock does not cover them.
+    pub fn set_tags(&self, key: &str, tags: &Tags) -> Result<(), StoreError> {
+        self.writable()?;
+        tagging::validate(tags)?;
+        for _ in 0..PUBLISH_ATTEMPTS {
+            let o = self.head(key)?;
+            match self.store_tags(o.ino, tags) {
+                // Replaced since it was looked up: tag what is there now.
+                Err(StoreError::NoSuchKey) => self.forget(key),
+                r => return r,
+            }
+        }
+        Err(StoreError::ConditionalConflict(
+            "the object kept changing while it was tagged".into(),
+        ))
+    }
+
+    /// Drops the cached name of the object at `key`.
+    fn forget(&self, key: &str) {
+        if let Ok(KeyPath {
+            dirs,
+            name: Some(name),
+        }) = parse_key(key)
+        {
+            if let Ok(Some(dir)) = self.find_dir(&dirs) {
+                self.ops.forget_entry(dir, name);
+            }
+        }
+    }
+
     /// The object's retention-lock expiry (0 = none).
     pub fn retention(&self, key: &str) -> Result<u64, StoreError> {
         let o = self.head(key)?;
@@ -390,16 +514,29 @@ impl Bucket {
     /// Locks the object against delete and overwrite until `until`. Only ever extended.
     pub fn set_retention(&self, key: &str, until: u64) -> Result<(), StoreError> {
         self.writable()?;
-        let o = self.head(key)?;
-        let cur = self.retained_until(o.ino)?;
-        if until < cur {
-            return Err(StoreError::Locked(format!(
-                "the object is locked until {cur}; retention cannot be shortened"
-            )));
+        for _ in 0..PUBLISH_ATTEMPTS {
+            let o = self.head(key)?;
+            let cur = self.retained_until(o.ino)?;
+            if until < cur {
+                return Err(StoreError::Locked(format!(
+                    "the object is locked until {cur}; retention cannot be shortened"
+                )));
+            }
+            match self.ops.setxattr(
+                o.ino,
+                RETAIN_XATTR,
+                until.to_string().as_bytes(),
+                false,
+                false,
+            ) {
+                // Replaced since it was looked up: lock what is there now.
+                Err(libc::ENOENT) => self.forget(key),
+                r => return r.map_err(io),
+            }
         }
-        self.ops
-            .setxattr(o.ino, RETAIN_XATTR, until.to_string().as_bytes(), false, false)
-            .map_err(io)
+        Err(StoreError::ConditionalConflict(
+            "the object kept changing while it was locked".into(),
+        ))
     }
 
     fn is_marker(&self, dir: u64) -> Result<bool, StoreError> {
@@ -407,20 +544,7 @@ impl Bucket {
     }
 
     fn object(&self, a: &Attr) -> Result<Object, StoreError> {
-        let meta: Option<ObjectMeta> = self.meta(a.ino, META_XATTR)?;
-        let (etag, headers) = match meta {
-            Some(m) if a.kind == NodeType::Dir => (EMPTY_ETAG.to_string(), m.headers),
-            Some(m) if m.size == a.size && m.mtime_ns == a.mtime_ns => (m.etag, m.headers),
-            Some(m) => (derived_etag(a), m.headers),
-            None => (derived_etag(a), Headers::default()),
-        };
-        Ok(Object {
-            ino: a.ino,
-            size: if a.kind == NodeType::Dir { 0 } else { a.size },
-            mtime_ns: a.mtime_ns,
-            etag,
-            headers,
-        })
+        Ok(object_from(a, self.meta(a.ino, META_XATTR)?))
     }
 
     /// The object at `key`: a regular file, or a directory carrying a marker.
@@ -432,10 +556,20 @@ impl Bucket {
         };
         let dir = self.find_dir(&p.dirs)?.ok_or(StoreError::NoSuchKey)?;
         match p.name {
-            Some(name) => match self.lookup(dir, name)? {
-                Some(a) if a.kind == NodeType::File => self.object(&a),
-                _ => Err(StoreError::NoSuchKey),
-            },
+            Some(name) => {
+                for _ in 0..PUBLISH_ATTEMPTS {
+                    let a = match self.lookup(dir, name)? {
+                        Some(a) if a.kind == NodeType::File => a,
+                        _ => break,
+                    };
+                    match self.object(&a) {
+                        // Replaced between the two reads: the key still has an object.
+                        Err(StoreError::NoSuchKey) => self.ops.forget_entry(dir, name),
+                        r => return r,
+                    }
+                }
+                Err(StoreError::NoSuchKey)
+            }
             None => {
                 if !self.is_marker(dir)? {
                     return Err(StoreError::NoSuchKey);
@@ -453,14 +587,18 @@ impl Bucket {
     }
 
     /// Where an object at `key` goes: its directory (created) and file name. A marker key makes
-    /// its directories and marks the last one.
+    /// its directories and marks the last one, under `spec`'s condition.
     pub fn prepare_put(
         &self,
         key: &str,
-        headers: &Headers,
+        spec: &ObjectSpec,
     ) -> Result<Option<(u64, String)>, StoreError> {
         self.writable()?;
         let p = parse_key(key)?;
+        if p.name.is_none() {
+            // Before the directories are made.
+            self.check(key, &spec.condition)?;
+        }
         let dir = self.make_dirs(&p.dirs)?;
         match p.name {
             Some(name) => {
@@ -474,14 +612,27 @@ impl Bucket {
                 Ok(Some((dir, name.to_string())))
             }
             None => {
+                self.refuse_if_retained(dir)?;
                 let a = self.ops.getattr(dir).map_err(io)?;
                 let meta = ObjectMeta {
                     etag: EMPTY_ETAG.into(),
                     size: 0,
                     mtime_ns: a.mtime_ns,
-                    headers: headers.clone(),
+                    headers: spec.headers.clone(),
                 };
-                self.set_meta(dir, META_XATTR, &meta)?;
+                let bytes = serde_json::to_vec(&meta).map_err(|_| StoreError::Io(libc::EINVAL))?;
+                // A marker's ETag never changes, so requiring that the attribute exists, or does
+                // not, is the whole condition, and the cluster checks it as it sets it.
+                let create = spec.condition == Condition::Absent;
+                let replace = matches!(spec.condition, Condition::Match(_));
+                self.ops
+                    .setxattr(dir, META_XATTR, &bytes, create, replace)
+                    .map_err(|e| match e {
+                        libc::EEXIST => StoreError::PreconditionFailed("the object exists".into()),
+                        libc::ENODATA => StoreError::NoSuchKey,
+                        e => io(e),
+                    })?;
+                self.store_tags(dir, &spec.tags)?;
                 Ok(None)
             }
         }
@@ -491,7 +642,10 @@ impl Bucket {
         let bytes = serde_json::to_vec(v).map_err(|_| StoreError::Io(libc::EINVAL))?;
         self.ops
             .setxattr(ino, xattr, &bytes, false, false)
-            .map_err(io)
+            .map_err(|e| match e {
+                libc::ENOENT => StoreError::NoSuchKey,
+                e => io(e),
+            })
     }
 
     /// A hidden temporary file in `parent` to write an object or part into.
@@ -537,7 +691,8 @@ impl Bucket {
         }
     }
 
-    /// Makes the written bytes the object `name` in their directory, replacing any object there.
+    /// Makes the written bytes the object `name` in their directory, replacing any object there
+    /// if `spec`'s condition holds and that object isn't retention-locked.
     /// `expected_md5` is the request's Content-MD5; `etag` overrides the MD5 ETag (multipart).
     pub fn commit(
         &self,
@@ -545,7 +700,30 @@ impl Bucket {
         name: &str,
         expected_md5: Option<[u8; 16]>,
         etag: Option<String>,
+        spec: ObjectSpec,
+    ) -> Result<Object, StoreError> {
+        let ObjectSpec {
+            headers,
+            tags,
+            condition,
+        } = spec;
+        self.finish(w, expected_md5, etag, headers, |parent, tmp, ino| {
+            if !tags.is_empty() {
+                self.set_meta(ino, TAGS_XATTR, &tags)?;
+            }
+            self.publish(parent, tmp, ino, name, &condition)
+        })
+    }
+
+    /// Completes the temporary file and hands it to `publish` (directory, temporary name,
+    /// inode); removes it if that fails.
+    fn finish(
+        &self,
+        w: Writer,
+        expected_md5: Option<[u8; 16]>,
+        etag: Option<String>,
         headers: Headers,
+        publish: impl FnOnce(u64, &str, u64) -> Result<(), StoreError>,
     ) -> Result<Object, StoreError> {
         let Writer {
             parent,
@@ -569,22 +747,7 @@ impl Bucket {
                 headers: headers.clone(),
             };
             self.set_meta(ino, META_XATTR, &meta)?;
-            if let Some(t) = self.lookup(parent, name)? {
-                if t.kind == NodeType::Dir {
-                    return Err(StoreError::Conflict(format!(
-                        "`{name}` is a directory (a prefix of other keys), so it cannot be an object"
-                    )));
-                }
-                self.refuse_if_retained(t.ino)?;
-            }
-            self.ops
-                .rename(parent, &tmp, parent, name)
-                .map_err(|e| match e {
-                    libc::EISDIR | libc::ENOTEMPTY | libc::EEXIST => StoreError::Conflict(format!(
-                        "`{name}` is a directory (a prefix of other keys), so it cannot be an object"
-                    )),
-                    e => io(e),
-                })?;
+            publish(parent, &tmp, ino)?;
             Ok(Object {
                 ino,
                 size: a.size,
@@ -601,10 +764,115 @@ impl Bucket {
         result
     }
 
-    /// Replaces the stored headers of an existing object (a copy onto itself).
-    pub fn set_headers(&self, key: &str, headers: Headers) -> Result<Object, StoreError> {
+    /// Renames the temporary file `tmp` (inode `ino`) over `name`: judges the object there,
+    /// then has the cluster rename only if it is still the one judged and isn't
+    /// retention-locked. Judges again if it changed in between.
+    fn publish(
+        &self,
+        parent: u64,
+        tmp: &str,
+        ino: u64,
+        name: &str,
+        condition: &Condition,
+    ) -> Result<(), StoreError> {
+        for _ in 0..PUBLISH_ATTEMPTS {
+            let expect = match self.lookup(parent, name)? {
+                None => {
+                    condition.judge(None)?;
+                    (*condition == Condition::Absent).then_some(RenameExpect::Absent)
+                }
+                Some(t) => {
+                    if t.kind == NodeType::Dir {
+                        return Err(directory(name));
+                    }
+                    let expect = match condition {
+                        Condition::Always => None,
+                        Condition::Absent => {
+                            return Err(StoreError::PreconditionFailed("the object exists".into()))
+                        }
+                        Condition::Match(_) => {
+                            let value = match self.ops.getxattr(t.ino, META_XATTR) {
+                                Ok(v) => Some(v),
+                                Err(libc::ENODATA) => None,
+                                // Removed since it was looked up.
+                                Err(libc::ENOENT) => {
+                                    self.ops.forget_entry(parent, name);
+                                    continue;
+                                }
+                                Err(e) => return Err(io(e)),
+                            };
+                            let meta = value
+                                .as_deref()
+                                .and_then(|v| serde_json::from_slice(v).ok());
+                            condition.judge(Some(&object_from(&t, meta).etag))?;
+                            Some(RenameExpect::Unchanged {
+                                ino: t.ino,
+                                size: t.size,
+                                mtime_ns: t.mtime_ns,
+                                xattr: META_XATTR.into(),
+                                value,
+                            })
+                        }
+                    };
+                    self.refuse_if_retained(t.ino)?;
+                    expect
+                }
+            };
+            let rename = ConditionalRename {
+                fs: String::new(),
+                parent,
+                name: tmp.into(),
+                ino,
+                new_parent: parent,
+                new_name: name.into(),
+                expect,
+                retain_xattr: Some(RETAIN_XATTR.into()),
+                now_ns: 0,
+            };
+            return match self.ops.rename_if(&rename) {
+                Ok(()) => Ok(()),
+                Err(libc::ECANCELED) => continue,
+                // Without the cluster's help an unconditional write goes ahead as it always
+                // did, its retention check not atomic with the rename; a conditional one is
+                // refused.
+                Err(libc::ENOSYS | libc::EOPNOTSUPP) if *condition == Condition::Always => {
+                    self.rename_over(parent, tmp, name)
+                }
+                Err(libc::ENOSYS) => Err(StoreError::ConditionalUnsupported),
+                Err(libc::EOPNOTSUPP) => Err(StoreError::ConditionalUnavailable),
+                Err(libc::EAGAIN) => {
+                    Err(StoreError::Locked("the object is retention-locked".into()))
+                }
+                Err(libc::EISDIR | libc::ENOTEMPTY | libc::EEXIST) => Err(directory(name)),
+                Err(e) => Err(io(e)),
+            };
+        }
+        Err(StoreError::ConditionalConflict(
+            "the object kept changing while it was written".into(),
+        ))
+    }
+
+    /// A plain rename of `tmp` over `name`.
+    fn rename_over(&self, parent: u64, tmp: &str, name: &str) -> Result<(), StoreError> {
+        self.ops
+            .rename(parent, tmp, parent, name)
+            .map_err(|e| match e {
+                libc::EISDIR | libc::ENOTEMPTY | libc::EEXIST => directory(name),
+                e => io(e),
+            })
+    }
+
+    /// Replaces the stored headers, and with `tags` the tags, of an existing object (a copy
+    /// onto itself).
+    pub fn set_headers(
+        &self,
+        key: &str,
+        headers: Headers,
+        tags: Option<&Tags>,
+    ) -> Result<Object, StoreError> {
         self.writable()?;
         let mut o = self.head(key)?;
+        self.refuse_if_retained(o.ino)?;
         let a = self.ops.getattr(o.ino).map_err(io)?;
         let meta = ObjectMeta {
             etag: o.etag.clone(),
@@ -613,6 +881,9 @@ impl Bucket {
             headers: headers.clone(),
         };
         self.set_meta(o.ino, META_XATTR, &meta)?;
+        if let Some(tags) = tags {
+            self.store_tags(o.ino, tags)?;
+        }
         o.headers = headers;
         Ok(o)
     }
@@ -669,9 +940,9 @@ impl Bucket {
                 }
                 _ => return Ok(()),
             },
-            None => match self.ops.removexattr(dir, META_XATTR) {
-                Ok(()) | Err(libc::ENODATA) | Err(libc::ENOENT) => {}
-                Err(e) => return Err(io(e)),
+            None => match self.unmark(dir) {
+                Ok(()) | Err(StoreError::NoSuchKey) => {}
+                Err(e) => return Err(e),
             },
         }
         for i in (0..p.dirs.len()).rev() {
@@ -683,6 +954,20 @@ impl Bucket {
             }
         }
         Ok(())
+    }
+
+    /// Removes the marker on directory `dir`, if it has one, unless it is retention-locked.
+    fn unmark(&self, dir: u64) -> Result<(), StoreError> {
+        if !self.is_marker(dir)? {
+            return Ok(());
+        }
+        self.refuse_if_retained(dir)?;
+        // The marker's tags go with it; the directory may outlive both.
+        self.store_tags(dir, &Tags::new())?;
+        match self.ops.removexattr(dir, META_XATTR) {
+            Ok(()) | Err(libc::ENODATA) | Err(libc::ENOENT) => Ok(()),
+            Err(e) => Err(io(e)),
+        }
     }
 
     /// Up to `max` keys and common prefixes after `after`, in key order, and whether more follow.
@@ -784,7 +1069,12 @@ impl Bucket {
         }
     }
 
-    pub fn create_upload(&self, key: &str, headers: Headers) -> Result<String, StoreError> {
+    pub fn create_upload(
+        &self,
+        key: &str,
+        headers: Headers,
+        tags: Tags,
+    ) -> Result<String, StoreError> {
         self.writable()?;
         if parse_key(key)?.name.is_none() {
             return Err(StoreError::InvalidKey(
@@ -800,6 +1090,7 @@ impl Bucket {
         let meta = UploadMeta {
             key: key.to_string(),
             initiated_ns: a.ctime_ns,
+            tags,
             headers,
         };
         self.set_meta(a.ino, UPLOAD_XATTR, &meta)?;
@@ -825,9 +1116,14 @@ impl Bucket {
         expected_md5: Option<[u8; 16]>,
     ) -> Result<String, StoreError> {
         let name = format!("{number:05}");
-        Ok(self
-            .commit(w, &name, expected_md5, None, Headers::default())?
-            .etag)
+        let o = self.finish(
+            w,
+            expected_md5,
+            None,
+            Headers::default(),
+            |parent, tmp, _| self.rename_over(parent, tmp, &name),
+        )?;
+        Ok(o.etag)
     }
 
     pub fn list_parts(&self, id: &str, key: &str) -> Result<Vec<Part>, StoreError> {
@@ -857,16 +1153,31 @@ impl Bucket {
         Ok(parts)
     }
 
+    /// [`Self::check`] for completing upload `id`, which must exist.
+    pub fn check_completion(
+        &self,
+        id: &str,
+        key: &str,
+        condition: &Condition,
+    ) -> Result<(), StoreError> {
+        self.upload_dir(id, key)?;
+        self.check(key, condition)
+    }
+
     /// Assembles the parts (in ascending order, each but the last at least 5 MiB, ETags
-    /// matching) into the object, then removes the upload.
+    /// matching) into the object under `condition`, then removes the upload. A completion that
+    /// fails leaves the upload as it was.
     pub fn complete_upload(
         &self,
         id: &str,
         key: &str,
         parts: &[(i32, String)],
+        condition: Condition,
     ) -> Result<Object, StoreError> {
         self.writable()?;
         let (dir, upload) = self.upload_dir(id, key)?;
+        // Before the parts are copied; the publish judges it again.
+        self.check(key, &condition)?;
         if parts.is_empty() {
             return Err(StoreError::InvalidPart(
                 "at least one part is required".into(),
@@ -904,8 +1215,13 @@ impl Bucket {
             sources.push((ino, part.size));
         }
         let etag = format!("{}-{}", hex(&Md5::checksum(&digests)), parts.len());
+        let spec = ObjectSpec {
+            headers: upload.headers,
+            tags: upload.tags,
+            condition,
+        };
         let (parent, name) = self
-            .prepare_put(key, &upload.headers)?
+            .prepare_put(key, &spec)?
             .ok_or_else(|| StoreError::InvalidKey("not an object key".into()))?;
         let mut w = self.writer(parent)?;
         for (ino, size) in sources {
@@ -914,7 +1230,7 @@ impl Bucket {
                 return Err(e);
             }
         }
-        let object = self.commit(w, &name, None, Some(etag), upload.headers)?;
+        let object = self.commit(w, &name, None, Some(etag), spec)?;
         self.remove_upload(dir, id);
         Ok(object)
     }
@@ -961,6 +1277,30 @@ impl Bucket {
         out.sort_by(|a, b| (&a.key, a.initiated_ns).cmp(&(&b.key, b.initiated_ns)));
         Ok(out)
     }
+}
+
+/// The object that file (or marker directory) `a` is, given its recorded metadata.
+fn object_from(a: &Attr, meta: Option<ObjectMeta>) -> Object {
+    let (etag, headers) = match meta {
+        Some(m) if a.kind == NodeType::Dir => (EMPTY_ETAG.to_string(), m.headers),
+        Some(m) if m.size == a.size && m.mtime_ns == a.mtime_ns => (m.etag, m.headers),
+        Some(m) => (derived_etag(a), m.headers),
+        None => (derived_etag(a), Headers::default()),
+    };
+    Object {
+        ino: a.ino,
+        size: if a.kind == NodeType::Dir { 0 } else { a.size },
+        mtime_ns: a.mtime_ns,
+        etag,
+        headers,
+    }
+}
+
+/// The refusal of an object whose name a directory holds.
+fn directory(name: &str) -> StoreError {
+    StoreError::Conflict(format!(
+        "`{name}` is a directory (a prefix of other keys), so it cannot be an object"
+    ))
 }
 
 /// ETag of a file without a valid recorded one: stable while its content is unchanged.

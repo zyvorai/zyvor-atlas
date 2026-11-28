@@ -62,7 +62,10 @@ data nodes directly.
 ## 2. S3 object retention
 
 `PutObjectRetention` / `GetObjectRetention` on the native S3 gateway, compliance mode only; see
-[`NATIVE_S3.md`](NATIVE_S3.md). It protects an object against the S3 API only. A client with a
+[`NATIVE_S3.md`](NATIVE_S3.md). Writes (put, copy, multipart completion) check the lock in the same
+replicated step that publishes them, once every metadata node is upgraded; deletes and concurrent
+retention changes check it just before acting, so a request racing the lock can slip past it. Object
+tags are not covered. It protects an object against the S3 API only. A client with a
 FUSE, NFS or SMB mount of the same filesystem can still unlink the file, so combine it with a
 locked **filesystem snapshot**, which they cannot touch.
 

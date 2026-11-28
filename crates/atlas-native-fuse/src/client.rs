@@ -77,6 +77,7 @@ impl Error {
                 // The token's roles or scope do not cover the request.
                 "forbidden" => libc::EACCES,
                 "no_session" => libc::ENOLCK,
+                "precondition" => libc::ECANCELED,
                 _ if *status == 413 => libc::EFBIG,
                 _ => libc::EIO,
             },

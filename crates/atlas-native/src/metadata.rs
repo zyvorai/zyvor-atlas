@@ -193,6 +193,14 @@ pub struct Catalog {
     /// next checkpoint writes in full.
     #[serde(skip)]
     pub in_store: bool,
+    /// Capability bits ([`crate::raft::CAP_RENAME_IF`]) of commands this catalog has applied
+    /// that older builds cannot decode.
+    #[serde(default, skip_serializing_if = "no_features")]
+    pub features: u64,
+}
+
+pub(crate) fn no_features(features: &u64) -> bool {
+    *features == 0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -350,6 +358,9 @@ pub enum MetaError {
     Quota(String),
     #[error("read-only: {0}")]
     ReadOnly(String),
+    /// A conditional change found something else than it required.
+    #[error("precondition failed: {0}")]
+    Precondition(String),
     /// Pending delta writes have to be folded first: asking again will succeed.
     #[error("busy: {0}")]
     Busy(String),

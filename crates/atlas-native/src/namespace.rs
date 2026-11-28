@@ -18,7 +18,10 @@ use crate::{
     },
 };
 
+mod conditional;
 mod replica;
+
+pub use conditional::{ConditionalRename, RenameExpect};
 
 pub type FsId = String;
 
@@ -287,6 +290,9 @@ pub enum FsOp {
         new_name: String,
         now_ns: i64,
     },
+    /// [`FsOp::Rename`] applied only if its conditions hold. Proposed only once every replica
+    /// decodes it ([`crate::raft::CAP_RENAME_IF`]).
+    RenameIf(ConditionalRename),
     SetAttr {
         fs: FsId,
         ino: u64,
@@ -446,6 +452,7 @@ impl FsOp {
             | FsOp::InstallFileExtents {
                 fs, replica: false, ..
             } => vec![fs],
+            FsOp::RenameIf(r) => vec![&r.fs],
             FsOp::AppendDeltas { items } => items
                 .iter()
                 .filter_map(|i| match &i.target {
@@ -1089,6 +1096,7 @@ impl Catalog {
                     self.drop_inode(fs, &gone, gc)?;
                 }
             }
+            FsOp::RenameIf(r) => self.rename_if(r, gc)?,
             FsOp::SetAttr {
                 fs,
                 ino,

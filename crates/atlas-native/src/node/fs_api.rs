@@ -21,7 +21,8 @@ use crate::{
     },
     http::{Request, Response},
     leases::{LockKind, Session},
-    namespace::{FsQuota, ReplicaInode, SetAttr, XattrMode},
+    metadata::MetaError,
+    namespace::{ConditionalRename, FsQuota, ReplicaInode, SetAttr, XattrMode},
     raft::Role,
 };
 
@@ -326,6 +327,18 @@ fn fs_route(
             e.fs_rename(fs, parent, name, new_parent, new_name)?;
             Ok(Response::text(204, ""))
         }
+        // A route of its own: a node that predates it answers 404, never a plain rename.
+        ("POST", ["v1", "fs", fs, "rename-if"]) => {
+            let mut r: ConditionalRename = serde_json::from_slice(&req.body)
+                .map_err(|err| NativeError::Invalid(format!("invalid rename: {err}")))?;
+            r.fs = (*fs).to_string();
+            let mut inos = vec![r.parent, r.new_parent];
+            inos.extend(child(e, fs, r.parent, &r.name));
+            inos.extend(child(e, fs, r.new_parent, &r.new_name));
+            let _change = change(g, req, fs, &inos)?;
+            e.fs_rename_if(r)?;
+            Ok(Response::text(204, ""))
+        }
         ("POST", ["v1", "fs", fs, "snapshots"]) => {
             let body = parse(req)?;
             let name = str_field(&body, "name")?;
@@ -422,12 +435,19 @@ fn inode_route(
             // The directory's lease covers the name, the child's its attributes; each is read
             // after its lease is granted.
             let dir = lease(g, req, fs, &[ino])?;
-            let found = e.fs_lookup(fs, ino, &name)?;
-            let lease = match dir {
-                Some(_) => lease(g, req, fs, &[found.ino])?,
-                None => None,
-            };
-            leased(e.fs_getattr(fs, found.ino)?, lease)
+            let mut tries = 0;
+            loop {
+                let found = e.fs_lookup(fs, ino, &name)?;
+                let lease = match dir {
+                    Some(_) => lease(g, req, fs, &[found.ino])?,
+                    None => None,
+                };
+                match e.fs_getattr(fs, found.ino) {
+                    // Renamed over between the two reads: the name now has another inode.
+                    Err(NativeError::Metadata(MetaError::NotFound(_))) if tries < 8 => tries += 1,
+                    a => break leased(a?, lease),
+                }
+            }
         }
         ("GET", ["entries"]) => {
             let after = req.query.get("after").map(|a| pct_decode(a)).transpose()?;

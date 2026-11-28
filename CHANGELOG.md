@@ -9,6 +9,10 @@ before `0.2.0` were not tracked here — see `git log` for that history.
 
 ## [Unreleased]
 
+### Added (native S3)
+
+- Conditional writes on the native S3 gateway (`If-None-Match: *`, `If-Match` on put, copy and multipart completion) are atomic across gateway replicas, through a new replicated compare-and-swap rename that also enforces retention locks atomically against writes. Object tagging (`Put/Get/DeleteObjectTagging`, `x-amz-tagging`). Conditional deletes and other unsupported condition forms now return `NotImplemented` instead of being ignored. Upgrade note: once the cluster has applied one such rename (the first S3 write after every metadata node is upgraded), do not downgrade metadata nodes (`docs/NATIVE_S3.md`, "Conditional writes").
+
 ### Changed
 
 - Dependency pass 2: `cargo update` (ahash, const-random, crypto-common, hyper 1.13 and others) and `kube` requirement 5.0 to 5.1 (the only newer release `cargo upgrade --incompatible` found; no major bumps are available). License header fix: `crates/atlas-io/src/gpu.rs`, `crates/atlas-io/tests/gpu.rs`, `docs/GPU.md` and `CHANGELOG.md` carried the wrong SPDX identifier, so `scripts/check-license-headers.sh` failed on main.

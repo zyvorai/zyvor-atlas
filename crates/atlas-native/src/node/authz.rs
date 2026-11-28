@@ -142,6 +142,8 @@ const ROUTES: &[Route] = &[
     r("DELETE", "v1/fs/{fs}/sessions/{id}",           DATA,        On::Object),
     r("GET",    "v1/fs/{fs}/locks",                   READ | DATA, On::Object),
     r("POST",   "v1/fs/{fs}/rename",                  DATA,        On::Object),
+    // The same roles as `rename`: it does no more, only under conditions.
+    r("POST",   "v1/fs/{fs}/rename-if",               DATA,        On::Object),
     r("POST",   "v1/fs/{fs}/snapshots",               LIFE | REPL, On::Object),
     r("POST",   "v1/fs/{fs}/replica/apply",           REPL,        On::Object),
     r("PUT",    "v1/fs/{fs}/replica/inodes/{ino}/data", REPL,      On::Object),

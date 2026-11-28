@@ -67,8 +67,10 @@ pub const CAP_DELTA: u64 = 1;
 /// Capability bit: this build decodes [`MetaCommand::FoldCells`]. A leader proposes it only
 /// once every replica it feeds has advertised it.
 pub const CAP_FOLD_BATCH: u64 = 2;
+/// Capability bit: this build decodes the conditional rename ([`crate::FsOp::RenameIf`]).
+pub const CAP_RENAME_IF: u64 = 1 << 4;
 /// Every capability of this build.
-pub const CAPABILITIES: u64 = CAP_DELTA | CAP_FOLD_BATCH;
+pub const CAPABILITIES: u64 = CAP_DELTA | CAP_FOLD_BATCH | CAP_RENAME_IF;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RaftError {
