@@ -154,12 +154,21 @@ impl NativeEngine {
 
     /// A client writing directly reported that its writes to `node` failed. It was given the
     /// devices `leased`: if one of several now refuses writes, only that one is set aside.
+    /// Otherwise the node is backed off.
     pub(super) fn client_write_failed(&self, node: &NodeRuntime, leased: &BTreeSet<usize>) {
         let mut refusing = false;
-        for &i in leased.iter().filter(|i| **i < node.devices.len()) {
-            refusing |= matches!(self.probe_device(node, i), Ok(true));
+        // A node with one device is backed off whatever it would answer, so it is not asked;
+        // and one that cannot be reached is asked once, as the commit waits for it.
+        if node.devices.len() > 1 {
+            for &i in leased.iter().filter(|i| **i < node.devices.len()) {
+                match self.probe_device(node, i) {
+                    Ok(failed) => refusing |= failed,
+                    Err(e) if node_unreachable(node.devices[i].as_ref(), &e) => break,
+                    Err(_) => {}
+                }
+            }
         }
-        if refusing && node.devices.len() > 1 {
+        if refusing {
             node.health.failures.fetch_add(1, Ordering::Relaxed);
         } else {
             self.mark_down(node);

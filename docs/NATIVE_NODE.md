@@ -153,9 +153,10 @@ A data node answers a write with success only once its data is durable. When tha
   `data_node.failed_devices` in `/v1/status`, and asks to be restarted (below).
 
 A device that cannot be opened at startup because of an I/O error (a dead disk, a filesystem
-remounted read-only, missing permissions) does not stop the node: it takes its position as a failed
-device, so that the other devices and the metadata role run. Other errors, such as a backend this
-build lacks, still stop the node from starting.
+remounted read-only, missing permissions, an open mode or system call the host refuses) does not
+stop the node: it takes its position as a failed device, so that the other devices and the metadata
+role run. Check `/readyz` and the metrics after changing `data_node.devices`. Other errors, such as
+a backend this build lacks, still stop the node from starting.
 
 #### What the cluster does meanwhile
 
@@ -201,7 +202,9 @@ that could not be written is tried again every 10 s.
 `any` gets a device back soonest, but a restart also takes the node's healthy devices and its
 metadata replica away for as long as it takes. With as many data nodes as `replicas`, writes fail
 for that long. On a node with several devices, `last` keeps writes going on the healthy ones and
-leaves the failed one to the rebuild controller and an operator.
+leaves the failed one to the rebuild controller and an operator. Restarts are not coordinated
+between nodes (a pod disruption budget does not hold back a liveness restart), so one event that
+fails disks on several nodes restarts them together.
 
 Related metrics: `atlas_native_restart_required{node}`, `atlas_native_metadata_failed{node}`,
 `atlas_native_failure_restarts{node,component}` (restarts counted in the window, which survives
@@ -550,9 +553,11 @@ token unlock alone.
   powered-off host) is detected by its Raft senders: a connection is replaced when the peer has
   answered none of our requests for `max(40 ticks, 1 s)` or has reconnected to us since (it
   restarted). Counted in `atlas_native_transport_stale_reconnects_total`.
-- **Failure**: a data node that fails I/O is backed off for 5 s and writes move to the next eligible
-  node; reads fall back to other replicas. Losing the metadata leader triggers an election
-  (typically well under a second with the default tick) and clients retry against the new leader.
+- **Failure**: a data node that cannot be reached, or whose only device fails, is backed off for
+  5 s and writes move to the next eligible node; on a node with several devices a failed one is
+  passed over for the others ([Failed data syncs](#failed-data-syncs)). Reads fall back to other
+  replicas. Losing the metadata leader triggers an election (typically well under a second with the
+  default tick) and clients retry against the new leader.
 - **Durability**: a follower fsyncs its log once per batch of AppendEntries, before acknowledging
   any of it; the leader writes proposals in parallel with replicating them and counts itself towards
   a quorum only for entries it has fsynced, so concurrent proposals share fsyncs (group commit). The
