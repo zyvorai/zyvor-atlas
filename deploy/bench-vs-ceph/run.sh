@@ -150,8 +150,9 @@ for rep in $(seq 1 "$REPEATS"); do
     --rw=write --bs=4k --create_on_open=1 --openfiles=1 --file_service_type=sequential --fsync_on_close=1
 done
 
-# Data integrity: random 4k writes, then read back and check every block.
-fio_run verify 1 0 --directory="$DIR" --filename=verify.dat --size=128m --rw=randwrite --bs=4k --sync=1 \
+# Data integrity: random 4k writes, then read back and check every block. Small, because every write is
+# synced and a slow system manages only a few per second.
+fio_run verify 1 0 --directory="$DIR" --filename=verify.dat "--size=${VERIFY_MB:-4}m" --rw=randwrite --bs=4k --sync=1 \
   --numjobs=1 --verify=crc32c --verify_fatal=1 --do_verify=1
 
 inct du -sk /srv/bench >"$OUT/space.txt" || true
