@@ -150,7 +150,8 @@ A data node answers a write with success only once its data is durable. When tha
 - reads go on, including everything written before the failure;
 - the node logs `atlas-native: device <path> failed, ...` once, reports
   `atlas_native_data_device_failed{node,device}` = 1 on `/metrics`, lists the device under
-  `data_node.failed_devices` in `/v1/status`, and asks to be restarted (below).
+  `data_node.failed_devices` in `/v1/status`. When no device of the node accepts writes any more,
+  the node asks to be restarted (below).
 
 A device that cannot be opened at startup because of an I/O error (a dead disk, a filesystem
 remounted read-only, missing permissions, an open mode or system call the host refuses) does not
@@ -179,11 +180,12 @@ node) the data stays where it is, still readable, counted in `degraded_extents`.
 
 #### Restarting, and its limit
 
-Only reopening the file ends the failed state. While a restart is wanted, `/healthz` answers 503
+Only reopening the file ends the failed state. By default a data device asks for that only when
+no device of its node accepts writes: at once on a node with one device. A stopped metadata
+replica always asks. While a restart is wanted, `/healthz` answers 503
 (`restart required: ...`) and `atlas-native-node` exits non-zero within about a second, so that
 Kubernetes, systemd or another supervisor starts it again. **Run the node under a supervisor that
-restarts it**; without one it stays down. A stopped metadata replica (a failed log, vote or
-checkpoint write) is handled the same way.
+restarts it**; without one it stays down.
 
 On a disk that is bad for good a restart cures nothing, so each component (`device<i>`, `metadata`)
 gets at most 3 restarts an hour. They are counted in `data_dir/restarts.json`, written before the
@@ -197,14 +199,22 @@ that could not be written is tried again every 10 s.
 | --- | --- | --- |
 | `ATLAS_NATIVE_FAILURE_RESTARTS` | 3 | Restarts per component per window; 0 asks for none. |
 | `ATLAS_NATIVE_FAILURE_WINDOW_SECS` | 3600 | The window. |
-| `ATLAS_NATIVE_DEVICE_FAILURE_RESTART` | `any` | When a failed data device asks for a restart: `any` (at once), `last` (only when no device of the node accepts writes), `never`. |
+| `ATLAS_NATIVE_DEVICE_FAILURE_RESTART` | `last` | When a failed data device asks for a restart: `last` (only when no device of the node accepts writes), `any` (as soon as it fails), `never`. |
 
-`any` gets a device back soonest, but a restart also takes the node's healthy devices and its
-metadata replica away for as long as it takes. With as many data nodes as `replicas`, writes fail
-for that long. On a node with several devices, `last` keeps writes going on the healthy ones and
-leaves the failed one to the rebuild controller and an operator. Restarts are not coordinated
-between nodes (a pod disruption budget does not hold back a liveness restart), so one event that
-fails disks on several nodes restarts them together.
+With `last`, a node with healthy devices keeps writing to them and is not restarted. **Nothing
+brings the failed device back by itself**, and neither probe shows it: `/healthz` and `/readyz`
+stay 200. Alert on `atlas_native_failed_without_restart{node,component}` (or
+`atlas_native_data_device_failed{node,device}`); `/v1/status` lists it under `failures` with
+`restart_wanted` false. The one way to reopen the device is to restart the node's process (delete
+the pod, restart the unit) when that is convenient, after fixing or replacing the disk if it is
+bad; this uses none of the restart allowance. Until then the node has that much less capacity, and
+after `rebuild_delay_secs` the rebuild controller moves the device's data to others.
+
+`any` gets a device back soonest, without an operator, but a restart also takes the node's healthy
+devices and its metadata replica away for as long as it takes. With as many data nodes as
+`replicas`, writes fail for that long. Restarts are not coordinated between nodes (a pod
+disruption budget does not hold back a liveness restart), so one event that leaves several nodes
+without a writable device restarts them together.
 
 Related metrics: `atlas_native_restart_required{node}`, `atlas_native_metadata_failed{node}`,
 `atlas_native_failure_restarts{node,component}` (restarts counted in the window, which survives
@@ -571,9 +581,9 @@ token unlock alone.
   cause needless elections (clients retry through them). On such disks raise `metadata.tick_ms`
   (e.g. 200 for 2–4 s elections).
 - **Restart**: all Raft state and data are crash-safe on disk, so stopping the process (any signal)
-  needs no graceful path. After a storage error (a failed sync of a data device or of the metadata
-  replica's state) the process exits non-zero so its supervisor restarts it from disk, a bounded
-  number of times: see [Failed data syncs](#failed-data-syncs) and
+  needs no graceful path. After a storage error (a failed sync of the metadata replica's state, or
+  of the last data device that accepted writes) the process exits non-zero so its supervisor
+  restarts it from disk, a bounded number of times: see [Failed data syncs](#failed-data-syncs) and
   [`NATIVE_METADATA.md`](NATIVE_METADATA.md#failed-writes-and-syncs).
 - **Logging**: startup prints the bound addresses to stderr; everything else is in `/metrics` and
   `/v1/status`.
