@@ -4,22 +4,37 @@
 //! which extents that leaves short of parts, and repairing one extent at a time.
 
 use std::{
-    collections::BTreeSet,
+    collections::{BTreeMap, BTreeSet},
     ops::Bound,
     time::{Duration, Instant},
 };
 
 use super::{NativeEngine, NativeError, RepairStats};
+use crate::metadata::ReplicaRef;
 
-/// An extent with parts on lost nodes.
+/// An extent with parts on lost nodes or failed devices.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Degraded {
     pub extent_id: String,
     /// Parts (replicas or shards) on lost nodes.
     pub lost: usize,
-    /// How many more parts it can lose and still be read: replicas left minus one, or parity
-    /// shards minus lost shards. Negative means it can't be rebuilt until a node returns.
+    /// Parts on devices of other nodes that refuse writes. They may still be read, and are
+    /// moved.
+    pub failed: usize,
+    /// How many more parts it can lose and still be read from sound devices: replicas left
+    /// minus one, or parity shards minus the parts above.
     pub spare: i64,
+    /// Whether a part on a failed device has somewhere to go: a node that is up and not lost,
+    /// holds no other part (nor shares a host with one, when placement requires distinct
+    /// hosts) and has a device that accepts writes.
+    pub movable: bool,
+}
+
+impl Degraded {
+    /// False if too few parts are left to rebuild it until a node returns.
+    pub fn rebuildable(&self) -> bool {
+        self.spare + self.failed as i64 >= 0
+    }
 }
 
 impl NativeEngine {
@@ -41,18 +56,19 @@ impl NativeEngine {
             .collect()
     }
 
-    /// Asks every configured node not inside a back-off window for its device length, so a
-    /// node that died while idle is noticed and one that came back is cleared. Nodes answer in
-    /// parallel; a dead one costs at most one I/O timeout per back-off window.
+    /// Asks every configured node not inside a back-off window about each of its devices, so a
+    /// node that died while idle is noticed, one that came back is cleared, and devices that
+    /// refuse writes are known. Nodes answer in parallel; a dead one costs at most one I/O
+    /// timeout per back-off window.
     pub fn probe_nodes(&self) {
         std::thread::scope(|s| {
             for n in self.nodes.iter().filter(|n| self.is_up(n)) {
-                let Some(dev) = n.devices.first() else {
-                    continue;
-                };
-                s.spawn(move || match dev.len() {
-                    Ok(_) => self.mark_up(n),
-                    Err(_) => self.mark_down(n),
+                s.spawn(move || {
+                    if self.probe_node_devices(n) {
+                        self.mark_up(n);
+                    } else {
+                        self.mark_down(n);
+                    }
                 });
             }
         });
@@ -60,9 +76,38 @@ impl NativeEngine {
 
     /// Extents with parts on `lost` nodes, least spare redundancy first. Reads metadata only.
     pub fn degraded_extents(&self, lost: &BTreeSet<String>) -> Result<Vec<Degraded>, NativeError> {
-        if lost.is_empty() {
+        self.degraded_extents_on(lost, &BTreeSet::new())
+    }
+
+    /// [`Self::degraded_extents`], counting parts on `failed` devices
+    /// ([`Self::failed_devices`]) as well.
+    pub fn degraded_extents_on(
+        &self,
+        lost: &BTreeSet<String>,
+        failed: &BTreeSet<(String, usize)>,
+    ) -> Result<Vec<Degraded>, NativeError> {
+        if lost.is_empty() && failed.is_empty() {
             return Ok(Vec::new());
         }
+        let on_failed = |node: &str, device: usize| failed.contains(&(node.to_string(), device));
+        // The nodes a part could move to.
+        let targets: Vec<(&str, &str)> = self
+            .nodes
+            .iter()
+            .filter(|n| {
+                !failed.is_empty()
+                    && !lost.contains(&n.spec.id)
+                    && self.is_up(n)
+                    && (0..n.devices.len()).any(|i| !on_failed(&n.spec.id, i))
+            })
+            .map(|n| (n.spec.id.as_str(), n.spec.failure_domain.host.as_str()))
+            .collect();
+        let hosts: BTreeMap<&str, &str> = self
+            .nodes
+            .iter()
+            .map(|n| (n.spec.id.as_str(), n.spec.failure_domain.host.as_str()))
+            .collect();
+        let distinct = self.cfg.placement.require_distinct_hosts;
         let mut out: Vec<Degraded> = self.with_catalog(|c| {
             c.extents
                 .values()
@@ -73,9 +118,24 @@ impl NativeEngine {
                         .iter()
                         .filter(|r| lost.contains(&r.node_id))
                         .count();
-                    if n == 0 {
+                    let moving: Vec<&ReplicaRef> = e
+                        .replicas
+                        .iter()
+                        .filter(|r| {
+                            !lost.contains(&r.node_id) && on_failed(&r.node_id, r.device_index)
+                        })
+                        .collect();
+                    if n + moving.len() == 0 {
                         return None;
                     }
+                    let movable = moving.iter().any(|part| {
+                        targets.iter().any(|(node, host)| {
+                            e.replicas.iter().filter(|r| r != part).all(|r| {
+                                r.node_id != *node
+                                    && !(distinct && hosts.get(r.node_id.as_str()) == Some(host))
+                            })
+                        })
+                    });
                     let tolerance = match &e.ec {
                         Some(ec) => ec.parity,
                         None => e.replicas.len().saturating_sub(1),
@@ -83,7 +143,9 @@ impl NativeEngine {
                     Some(Degraded {
                         extent_id: e.id.clone(),
                         lost: n,
-                        spare: tolerance as i64 - n as i64,
+                        failed: moving.len(),
+                        spare: tolerance as i64 - (n + moving.len()) as i64,
+                        movable,
                     })
                 })
                 .collect()
@@ -119,13 +181,24 @@ impl NativeEngine {
         id: &str,
         lost: &BTreeSet<String>,
     ) -> Result<RepairStats, NativeError> {
+        self.repair_extent_on(id, lost, &BTreeSet::new())
+    }
+
+    /// [`Self::repair_extent`] that also moves parts off `failed` devices. A part stays where it
+    /// is until its replacement is committed.
+    pub fn repair_extent_on(
+        &self,
+        id: &str,
+        lost: &BTreeSet<String>,
+        failed: &BTreeSet<(String, usize)>,
+    ) -> Result<RepairStats, NativeError> {
         let fence = self.write_fence()?;
         let _repair = self
             .repair_lock
             .lock()
             .map_err(|_| NativeError::Poisoned("repair"))?;
         let mut st = RepairStats::default();
-        self.repair_extent_with(id, lost, fence, &mut st)?;
+        self.repair_extent_with(id, lost, failed, fence, &mut st)?;
         Ok(st)
     }
 }

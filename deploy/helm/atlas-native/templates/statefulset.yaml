@@ -78,6 +78,9 @@ spec:
             - name: POD_NAME
               valueFrom:
                 fieldRef: { fieldPath: metadata.name }
+            - { name: ATLAS_NATIVE_FAILURE_RESTARTS, value: {{ .Values.node.failureRestarts | int | quote }} }
+            - { name: ATLAS_NATIVE_FAILURE_WINDOW_SECS, value: {{ .Values.node.failureWindowSecs | int | quote }} }
+            - { name: ATLAS_NATIVE_DEVICE_FAILURE_RESTART, value: {{ .Values.node.deviceFailureRestart | quote }} }
             {{- with .Values.node.mallocArenaMax }}
             - { name: MALLOC_ARENA_MAX, value: {{ . | quote }} }
             {{- end }}
@@ -90,6 +93,8 @@ spec:
             - { name: http, containerPort: 7480 }
             - { name: data, containerPort: 7481 }
             - { name: raft, containerPort: 7482 }
+          # /healthz fails while a storage failure calls for a restart; /readyz also fails when
+          # the metadata replica stopped or no data device accepts writes.
           startupProbe:
             httpGet: { path: /healthz, port: http, scheme: {{ include "atlas-native.probeScheme" . }} }
             periodSeconds: 2

@@ -147,6 +147,9 @@ spec:
             - { name: http, containerPort: 7480 }
             - { name: data, containerPort: 7481 }
             - { name: raft, containerPort: 7482 }
+          # /healthz fails while a storage failure calls for a restart (at most 3 per component
+          # per hour, docs/NATIVE_NODE.md "Failed data syncs"); /readyz also fails when the
+          # metadata replica stopped or no data device accepts writes.
           startupProbe:
             httpGet: { path: /healthz, port: http }
             periodSeconds: 2

@@ -49,6 +49,7 @@ pub mod rdma_link;
 pub mod rdma_pipeline;
 pub mod read_lease;
 pub mod rebuild;
+pub mod restart;
 pub mod store;
 mod sync_guard;
 pub mod telemetry;
@@ -78,4 +79,5 @@ pub use raft::{Envelope, Message, RaftConfig, RaftCounters, RaftError, RaftNode,
 pub use raft_server::{RaftMux, RaftServer, RaftStatus};
 pub use raw::{open_store, DeviceBackend};
 pub use rdma_link::{FakeTransport, RdmaConfig, RdmaSnapshot, RdmaStats, RdmaTransport};
+pub use restart::{DeviceRestart, RestartPolicy};
 pub use tls::TlsIdentity;

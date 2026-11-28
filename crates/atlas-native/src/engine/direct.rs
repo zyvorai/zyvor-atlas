@@ -22,7 +22,7 @@
 //! client falls back to the leader path.
 
 use std::{
-    collections::HashMap,
+    collections::{BTreeSet, HashMap},
     sync::Mutex,
     time::{Duration, Instant},
 };
@@ -281,12 +281,15 @@ impl NativeEngine {
             }
             let mut targets = Vec::new();
             let mut held = Vec::new();
-            for (n, node_id) in order.iter().take(needed + 1).enumerate() {
+            for node_id in &order {
+                let n = targets.len();
+                if n > needed {
+                    break;
+                }
                 let node = self.node(node_id)?;
-                let device_index = node
-                    .next_device
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
-                    % node.devices.len();
+                let Some(device_index) = self.next_device(node) else {
+                    continue;
+                };
                 let endpoint = node.devices[device_index]
                     .endpoint()
                     .ok_or_else(|| {
@@ -318,6 +321,12 @@ impl NativeEngine {
                     device_index,
                     offset: at,
                     grant,
+                });
+            }
+            if targets.len() < needed {
+                return Err(NativeError::InsufficientReplicas {
+                    needed,
+                    found: targets.len(),
                 });
             }
             out_cells.push(DirectCell {
@@ -390,12 +399,15 @@ impl NativeEngine {
             NativeError::Invalid("direct writes need a write-grant key on the cluster".into())
         })?;
         for node_id in &c.failed {
-            let leased = pending
+            let leased: BTreeSet<usize> = pending
                 .cells
                 .iter()
-                .any(|(_, ts)| ts.iter().any(|t| &t.node_id == node_id));
-            if let (true, Ok(node)) = (leased, self.node(node_id)) {
-                self.mark_down(node);
+                .flat_map(|(_, ts)| ts.iter())
+                .filter(|t| &t.node_id == node_id)
+                .map(|t| t.device_index)
+                .collect();
+            if let (false, Ok(node)) = (leased.is_empty(), self.node(node_id)) {
+                self.client_write_failed(node, &leased);
                 self.telemetry.replica_write_failure();
             }
         }

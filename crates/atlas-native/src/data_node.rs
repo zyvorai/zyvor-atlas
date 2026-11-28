@@ -17,7 +17,8 @@
 //!
 //! A write is answered with success only once it is durable. A device on which that failed
 //! refuses further writes until the node is restarted (see [`crate::device::FileDevice`]); the
-//! engine places new replicas elsewhere, and `atlas_native_data_device_failed` reports it.
+//! engine places new replicas on the node's other devices or elsewhere, and
+//! `atlas_native_data_device_failed` and the answer to `Len` report it.
 //!
 //! Every write carries a fence (the writer's Raft term) and the metadata group it writes for.
 //! The node durably records the highest fence it has accepted from each group and rejects lower
@@ -137,6 +138,10 @@ enum Response {
     },
     Len {
         len: u64,
+        /// Why the device refuses writes until the node restarts, if it does. Older nodes
+        /// don't send it and older clients ignore it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        failed: Option<String>,
     },
     Devices {
         count: usize,
@@ -202,6 +207,20 @@ struct Stats {
 struct Fence {
     current: RwLock<u64>,
     path: PathBuf,
+    /// Whether `current` is known to be on disk. A value read from the file may be one whose
+    /// directory sync failed, so it is written again before a write is accepted under it.
+    persisted: AtomicBool,
+}
+
+impl Fence {
+    fn read(path: PathBuf) -> Result<Self, NativeError> {
+        let current = read_fence(&path)?;
+        Ok(Self {
+            persisted: AtomicBool::new(current == 0),
+            current: RwLock::new(current),
+            path,
+        })
+    }
 }
 
 struct Shared {
@@ -266,11 +285,7 @@ impl Shared {
         if let Some(f) = fences.get(&group) {
             return Ok(f.clone());
         }
-        let path = fence_path(&self.root, group);
-        let f = Arc::new(Fence {
-            current: RwLock::new(read_fence(&path)?),
-            path,
-        });
+        let f = Arc::new(Fence::read(fence_path(&self.root, group))?);
         fences.insert(group, f.clone());
         Ok(f)
     }
@@ -317,7 +332,7 @@ impl Shared {
                     self.stats.fenced.fetch_add(1, Ordering::Relaxed);
                     return Response::Fenced { current: *current };
                 }
-                if fence == *current {
+                if fence == *current && f.persisted.load(Ordering::Acquire) {
                     return write().unwrap_or_else(|e| {
                         self.stats.errors.fetch_add(1, Ordering::Relaxed);
                         Response::Error {
@@ -329,7 +344,8 @@ impl Shared {
             let Ok(mut current) = f.current.write() else {
                 return poisoned();
             };
-            if fence > *current {
+            let unpersisted = fence == *current && !f.persisted.load(Ordering::Acquire);
+            if fence > *current || unpersisted {
                 if let Err(e) = durable::write_atomic(&f.path, fence.to_string().as_bytes()) {
                     self.stats.errors.fetch_add(1, Ordering::Relaxed);
                     return Response::Error {
@@ -337,6 +353,7 @@ impl Shared {
                     };
                 }
                 *current = fence;
+                f.persisted.store(true, Ordering::Release);
             }
         }
     }
@@ -471,19 +488,13 @@ impl DataNodeServer {
             .transpose()?;
         let root = root.as_ref();
         fs::create_dir_all(root)?;
-        let fence = read_fence(&fence_path(root, 0))?;
+        let fence = Fence::read(fence_path(root, 0))?;
         let addr = listener.local_addr()?;
         listener.set_nonblocking(true)?;
         let shared = Arc::new(Shared {
             devices,
             root: root.to_path_buf(),
-            fences: Mutex::new(BTreeMap::from([(
-                0,
-                Arc::new(Fence {
-                    current: RwLock::new(fence),
-                    path: fence_path(root, 0),
-                }),
-            )])),
+            fences: Mutex::new(BTreeMap::from([(0, Arc::new(fence))])),
             tls: RwLock::new(tls_cfg),
             tls_watch: Mutex::new(tls_watch),
             last_tls_check: Mutex::new(Instant::now()),
@@ -554,6 +565,11 @@ impl DataNodeServer {
             .enumerate()
             .filter_map(|(i, d)| Some((i, d.failure()?)))
             .collect()
+    }
+
+    /// How many devices this node serves.
+    pub fn device_count(&self) -> usize {
+        self.shared.devices.len()
     }
 
     /// Prometheus text exposition for this node's request counters and device size.
@@ -990,8 +1006,8 @@ fn serve_requests<S: Read + Write>(
                 }
             }
             Request::Len { device } => {
-                let resp = match sh.device(device).and_then(|d| d.len()) {
-                    Ok(len) => Response::Len { len },
+                let resp = match sh.device(device).and_then(|d| Ok((d.len()?, d.failure()))) {
+                    Ok((len, failed)) => Response::Len { len, failed },
                     Err(e) => Response::Error {
                         message: e.to_string(),
                     },
@@ -1254,10 +1270,13 @@ impl RemoteDevice {
                 Ok(())
             }
             Ok((other, _)) => Err(unexpected(other)),
-            Err(e) => Err(NativeError::Remote(format!(
-                "data node {} does not keep per-group fences (older version?): {e}",
-                self.target
-            ))),
+            Err(e) => Err(unanswered(
+                e,
+                format!(
+                    "data node {} did not report its fences (unreachable, or an older version?)",
+                    self.target
+                ),
+            )),
         }
     }
 
@@ -1277,10 +1296,13 @@ impl RemoteDevice {
                 self.target, self.device
             ))),
             Ok((other, _)) => Err(unexpected(other)),
-            Err(e) => Err(NativeError::Remote(format!(
-                "data node {} did not report its devices (older version?): {e}",
-                self.target
-            ))),
+            Err(e) => Err(unanswered(
+                e,
+                format!(
+                    "data node {} did not report its devices (unreachable, or an older version?)",
+                    self.target
+                ),
+            )),
         }
     }
 
@@ -1496,6 +1518,15 @@ fn authenticate(stream: &mut (impl Read + Write), token: &str) -> io::Result<()>
     }
 }
 
+/// A question the node did not answer. A transport error stays one: the engine backs off the
+/// whole node for it, and only the device for an error the node answered with.
+fn unanswered(e: NativeError, what: String) -> NativeError {
+    match e {
+        NativeError::Io(e) => io::Error::new(e.kind(), format!("{what}: {e}")).into(),
+        other => NativeError::Remote(format!("{what}: {other}")),
+    }
+}
+
 fn unexpected(resp: Response) -> NativeError {
     NativeError::Remote(format!("unexpected data-node response: {resp:?}"))
 }
@@ -1545,7 +1576,17 @@ impl BlockStore for RemoteDevice {
             )?
             .0
         {
-            Response::Len { len } => Ok(len),
+            Response::Len { len, .. } => Ok(len),
+            other => Err(unexpected(other)),
+        }
+    }
+
+    fn probe(&self) -> Result<Option<String>, NativeError> {
+        let req = Request::Len {
+            device: self.device,
+        };
+        match self.call(&req, &[])?.0 {
+            Response::Len { failed, .. } => Ok(failed),
             other => Err(unexpected(other)),
         }
     }

@@ -300,6 +300,51 @@ fn file_device_does_not_acknowledge_a_write_the_disk_never_got() {
     assert!(b.is_err(), "ACKNOWLEDGED BUT NOT ON DISK: write B");
 }
 
+/// A restart of the process without a reboot: the page cache survives it, and can hold the data
+/// of the failed write. The reopened device must read what the disk holds.
+fn reopened_device_reads_the_disk(name: &str, open: impl Fn(&Path) -> Box<dyn BlockStore>) {
+    let path = old_file(name);
+    let _faults = Faults;
+    let device = open(&path);
+    fail_blocks(&path, B_AT, BLOCK as u64);
+    let write = device.write_at(0, B_AT, &[b'b'; BLOCK]);
+    heal();
+    drop(device);
+    println!("write: {write:?}");
+    println!(
+        "B's block in the page cache after closing: {}",
+        describe(&cached(&path, B_AT, BLOCK))
+    );
+    let device = open(&path);
+    let read = device.read_exact_at(B_AT, BLOCK).unwrap();
+    println!("B's block read by the reopened device: {}", describe(&read));
+    let disk = on_disk(&path, B_AT, BLOCK);
+    println!("B's block on disk: {}", describe(&disk));
+    assert!(write.is_err());
+    assert_eq!(disk, vec![OLD; BLOCK], "B's data did reach the disk");
+    expect_old_after_remount(&path);
+    assert_eq!(read, vec![OLD; BLOCK], "SERVED FROM THE PAGE CACHE");
+}
+
+#[test]
+#[ignore = "needs deploy/native/writeback-error-lab.sh"]
+fn reopened_file_device_does_not_serve_a_failed_write_from_the_page_cache() {
+    reopened_device_reads_the_disk("reopen-file.data", |p| {
+        Box::new(FileDevice::open(p).unwrap())
+    });
+}
+
+#[test]
+#[ignore = "needs deploy/native/writeback-error-lab.sh"]
+fn reopened_aligned_device_does_not_serve_a_failed_write_from_the_page_cache() {
+    reopened_device_reads_the_disk("reopen-aligned.data", |p| {
+        // The mark lives off the failing device.
+        let mark = dir("ATLAS_WB_CTL").join("reopen-aligned.hwm");
+        let io = PreadIo::open(p).unwrap();
+        Box::new(RawDevice::open(io, mark, FILE_LEN as u64).unwrap())
+    });
+}
+
 fn trials() -> u32 {
     std::env::var("ATLAS_WB_TRIALS")
         .ok()

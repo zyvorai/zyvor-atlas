@@ -6,7 +6,9 @@
 //!
 //! - **Rebuild:** extents with parts on nodes that have failed every request for
 //!   [`RebuildConfig::delay`] are found from metadata alone and rebuilt onto other nodes, those
-//!   with the least spare redundancy first, without waiting on reads from the lost nodes.
+//!   with the least spare redundancy first, without waiting on reads from the lost nodes. Parts
+//!   on devices that have refused writes for as long are moved to devices that accept them, on
+//!   the same node or another.
 //! - **Scrub:** with nothing to rebuild, the next batch of extents (in id order, resuming where
 //!   the last batch stopped) is read back and verified, so bit rot and silently lost parts are
 //!   found; one pass over every extent starts each [`RebuildConfig::scrub_interval`].
@@ -47,7 +49,9 @@ pub struct RebuildConfig {
 pub struct RebuildStatus {
     /// Nodes treated as lost: configured unhealthy, or failing for at least the delay.
     pub lost_nodes: Vec<String>,
-    /// Extents with parts on lost nodes.
+    /// Devices (`node/index`) that have refused writes for at least the delay.
+    pub failed_devices: Vec<String>,
+    /// Extents with parts on lost nodes or failed devices.
     pub degraded_extents: u64,
     /// Degraded extents that one more lost part would make unreadable.
     pub at_risk_extents: u64,
@@ -149,16 +153,25 @@ impl Rebuilder {
             self.last_probe = Some(now);
         }
         let lost = e.lost_nodes(self.cfg.delay);
-        let degraded = e.degraded_extents(&lost)?;
+        let failed = e.failed_devices(self.cfg.delay);
+        let degraded = e.degraded_extents_on(&lost, &failed)?;
         self.stuck.retain(|_, until| *until > now);
         self.status.lost_nodes = lost.iter().cloned().collect();
+        self.status.failed_devices = failed.iter().map(|(n, i)| format!("{n}/{i}")).collect();
         self.status.degraded_extents = degraded.len() as u64;
-        self.status.at_risk_extents = degraded.iter().filter(|d| d.spare == 0).count() as u64;
-        self.status.unrecoverable_extents = degraded.iter().filter(|d| d.spare < 0).count() as u64;
+        self.status.at_risk_extents = degraded
+            .iter()
+            .filter(|d| d.rebuildable() && d.spare <= 0)
+            .count() as u64;
+        self.status.unrecoverable_extents =
+            degraded.iter().filter(|d| !d.rebuildable()).count() as u64;
 
+        // An extent whose only trouble is a failed device is left where it is, unread, while
+        // it has nowhere to go.
         let work: Vec<&str> = degraded
             .iter()
-            .filter(|d| d.spare >= 0 && !self.stuck.contains_key(&d.extent_id))
+            .filter(|d| d.rebuildable() && (d.lost > 0 || d.movable))
+            .filter(|d| !self.stuck.contains_key(&d.extent_id))
             .take(BATCH)
             .map(|d| d.extent_id.as_str())
             .collect();
@@ -167,7 +180,7 @@ impl Rebuilder {
                 if stop.load(Ordering::SeqCst) {
                     break;
                 }
-                let st = e.repair_extent(id, &lost)?;
+                let st = e.repair_extent_on(id, &lost, &failed)?;
                 if st.replicas_repaired == 0 {
                     self.stuck.insert(id.to_string(), now + RETRY_AFTER);
                 }
@@ -197,7 +210,7 @@ impl Rebuilder {
             if stop.load(Ordering::SeqCst) {
                 break;
             }
-            let st = e.repair_extent(&id, &lost)?;
+            let st = e.repair_extent_on(&id, &lost, &failed)?;
             self.status.scrub.current.add(&st);
             self.status.scrub.total.add(&st);
             self.scrub_pacer

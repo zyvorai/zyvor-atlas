@@ -38,7 +38,11 @@ Rebello et al., "Can Applications Recover from fsync Failures?", USENIX ATC '20)
 - the metadata log refuses every append, sync and rewrite after one of them has failed;
 - a Raft replica that failed to write its log, term and vote, checkpoint or snapshot no longer
   ticks, steps, proposes or sends, so it neither acknowledges an unsynced entry nor counts it
-  toward a quorum; the server stops (`fatal_error()`) and the process exits to be restarted;
+  toward a quorum; the server stops (`fatal_error()`) and the process exits to be restarted, a
+  bounded number of times per hour, after which it stays up with the replica stopped
+  ([`NATIVE_NODE.md`](NATIVE_NODE.md#failed-data-syncs));
+- opening a replica writes its term and vote again before acting on them, since what was read may
+  be held only by the page cache;
 - the catalog store (redb) refuses further I/O after a failed commit; when it is opened again
   its cached pages are dropped first (`posix_fadvise`, Linux, advisory), so that recovery sees
   what the disk holds;

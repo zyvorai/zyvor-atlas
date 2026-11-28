@@ -46,11 +46,15 @@ fn main() -> ExitCode {
             eprintln!("atlas-native-node {}: warning: RDMA is enabled but {w}", node.id());
         }
     }
-    // Raft state and data are crash-safe on disk, so termination needs no graceful path; a fatal
-    // storage error exits non-zero so the supervisor restarts the node from disk.
+    // Raft state and data are crash-safe on disk, so termination needs no graceful path; a
+    // storage failure that a restart may cure exits non-zero so the supervisor restarts the node
+    // from disk. How often is bounded (docs/NATIVE_NODE.md, "Failed data syncs").
     loop {
-        if let Some(err) = node.fatal_error() {
-            eprintln!("atlas-native-node {}: fatal: {err}", node.id());
+        if let Some(reason) = node.restart_reason() {
+            eprintln!(
+                "atlas-native-node {}: exiting to be restarted: {reason}",
+                node.id()
+            );
             return ExitCode::FAILURE;
         }
         thread::sleep(Duration::from_secs(1));

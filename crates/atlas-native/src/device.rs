@@ -12,7 +12,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::{engine::NativeError, sync_guard::SyncGuard};
+use crate::{durable, engine::NativeError, sync_guard::SyncGuard};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DeviceId(pub String);
@@ -40,6 +40,51 @@ pub trait BlockStore: std::fmt::Debug + Send + Sync {
     /// data durable failed. `None` for a remote device, whose node knows.
     fn failure(&self) -> Option<String> {
         None
+    }
+    /// Asks the device why it refuses writes until reopened, if it does: for a remote device a
+    /// request to its node. An error means the device could not be asked.
+    fn probe(&self) -> Result<Option<String>, NativeError> {
+        self.len()?;
+        Ok(self.failure())
+    }
+}
+
+/// Stands in for a device that could not be opened, so that its node still starts and serves its
+/// other devices. It keeps the position (replicas record their device index), refuses every
+/// access and reports why through [`BlockStore::failure`].
+#[derive(Debug)]
+pub(crate) struct FailedDevice {
+    cause: String,
+}
+
+impl FailedDevice {
+    pub fn new(path: &Path, error: &io::Error) -> Self {
+        let cause = format!("{} could not be opened: {error}", path.display());
+        eprintln!("atlas-native: device {cause}");
+        Self { cause }
+    }
+
+    fn refuse<T>(&self) -> Result<T, NativeError> {
+        Err(io::Error::other(format!("device {}", self.cause)).into())
+    }
+}
+
+impl BlockStore for FailedDevice {
+    fn append(&self, _fence: u64, _data: &[u8]) -> Result<u64, NativeError> {
+        self.refuse()
+    }
+    fn write_at(&self, _fence: u64, _offset: u64, _data: &[u8]) -> Result<(), NativeError> {
+        self.refuse()
+    }
+    fn read_exact_at(&self, _offset: u64, _len: usize) -> Result<Vec<u8>, NativeError> {
+        self.refuse()
+    }
+    /// Nothing is known to be in use.
+    fn len(&self) -> Result<u64, NativeError> {
+        Ok(0)
+    }
+    fn failure(&self) -> Option<String> {
+        Some(self.cause.clone())
     }
 }
 
@@ -116,6 +161,9 @@ impl FileDevice {
             .read(true)
             .write(true)
             .open(&path)?;
+        // After a failed sync, in this process or an earlier one, the page cache can hold data
+        // the disk never got. Read from the disk.
+        durable::drop_cached(&path);
         let end = file.metadata()?.len();
         Ok(Self {
             id: DeviceId(Uuid::new_v4().to_string()),

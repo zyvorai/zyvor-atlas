@@ -129,24 +129,110 @@ silently landing on device 0. Requests for device 0 are unchanged on the wire.
 A data node answers a write with success only once its data is durable. When that fails (the
 `fdatasync` of the `file` backend, or a write of the `aligned` or `io_uring` backend):
 
-- the device refuses every later write until the node is restarted. Linux reports a writeback
-  error to one caller only and then calls the pages clean, so a later success would prove nothing;
+- the device refuses every later write until the node's process is restarted. Linux reports a
+  writeback error to one caller only and then calls the pages clean, so a later success would prove
+  nothing;
 - writes in progress at the same time are not acknowledged either. Each write waits until every
   sync that began before its own sync returned has returned, and fails if any of them failed:
   one of those may be the caller that was told about this write's data. Syncs still run
   concurrently; the cost is that a write's answer can wait for a slower, earlier sync;
-- the engine treats it like any failed write: it backs the node off and places the replica
-  elsewhere. The ranges of the failed writes are referenced by nothing;
 - reads go on, including everything written before the failure;
 - the node logs `atlas-native: device <path> failed, ...` once, reports
-  `atlas_native_data_device_failed{node,device}` = 1 on `/metrics` and the device under
-  `data_node.failed_devices` in `/v1/status`. `/readyz` stays 200, so that reads go on.
+  `atlas_native_data_device_failed{node,device}` = 1 on `/metrics`, lists the device under
+  `data_node.failed_devices` in `/v1/status`, and asks to be restarted (below).
 
-Fix or replace the disk, then restart the node. Until then the engine still offers the device
-writes once each back-off expires (each fails at once and goes elsewhere); with no spare node,
-writes that need this one fail with `InsufficientReplicas`. With the `aligned` and `io_uring`
-backends any write error counts, `ENOSPC` included, because it cannot be told apart from a failed
-sync: keep a file-backed device's filesystem from filling up.
+A device that cannot be opened at startup because of an I/O error (a dead disk, a filesystem
+remounted read-only, missing permissions) does not stop the node: it takes its position as a failed
+device, so that the other devices and the metadata role run. Other errors, such as a backend this
+build lacks, still stop the node from starting.
+
+#### What the cluster does meanwhile
+
+The engine on the metadata leader treats the devices of a node separately. A write that a device
+refuses goes to another device of the same node, within the same write; only when no device takes
+it, or the node cannot be reached, does it go to another node. What a write needs does not change:
+the full replica (or shard) count, each on a different node. A node with a single device is backed
+off as a whole, as before.
+
+The leader learns of a failed device from a refused write or from the rebuild controller's probe,
+and checks again before offering it another write, so a restarted node is used again without any
+step by hand. `GET /v1/status` (`data_nodes[].failed_devices`) and
+`atlas_native_node_failed_devices{node}` show what it knows.
+
+A device that has stayed failed for `rebuild_delay_secs` has its replicas and shards moved by the
+rebuild controller to devices that accept writes, on the same node or another one that holds no
+other part of the extent. `POST /v1/repair` does so at once. The old copy is dropped only by the
+same commit that records its replacement. With nowhere to go (single-device nodes and no spare
+node) the data stays where it is, still readable, counted in `degraded_extents`.
+
+#### Restarting, and its limit
+
+Only reopening the file ends the failed state. While a restart is wanted, `/healthz` answers 503
+(`restart required: ...`) and `atlas-native-node` exits non-zero within about a second, so that
+Kubernetes, systemd or another supervisor starts it again. **Run the node under a supervisor that
+restarts it**; without one it stays down. A stopped metadata replica (a failed log, vote or
+checkpoint write) is handled the same way.
+
+On a disk that is bad for good a restart cures nothing, so each component (`device<i>`, `metadata`)
+gets at most 3 restarts an hour. They are counted in `data_dir/restarts.json`, written before the
+restart is asked for. Past the limit, or when the count cannot be read or written, the process
+**stays up**: `/healthz` answers 200, the component stays failed, reads and the healthy devices go
+on, and `atlas_native_failed_without_restart{node,component}` = 1 says that someone has to act.
+`/readyz` answers 503 if the metadata replica is stopped or no data device accepts writes. A count
+that could not be written is tried again every 10 s.
+
+| Environment | Default | Meaning |
+| --- | --- | --- |
+| `ATLAS_NATIVE_FAILURE_RESTARTS` | 3 | Restarts per component per window; 0 asks for none. |
+| `ATLAS_NATIVE_FAILURE_WINDOW_SECS` | 3600 | The window. |
+| `ATLAS_NATIVE_DEVICE_FAILURE_RESTART` | `any` | When a failed data device asks for a restart: `any` (at once), `last` (only when no device of the node accepts writes), `never`. |
+
+`any` gets a device back soonest, but a restart also takes the node's healthy devices and its
+metadata replica away for as long as it takes. With as many data nodes as `replicas`, writes fail
+for that long. On a node with several devices, `last` keeps writes going on the healthy ones and
+leaves the failed one to the rebuild controller and an operator.
+
+Related metrics: `atlas_native_restart_required{node}`, `atlas_native_metadata_failed{node}`,
+`atlas_native_failure_restarts{node,component}` (restarts counted in the window, which survives
+the restart) and `atlas_native_failed_data_devices{node,group}` (devices the leader is moving data
+off). `/v1/status` has `failures` and `restarts_counted`.
+
+To recover a node that no longer asks for restarts: fix or replace the disk, delete
+`data_dir/restarts.json` to restore its allowance (or wait out the window), and restart the process.
+
+#### What a restart reads back
+
+A restart of the process does not clear the page cache: after a failed sync Linux can go on serving
+the new bytes from memory although the disk never got them. Only a reboot discards every such page.
+What the node does about it:
+
+| State | On open |
+| --- | --- |
+| Data devices (`file`, `aligned`) | Asks Linux to drop the file's cached pages (`posix_fadvise`), so reads come from the disk. `io_uring` uses `O_DIRECT`. Nothing refers to the ranges of unacknowledged writes in any case: a write is committed only after its sync, and every sync it could depend on, succeeded. |
+| Metadata log | Read as the cache has it and written to a new, synced file. A record whose sync failed can therefore come back and take effect: its outcome was unknown, as after a crash. If the cache has dropped it, the disk's content is read: a torn last line is discarded; damage further in stops the replica from opening. |
+| Term and vote, fences, high-water marks | Written again (new file, synced) before the node acts on them. |
+| Catalog store | Cached pages dropped before it is opened. |
+| Restart counts | If unreadable, no restart is asked for. |
+
+Limits:
+
+- `posix_fadvise` is advisory. Pages still mapped, dirty or under writeback stay, some
+  filesystems ignore it, and other systems than Linux have no equivalent here. Where that matters,
+  reboot the host before returning a failed disk to service.
+- A device is not remembered as bad: after a restart it takes writes again (including into space
+  freed by moving data off it) until it fails again, which counts another restart.
+- A disk that hangs instead of returning errors is not detected by any of this; requests time out
+  and the node is backed off.
+- A metadata replica whose disk is so bad that it cannot open stops the whole process from
+  starting, its data node included; the supervisor's own back-off is then the only limit. The other
+  voters keep the cluster going.
+- A data node too old to report failed devices is handled as before (backed off on a failed
+  write); upgrade data and metadata nodes to get the behaviour above.
+- With `repair_interval_secs` 0 there is no rebuild controller: nothing moves off a failed device
+  until `POST /v1/repair`.
+- With the `aligned` and `io_uring` backends any write error counts, `ENOSPC` included, because
+  it cannot be told apart from a failed sync: keep a file-backed device's filesystem from filling
+  up. Each restart of such a device also skips up to 256 MiB of unused space.
 
 `deploy/native/writeback-error-lab.sh` runs `tests/writeback_errors.rs` against real kernel
 writeback errors (a device-mapper target that fails chosen blocks; needs sudo on a lab host).
@@ -249,10 +335,10 @@ leading the group; resubmit them to the new leader. `GET /v1/transfers/{id}` rep
 
 | Method and path | Auth | Description |
 | --- | --- | --- |
-| `GET /healthz` | no | Process is up. |
-| `GET /readyz` | no | 200 once every metadata group has a known leader (metadata role; a non-voter waiting to be added counts as ready) or the data node is serving; 503 otherwise, including after a fatal storage error. |
-| `GET /metrics` | no | Prometheus text: Raft/transport, engine (including `atlas_native_client_sessions` and `atlas_native_file_locks`), data node (including `atlas_native_data_device_failed`), `atlas_native_{repair,gc}_{runs,errors}_total`, `atlas_native_client_sessions_expired_total` and `atlas_native_cache_leases{group}` (cache leases this node holds out as a group leader). |
-| `GET /v1/status` | yes | Raft role/term/leader/indexes and voter flag (`metadata`, group 0; `metadata_groups` lists `{group, leader, ...}` for every group), `layout` (`extent_bytes`, `replicas`), per-data-node health, last repair result, data-node fence and failed devices, `gpu_io` (a startup GPU/GDS capability probe, files only and unverified on real GPU hardware: [`NATIVE_GPU.md`](NATIVE_GPU.md)). |
+| `GET /healthz` | no | 200 while the process is up and no restart is wanted; 503 after a storage failure that a restart should cure ([Failed data syncs](#failed-data-syncs)). Use it as the liveness probe. |
+| `GET /readyz` | no | 200 once every metadata group has a known leader (metadata role; a non-voter waiting to be added counts as ready) or the data node is serving; 503 otherwise, including after a fatal storage error, while a restart is wanted, and when no data device accepts writes. |
+| `GET /metrics` | no | Prometheus text: Raft/transport, engine (including `atlas_native_client_sessions` and `atlas_native_file_locks`), data node (including `atlas_native_data_device_failed`), storage failures (`atlas_native_restart_required`, `atlas_native_failed_without_restart`, `atlas_native_failure_restarts`, `atlas_native_metadata_failed`), `atlas_native_{repair,gc}_{runs,errors}_total`, `atlas_native_client_sessions_expired_total` and `atlas_native_cache_leases{group}` (cache leases this node holds out as a group leader). |
+| `GET /v1/status` | yes | Raft role/term/leader/indexes and voter flag (`metadata`, group 0; `metadata_groups` lists `{group, leader, ...}` for every group), `layout` (`extent_bytes`, `replicas`), per-data-node health, last repair result, data-node fence and failed devices, `failures` (components failed until a restart, and whether one is wanted), `restarts_counted`, `gpu_io` (a startup GPU/GDS capability probe, files only and unverified on real GPU hardware: [`NATIVE_GPU.md`](NATIVE_GPU.md)). |
 | `GET /v1/volumes` | yes | Volumes in the applied catalog. |
 | `POST /v1/volumes` | yes | `{"name": "...", "size_bytes": N, "id"?: "..."}` → 201 `{"id": "..."}`. An optional client-chosen `id` (1–64 of `[A-Za-z0-9-]`) makes the create idempotent: repeating it with the same parameters is a no-op, different parameters get 409. |
 | `DELETE /v1/volumes/{id}` | yes | 204. |
@@ -311,10 +397,10 @@ connection per request costs about 7 ms.
   cause needless elections (clients retry through them). On such disks raise `metadata.tick_ms`
   (e.g. 200 for 2–4 s elections).
 - **Restart**: all Raft state and data are crash-safe on disk, so stopping the process (any signal)
-  needs no graceful path. A fatal storage error inside the Raft replica (e.g. a failed fsync) makes
-  the process exit non-zero so its supervisor restarts it from disk
-  ([`NATIVE_METADATA.md`](NATIVE_METADATA.md#failed-writes-and-syncs)). A failed sync of a data
-  device does not stop the process: see [Failed data syncs](#failed-data-syncs).
+  needs no graceful path. After a storage error (a failed sync of a data device or of the metadata
+  replica's state) the process exits non-zero so its supervisor restarts it from disk, a bounded
+  number of times: see [Failed data syncs](#failed-data-syncs) and
+  [`NATIVE_METADATA.md`](NATIVE_METADATA.md#failed-writes-and-syncs).
 - **Logging**: startup prints the bound addresses to stderr; everything else is in `/metrics` and
   `/v1/status`.
 
@@ -325,7 +411,9 @@ The leader of each metadata group runs a rebuild controller:
 - **Finding lost nodes.** Every 5 s it probes each data node that isn't backed off. A node that
   has failed every request (probes, client I/O, repair) for `rebuild_delay_secs` counts as lost.
   A node that answers again within the delay, such as one that restarted, costs no rebuild.
-- **Rebuild.** Extents with replicas or shards on lost nodes are found from metadata alone, and
+- **Rebuild.** Extents with replicas or shards on lost nodes, or on devices that have refused
+  writes for `rebuild_delay_secs` ([Failed data syncs](#failed-data-syncs)), are found from
+  metadata alone, and
   rebuilt onto other nodes with the least spare redundancy first. A 4+2 extent that lost two
   shards goes before one that lost one, and a 3-replica extent down to one copy goes before one
   down to two. Parts on lost nodes are rebuilt without trying to read them. Extents that have
@@ -339,7 +427,7 @@ The leader of each metadata group runs a rebuild controller:
   `scrub_bytes_per_sec`). Client writes are held off only while a replacement is placed and
   committed, never for a whole pass.
 
-`/v1/status` reports `rebuild` for each group the node leads: `lost_nodes`, `degraded_extents`,
+`/v1/status` reports `rebuild` for each group the node leads: `lost_nodes`, `failed_devices`, `degraded_extents`,
 `at_risk_extents` (one more lost part from unreadable), `unrecoverable_extents`, `rebuilt` and
 `scrub` totals. `/metrics` has `atlas_native_lost_nodes`, `atlas_native_degraded_extents`,
 `atlas_native_at_risk_extents`, `atlas_native_unrebuildable_extents`,
@@ -403,7 +491,8 @@ node:
   extents survive rescheduling;
 - the API token from Secret `atlas-native-api`; ClusterIP Service `atlas-native-api:7480` for clients
   (mutations sent to a follower get 421 with the leader's pod name);
-- probes on `/healthz` (startup, liveness) and `/readyz` (readiness), a PDB of `maxUnavailable: 1`,
+- probes on `/healthz` (startup, liveness; fails while a storage failure calls for a restart) and
+  `/readyz` (readiness), a PDB of `maxUnavailable: 1`,
   non-root, read-only root filesystem, all capabilities dropped.
 
 `scripts/deploy-native-remote.sh <host> [user] [--verify-failover]` builds the image with podman on a
