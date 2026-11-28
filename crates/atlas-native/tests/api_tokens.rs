@@ -20,7 +20,14 @@ use serde_json::{json, Value};
 const ADMIN: &str = "legacy-admin";
 
 /// `(name, roles, filesystems, volumes)`; each token's value is `value-of-<name>-0123456789`.
-const TOKENS: &[(&str, &[&str], &[&str], &[&str])] = &[
+type Spec = (
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+    &'static [&'static str],
+);
+
+const TOKENS: &[Spec] = &[
     ("reader", &["read-only"], &[], &[]),
     ("reader-a", &["read-only"], &["a"], &[]),
     ("data-a", &["data"], &["a"], &[]),
@@ -616,7 +623,13 @@ fn lifecycle_replication_and_admin_roles_are_separate() {
     let (fa, _) = populate(a, "gateway");
 
     // What the CSI controller does, without touching data.
-    ok(a, "csi", "PUT", "/v1/fs/a/quota", br#"{"max_bytes":1000000}"#);
+    ok(
+        a,
+        "csi",
+        "PUT",
+        "/v1/fs/a/quota",
+        br#"{"max_bytes":1000000}"#,
+    );
     ok(a, "csi", "GET", "/v1/fs/a/quota", b"");
     ok(a, "csi", "GET", "/v1/fs/a/statfs", b"");
     ok(
@@ -720,13 +733,7 @@ fn the_node_logs_denials_and_never_a_token() {
             .collect();
         held.iter().map(|l| l.local_addr().unwrap()).collect()
     };
-    let cfg = config(
-        td.path(),
-        &ports[0].to_string(),
-        ports[1],
-        ports[2],
-        true,
-    );
+    let cfg = config(td.path(), &ports[0].to_string(), ports[1], ports[2], true);
     std::fs::write(td.path().join("node.json"), cfg.to_string()).unwrap();
     let child = Command::new(env!("CARGO_BIN_EXE_atlas-native-node"))
         .arg("--config")

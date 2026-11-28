@@ -523,10 +523,13 @@ impl ApiAuth {
         let got = sha256(header?.strip_prefix("Bearer ")?.as_bytes());
         // Every credential is compared, whichever matches.
         let admin = self.admin.as_ref().is_some_and(|a| same(a, &got));
-        let scoped = self
-            .scoped
-            .iter()
-            .fold(None, |found, t| if same(&t.digest, &got) { Some(t) } else { found });
+        let scoped = self.scoped.iter().fold(None, |found, t| {
+            if same(&t.digest, &got) {
+                Some(t)
+            } else {
+                found
+            }
+        });
         if admin {
             Some(Who::Admin)
         } else {
@@ -643,7 +646,11 @@ impl ApiAuth {
         }
         let name = "atlas_native_api_denied_total";
         let mut p = PromText::new();
-        let fam = p.family(name, "counter", "API requests refused for their credentials.");
+        let fam = p.family(
+            name,
+            "counter",
+            "API requests refused for their credentials.",
+        );
         for (reason, t) in [
             ("unauthenticated", &self.unauthenticated),
             ("forbidden", &self.forbidden),
