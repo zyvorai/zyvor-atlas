@@ -87,6 +87,18 @@ impl SyncGuard {
         }
     }
 
+    /// Waits until no call is in progress, and errors once any has failed.
+    pub fn drain(&self) -> io::Result<()> {
+        let mut state = self.lock();
+        while state.failed.is_none() && !state.running.is_empty() {
+            state = self
+                .returned
+                .wait(state)
+                .unwrap_or_else(PoisonError::into_inner);
+        }
+        Self::refused(&self.name, &state)
+    }
+
     /// Runs `sync`, a call that makes data written to the file durable (`fdatasync`, or a write
     /// through `O_DSYNC`), for data this thread wrote before it or writes within it. `Ok` means
     /// that data is durable.

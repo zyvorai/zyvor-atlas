@@ -311,6 +311,11 @@ Do the experiment before the code. Stop at the first failure.
 - **Change:** place new or fully replaced extents outside `write_lock` and commit them as a compare-and-swap
   on the cell's current extent, as folding already does; order only writes that touch the same cell or
   change the file's size; sync the leader log from its own thread.
+- **Status of the concurrent commits:** implemented, **off by default, not measured**
+  (`metadata.concurrent_commits`, [NATIVE_METADATA](NATIVE_METADATA.md#concurrent-commits-opt-in)).
+  The compare-and-swap is the leader's check at proposal time, not a new log record. Partial overwrites
+  still hold the write lock, so the gain predicted for them below is not expected from this. The
+  disproof experiment has not been run.
 - **Cheapest disproof (days, no change to the write path):** run the job with 1, 8 and 32 writers and read the
   new sync metrics. The bet is dead if the rate already scales with writers, or if one writer already keeps
   the disk at the measured flush ceiling with few syncs to remove. Then a throwaway spike on an in-process
@@ -321,6 +326,9 @@ Do the experiment before the code. Stop at the first failure.
   matter more.
 - **Also helps** ordinary partial overwrites with delta writes off (3.8 IOPS in the quick run). It is not
   folding work.
+- **Status of the log sync half:** implemented, **off by default, not measured**
+  (`metadata.parallel_log_sync`, [NATIVE_METADATA](NATIVE_METADATA.md#parallel-leader-log-sync-opt-in)).
+  The disproof experiment above has not been run.
 
 ### Bet 2: make fork cost independent of file count
 

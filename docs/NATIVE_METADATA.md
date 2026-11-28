@@ -182,6 +182,34 @@ toward the leader's own vote; the catalog is checkpointed before the log is comp
 and an installed snapshot is durable in the swapped-in store before the log entries it covers
 are dropped.
 
+### Parallel leader log sync (opt-in)
+
+By default the leader sends an entry first and syncs its own copy afterwards, when a follower
+answers or at the next tick, holding the node lock for the sync. The two syncs of a commit then run
+one after the other. With `metadata.parallel_log_sync` (`RaftConfig::parallel_log_sync`, **off by
+default**) `RaftServer` syncs the leader's log on a thread of its own instead
+([Ongaro](https://web.stanford.edu/~ouster/cgi-bin/papers/OngaroPhD.pdf) §10.2.1):
+
+- the sync starts as soon as there is something unsynced, runs without the node lock, one at a
+  time, and covers what the log held when it began; entries appended meanwhile are covered by the
+  next one;
+- the leader counts itself towards a quorum only up to what a returned sync covers. When the
+  followers are a quorum without it (two of three voters, say), an entry can commit, and be
+  acknowledged, before the leader's own copy is durable. It is then on the same number of disks
+  as any commit needs (a majority of the voters), but the leader's need not be one of them, which
+  the inline sync always made it;
+- a compaction or log truncation waits for a running sync, and a sync that began before one
+  counts for nothing afterwards;
+- every sync of the log, inline or not, goes through the same `sync_guard` as device syncs, so a
+  sync cannot be told of success while another one is holding the kernel's writeback error. The
+  first failure stops the server, as without the option.
+
+The setting is per node and changes neither the log format nor the wire protocol, so members may
+differ. `atlas_native_raft_parallel_log_syncs_total` counts the syncs the thread made.
+Tests: `tests/raft_log_sync.rs` (what the leader may count, stale syncs, randomised partitions,
+restarts and power failures in both modes) and `src/fault_tests.rs` (failed and overlapping
+syncs). **No performance measurement of this option exists.**
+
 Proposals are validated on the leader against its applied catalog plus all uncommitted entries, so
 an invalid command is rejected instead of logged. If a committed command still fails to apply, it is
 a no-op that consumes its index on every replica, keeping replicas identical.
@@ -326,7 +354,8 @@ binary yet). All Raft series carry `node` and `group` labels:
 - Raft: `atlas_native_raft_{term,commit_index,applied_index,last_index,snapshot_index}`,
   `atlas_native_raft_role{role}` (one-hot), `atlas_native_raft_peer_match_index{peer}` (leader only),
   `atlas_native_raft_{elections,leader_terms,append_rejections}_total`,
-  `atlas_native_raft_wal_sync_seconds` (histogram of the log's fsyncs);
+  `atlas_native_raft_wal_sync_seconds` (histogram of the log's fsyncs),
+  `atlas_native_raft_parallel_log_syncs_total`;
 - transport, per peer: `atlas_native_transport_{sent,connect_failures,write_failures,dropped}_total`,
   plus `atlas_native_transport_rejected_frames_total` and the node-wide
   `atlas_native_transport_tls_handshake_failures_total`;
@@ -382,6 +411,42 @@ all configured with the same node ids and data-node addresses:
   read, so a slow data node never holds the Raft node lock;
 - `checkpoint` is refused: the Raft node compacts its own log. `wal_records` reports the Raft log
   length above its compaction point.
+
+#### Concurrent commits (opt-in)
+
+By default a write that is neither a delta nor a whole number of grid cells (a new file smaller
+than the grid, say) holds the group's write lock while it places its data **and** waits for the
+Raft commit, and a whole-cell write holds it for the commit, so one such commit is in flight per
+group. With `metadata.concurrent_commits` (`EngineConfig::concurrent_commits`, **off by
+default**) a write whose every cell is new, or covered completely, goes differently:
+
+1. it takes a turn on each of its cells, kept until its commit has applied: writes of one cell
+   run one at a time, in the order they asked; writes of other cells do not wait;
+2. it places its replicas without the write lock;
+3. it takes the lock only to propose, and proposes only if, in the catalog the command will apply
+   on (applied plus every logged entry), each cell is still new or covered completely and the file
+   or volume still exists. This compare-and-swap is made by the leader under the node lock, with
+   nothing proposed in between and refused if the term has moved; the command itself is the same
+   `InstallExtents` as without the option, so there is no new log record and no upgrade rule;
+4. it releases the lock and waits for the commit.
+
+If the cell changed meanwhile (a partial overwrite or a truncate got in), nothing is proposed and
+the write takes the locked path, which reads and merges; the data already placed is left unused
+(`atlas_native_concurrent_commit_conflicts_total`). Everything that reads before it writes still
+holds the write lock: it knows no command is proposed meanwhile, and waiting for the applied index
+to reach the log's end covers those proposed before. With the option on, a `setattr` that does not
+change the size no longer takes the lock.
+
+Acknowledgement is unchanged: the replicas are durable and the command has committed and applied
+on the leader. What is **not** concurrent: partial overwrites of existing extents (delta writes are
+the separate answer for small ones), truncates, and snapshots while delta writes are in use. A
+locked write holds the lock until the proposals made before it have applied, and others wait to
+propose until it is done.
+
+The setting acts on the node that leads a group; set it on every metadata node so behaviour does
+not depend on who leads. `atlas_native_concurrent_commits_total` counts the writes that went this
+way. Tests: `tests/concurrent_commits.rs` and `src/engine/concurrent/tests.rs`. **No performance
+measurement of this option exists.**
 
 Node health and repair are described in the next section.
 

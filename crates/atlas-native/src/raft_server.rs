@@ -45,6 +45,8 @@ const CONNECT_TIMEOUT: Duration = Duration::from_millis(200);
 const RECONNECT_BACKOFF: Duration = Duration::from_millis(100);
 const WRITE_TIMEOUT: Duration = Duration::from_secs(2);
 const HANDSHAKE_TIMEOUT: Duration = Duration::from_secs(5);
+/// How often an idle log sync thread looks for work it was not woken for.
+const LOG_SYNC_IDLE: Duration = Duration::from_millis(50);
 /// How long [`RaftServer::read_barrier`] waits for an answer before asking again.
 pub const READ_RETRY: Duration = Duration::from_millis(500);
 
@@ -156,6 +158,8 @@ struct Shared {
     group: u32,
     node: Mutex<RaftNode>,
     changed: Condvar,
+    /// Wakes the thread that syncs the leader's log (`RaftConfig::parallel_log_sync`).
+    log_dirty: Condvar,
     stop: AtomicBool,
     fatal: Mutex<Option<String>>,
     peers: Mutex<BTreeMap<NodeId, Peer>>,
@@ -176,6 +180,10 @@ impl Shared {
     }
 
     fn flush(&self, node: &mut RaftNode) -> Result<(), RaftError> {
+        // Every path that appends to the log ends here.
+        if node.log_sync_due() {
+            self.log_dirty.notify_one();
+        }
         let msgs = node.take_messages()?;
         if msgs.is_empty() {
             return Ok(());
@@ -282,7 +290,13 @@ impl Shared {
             f.get_or_insert_with(|| err.to_string());
         }
         self.stop.store(true, Ordering::SeqCst);
+        self.wake_all();
+    }
+
+    /// Wakes everything waiting on the node.
+    fn wake_all(&self) {
         self.changed.notify_all();
+        self.log_dirty.notify_all();
     }
 }
 
@@ -457,6 +471,9 @@ impl RaftServer {
         let mut node = RaftNode::open(cfg.clone())?;
         let tick_ms = u64::try_from(tick.as_millis()).unwrap_or(u64::MAX);
         node.configure_read_lease_clock(tick_ms, 0);
+        if cfg.parallel_log_sync {
+            node.sync_leader_log_externally();
+        }
 
         let stop = Arc::new(AtomicBool::new(false));
         let mut threads = Vec::new();
@@ -465,6 +482,7 @@ impl RaftServer {
             group,
             node: Mutex::new(node),
             changed: Condvar::new(),
+            log_dirty: Condvar::new(),
             stop: AtomicBool::new(false),
             fatal: Mutex::new(None),
             peers: Mutex::new(BTreeMap::new()),
@@ -503,6 +521,10 @@ impl RaftServer {
                 drive(&shared, in_rx, tick);
                 stop.store(true, Ordering::SeqCst);
             }));
+        }
+        if cfg.parallel_log_sync {
+            let shared = shared.clone();
+            threads.push(thread::spawn(move || sync_log(&shared)));
         }
         Ok(Self {
             shared,
@@ -821,7 +843,7 @@ impl RaftServer {
     #[doc(hidden)]
     pub fn halt(&self) {
         self.shared.stop.store(true, Ordering::SeqCst);
-        self.shared.changed.notify_all();
+        self.shared.wake_all();
         self.mux.unregister(self.shared.group);
     }
 
@@ -909,6 +931,16 @@ impl RaftServer {
             "atlas_native_raft_append_rejections_total",
             &node,
             c.append_rejections,
+        );
+        p.family(
+            "atlas_native_raft_parallel_log_syncs_total",
+            "counter",
+            "Leader log syncs run on their own thread (metadata.parallel_log_sync).",
+        )
+        .sample(
+            "atlas_native_raft_parallel_log_syncs_total",
+            &node,
+            c.external_log_syncs,
         );
         let name = "atlas_native_raft_wal_sync_seconds";
         p.family(name, "histogram", "Fsyncs of the Raft log.")
@@ -1047,7 +1079,7 @@ impl RaftServer {
 
     pub fn shutdown(&mut self) {
         self.shared.stop.store(true, Ordering::SeqCst);
-        self.shared.changed.notify_all();
+        self.shared.wake_all();
         self.mux.unregister(self.shared.group);
         for t in self.threads.drain(..) {
             let _ = t.join();
@@ -1114,6 +1146,50 @@ fn drive(shared: &Shared, inbound: Receiver<Envelope>, tick: Duration) {
         let result = result.and_then(|_| shared.flush(&mut node));
         drop(node);
         if let Err(e) = result {
+            shared.fail(e);
+            return;
+        }
+        shared.changed.notify_all();
+    }
+}
+
+/// Syncs the log of a leading node without holding it, one sync at a time: entries appended
+/// during one are covered by the next. Stops the server if a sync fails.
+fn sync_log(shared: &Shared) {
+    let Ok(mut node) = shared.node.lock() else {
+        return;
+    };
+    while !shared.stop.load(Ordering::SeqCst) {
+        let sync = match node.begin_log_sync() {
+            Ok(sync) => sync,
+            Err(e) => {
+                drop(node);
+                shared.fail(e);
+                return;
+            }
+        };
+        let Some(sync) = sync else {
+            node = match shared.log_dirty.wait_timeout(node, LOG_SYNC_IDLE) {
+                Ok((node, _)) => node,
+                Err(_) => return,
+            };
+            continue;
+        };
+        drop(node);
+        let synced = sync.run();
+        node = match shared.node.lock() {
+            Ok(node) => node,
+            Err(_) => return,
+        };
+        // A halted replica does nothing more, as if the process had died during the sync.
+        if shared.stop.load(Ordering::SeqCst) {
+            return;
+        }
+        let result = node
+            .finish_log_sync(synced)
+            .and_then(|()| shared.flush(&mut node));
+        if let Err(e) = result {
+            drop(node);
             shared.fail(e);
             return;
         }

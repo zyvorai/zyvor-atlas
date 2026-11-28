@@ -433,6 +433,165 @@ fn a_raft_server_stops_after_a_failed_log_sync() {
     assert!(server.propose(volume("v3"), timeout).is_err());
 }
 
+/// A single voter whose log the test syncs itself, with one unsynced proposal `v`.
+fn externally_synced(dir: &Path) -> RaftNode {
+    let mut node = single_voter(dir);
+    node.sync_leader_log_externally();
+    node
+}
+
+#[test]
+fn a_failed_external_log_sync_stops_the_leader_before_it_is_reported() {
+    let td = tempfile::tempdir().unwrap();
+    let sync = FailOnce::default();
+    let mut node = externally_synced(td.path());
+    node.wal_mut().set_sync(Box::new(sync.clone()));
+    let committed = node.commit_index();
+    node.propose(volume("v1")).unwrap();
+    let pending = node.begin_log_sync().unwrap().unwrap();
+    sync.arm();
+    let failed = pending.run();
+    // The kernel would now report success to every other caller, and the node has not heard yet.
+    assert!(node.propose(volume("v2")).is_err());
+    assert!(node.tick().is_err());
+    assert!(node.take_messages().is_err());
+    assert!(node.begin_log_sync().is_err());
+    assert!(node.finish_log_sync(failed).is_err());
+    assert_eq!(
+        node.commit_index(),
+        committed,
+        "committed an unsynced entry"
+    );
+    assert!(!node.catalog().volumes.contains_key("v1"));
+    assert!(node.propose(volume("v3")).is_err());
+}
+
+/// The background sync holds the writeback error; the sync the node makes itself while stepping
+/// down is told of success, and must not count it.
+#[test]
+fn an_inline_sync_does_not_succeed_while_a_background_sync_holds_the_error() {
+    let td = tempfile::tempdir().unwrap();
+    let (gate, syncs) = Gate::new();
+    let mut node = externally_synced(td.path());
+    node.wal_mut().set_sync(Box::new(gate));
+    node.propose(volume("v1")).unwrap();
+    let pending = node.begin_log_sync().unwrap().unwrap();
+    // A newer entry, so that stepping down has something of its own to sync.
+    node.propose(volume("v2")).unwrap();
+    let term = node.term();
+    thread::scope(|s| {
+        let background = s.spawn(move || pending.run());
+        let first = syncs.next();
+        let node = &mut node;
+        let stepping = s.spawn(move || {
+            let r = node.step(append_entries(term + 1, vec![]));
+            (r, node)
+        });
+        syncs.next().succeed();
+        thread::sleep(QUIET);
+        assert!(
+            !stepping.is_finished(),
+            "answered while another sync, which may hold its error, was running"
+        );
+        first.fail();
+        let failed = join(background);
+        let (stepped, node) = join(stepping);
+        assert!(stepped.is_err(), "synced after a sync failure");
+        assert!(node.take_messages().is_err());
+        assert!(node.finish_log_sync(failed).is_err());
+    });
+}
+
+#[test]
+fn the_log_is_not_rewritten_under_a_running_sync() {
+    let td = tempfile::tempdir().unwrap();
+    let (gate, syncs) = Gate::new();
+    let mut wal = Wal::open(td.path()).unwrap();
+    wal.append(&record(1)).unwrap();
+    wal.set_sync(Box::new(gate));
+    wal.append_unsynced(&record(2)).unwrap();
+    let pending = wal.begin_sync().unwrap().unwrap();
+    thread::scope(|s| {
+        let background = s.spawn(move || pending.run());
+        let held = syncs.next();
+        let wal = &mut wal;
+        let rewrite = s.spawn(move || (wal.compact_through(1), wal));
+        thread::sleep(QUIET);
+        assert!(!rewrite.is_finished(), "rewrote a file being synced");
+        held.fail();
+        let failed = join(background);
+        let (rewritten, wal) = join(rewrite);
+        assert!(rewritten.is_err(), "compacted after a failed sync");
+        assert!(wal.finish_sync(failed).is_err());
+        assert_eq!(wal.synced_index(), 1);
+    });
+}
+
+/// A single voter syncing its log in parallel, once it leads.
+fn parallel_server(dir: &Path) -> RaftServer {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let mut cfg = RaftConfig::new("a", vec![], dir);
+    cfg.parallel_log_sync = true;
+    let server = RaftServer::start(
+        cfg,
+        listener,
+        BTreeMap::<String, String>::new(),
+        Duration::from_millis(5),
+    )
+    .unwrap();
+    let timeout = Duration::from_secs(5);
+    wait_for("a leader", || server.leader_ready(timeout).is_ok());
+    server
+}
+
+#[test]
+fn a_server_syncing_in_parallel_holds_no_lock_while_it_waits_for_the_disk() {
+    let td = tempfile::tempdir().unwrap();
+    let server = parallel_server(td.path());
+    let (gate, syncs) = Gate::new();
+    server.with_node(|n| n.wal_mut().set_sync(Box::new(gate)));
+    let applied = server.status().unwrap().applied_index;
+    thread::scope(|s| {
+        let propose = |name: &'static str| {
+            let server = &server;
+            s.spawn(move || server.propose(volume(name), WAIT))
+        };
+        let a = propose("v1");
+        let first = syncs.next();
+        let b = propose("v2");
+        let c = propose("v3");
+        // Both are appended while the first sync is still on its way to the disk.
+        wait_for("the log to grow", || {
+            server.with_node(|n| n.last_index()) == applied + 3
+        });
+        thread::sleep(QUIET);
+        assert!(!a.is_finished(), "answered before the sync returned");
+        assert_eq!(server.status().unwrap().applied_index, applied);
+        syncs.none();
+        first.succeed();
+        assert_eq!(join(a).unwrap(), applied + 1);
+        assert!(!b.is_finished() && !c.is_finished());
+        // One more sync covers both.
+        syncs.next().succeed();
+        join(b).unwrap();
+        join(c).unwrap();
+        syncs.none();
+    });
+}
+
+#[test]
+fn a_server_syncing_in_parallel_stops_after_a_failed_log_sync() {
+    let td = tempfile::tempdir().unwrap();
+    let server = parallel_server(td.path());
+    server.propose(volume("v1"), WAIT).unwrap();
+    let sync = FailOnce::default();
+    server.with_node(|n| n.wal_mut().set_sync(Box::new(sync.clone())));
+    sync.arm();
+    assert!(server.propose(volume("v2"), WAIT).is_err());
+    wait_for("the server to stop", || server.fatal_error().is_some());
+    assert!(server.propose(volume("v3"), WAIT).is_err());
+}
+
 fn node(id: &str) -> Node {
     Node {
         id: id.into(),

@@ -25,9 +25,15 @@ rdma = ["dep:ibverbs"]
 # Not part of `make native-features` (CI hosts have no libcufile; the files-only probe does
 # not need the feature).
 cufile = []
+# Test only: concurrent commits on by default, so the existing tests run in that mode too
+# (`metadata.concurrent_commits`, docs/NATIVE_METADATA.md).
+concurrent-commits-test = []
 # Test only: delta writes on by default, with no GC grace period, so the existing tests run in
 # that mode too. See docs/NATIVE_DELTA_WRITES.md.
 delta-writes-test = []
+# Test only: the leader log is synced on its own thread by default, so the existing tests run
+# in that mode too (`metadata.parallel_log_sync`, docs/NATIVE_METADATA.md).
+parallel-log-sync-test = []
 
 [dependencies]
 anyhow = { workspace = true, optional = true }

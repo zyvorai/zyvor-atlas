@@ -13,6 +13,13 @@
 //! those writes fails the node refuses to tick, step, propose or release messages until it is
 //! reopened: a repeated fsync would succeed without the data being on disk.
 //!
+//! A leader may send an entry before its own copy is durable. By default it syncs its log inside
+//! the node, when a follower answers or at the next tick. After
+//! [`RaftNode::sync_leader_log_externally`] the caller runs those syncs without borrowing the
+//! node ([`RaftNode::begin_log_sync`], [`RaftNode::finish_log_sync`]), so they overlap the
+//! followers' writes; an entry may then commit on the followers' copies alone when they are a
+//! quorum without the leader.
+//!
 //! Pre-vote keeps a partitioned node from inflating its term: it only starts a real election after
 //! a majority confirms it could win. Check-quorum makes a leader that has not heard from a
 //! majority within an election timeout step down, and lets nodes with a live leader ignore
@@ -48,7 +55,7 @@ use crate::{
         load_checkpoint, remove_legacy_catalog, CatalogStore, CATALOG_STORE, DEFAULT_CACHE_INODES,
         DEFAULT_STORE_CACHE_BYTES,
     },
-    wal::{Wal, WalError, WalRecord},
+    wal::{LogSync, LogSynced, Wal, WalError, WalRecord},
 };
 
 pub type NodeId = String;
@@ -118,6 +125,10 @@ pub struct RaftConfig {
     /// Capability bits this node advertises to a leader ([`CAPABILITIES`]; tests clear them to
     /// stand in for an older build).
     pub capabilities: u64,
+    /// [`crate::RaftServer`] only: sync the leader's log on a thread of its own, in parallel
+    /// with replication ([`RaftNode::sync_leader_log_externally`]). Off by default. A
+    /// [`RaftNode`] driven directly ignores it.
+    pub parallel_log_sync: bool,
 }
 
 impl RaftConfig {
@@ -134,6 +145,8 @@ impl RaftConfig {
             catalog_cache_inodes: DEFAULT_CACHE_INODES,
             catalog_cache_bytes: DEFAULT_STORE_CACHE_BYTES,
             capabilities: CAPABILITIES,
+            // The test feature runs the existing tests with it on.
+            parallel_log_sync: cfg!(feature = "parallel-log-sync-test"),
         }
     }
 }
@@ -311,6 +324,8 @@ pub struct RaftCounters {
     pub leader_terms: u64,
     /// `AppendEntries` rejections received while leader (log-consistency backoffs).
     pub append_rejections: u64,
+    /// Log syncs reported through [`RaftNode::finish_log_sync`].
+    pub external_log_syncs: u64,
 }
 
 /// A read barrier the leader is confirming: `index` is its commit index when the barrier was
@@ -346,6 +361,8 @@ pub struct RaftNode {
     /// so a proposal is validated without copying the catalog. Built on first use in a term.
     spec: Option<Catalog>,
     wal: Wal,
+    /// The leader's log is synced by the caller ([`Self::sync_leader_log_externally`]).
+    external_sync: bool,
     store: CatalogStore,
     /// The first failed write of durable state outside the log (the log remembers its own).
     storage_failed: Option<String>,
@@ -465,6 +482,7 @@ impl RaftNode {
             catalog,
             spec: None,
             wal,
+            external_sync: false,
             store,
             storage_failed: None,
             votes: BTreeSet::new(),
@@ -924,6 +942,52 @@ impl RaftNode {
     pub(crate) fn wal_mut(&mut self) -> &mut Wal {
         &mut self.wal
     }
+    /// Highest log index this node's own disk durably holds.
+    pub fn log_synced_index(&self) -> u64 {
+        self.wal.synced_index()
+    }
+
+    /// From now on a leader's log is not synced inside this node: the caller runs
+    /// [`Self::begin_log_sync`] whenever [`Self::log_sync_due`], runs the returned sync without
+    /// borrowing the node and reports it to [`Self::finish_log_sync`]. The leader counts itself
+    /// towards a quorum only up to what was so reported (or synced here by a role change or a
+    /// compaction). A node that does not lead syncs its log itself, as before.
+    pub fn sync_leader_log_externally(&mut self) {
+        self.external_sync = true;
+    }
+
+    /// Whether [`Self::begin_log_sync`] has something to hand out.
+    pub fn log_sync_due(&self) -> bool {
+        self.external_sync
+            && self.role == Role::Leader
+            && self.wal.synced_index() < self.wal.last_index()
+    }
+
+    /// The next sync of the leader's log, if one is due.
+    pub fn begin_log_sync(&mut self) -> Result<Option<LogSync>, RaftError> {
+        self.check_storage()?;
+        if !self.log_sync_due() {
+            return Ok(None);
+        }
+        Ok(self.wal.begin_sync()?)
+    }
+
+    /// Records the outcome of a sync [`Self::begin_log_sync`] handed out and commits what it
+    /// allows. After a failed one the node refuses everything until it is reopened.
+    pub fn finish_log_sync(&mut self, synced: LogSynced) -> Result<(), RaftError> {
+        self.wal.finish_sync(synced)?;
+        self.check_storage()?;
+        self.counters.external_log_syncs += 1;
+        self.advance_commit()
+    }
+
+    /// Syncs the leader's log here, unless the caller does it.
+    fn leader_sync(&mut self) -> Result<(), RaftError> {
+        if !self.external_sync {
+            self.wal.sync()?;
+        }
+        Ok(())
+    }
     /// Highest log index known to be replicated on each peer; empty unless leader.
     pub fn peer_match_index(&self) -> BTreeMap<NodeId, u64> {
         if self.role == Role::Leader {
@@ -953,7 +1017,7 @@ impl RaftNode {
         self.check_storage()?;
         self.ticks += 1;
         if self.role == Role::Leader {
-            if self.wal.synced_index() < self.last_index() {
+            if !self.external_sync && self.wal.synced_index() < self.last_index() {
                 self.wal.sync()?;
                 self.advance_commit()?;
             }
@@ -1161,7 +1225,7 @@ impl RaftNode {
                     let next = (*m + 1).max(self.next_index.get(&from).copied().unwrap_or(0));
                     self.next_index.insert(from.clone(), next);
                     // Covers every proposal appended since the last ack with one fsync.
-                    self.wal.sync()?;
+                    self.leader_sync()?;
                     self.advance_commit()?;
                     if next <= self.last_index() {
                         self.send_append(&from);
@@ -1511,8 +1575,9 @@ impl RaftNode {
             index,
             command,
         };
-        // The leader writes in parallel with replication and counts itself towards a quorum only
-        // up to `wal.synced_index()` (Raft thesis §10.2.1), so concurrent proposals share fsyncs.
+        // Sent to followers before it is synced here; the leader counts itself towards a quorum
+        // only up to `wal.synced_index()` (Raft thesis §10.2.1), so concurrent proposals share
+        // fsyncs.
         self.wal.append_unsynced(&e)?;
         if let Some(spec) = &mut self.spec {
             // A no-op for proposals, which append_validated already applied.
@@ -1588,7 +1653,7 @@ impl RaftNode {
                 .membership
                 .has_quorum(&BTreeSet::from([self.cfg.id.clone()]))
             {
-                self.wal.sync()?;
+                self.leader_sync()?;
             }
             let synced = self.wal.synced_index();
             let mut new_commit = self.commit_index;

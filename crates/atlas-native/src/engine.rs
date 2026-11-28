@@ -38,6 +38,7 @@ use crate::{
 };
 
 mod combiner;
+mod concurrent;
 mod delta;
 mod devices;
 mod direct;
@@ -53,6 +54,7 @@ mod replica;
 mod tier;
 use delta::{CellView, Scope};
 
+pub use concurrent::CommitPoint;
 pub use delta::{DeltaConfig, DeltaPoint};
 pub use direct::{
     DirectCell, DirectCellDone, DirectCommit, DirectLease, DirectReplicaDone, DirectTarget,
@@ -269,6 +271,10 @@ pub struct EngineConfig {
     pub meta_group: u32,
     /// Delta writes ([`DeltaConfig`]).
     pub delta_writes: DeltaConfig,
+    /// Let writes that create a cell's extent or replace all of it commit concurrently: they
+    /// hold the write lock only to propose, not while they wait for the commit
+    /// (`docs/NATIVE_METADATA.md`, "Concurrent commits"). Off by default.
+    pub concurrent_commits: bool,
 }
 
 /// See [`NativeEngine::data_reduction`].
@@ -310,6 +316,8 @@ impl EngineConfig {
             grant_key: None,
             meta_group: 0,
             delta_writes: DeltaConfig::default(),
+            // The test feature runs the existing tests with it on.
+            concurrent_commits: cfg!(feature = "concurrent-commits-test"),
         }
     }
 }
@@ -437,8 +445,11 @@ pub struct NativeEngine {
     /// A write or sync of the local metadata log failed; the engine must be reopened.
     log_failed: AtomicBool,
     /// Serializes writes that read what they overwrite (partial extents) through their commit,
-    /// and every write's commit; aligned whole-extent writes place their data without it.
+    /// and every write's commit; aligned whole-extent writes place their data without it. With
+    /// [`EngineConfig::concurrent_commits`], a write that reads nothing holds it only to
+    /// propose, not through its commit.
     write_lock: Mutex<()>,
+    concurrent: concurrent::Concurrent,
     /// Free ranges held by placements whose commit hasn't applied yet.
     inflight: inflight::Inflight,
     delta: delta::DeltaState,
@@ -537,6 +548,7 @@ impl NativeEngine {
             meta,
             log_failed: AtomicBool::new(false),
             write_lock: Mutex::new(()),
+            concurrent: Default::default(),
             inflight: Default::default(),
             delta: Default::default(),
             direct: Default::default(),
@@ -658,7 +670,7 @@ impl NativeEngine {
         if self.try_delta(&target, offset, data)? {
             return Ok(());
         }
-        if self.write_aligned(&target, offset, data, in_bounds)? {
+        if self.write_unlocked(&target, offset, data, in_bounds)? {
             return Ok(());
         }
         let _write = self
@@ -748,6 +760,22 @@ impl NativeEngine {
                 self.commit_cells(target, placed, Vec::new(), fence, &alloc)
             }
             r => r,
+        }
+    }
+
+    /// The writes that place their data without `write_lock`: whole grid cells, or with
+    /// concurrent commits every write that reads nothing back. False: not one of them.
+    fn write_unlocked(
+        &self,
+        target: &Target,
+        offset: u64,
+        data: &[u8],
+        in_bounds: impl Fn(&Catalog) -> Result<(), NativeError>,
+    ) -> Result<bool, NativeError> {
+        if self.cfg.concurrent_commits {
+            self.write_concurrent(target, offset, data, in_bounds)
+        } else {
+            self.write_aligned(target, offset, data, in_bounds)
         }
     }
 
@@ -958,12 +986,25 @@ impl NativeEngine {
         alloc: &inflight::Lease<'_>,
     ) -> Result<(), NativeError> {
         let bytes: usize = placed_all.iter().map(|e| e.len()).sum();
+        let cmd = Self::cells_command(target, placed_all, shared);
+        self.commit(cmd, Some(fence))
+            .inspect_err(|e| alloc.settle(e))?;
+        self.telemetry.record_write(bytes);
+        Ok(())
+    }
+
+    /// The command that installs placed extents into `target`.
+    fn cells_command(
+        target: &Target,
+        placed_all: Vec<ExtentRef>,
+        shared: Vec<ExtentId>,
+    ) -> MetaCommand {
         let end = placed_all
             .iter()
             .map(|e| e.logical_offset + e.len() as u64)
             .max()
             .unwrap_or(0);
-        let cmd = match target {
+        match target {
             Target::Volume(volume_id) => MetaCommand::InstallExtents {
                 volume_id: volume_id.to_string(),
                 extents: placed_all,
@@ -980,11 +1021,7 @@ impl NativeEngine {
                     shared,
                 },
             },
-        };
-        self.commit(cmd, Some(fence))
-            .inspect_err(|e| alloc.settle(e))?;
-        self.telemetry.record_write(bytes);
-        Ok(())
+        }
     }
 
     /// Writes `chunk` to fresh replicas and commits it as the extent at `logical`.
@@ -1723,6 +1760,16 @@ impl NativeEngine {
         let (dirty_cells, delta) = self.with_catalog(|c| (c.dirty.len(), c.delta_totals))?;
         let mut p = PromText::new();
         for (name, help, v) in [
+            (
+                "atlas_native_concurrent_commits_total",
+                "Writes committed without holding the write lock for the commit.",
+                t.concurrent_commits,
+            ),
+            (
+                "atlas_native_concurrent_commit_conflicts_total",
+                "Such writes whose cell changed before they could be proposed.",
+                t.concurrent_conflicts,
+            ),
             ("atlas_native_reads_total", "Extent reads served.", t.reads),
             ("atlas_native_writes_total", "Extents written.", t.writes),
             (

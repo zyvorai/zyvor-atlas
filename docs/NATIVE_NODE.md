@@ -76,12 +76,14 @@ data-node addresses are `host:port` and resolved on every connect, so DNS names 
 | `metadata.replicas` | 3 | Between 1 and the number of `data_nodes`. |
 | `metadata.erasure` | unset | Reed-Solomon scheme `k+m` (e.g. `4+2`, `8+3`; k up to 32, m up to 8) for new extents; unset keeps replicating. Needs at least k+m data nodes; see [Erasure coding](#erasure-coding). |
 | `metadata.erasure_min_bytes` | 64 KiB | Smaller extents (file tails, small files) are still replicated. |
+| `metadata.concurrent_commits` | off | Writes of new or completely replaced extents commit concurrently ([Concurrent commits](NATIVE_METADATA.md#concurrent-commits-opt-in)). Acts on a group's leader; set it on every metadata node. Not measured. |
 | `metadata.dedup` | `false` | Store identical extents once; see [`NATIVE_DATA_REDUCTION.md`](NATIVE_DATA_REDUCTION.md). |
 | `metadata.compression` | `false` | LZ4-compress new extents that shrink by at least 12.5%; see [`NATIVE_DATA_REDUCTION.md`](NATIVE_DATA_REDUCTION.md). |
 | `metadata.extent_bytes` | 4 MiB | Writes are split into extents of this size. |
 | `metadata.delta_writes` | off | Store small partial overwrites as deltas folded later (`{"enabled": true, ...}`); read [`NATIVE_DELTA_WRITES.md`](NATIVE_DELTA_WRITES.md), including its upgrade rules, before enabling. |
 | `metadata.tick_ms` | 50 | Raft tick; elections take 10–20 ticks. |
 | `metadata.proposal_timeout_ms` | 5000 | Bounds leader readiness, each proposal and each data-node I/O. |
+| `metadata.parallel_log_sync` | off | Sync the Raft leader's log on its own thread, in parallel with replication ([Parallel leader log sync](NATIVE_METADATA.md#parallel-leader-log-sync-opt-in)). Per node. Not measured. |
 | `metadata.repair_interval_secs` | 300 | Time between the starts of two scrub passes of the leader's rebuild controller; 0 disables the controller (scrub and rebuild). See [Rebuild and scrub](#rebuild-and-scrub). |
 | `metadata.rebuild_delay_secs` | 60 | How long a data node must fail every request before its replicas and shards are rebuilt on other nodes. |
 | `metadata.rebuild_bytes_per_sec` | 256 MiB | Rebuild traffic cap (bytes read plus written per second, per group); 0 is unlimited. |
