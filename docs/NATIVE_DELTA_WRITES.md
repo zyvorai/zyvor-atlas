@@ -6,7 +6,8 @@ Without this mode a partial overwrite holds the metadata group's write lock, rea
 extent, writes it again to every replica and commits, one write at a time. With
 `metadata.delta_writes.enabled` a small overwrite instead stores only its bytes, as a **delta**
 extent listed beside the cell's base extent, and many writers share one metadata commit. A
-background **fold** later rewrites the base with its deltas applied.
+background **fold** later rewrites the base with its deltas applied. Several cells are folded at
+once: see [How folding works](#how-folding-works).
 
 Off by default. No performance result is claimed here: see
 [What is verified](#what-is-verified-and-what-is-not).
@@ -52,6 +53,68 @@ A write is a delta when all of these hold. Anything else takes the previous path
 - Dead extents are reclaimed only after they have been dead for `gc_grace_ms`, as this leader
   saw it (a new leader starts the clock again), in batches of up to 1024 per command.
 
+## How folding works
+
+A node runs one pool of `fold_concurrency` folder threads over all the metadata groups it
+replicates. A folder folds only in a group this node leads, one cell at a time, so at most
+`fold_concurrency` background folds run on a node at once. Between two folds a busy folder does
+not wait: there is no per-second bound other than the number of folders.
+
+**Which cells are due.** A cell with `fold_after_deltas` deltas, or dirty for `fold_after_ms` as
+this node first saw it. Every dirty cell is due while delta writes are turned off, or while
+pending plus dead bytes (or the pending delta count) have used half their room.
+
+**Which goes first.** The leader plans from its dirty-cell index and queues up to 256 of the due
+cells with the most deltas and up to 256 of those waiting longest. Three picks in four take the
+first queue (most deltas, the longer wait first among equals), the fourth takes the cell that has
+waited longest, so a cell with one delta is reached however busy the others are: each fourth fold
+takes the oldest. That is a bound in folds, not in time: when folding falls behind the writes,
+every cell waits longer. A cell's wait starts again when it is picked.
+
+A plan reads every dirty cell, 4096 per hold of the catalog lock (under Raft, the node's lock).
+It is made again when the queues run out (at once if cells were left out, else after
+`fold_interval_ms`) or are a second old. An idle folder therefore notices a newly due cell within
+about `fold_interval_ms`.
+
+**One fold per cell.** Every fold takes a claim on its cell first, so two never work on the same
+cell. This avoids wasted work and lets a snapshot wait; it is not what keeps data right. That is
+still the compare-and-swap: a write that replaces the base meanwhile (a whole-cell write, a
+rewrite of a cell at its delta limit, a truncate, an unlink) takes no claim, and the fold that
+lost is rejected, giving its space back.
+
+**Snapshots.** A snapshot folds what no one else is folding, then stops new deltas on its target,
+takes the write lock, waits for the folds in progress on its cells and folds the rest. While a
+target is stopped, the folders take its cells before any other, which shortens the time the write
+lock is held. A folder never waits for the write lock or for a second claim, so this cannot
+deadlock; no new delta lands on the target, so it ends under continuous writes.
+
+**Failures.** A folder whose fold fails (a data node down or full, a commit that timed out or
+lost its leader) pauses for `fold_interval_ms`, doubling with each failure in a row up to 5
+seconds. A fold with an unknown outcome keeps its space reserved for 300 s, as before; if it
+applies after all, a later fold of the same cell loses the compare-and-swap. A folder that loses
+leadership mid-fold ends that fold: data nodes refuse its writes once they have seen a newer
+term, and its commit is bound to its term. A panic in a fold is counted as a failure and the
+folder goes on.
+
+**Reclaim** runs on its own thread, so a slow reclaim does not stop folding, nor the reverse.
+Every `fold_interval_ms` after the previous pass ends, it runs a GC pass in each led group whose
+pending plus dead bytes have used half the room, as long as delta writes are on or deltas are
+pending. The grace period applies as before.
+
+**Backpressure.** The folders stop starting folds while dead, unreclaimed bytes alone reach
+`max_pending_bytes`: folding more would only take more device space until reclaim catches up.
+Folds already running finish, so dead bytes can pass the limit by about one cell and its deltas
+per folder. Snapshots and truncates are not held back.
+
+**Shutdown** stops the folders from starting folds and waits for those in progress, each bounded
+by the data-node and proposal timeouts.
+
+**Cost.** Each fold holds its cell in memory (a small multiple of `extent_bytes`) and uses up to
+8 reader threads, then one writer thread per replica or shard. Besides the folders, each snapshot
+being taken folds one cell at a time on its caller's thread. More folders also take more disk
+time and metadata commits from foreground writes. How many suit a given disk has not been
+measured.
+
 ## Configuration
 
 In the `metadata` section of the node config. Unknown fields are rejected. The defaults are
@@ -71,14 +134,20 @@ starting points that have not been tuned.
 | `fold_headroom_bytes` | 512 MiB | Part of that left free for folding; delta writes stop at the difference. |
 | `fold_after_deltas` | 8 | A cell with this many deltas is due for folding. |
 | `fold_after_ms` | 5000 | So is a cell dirty this long. |
-| `fold_interval_ms` | 200 | Time between folding passes. |
-| `fold_cells_per_pass` | 8 | Cells folded per pass at most: with the interval, the bound on folding (40 cells/s by default). |
+| `fold_concurrency` | 4 | Folder threads per node, over all its metadata groups (1 to 32). |
+| `fold_interval_ms` | 200 | How long an idle folder waits before looking again; the pause between early GC passes; the first pause after a failed fold. It does not pace busy folders. |
+| `fold_cells_per_pass` | 8 | No longer limits a node. Still accepted; it bounds one `delta_maintenance_once` call of the library (used by tests). |
 | `gc_grace_ms` | 10000 | How long an extent stays dead before reclaim. |
 
-When pending plus dead bytes pass half of the room, every dirty cell is due and a folding pass
-also runs GC. The grace period still applies, so under a sustained load faster than folding and
-reclaim, writes fall back to the previous path until room returns. The fallback creates more
-dead data, not less, so throughput then drops to roughly that of the mode off.
+The default of 4 folders is a deliberately low, untuned starting point: enough that folds
+overlap their syncs and commits, few enough to leave most of a single disk's queue to foreground
+writes and to hold only a few cells in memory. `1` folds one cell at a time (still without the
+former bound of 40 a second).
+
+When pending plus dead bytes pass half of the room, every dirty cell is due and GC runs early.
+The grace period still applies, so under a sustained load faster than folding and reclaim, writes
+fall back to the previous path until room returns. The fallback creates more dead data, not less,
+so throughput then drops to roughly that of the mode off.
 
 With `enabled` off, deltas written earlier are still read, and the leader folds them in the
 background.
@@ -131,6 +200,11 @@ Where the syncs and elections show:
 Latency histograms have buckets from 0.1 ms to 30 s; `_count` is the number of calls. All of
 these start from zero when a process restarts.
 
+A node also counts `atlas_native_fold_runs_total` (background folds attempted, including those
+that lost their compare-and-swap; before the folders ran in parallel it counted passes) and
+`atlas_native_fold_errors_total` (folds that failed). Early reclaim passes are counted in
+`atlas_native_gc_runs_total` and `atlas_native_gc_errors_total`.
+
 ## Known costs and limits
 
 - A cell with `n` deltas costs `n + 1` data-node reads, and the whole base is still read for
@@ -142,8 +216,12 @@ these start from zero when a process restarts.
 - Small deltas fragment device free space; the free list is searched linearly.
 - The room under `max_pending_bytes` counts all dead extents, so heavy ordinary overwrites can
   push delta writes back to the previous path until GC catches up.
-- While the room is half used, each folding pass runs a GC pass, which scans the whole extent
-  table.
+- While the room is half used, a GC pass runs every `fold_interval_ms`, and each scans the whole
+  extent table.
+- Planning scans the whole dirty-cell index at least once a second while there is a backlog.
+- A failed placement can leave appended bytes that no catalog entry refers to (as for any failed
+  write). More folders can leave more of them when a data node keeps failing; the pauses limit
+  how often.
 - A panic while a delta command is being proposed poisons the group's write lock, as any panic
   under that lock does: the node must be restarted.
 - Locality pinning moves base extents only.
@@ -172,6 +250,17 @@ Covered by tests:
   command commits), followers halted so a proposal cannot commit, and leadership moving away and
   back; replication, repair, GC grace, tiering, erasure coding, deduplication, block-aligned
   devices, the caps, and turning the mode off;
+- the fold planner and claims (`crates/atlas-native/src/engine/folder/tests.rs`): the order,
+  that a quiet cell is not starved, exclusive claims and their hand-over, release on panic; and
+  on an engine: folding with reclaim stuck, the pause on dead space, a stopped target going first;
+- the pool at work (`crates/atlas-native/tests/delta_folding.rs`): the concurrency limit, one
+  fold per cell, a snapshot waiting for a fold, truncate, rewrite and unlink during a fold,
+  writers, snapshots, truncates and reclaim racing four folders over three reopens against a
+  model, turning the mode off, reclaim with every folder stuck, writes failing as on a full
+  device, a panic in a fold, shutdown with a fold in progress, a leader halted mid-fold whose
+  successor rewrites the cells, a leader losing its quorum mid-fold, and a single node folding,
+  reclaiming, shutting down with a backlog and restarting. The device failures, halts and stalls
+  are injected inside the test process;
 - a FUSE operations-layer client with direct reads on a cell with deltas
   (`crates/atlas-native-fuse/tests/ops.rs`);
 - the `atlas-native` and `atlas-native-fuse` tests with the mode off, and again with it on by
@@ -181,7 +270,11 @@ Covered by tests:
 
 Not verified:
 
-- **performance** beyond the two single runs below; none of the defaults are tuned;
+- **performance** beyond the two single runs below; none of the defaults are tuned. Both runs
+  predate parallel folding, which **has not been benchmarked**: neither the fold rate, the effect
+  on foreground writes, nor any `fold_concurrency` other than by the tests' correctness checks;
+- more than one metadata group per node with the folders under load;
+- a data node that is really out of space (the test fails its writes instead);
 - a kernel FUSE mount with the mode on beyond the benchmark runs below and their 4 MiB `fio`
   verify (no `git clone` with `fsck`); NFS, SMB, S3 or CSI with the mode on;
 - a deployed or multi-host cluster, real disks under load, power loss, or killing processes: the
@@ -193,6 +286,8 @@ Not verified:
 - runs longer than 20 minutes, large catalogs, and behaviour near a full device.
 
 ## Measured: one quick run against Ceph (2026-11-28)
+
+The runs below were made with the earlier, serial folding.
 
 `deploy/bench-vs-ceph/compare.sh`, commit `598a6b31`, one shared host, one spinning disk, three
 copies for both systems, CephFS (Ceph 20.2.5, ceph-fuse) against atlas-native FUSE. 1 GiB data set,

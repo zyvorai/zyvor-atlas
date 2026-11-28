@@ -25,8 +25,8 @@ use crate::{
     device::BlockStore,
     ec::EcScheme,
     engine::{
-        check_export_name, DeltaConfig, EngineConfig, MetaBackend, NativeEngine, NativeError,
-        ObjectKind, RepairStats, TierPolicy, TierStats,
+        check_export_name, nap, run_folders, DeltaConfig, EngineConfig, MetaBackend, NativeEngine,
+        NativeError, ObjectKind, RepairStats, TierPolicy, TierStats,
     },
     gc::GcStats,
     grant::GrantKey,
@@ -494,7 +494,7 @@ struct NodeShared {
     stop: AtomicBool,
     repair: TaskStats,
     gc: TaskStats,
-    /// Delta folding passes.
+    /// Delta folds attempted by the background folders.
     fold: TaskStats,
     last_repair: Mutex<Option<RepairStats>>,
     /// The rebuild controller's status for each group, once this node has led it.
@@ -820,16 +820,13 @@ impl NativeNode {
         let mut loops = Vec::new();
         if let Some((rebuild, gc_secs, tier, fold)) = intervals {
             {
-                // Runs with delta writes off too: it folds deltas written while they were on.
+                // Both run with delta writes off too: they fold deltas written while they were
+                // on. Folding and early reclaim have their own threads, so neither waits for
+                // the other.
                 let sh = shared.clone();
-                loops.push(thread::spawn(move || {
-                    maintenance(
-                        &sh,
-                        fold,
-                        |_, e| e.delta_maintenance_once().map(|_| ()),
-                        |sh| &sh.fold,
-                    )
-                }));
+                loops.push(thread::spawn(move || fold_groups(&sh)));
+                let sh = shared.clone();
+                loops.push(thread::spawn(move || reclaim_early(&sh, fold)));
             }
             if let Some((_, _, secs)) = tier.filter(|t| t.2 > 0) {
                 let sh = shared.clone();
@@ -954,6 +951,38 @@ fn maintenance(
                 }
             }
         }
+    }
+}
+
+/// The pool of delta folders, over every group; each folds only in the groups this replica
+/// leads. Returns once `stop` is set and the folds in progress have ended.
+fn fold_groups(sh: &NodeShared) {
+    let engines: Vec<&NativeEngine> = sh.groups.iter().map(|g| &g.engine).collect();
+    run_folders(&engines, &sh.stop, |ok| {
+        sh.fold.runs.fetch_add(1, Ordering::Relaxed);
+        if !ok {
+            sh.fold.errors.fetch_add(1, Ordering::Relaxed);
+        }
+    });
+}
+
+/// Reclaims early in each led group whose delta writes are running out of room, `every` so
+/// often; counted with the GC runs.
+fn reclaim_early(sh: &NodeShared, every: Duration) {
+    while !sh.stop.load(Ordering::SeqCst) {
+        for g in &sh.groups {
+            match g.engine.reclaim_if_pressed() {
+                Ok(None) | Err(NativeError::Raft(RaftError::NotLeader { .. })) => {}
+                Ok(Some(_)) => {
+                    sh.gc.runs.fetch_add(1, Ordering::Relaxed);
+                }
+                Err(_) => {
+                    sh.gc.runs.fetch_add(1, Ordering::Relaxed);
+                    sh.gc.errors.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
+        nap(every, &sh.stop);
     }
 }
 
@@ -1950,6 +1979,11 @@ mod tests {
         let on = delta(on);
         assert!(on.enabled);
         assert_eq!((on.max_bytes, on.max_deltas_per_cell), (4096, 32));
+        assert_eq!(on.fold_concurrency, 4);
+        for (folders, ok) in [(0, false), (1, true), (32, true), (33, false)] {
+            let got = cfg(Some(serde_json::json!({ "fold_concurrency": folders }))).unwrap();
+            assert_eq!(got.validate().is_ok(), ok, "fold_concurrency {folders}");
+        }
         assert!(cfg(Some(serde_json::json!({ "enable": true }))).is_err());
         let bad = serde_json::json!({ "max_pending_bytes": 10, "fold_headroom_bytes": 10 });
         assert!(cfg(Some(bad)).unwrap().validate().is_err());

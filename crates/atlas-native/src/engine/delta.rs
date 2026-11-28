@@ -16,6 +16,7 @@ use std::{
 
 use super::{
     combiner::{Combiner, Outcome},
+    folder::{Folds, MAX_FOLD_CONCURRENCY},
     now_ns, Meta, NativeEngine, NativeError, Target, READ_PARALLELISM,
 };
 use crate::{
@@ -31,8 +32,6 @@ use crate::{
 const DELTA_ATTEMPTS: usize = 3;
 /// Times one cell is looked up again after a read of it failed because it changed.
 const CELL_RETRIES: usize = 8;
-/// Dirty cells one maintenance pass looks at when choosing what to fold.
-const FOLD_SCAN: usize = 4096;
 /// Extents one batched reclaim command frees.
 const RECLAIM_BATCH: usize = 1024;
 /// Rounds of folding (under the write lock) and of retrying a snapshot before giving up.
@@ -57,13 +56,18 @@ pub struct DeltaConfig {
     /// Part of `max_pending_bytes` delta writes leave free for folding, which needs room for a
     /// new base while the old one and the deltas are not reclaimed yet.
     pub fold_headroom_bytes: u64,
-    /// A cell with this many deltas is folded by the next pass that reaches it.
+    /// A cell with this many deltas is due for folding.
     pub fold_after_deltas: u32,
-    /// A cell dirty for this long is folded too.
+    /// A cell dirty for this long is due too.
     pub fold_after_ms: u64,
-    /// Time between folding passes.
+    /// Cells a node folds at once, over all its metadata groups: the bound on background
+    /// folding. At most [`MAX_FOLD_CONCURRENCY`].
+    pub fold_concurrency: usize,
+    /// How long an idle folder waits before looking for due cells again; also the pause between
+    /// early reclaim passes, and the first pause after a failed fold.
     pub fold_interval_ms: u64,
-    /// Cells one pass folds at most: with `fold_interval_ms`, the bound on background folding.
+    /// Cells one [`NativeEngine::delta_maintenance_once`] call folds at most. A node's folders
+    /// do not use it.
     pub fold_cells_per_pass: usize,
     /// How long an extent stays dead before it is reclaimed, so a read that looked it up just
     /// before it died does not find its space reused.
@@ -84,6 +88,7 @@ impl Default for DeltaConfig {
             fold_headroom_bytes: 512 << 20,
             fold_after_deltas: 8,
             fold_after_ms: 5_000,
+            fold_concurrency: 4,
             fold_interval_ms: 200,
             fold_cells_per_pass: 8,
             gc_grace_ms: if test { 0 } else { 10_000 },
@@ -106,6 +111,11 @@ impl DeltaConfig {
         if self.fold_after_deltas == 0 {
             return invalid("fold_after_deltas must be > 0");
         }
+        if !(1..=MAX_FOLD_CONCURRENCY).contains(&self.fold_concurrency) {
+            return invalid(&format!(
+                "fold_concurrency must be between 1 and {MAX_FOLD_CONCURRENCY}"
+            ));
+        }
         Ok(())
     }
 }
@@ -118,10 +128,11 @@ pub(super) enum Scope {
 }
 
 impl Scope {
-    fn cells(&self, c: &Catalog) -> Vec<DeltaCell> {
+    /// The first `limit` dirty cells of the scope.
+    pub(super) fn cells(&self, c: &Catalog, limit: usize) -> Vec<DeltaCell> {
         match self {
-            Scope::Volume(v) => c.dirty_volume_cells(v).cloned().collect(),
-            Scope::Fs(f) => c.dirty_fs_cells(f).cloned().collect(),
+            Scope::Volume(v) => c.dirty_volume_cells(v).take(limit).cloned().collect(),
+            Scope::Fs(f) => c.dirty_fs_cells(f).take(limit).cloned().collect(),
         }
     }
 }
@@ -140,14 +151,6 @@ pub(super) struct CellView {
 struct DeadSince {
     term: u64,
     at: HashMap<ExtentId, Instant>,
-}
-
-#[derive(Debug, Default)]
-struct FoldQueue {
-    /// Where the next pass starts looking.
-    cursor: Option<DeltaCell>,
-    /// When this leader first saw each cell dirty.
-    since: HashMap<DeltaCell, Instant>,
 }
 
 /// A step of a delta write, for tests that act between steps.
@@ -249,7 +252,7 @@ pub(super) struct DeltaState {
     dead: Mutex<DeadSince>,
     /// One reclaim pass at a time, so two never propose the same extent.
     pub(super) reclaiming: Mutex<()>,
-    folds: Mutex<FoldQueue>,
+    pub(super) folds: Folds,
 }
 
 /// Keeps a [`Scope`] blocked until dropped.
@@ -333,6 +336,16 @@ impl NativeEngine {
             engine: self,
             scope,
         })
+    }
+
+    /// The targets taking no new deltas.
+    pub(super) fn blocked_scopes(&self) -> Result<Vec<Scope>, NativeError> {
+        Ok(self
+            .delta
+            .blocked
+            .lock()
+            .map_err(|_| NativeError::Poisoned("delta"))?
+            .clone())
     }
 
     pub(super) fn is_blocked(&self, target: &DeltaTarget) -> bool {
@@ -551,11 +564,10 @@ impl NativeEngine {
         }
     }
 
-    fn fold_scope(&self, scope: &Scope) -> Result<(), NativeError> {
-        for cell in self.with_catalog(|c| scope.cells(c))? {
-            self.fold_cell(&cell)?;
-        }
-        Ok(())
+    /// Folds the dirty cells of `scope`; with `wait`, also those other folds hold.
+    fn fold_scope(&self, scope: &Scope, wait: bool) -> Result<(), NativeError> {
+        let cells = self.with_catalog(|c| scope.cells(c, usize::MAX))?;
+        self.fold_cells(cells, wait).map(|_| ())
     }
 
     /// Runs `commit` (a snapshot of `scope`) once `scope` holds no deltas: folds what it can
@@ -566,7 +578,7 @@ impl NativeEngine {
         scope: Scope,
         commit: impl Fn(Option<u64>) -> Result<(), NativeError>,
     ) -> Result<(), NativeError> {
-        let dirty = || self.with_catalog(|c| !scope.cells(c).is_empty());
+        let dirty = || self.with_catalog(|c| !scope.cells(c, 1).is_empty());
         if !self.cfg.delta_writes.enabled && !dirty()? {
             match commit(None) {
                 // A delta this replica had not applied yet: fold, below.
@@ -576,7 +588,7 @@ impl NativeEngine {
         }
         let mut last = None;
         for _ in 0..FOLD_ROUNDS {
-            self.fold_scope(&scope)?;
+            self.fold_scope(&scope, false)?;
             let _block = self.block(scope.clone())?;
             let _write = self
                 .write_lock
@@ -589,7 +601,7 @@ impl NativeEngine {
                 if !dirty()? {
                     break;
                 }
-                self.fold_scope(&scope)?;
+                self.fold_scope(&scope, true)?;
             }
             match commit(Some(fence)) {
                 Err(e) if is_busy(&e) => last = Some(e),
@@ -683,7 +695,7 @@ impl NativeEngine {
     }
 
     /// Whether pending deltas and dead extents have used up half of what delta writes may.
-    fn delta_pressure(&self, c: &Catalog) -> bool {
+    pub(super) fn delta_pressure(&self, c: &Catalog) -> bool {
         let t = c.delta_totals;
         let room =
             self.cfg.delta_writes.max_pending_bytes - self.cfg.delta_writes.fold_headroom_bytes;
@@ -691,79 +703,10 @@ impl NativeEngine {
             || t.pending >= self.cfg.delta_writes.max_pending_deltas / 2
     }
 
-    /// Up to `fold_cells_per_pass` dirty cells due for folding, continuing round-robin where the
-    /// last pass stopped.
-    fn due_folds(&self) -> Result<Vec<DeltaCell>, NativeError> {
-        let cfg = &self.cfg.delta_writes;
-        let mut q = self
-            .delta
-            .folds
-            .lock()
-            .map_err(|_| NativeError::Poisoned("delta"))?;
-        let now = Instant::now();
-        let age = Duration::from_millis(cfg.fold_after_ms);
-        let due = self.with_catalog(|c| {
-            // Turned off, nothing keeps deltas around: fold them all.
-            let all = !cfg.enabled || self.delta_pressure(c);
-            let after = q.cursor.clone();
-            let ahead = c.dirty.iter().filter(|(k, _)| match &after {
-                Some(a) => *k > a,
-                None => true,
-            });
-            let wrapped = c.dirty.iter().filter(|(k, _)| match &after {
-                Some(a) => *k <= a,
-                None => false,
-            });
-            let mut due = Vec::new();
-            for (key, count) in ahead.chain(wrapped).take(FOLD_SCAN) {
-                q.cursor = Some(key.clone());
-                let since = *q.since.entry(key.clone()).or_insert(now);
-                if all || *count >= cfg.fold_after_deltas || now.duration_since(since) >= age {
-                    due.push(key.clone());
-                    if due.len() >= cfg.fold_cells_per_pass {
-                        break;
-                    }
-                }
-            }
-            q.since.retain(|k, _| c.dirty.contains_key(k));
-            due
-        })?;
-        for key in &due {
-            q.since.remove(key);
-        }
-        Ok(due)
-    }
-
-    /// One background pass on the leader: folds the cells that are due, at most
-    /// `fold_cells_per_pass` of them, and reclaims dead extents early when they and the pending
-    /// deltas have used up half the room delta writes have. Returns the cells folded. Does
-    /// nothing on a follower, or with no delta pending and delta writes off.
-    pub fn delta_maintenance_once(&self) -> Result<usize, NativeError> {
-        if let Meta::Raft { server, .. } = &self.meta {
-            if server.leader_term()?.is_none() {
-                return Ok(0);
-            }
-        }
-        if !self.cfg.delta_writes.enabled && self.with_catalog(|c| c.dirty.is_empty())? {
-            return Ok(0);
-        }
-        let mut folded = 0;
-        for key in self.due_folds()? {
-            folded += usize::from(self.fold_cell(&key)?);
-        }
-        if self.with_catalog(|c| c.delta_totals.dead_bytes > 0 && self.delta_pressure(c))? {
-            self.gc_once()?;
-        }
-        Ok(folded)
-    }
-
     /// Folds every pending delta of this group (for tests and for turning delta writes off).
     pub fn fold_all_deltas(&self) -> Result<usize, NativeError> {
-        let mut folded = 0;
-        for key in self.with_catalog(|c| c.dirty.keys().cloned().collect::<Vec<_>>())? {
-            folded += usize::from(self.fold_cell(&key)?);
-        }
-        Ok(folded)
+        let cells = self.with_catalog(|c| c.dirty.keys().cloned().collect::<Vec<_>>())?;
+        self.fold_cells(cells, true)
     }
 
     /// Cells holding deltas, and the deltas pending in them.

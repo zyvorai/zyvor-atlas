@@ -42,6 +42,7 @@ mod delta;
 mod direct;
 mod export;
 mod files;
+mod folder;
 mod inflight;
 mod leases;
 mod locality;
@@ -59,6 +60,8 @@ pub use files::{
     Attr, DirEntry, FileLayout, FsInfo, FsSnapshotInfo, FsStat, LayoutEc, LayoutExtent,
     LayoutReplica, NewNode,
 };
+pub(crate) use folder::nap;
+pub use folder::{run_folders, MAX_FOLD_CONCURRENCY};
 pub use leases::{now_ms, LockRequest, LockTable};
 pub use locality::{HostLocality, Locality, NodeLocality, PinReport};
 pub use rebuild::Degraded;
