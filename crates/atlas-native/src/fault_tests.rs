@@ -1459,6 +1459,6 @@ fn a_high_water_mark_and_a_vote_read_back_are_written_again() {
     drop(single_voter(&root));
     let state = root.join("raft_state.json");
     let before = inode(&state);
-    let _node = RaftNode::new(RaftConfig::new("a", vec![], &root)).unwrap();
+    let _node = RaftNode::open(RaftConfig::new("a", vec![], &root)).unwrap();
     assert_ne!(inode(&state), before);
 }
