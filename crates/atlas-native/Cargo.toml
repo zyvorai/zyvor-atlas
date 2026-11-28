@@ -34,6 +34,9 @@ delta-writes-test = []
 # Test only: the leader log is synced on its own thread by default, so the existing tests run
 # in that mode too (`metadata.parallel_log_sync`, docs/NATIVE_METADATA.md).
 parallel-log-sync-test = []
+# Test only: every file device opened without explicit settings preallocates, with small steps,
+# so the existing tests run in that mode too. See docs/NATIVE_NODE.md.
+prealloc-test = []
 
 [dependencies]
 anyhow = { workspace = true, optional = true }

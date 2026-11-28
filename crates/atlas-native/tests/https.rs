@@ -122,6 +122,7 @@ fn start_node(root: &Path, server: &(String, String), client_ca: &str) -> Native
         data_node: Some(DataNodeRole {
             listen: data_l.local_addr().unwrap(),
             devices: Vec::new(),
+            preallocate: Default::default(),
         }),
         metadata: Some(MetadataRole {
             listen: raft_l.local_addr().unwrap(),

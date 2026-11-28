@@ -27,6 +27,15 @@ fn main() -> ExitCode {
         }
     };
     atlas_native::tls::install_cert_reload_sighup();
+    // Only then is there something to do before exiting; otherwise the signals keep their
+    // default effect.
+    let preallocating = cfg
+        .data_node
+        .as_ref()
+        .is_some_and(|d| d.preallocate.enabled);
+    if preallocating {
+        atlas_native::prealloc::install_stop_signals();
+    }
     let node = match NativeNode::start(cfg) {
         Ok(n) => n,
         Err(e) => {
@@ -46,10 +55,17 @@ fn main() -> ExitCode {
             eprintln!("atlas-native-node {}: warning: RDMA is enabled but {w}", node.id());
         }
     }
-    // Raft state and data are crash-safe on disk, so termination needs no graceful path; a
-    // storage failure that a restart may cure exits non-zero so the supervisor restarts the node
-    // from disk. How often is bounded (docs/NATIVE_NODE.md, "Failed data syncs").
+    // Raft state and data are crash-safe on disk, so termination needs no graceful path (with
+    // preallocation, a requested stop first returns the unused device space); a storage failure
+    // that a restart may cure exits non-zero so the supervisor restarts the node from disk. How
+    // often is bounded (docs/NATIVE_NODE.md, "Failed data syncs").
+    let poll = Duration::from_millis(if preallocating { 100 } else { 1000 });
     loop {
+        if atlas_native::prealloc::stop_requested() {
+            node.seal_devices();
+            // Without the destructors, as when the signal ends the process itself.
+            std::process::exit(0);
+        }
         if let Some(reason) = node.restart_reason() {
             eprintln!(
                 "atlas-native-node {}: exiting to be restarted: {reason}",
@@ -57,6 +73,6 @@ fn main() -> ExitCode {
             );
             return ExitCode::FAILURE;
         }
-        thread::sleep(Duration::from_secs(1));
+        thread::sleep(poll);
     }
 }

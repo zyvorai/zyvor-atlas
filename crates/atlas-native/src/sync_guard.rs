@@ -99,6 +99,21 @@ impl SyncGuard {
         Self::refused(&self.name, &state)
     }
 
+    fn record(name: &str, state: &mut State, e: &io::Error) {
+        if state.failed.is_none() {
+            let cause = e.to_string();
+            eprintln!("atlas-native: {name} failed, refusing writes until it is reopened: {cause}");
+            state.failed = Some((e.kind(), cause));
+        }
+    }
+
+    /// Records a failure found by a sync that [`Self::run`] did not make: one on another open
+    /// file description of the same file. Writers waiting to be acknowledged are refused too.
+    pub fn fail(&self, error: &io::Error) {
+        Self::record(&self.name, &mut self.lock(), error);
+        self.returned.notify_all();
+    }
+
     /// Runs `sync`, a call that makes data written to the file durable (`fdatasync`, or a write
     /// through `O_DSYNC`), for data this thread wrote before it or writes within it. `Ok` means
     /// that data is durable.
@@ -121,14 +136,7 @@ impl SyncGuard {
         let value = match result {
             Ok(value) => value,
             Err(e) => {
-                let cause = e.to_string();
-                if state.failed.is_none() {
-                    eprintln!(
-                        "atlas-native: {} failed, refusing writes until it is reopened: {cause}",
-                        self.name
-                    );
-                    state.failed = Some((e.kind(), cause));
-                }
+                Self::record(&self.name, &mut state, &e);
                 return Err(e);
             }
         };

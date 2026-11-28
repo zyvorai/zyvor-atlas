@@ -684,6 +684,7 @@ impl DataNodeServer {
                 u8::from(d.failure().is_some()),
             );
         }
+        crate::prealloc::render_metrics(&mut p, &self.id, &self.shared.devices);
         p.family(
             "atlas_native_data_device_bytes",
             "gauge",
@@ -698,6 +699,13 @@ impl DataNodeServer {
             );
         }
         Ok(p.finish())
+    }
+
+    /// [`BlockStore::seal`] on every device, for a process about to exit.
+    pub fn seal_devices(&self) {
+        for d in &self.shared.devices {
+            d.seal();
+        }
     }
 
     pub fn shutdown(&mut self) {
