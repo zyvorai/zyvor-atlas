@@ -519,10 +519,11 @@ fn the_log_is_not_rewritten_under_a_running_sync() {
     });
 }
 
-fn server(dir: &Path, parallel_log_sync: bool) -> RaftServer {
+/// A single voter syncing its log in parallel, once it leads.
+fn parallel_server(dir: &Path) -> RaftServer {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let mut cfg = RaftConfig::new("a", vec![], dir);
-    cfg.parallel_log_sync = parallel_log_sync;
+    cfg.parallel_log_sync = true;
     let server = RaftServer::start(
         cfg,
         listener,
@@ -538,7 +539,7 @@ fn server(dir: &Path, parallel_log_sync: bool) -> RaftServer {
 #[test]
 fn a_server_syncing_in_parallel_holds_no_lock_while_it_waits_for_the_disk() {
     let td = tempfile::tempdir().unwrap();
-    let server = server(td.path(), true);
+    let server = parallel_server(td.path());
     let (gate, syncs) = Gate::new();
     server.with_node(|n| n.wal_mut().set_sync(Box::new(gate)));
     let applied = server.status().unwrap().applied_index;
@@ -573,7 +574,7 @@ fn a_server_syncing_in_parallel_holds_no_lock_while_it_waits_for_the_disk() {
 #[test]
 fn a_server_syncing_in_parallel_stops_after_a_failed_log_sync() {
     let td = tempfile::tempdir().unwrap();
-    let server = server(td.path(), true);
+    let server = parallel_server(td.path());
     server.propose(volume("v1"), WAIT).unwrap();
     let sync = FailOnce::default();
     server.with_node(|n| n.wal_mut().set_sync(Box::new(sync.clone())));

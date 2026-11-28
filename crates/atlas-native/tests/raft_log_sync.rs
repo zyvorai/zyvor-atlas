@@ -313,6 +313,8 @@ fn a_sync_reported_after_the_log_was_cut_counts_for_nothing() {
         c.node_mut(&old).propose(create(name)).unwrap();
     }
     c.begin_sync(&old);
+    // Kept aside: the ticks below run every sync the cluster holds.
+    let stale = c.held.remove(&old).unwrap();
     let new = c.elect();
     c.node_mut(&new).propose(create("kept")).unwrap();
     // The new leader's entries replace the old tail; `old` has appended them but sent nothing,
@@ -328,8 +330,9 @@ fn a_sync_reported_after_the_log_was_cut_counts_for_nothing() {
             let to = c.net[i].to.clone();
             c.deliver_at(i);
             if to == old {
-                // The rejection tells the leader where to continue.
-                if c.node(&old).last_index() == c.node(&new).last_index() {
+                // Rejections tell the leader where to continue; the append that follows the
+                // cut leaves entries unsynced.
+                if c.node(&old).log_synced_index() < c.node(&old).last_index() {
                     stepped = true;
                     break;
                 }
@@ -342,8 +345,9 @@ fn a_sync_reported_after_the_log_was_cut_counts_for_nothing() {
     }
     assert!(stepped, "the old leader never caught up");
     let durable = c.node(&old).log_synced_index();
-    assert!(durable < c.node(&old).last_index());
-    c.finish_sync(&old);
+    assert!(durable < stale.through());
+    let synced = stale.run();
+    c.node_mut(&old).finish_log_sync(synced).unwrap();
     assert_eq!(c.node(&old).log_synced_index(), durable);
 }
 
@@ -487,7 +491,12 @@ fn random_run(seed: u64, voters: usize, external: bool, steps: usize) -> (usize,
             if n.log_synced_index() < w.index {
                 ahead += 1;
             }
-            acked.insert(w.index, w.name.clone());
+            let before = acked.insert(w.index, w.name.clone());
+            assert!(
+                before.is_none_or(|name| name == w.name),
+                "step {step}: two commands acknowledged at index {}",
+                w.index
+            );
             false
         });
         let mut terms = BTreeSet::new();
