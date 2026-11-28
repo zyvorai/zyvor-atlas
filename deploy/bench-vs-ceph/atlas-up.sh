@@ -35,6 +35,9 @@ build() {
   [ -n "$rust_image" ] && [ -n "$channel" ] || { echo "cannot read the builder image or toolchain" >&2; exit 1; }
   mkdir -p "$CACHE/cargo-registry" "$CACHE/cargo-git" "$CACHE/rustup" "$CACHE/target" "$ctx"
   echo "building release binaries in $rust_image (toolchain $channel)"
+  # Every source copy mounts at /build and shares one target directory, and cargo judges freshness by
+  # file times: without this, a tree older than another copy's build would be served that build.
+  find "$SRC/crates" "$SRC/Cargo.toml" "$SRC/Cargo.lock" -type f -exec touch {} +
   bpodman run --rm --replace --name atlas-bench-atlas-build --http-proxy=false \
     --cpus "$BENCH_CPUS" --memory "$BENCH_MEM" --pids-limit -1 \
     -v "$SRC:/build:ro" -w /build \
