@@ -620,21 +620,24 @@ class Suite:
         self.refills(snap + "/f", data, "a snapshot mount")
         self.m.unmount(snap)
 
-    def run(self, rounds):
-        for fs in ("remote0", "remote60", "conc", "lost", "fail", "restore"):
+    def run(self, rounds, only=None):
+        sections = (
+            ("remote0", "remote changes, no attribute caching",
+             lambda fs: self.remote_changes(fs, 0, True)),
+            ("remote60", "remote changes, attributes and read-ahead cached for 60 s",
+             lambda fs: self.remote_changes(fs, 60_000, False)),
+            ("conc", "concurrent writer and readers",
+             lambda fs: self.concurrent(fs, rounds)),
+            ("lost", "lost write-back", self.lost_writes),
+            ("restore", "snapshot restore", self.restore),
+            ("fail", "leader failover and a stale leader", self.failover),
+        )
+        for fs, title, section in sections:
+            if only and fs not in only:
+                continue
             self.c.api("POST", "/v1/fs", {"id": fs, "name": fs})
-        print("remote changes, no attribute caching")
-        self.remote_changes("remote0", 0, True)
-        print("remote changes, attributes and read-ahead cached for 60 s (sizes fixed)")
-        self.remote_changes("remote60", 60_000, False)
-        print("concurrent writer and readers")
-        self.concurrent("conc", rounds)
-        print("lost write-back")
-        self.lost_writes("lost")
-        print("snapshot restore")
-        self.restore("restore")
-        print("leader failover and a stale leader")
-        self.failover("fail")
+            print(title, flush=True)
+            section(fs)
 
 
 def bench(cluster, mounts, mib, files, passes):
@@ -723,6 +726,11 @@ def main():
     p.add_argument("--mount", required=True, help="atlas-native-mount binary (fuse)")
     p.add_argument("--work", help="existing directory for data, logs and mount points")
     p.add_argument("--rounds", type=int, default=200, help="concurrent rewrites")
+    p.add_argument(
+        "--only",
+        action="append",
+        help="run only this section (remote0, remote60, conc, lost, restore, fail)",
+    )
     p.add_argument("--bench", action="store_true")
     p.add_argument("--bench-mib", type=int, default=256)
     p.add_argument("--bench-files", type=int, default=1000)
@@ -738,7 +746,7 @@ def main():
             bench(cluster, mounts, args.bench_mib, args.bench_files, args.bench_passes)
         else:
             suite = Suite(cluster, mounts)
-            suite.run(args.rounds)
+            suite.run(args.rounds, args.only)
             print(f"{suite.passed} checks passed on Linux {os.uname().release}")
         status = 0
     except (Failed, OSError) as e:
