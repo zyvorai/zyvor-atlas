@@ -112,8 +112,10 @@ export function Table<T>({
 
     return (
       // A wide table scrolls sideways on narrow screens, so the scroller must take keyboard focus.
+      // `relative` keeps the visually hidden "Actions" heading inside the scroller; without it the
+      // absolutely positioned span widens whatever holds the table.
       <div
-        className="overflow-x-auto"
+        className="relative overflow-x-auto"
         role="region"
         tabIndex={0}
         aria-label={typeof panelTitle === "string" ? `${panelTitle} table` : "Data table"}
