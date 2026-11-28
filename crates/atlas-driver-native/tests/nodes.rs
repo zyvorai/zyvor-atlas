@@ -459,9 +459,8 @@ async fn real_driver_lists_filesystem_changes_on_a_live_cluster() {
     let mk = |fs: String, name: &'static str| {
         let c = &c;
         async move {
-            let body = format!(
-                r#"{{"name":"{name}","op_id":"{fs}-{name}","kind":"file","mode":420}}"#
-            );
+            let body =
+                format!(r#"{{"name":"{name}","op_id":"{fs}-{name}","kind":"file","mode":420}}"#);
             on_leader(
                 c,
                 reqwest::Method::POST,

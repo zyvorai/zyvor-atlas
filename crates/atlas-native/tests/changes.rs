@@ -7,7 +7,10 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, MutexGuard, PoisonError,
+    },
 };
 
 use atlas_native::{
@@ -19,9 +22,18 @@ use atlas_native::{
 
 const GRID: usize = 4096;
 
+/// A process computes at most two listings at once and refuses the next, so these tests, which
+/// share the process, take turns.
+fn alone() -> MutexGuard<'static, ()> {
+    static TURN: Mutex<()> = Mutex::new(());
+    TURN.lock().unwrap_or_else(PoisonError::into_inner)
+}
+
 fn root(name: &str) -> PathBuf {
-    let root =
-        std::env::temp_dir().join(format!("atlas-native-changes-{name}-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!(
+        "atlas-native-changes-{name}-{}",
+        uuid::Uuid::new_v4()
+    ));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -71,7 +83,10 @@ fn mk(e: &NativeEngine, fs: &str, parent: u64, name: &str, kind: NodeType) -> u6
 }
 
 fn lines(changes: &[FsChange]) -> Vec<(ChangeKind, &str)> {
-    changes.iter().map(|c| (c.change, c.path.as_str())).collect()
+    changes
+        .iter()
+        .map(|c| (c.change, c.path.as_str()))
+        .collect()
 }
 
 /// Filesystem `ws`, cloned from snapshot `s` of `src`: `/dir/file` and `/f0`..`/f9`. Listings are
@@ -98,6 +113,7 @@ fn unsupported<T: std::fmt::Debug>(r: Result<T, NativeError>, says: &str) {
 
 #[test]
 fn writes_are_listed_and_pages_describe_one_instant() {
+    let _turn = alone();
     let root = root("pages");
     let e = open(config(&root));
     let (dir, file) = forked(&e, "w");
@@ -176,9 +192,7 @@ fn writes_are_listed_and_pages_describe_one_instant() {
     }
     // An offset past the end is an empty last page.
     let (id, _) = cursor.split_once('.').unwrap();
-    let past = e
-        .fs_changes("w", Some(&format!("{id}.999999")), 2)
-        .unwrap();
+    let past = e.fs_changes("w", Some(&format!("{id}.999999")), 2).unwrap();
     assert!(past.changes.is_empty() && past.next.is_none());
 
     // Reopened, the live filesystems are paged from the store and the answer is the same.
@@ -202,6 +216,7 @@ fn writes_are_listed_and_pages_describe_one_instant() {
 
 #[test]
 fn only_a_clone_with_its_snapshot_can_be_listed() {
+    let _turn = alone();
     let root = root("refusals");
     let e = open(config(&root));
     forked(&e, "r");
@@ -237,6 +252,7 @@ fn only_a_clone_with_its_snapshot_can_be_listed() {
 
 #[test]
 fn small_overwrites_held_as_deltas_are_content_changes() {
+    let _turn = alone();
     let root = root("deltas");
     let mut cfg = config(&root);
     cfg.delta_writes = DeltaConfig {
@@ -273,6 +289,7 @@ impl Drop for StopOnDrop<'_> {
 /// at that instant.
 #[test]
 fn a_listing_is_one_instant_of_a_changing_filesystem() {
+    let _turn = alone();
     let root = root("concurrent");
     let e = open(config(&root));
     let (dir, file) = forked(&e, "c");

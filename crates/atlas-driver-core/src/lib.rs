@@ -9,7 +9,8 @@ use async_trait::async_trait;
 use atlas_api_types::{
     CloneSnapshotRequest, CreateSnapshotRequest, CreateSnapshotResult, CreateVolumeRequest,
     CreateVolumeResult, DedupEstimate, DedupEstimateOptions, DeleteSnapshotRequest,
-    DeleteVolumeRequest, DiscoveryResult, ExpandVolumeRequest, FsChangesPage, MetricSample, StorageHealth, StoragePool, StorageVolume,
+    DeleteVolumeRequest, DiscoveryResult, ExpandVolumeRequest, FsChangesPage, MetricSample,
+    StorageHealth, StoragePool, StorageVolume,
 };
 
 pub mod dedup;

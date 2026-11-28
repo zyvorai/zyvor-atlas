@@ -183,7 +183,9 @@ async fn changes_follow_workspace_tenancy_and_the_fixture_invents_nothing() {
     let a_viewer = token("view-a", "viewer", "tenant-a");
     let b = token("agent-b", "operator", "tenant-b");
     let b_viewer = token("view-b", "viewer", "tenant-b");
-    let fs = api.volume(&admin, "tenant-a", "a-files", "filesystem").await;
+    let fs = api
+        .volume(&admin, "tenant-a", "a-files", "filesystem")
+        .await;
     let block = api.volume(&admin, "tenant-a", "a-disk", "block").await;
     let (wfs, _) = api.workspace(&a, &fs).await;
     let (wblock, _) = api.workspace(&a, &block).await;
@@ -194,7 +196,10 @@ async fn changes_follow_workspace_tenancy_and_the_fixture_invents_nothing() {
         let (st, v) = api.get(tok, &path(&wfs)).await;
         assert_eq!(st, 409, "{v}");
         assert!(message(&v).contains("fixture"), "{v}");
-        assert!(v.get("changes").is_none() && v.get("total").is_none(), "{v}");
+        assert!(
+            v.get("changes").is_none() && v.get("total").is_none(),
+            "{v}"
+        );
     }
     let (st, v) = api.get(&a, &path(&wblock)).await;
     assert_eq!(st, 400, "{v}");
@@ -364,7 +369,8 @@ impl Node {
 
     async fn create(&self, volume_id: &str, name: &str, content: &[u8]) {
         let fs = native_fs(volume_id);
-        let body = json!({ "name": name, "op_id": format!("{fs}-{name}"), "kind": "file", "mode": 420 });
+        let body =
+            json!({ "name": name, "op_id": format!("{fs}-{name}"), "kind": "file", "mode": 420 });
         let made = self
             .call(
                 Method::POST,
@@ -412,8 +418,11 @@ async fn changes_of_a_real_filesystem_workspace_stay_with_its_tenant() {
     let a = token("agent-a", "operator", "tenant-a");
     let b = token("agent-b", "operator", "tenant-b");
 
-    let source = api.volume(&admin, "tenant-a", "a-files", "filesystem").await;
-    node.create(&source, "input.txt", b"alpha-secret-input").await;
+    let source = api
+        .volume(&admin, "tenant-a", "a-files", "filesystem")
+        .await;
+    node.create(&source, "input.txt", b"alpha-secret-input")
+        .await;
     let (ws, vol) = api.workspace(&a, &source).await;
     let path = format!("/workspaces/{ws}/changes");
 
@@ -443,7 +452,9 @@ async fn changes_of_a_real_filesystem_workspace_stay_with_its_tenant() {
     assert_eq!(st, 200, "{first}");
     assert_eq!(changes(&first), ["created /out-1"]);
     let cursor = first["next_cursor"].as_str().unwrap().to_string();
-    let (st, second) = api.get(&a, &format!("{path}?limit=1&cursor={cursor}")).await;
+    let (st, second) = api
+        .get(&a, &format!("{path}?limit=1&cursor={cursor}"))
+        .await;
     assert_eq!(st, 200, "{second}");
     assert_eq!(changes(&second), ["created /out-2"]);
     assert_eq!(second["next_cursor"], Value::Null);
@@ -451,10 +462,14 @@ async fn changes_of_a_real_filesystem_workspace_stay_with_its_tenant() {
     // Tenant B: A's workspace is not there, and A's cursor opens nothing through B's own.
     assert_eq!(api.get(&b, &path).await.0, 404);
     assert_eq!(
-        api.get(&b, &format!("{path}?limit=1&cursor={cursor}")).await.0,
+        api.get(&b, &format!("{path}?limit=1&cursor={cursor}"))
+            .await
+            .0,
         404
     );
-    let source_b = api.volume(&admin, "tenant-b", "b-files", "filesystem").await;
+    let source_b = api
+        .volume(&admin, "tenant-b", "b-files", "filesystem")
+        .await;
     let (ws_b, _) = api.workspace(&b, &source_b).await;
     let (st, v) = api
         .get(
@@ -479,10 +494,7 @@ async fn changes_of_a_real_filesystem_workspace_stay_with_its_tenant() {
     assert_eq!(st, 200, "{v}");
     assert_eq!(v["total"], 0);
     assert_eq!(v["volume_id"], reset["volume_id"]);
-    assert_eq!(
-        api.get(&a, &format!("{path}?cursor={cursor}")).await.0,
-        409
-    );
+    assert_eq!(api.get(&a, &format!("{path}?cursor={cursor}")).await.0, 409);
 
     #[cfg(feature = "mcp")]
     mcp::tool_answers_the_owner_only(addr, &node, &ws, reset["volume_id"].as_str().unwrap()).await;
