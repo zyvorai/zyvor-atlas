@@ -2,9 +2,11 @@
 <!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Integration notes: `integration/untested-all`
 
-**This branch is UNTESTED. Nothing on it has been built, formatted, linted or run, on any host. It is
-not known to compile.** It combines unfinished work (the `wip/untested-*` branches are snapshots)
-so that it can be tested later. Do not release or deploy it.
+This branch combines work that was developed on separate branches. **It has been tested on the lab
+host, with the results in [Test results](#test-results) and the exceptions in
+[Open findings](#open-findings) and [Not run](#not-run).** It has not been released, deployed,
+benchmarked, tried on a cluster of separate hosts or upgraded from an older release. One test was
+loosened by a merged branch and one behaviour it covers is still unfixed.
 
 ## What is in it
 
@@ -33,14 +35,31 @@ No rebases, so later commits of any branch can be merged on top.
 | 18 | PR #436 (install-action 2.90.8) | `b64d8b46` | none |
 | 19 | `origin/main` | `637cd863` | none, no content change |
 
-Rows 1 to 11 are branches under `origin/`. After the follow-up commit that fills new fields in test
-literals (below), `origin/main` was merged: it had gained the squash merges of #444, #443, #442,
-#441, #440 and #436 while this branch was being assembled. Their content was already here (rows 12
-to 16 and 18), so that merge changed no file. At the time of writing `origin/main` has no commit
-this branch lacks.
+Rows 1 to 11 are branches under `origin/`. Rows 1 to 9 and 11 were snapshots of unfinished work;
+their finished commits were merged afterwards:
 
-`origin/fix/native-sync-error` (`2f1e1801`) was already fully contained, through
-`feat/native-delta-writes`. It was not merged again.
+| Order | Merged afterwards | Commit | Textual conflicts |
+|---:|---|---|---|
+| 20 | `wip/untested-ui-table-fix` (content: `ui/Table.tsx` only) | `1d988d38` | none |
+| 21 | `feat/s3-conditional-tagging` | `456e769a` | `NATIVE_S3.md` |
+| 22 | `feat/node-scoped-tokens` | `db573d87` | `authz.rs`, `authz/tests.rs`, `api_tokens.rs` (add/add) |
+| 23 | `feat/workspace-changes` | `28019c8b` | none |
+| 24 | `feat/agent-bench` | `846a848b` | none |
+| 25 | `feat/disk-failure-recovery` | `daa2bedf` | none |
+| 26 | `feat/disk-failure-recovery` (restart policy default `last`) | `0f07e2a3` | `fault_tests.rs` |
+| 27 | `feat/fold-batching` | `668227f7` | none |
+| 28 | `feat/fuse-keep-cache` | `0151c25c` | none |
+| 29 | `feat/small-write-concurrency` | `b0bf856b` | one comment in `engine.rs` |
+
+`feat/preallocation` (`98aa5d62`) has the same tree as the snapshot in row 4; nothing was merged.
+The bucket-settings console work finished on `feat/ui-apple` (`c29f0875`); its content is here
+through rows 11 and 20. In the later conflicts, the finished branch's text was taken and this
+branch's additions were kept (the three route entries in `authz.rs`; the new config fields in
+`fault_tests.rs`).
+
+`origin/main` (`637cd863`) is contained. `origin/fix/native-sync-error` (`2f1e1801`) was already
+contained through `feat/native-delta-writes`, which has since gained one merge commit
+(`fddba3ce`, row 21's content) that is not merged here.
 
 ### Pull requests
 
@@ -57,9 +76,8 @@ CI state of the included pull requests, as reported to this integration and not 
 all of them fail cargo-deny, as `main` does; #439 also failed one Postgres test
 (`mcp_mrtr`, `declining_or_cancelling_executes_nothing_and_consumes_nothing`).
 
-Lockfiles: no lockfile conflicted. Git merged `Cargo.lock` (row 12) by itself and no stale
-`jiff 1.0.2` reference remains; `ui/package.json` and `package-lock.json` are those of #443.
-Neither was checked with `cargo --locked` or `npm ci`.
+Lockfiles: no lockfile conflicted. `Cargo.lock` was merged by git; `cargo build --locked` of the
+gateway and the node and `npm ci` of the console both succeeded.
 
 ### Left out
 
@@ -121,60 +139,150 @@ and is not refused with 403. A `lifecycle`-only or `replication` token is. Two l
 can occupy both slots; and a token limited to a clone sees names that existed when the clone was
 made even if since removed. The role table in `NATIVE_NODE.md` covers all three routes.
 
-Test literals: `fault_tests.rs` (disk-failure-recovery) and
-`atlas-gateway/tests/workspace_changes.rs` build `NodeConfig`, `DataNodeRole` and `MetadataRole`
-field by field and predate `api_tokens_file`, `preallocate`, `delta_writes`, `concurrent_commits`
-and `parallel_log_sync`. The missing fields were added with their defaults. These were found by a
-text scan, not by a compiler; expect more of this kind.
+### Fixes made while testing
 
-## Suspected semantic problems (not fixed)
+- Test literals: `fault_tests.rs` and `atlas-gateway/tests/workspace_changes.rs` lacked the config
+  fields other branches added (`api_tokens_file`, `preallocate`, `delta_writes`,
+  `concurrent_commits`, `parallel_log_sync`); defaults were added. No other compile break between
+  branches was found.
+- `3eb34590`: `delta_folding.rs` defined `Held` twice and `raft_log_sync.rs` did not borrow-check.
+  Both were errors inside the unfinished branches' own files; the finished branches carry the same
+  repairs.
+- `6ba56598`: clippy (`large_enum_variant` in `engine.rs`, a needless borrow in `concurrent.rs`,
+  `type_complexity` in `api_tokens.rs`); the finished branches carry the same repairs.
+- `01b1cf6b`: the role of the changes listing (above) and its test.
 
-1. `FailedDevice` does not override `byte_granular`, so it answers `false`. A leader's
+No test was removed, skipped, ignored or loosened by the integration itself. See the first open
+finding for the one loosened by a merged branch.
+
+## Open findings
+
+1. **A snapshot can hold half of a truncate (unfixed; present on `main`).** Truncating into the
+   middle of an extent is two commands: the extent without its tail, then the new size. A filesystem
+   snapshot taken with delta writes off does not wait for the write lock, so it can hold the old
+   size with a zeroed tail, a state the file never had. Reproduced with a throwaway probe test (one
+   writer rewriting 8 KiB and truncating to 100 bytes, up to 600 snapshots, local metadata
+   backend): bad snapshots **143 of 600 on `main` `637cd863`**, 1 of 600 on `cfa2fa05`, 2 of 600 on
+   the combined tree. `concurrent_writers_stay_linearizable_under_snapshots` failed in every run
+   of it on this branch until `b0bf856b` (merged in row 29) **loosened the test** to accept that
+   state when delta writes are off. The test passing therefore does not mean the behaviour is gone.
+   Fixing it (the snapshot taking the write lock, or truncate becoming one command) is a design
+   decision and was not made.
+2. **`aligned_writes::partial_writes_stay_serialized` fails with the `concurrent-commits-test`
+   feature** (alone, with all four test features, and with `io-uring` added). It asserts one
+   device write at a time for partial writes, and saw four: with concurrent commits, a write that
+   creates a cell's extent runs concurrently by design. The same failure occurs on
+   `feat/small-write-concurrency` `b0bf856b` itself. It passes without the feature, which is the
+   shipped default. Not changed here: deciding what the test should assert belongs to that feature.
+3. `cargo clippy -p atlas-native --features cufile` fails with two
+   `not_unsafe_ptr_arg_deref` errors in `cufile.rs`, which is unchanged from `main`; it fails the
+   same way on `main` `637cd863`. CI does not build this feature.
+4. `FailedDevice` does not override `byte_granular`, so it answers `false`. A leader's
    `RemoteDevice` caches a data node's answer for good, so after that node restarts with a sound
    device, the leader may keep treating it as non-granular until the leader itself restarts: delta
    writes fall back to ordinary writes and delta repair skips the node. A failed device also
-   disables deltas for its whole node (`byte_granular` requires every device). Performance, not
-   data safety, as far as read.
-2. `NativeEngine::byte_granular` backs off the whole node on any error, while failure recovery
-   otherwise backs off only the device that answered with an error.
-3. With `concurrent_commits`, holding `write_lock` no longer means that no write is proposed and
+   disables deltas for its whole node. Found by reading; not reproduced.
+5. `NativeEngine::byte_granular` backs off the whole node on any error, while failure recovery
+   otherwise backs off only the device that answered with an error. Found by reading.
+6. With `concurrent_commits`, holding `write_lock` no longer means that no write is proposed and
    unapplied. `replace_replicas` and locality pinning take the lock and check the applied catalog;
-   they then depend on `ReplaceReplica` being rejected at apply time. Failure recovery makes
-   replica moves more frequent. The combination was not analysed further.
-4. Never exercised together: concurrent commits, parallel log sync, batched folds,
-   preallocation, device failure recovery and conditional rename. In particular, failure of a
-   parallel log sync against the restart policy, and a preparer sync failure against device
-   probing and rebuild.
-5. Mixed versions: `FoldCells` and `RenameIf` are gated by capability bits, but once either is in
+   they then depend on `ReplaceReplica` being rejected at apply time. Not analysed further.
+7. Mixed versions: `FoldCells` and `RenameIf` are gated by capability bits, but once either is in
    a log an older binary cannot replay it. `Catalog.features` lets a later leader propose
    `RenameIf` without hearing every replica again. `FsMeta.incarnation` is not set by older
    builds, so content tags can differ between mixed replicas.
-6. The node's HTTP `reason()` has no entry for 412, so a failed conditional rename is sent with
+8. The node's HTTP `reason()` has no entry for 412, so a failed conditional rename is sent with
    the reason phrase `Internal Server Error` (the status code is right).
-7. Setting the same key in both `ATLAS_DATA_EXTRA` and `ATLAS_DATA_NODE_EXTRA` gives a duplicate
-   JSON member, which a node is expected to refuse.
-8. Failure-recovery tests were never run with `prealloc-test`, `concurrent-commits-test` or
-   `parallel-log-sync-test`; assertions about device lengths or sync order may not hold. Only the
-   preallocation branch's own assertion was adjusted for it.
+9. Setting the same key in both `ATLAS_DATA_EXTRA` and `ATLAS_DATA_NODE_EXTRA` (bench harness)
+   gives a duplicate JSON member, which a node is expected to refuse.
 
-## To run later
+## Test results
 
-1. `cargo fmt --check` (hand-resolved hunks are not formatted), then
-   `cargo clippy --workspace --all-targets` and the feature builds (`make native-features`,
-   `fuse`, `s3`, `io-uring`, `mcp`).
-2. `cargo test --workspace`; then `atlas-native` and its dependants once with each of
-   `delta-writes-test`, `concurrent-commits-test`, `parallel-log-sync-test`, `prealloc-test`, and
-   with all four.
-3. Pay attention to `node::authz` tests (route table), `api_tokens`, `fault_tests`,
-   `writeback_errors`, `delta_writes`, `delta_folding`, `concurrent_commits`, `raft_log_sync`,
-   `prealloc`, `conditional_rename`, `content_tag`, `changes` and the gateway's
-   `workspace_changes` and `mcp_tool_counts`.
-4. `scripts/ci-remote.sh` on the lab host, `make headers`, the Postgres tests, cargo-deny.
-5. UI: `npm ci`, lint, tests, build in `crates/atlas-gateway/ui`.
-6. `helm lint` and `helm template` for both charts, with scoped tokens on and off.
-7. Bench harness: `deploy/bench-vs-ceph/test_agent.py` and a smoke run of `compare.sh` and
-   `agent.sh`.
-8. Live: pjdfstest over FUSE, S3 conditional check (`deploy/native/s3-conditional-check.sh`),
-   keep-cache lab script, preallocation probe, device failure and restart behaviour, scoped
-   tokens with CSI, S3, NFS, SMB, replication and the gateway, and a rolling upgrade from the
-   previous build.
+All on the lab host (Linux 7.0.0-44-generic, 12 cores, 30 GiB) on 2026-11-28, in rootless
+containers: Rust 1.98.1 (`rust-toolchain.toml`), `CARGO_BUILD_JOBS=4`, no incremental build, debug
+info and symbols stripped from the dev and test profiles to save disk. Other work ran on the host
+during parts of it. Counts are `cargo test` totals (passed / failed / ignored).
+
+**Tree.** `7011cf6e` is the last code commit; the commit after it changes only this file. Checks marked with another commit ran before the later merges;
+what changed between is noted.
+
+### Compile, lint, format (at `7011cf6e` unless noted)
+
+| Check | Result |
+|---|---|
+| `cargo check --workspace --all-targets` (first run, `d5ae3802`) | `CHECK_workspace_EXIT=101`, two test files; 0 after `3eb34590` |
+| `cargo check` of each feature (`3eb34590`): `fuse`, `io-uring`, native `s3`, `ublk`, `rdma`, fuse `rdma`, `cufile`, `delta-writes-test`, `concurrent-commits-test`, `parallel-log-sync-test`, `prealloc-test`, all four, gateway `mcp`, atlas-io `mcp` | all `EXIT=0` |
+| `cargo check` atlas-io `bpf` (`3eb34590`) | `EXIT=0` once `libbpf-dev` was in the build image |
+| DataBridge `sqlserver`, `mongodb`, `azure-blob`, `oracle`, `kafka-lag`, and the first four together (`3eb34590`; the crate is unchanged since) | all `EXIT=0` |
+| `cargo clippy --all-targets -- -D warnings`: `CLIPPY_workspace`, `_fuse`, `_io-uring`, `_native-s3`, `_ublk`, `_rdma`, `_fuse-rdma`, `_delta`, `_concurrent`, `_parallelsync`, `_prealloc`, `_allfour`, `_mcp`, `_io-mcp`, `_io-bpf` | all `EXIT=0` |
+| `CLIPPY_cufile` | `EXIT=101` (open finding 3) |
+| `cargo fmt --all --check` (informational in CI) | `EXIT=1`, 50 files; `cfa2fa05` has 52 and `main` 55; no file drifts here that drifts in neither |
+
+### Rust tests (all at `7011cf6e`)
+
+| Set | Exit | Passed | Failed | Ignored |
+|---|---:|---:|---:|---:|
+| `TEST_workspace` (`cargo test --workspace`; delta writes off) | 0 | 1292 | 0 | 33 |
+| `TEST_delta` (native and fuse, `delta-writes-test`) | 0 | 587 | 0 | 25 |
+| `TEST_delta-others` (s3, driver, csi with delta on) | 0 | 40 | 0 | 0 |
+| `TEST_fuse` (`--features fuse`) | 0 | 87 | 0 | 4 |
+| `TEST_fuse-delta` | 0 | 87 | 0 | 4 |
+| `TEST_io-uring` | 0 | 505 | 0 | 21 |
+| `TEST_concurrent` (`concurrent-commits-test`) | 101 | 586 | 1 | 25 |
+| `TEST_parallelsync` (`parallel-log-sync-test`) | 0 | 587 | 0 | 25 |
+| `TEST_prealloc` (`prealloc-test`) | 0 | 587 | 0 | 25 |
+| `TEST_allfour` (all four features; native crates, s3, driver, csi) | 101 | 626 | 1 | 25 |
+| `TEST_allfour-uring` (all four and `io-uring`) | 101 | 504 | 1 | 21 |
+| `TEST_mcp` (gateway `--features mcp`; includes the MCP tool counts 55/61/62/72) | 0 | 367 | 0 | 1 |
+
+The only failure in the three sets with exit 101 is open finding 2.
+
+Earlier runs on this branch, before the finished branches were merged, failed five tests:
+`only_an_undecided_batch_keeps_its_space`, `replay_reload_and_snapshot_transfer_reach_the_same_state`
+and `batches_wait_until_every_metadata_node_decodes_them` (fixed by row 27),
+`keep_cache_follows_a_leader_failover_and_a_restore` (fixed by row 28) and
+`concurrent_writers_stay_linearizable_under_snapshots` (open finding 1).
+
+### Repeats for flakiness (`4dcb241a`; the only later code change is one test file)
+
+| Tests | Result |
+|---|---|
+| Failure recovery: `fault_tests`, `restart`, `node::health`, `engine::devices` (39 tests) | 30 of 30 runs passed |
+| `delta_folding` (25 tests, batched folds on clusters) | 30 of 30 runs passed |
+| FUSE `ops` keep-cache tests (5) | 30 of 30 runs passed |
+
+### Other CI steps
+
+| Check | Tree | Result |
+|---|---|---|
+| License headers (1198 files), migrations parity (42), `bash -n` (78 scripts) | `7011cf6e` | `EXIT=0` each |
+| Migrations immutability against `main` | `d5ae3802` (no migration changed since) | `EXIT=0` |
+| Bench harness `test_agent.py` (69, 1 skipped), `test_gate.py` (37) | `7011cf6e` | `EXIT=0` |
+| `test_s3_pattern_probe` (9, 1 skipped), `atlas_recovery` unit tests (31) | `7011cf6e` | `EXIT=0` |
+| `atlas_data` tests (120, 1 skipped) and `examples/data/end_to_end.py`, Python 3.12 | `86873a9f` (`tools/` unchanged since) | `EXIT=0` |
+| Postgres 16: `TEST_pg_gateway` (`--features mcp`) 367 / 0 / 1; `TEST_pg_inventory` 5 / 0 / 0 | `4dcb241a` | `EXIT=0`. A first attempt failed because the throwaway database's 1.5 GiB tmpfs filled; rerun with 8 GiB. The `mcp_mrtr` failure reported on #439 did not occur |
+| `cargo build --workspace`, `cargo build --locked` of gateway and node, `atlas_recovery/tests/live_native.py` | `4dcb241a` | `EXIT=0`, live run `passed` |
+| UI: `npm ci`, lint, `tsc --noEmit`, `test:coverage` (51 files, 224 tests), build | `86873a9f` (UI unchanged since) | `EXIT=0` each |
+| Headless Chromium check of the bucket settings panel, mocked API, both themes, 1280 and 390 px | same build | `BROWSER_FAILURES=0`; the Lifecycle tab at 390 px overflows by 0 px |
+
+### Real kernel (binaries of `4dcb241a`, debug builds, processes on one host)
+
+| Script | Result |
+|---|---|
+| `deploy/native/writeback-error-lab.sh` (device-mapper over a loop device on its own file) | `WRITEBACK_LAB_EXIT=0`: 9 tests and the remount check passed; teardown left no device |
+| `deploy/native/keep-cache-lab.py` | full run `EXIT=0`, 39 checks; concurrent section alone 10 of 10 runs passed (the one EIO seen on its branch did not recur) |
+| `deploy/native/s3-conditional-check.sh`, two S3 gateways, aws-cli 2.42.5 | `passed=43 failed=0` |
+
+## Not run
+
+- `cargo-deny` (reported to fail on `main` too), `npm audit`, the website audit, coverage, the
+  Docker image builds and the GitHub workflows themselves.
+- Tests under the native `s3` (tiering), `rdma`, `cufile`, `ublk`, atlas-io `bpf` and atlas-io `mcp`
+  features: compiled and linted only. DataBridge optional connectors: compiled only.
+- `ignored` tests, including the benches and `prealloc_probe`, other than the writeback ones.
+- `deploy/native/ublk-live-check.sh`, `smoke.sh`, `lab-verify.sh`, pjdfstest, the NFS and SMB
+  gateways, CSI on a cluster, replication between clusters.
+- `helm lint` or `helm template` of either chart.
+- Any deployment on Kubernetes or separate hosts, a rolling upgrade from an older build, power
+  loss, and scoped tokens against a deployed gateway.
+- Any benchmark or performance measurement.
