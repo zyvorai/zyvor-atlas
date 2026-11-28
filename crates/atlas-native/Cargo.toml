@@ -28,6 +28,9 @@ cufile = []
 # Test only: delta writes on by default, with no GC grace period, so the existing tests run in
 # that mode too. See docs/NATIVE_DELTA_WRITES.md.
 delta-writes-test = []
+# Test only: the leader log is synced on its own thread by default, so the existing tests run
+# in that mode too (`metadata.parallel_log_sync`, docs/NATIVE_METADATA.md).
+parallel-log-sync-test = []
 
 [dependencies]
 anyhow = { workspace = true, optional = true }

@@ -154,6 +154,10 @@ pub struct MetadataRole {
     pub tick_ms: u64,
     #[serde(default = "default_proposal_timeout_ms")]
     pub proposal_timeout_ms: u64,
+    /// Sync the Raft leader's log on a thread of its own, in parallel with replication
+    /// (`docs/NATIVE_METADATA.md`); off by default. Per node: members may differ.
+    #[serde(default)]
+    pub parallel_log_sync: Option<bool>,
     /// Time between the starts of two scrub passes of the rebuild controller; 0 disables the
     /// controller (scrub and rebuild).
     #[serde(default = "default_repair_interval_secs")]
@@ -677,6 +681,9 @@ impl NativeNode {
                     rcfg.bootstrap = m.bootstrap.clone();
                     rcfg.catalog_cache_inodes = m.cache_inodes;
                     rcfg.catalog_cache_bytes = m.store_cache_bytes;
+                    if let Some(on) = m.parallel_log_sync {
+                        rcfg.parallel_log_sync = on;
+                    }
                     let server = Arc::new(RaftServer::start_in(
                         &mux,
                         g,
@@ -1951,6 +1958,38 @@ mod tests {
         let e = cfg("4+2").unwrap().validate().unwrap_err().to_string();
         assert!(e.contains("needs 6 data_nodes, 5 configured"), "{e}");
         assert!(cfg("4-2").is_err());
+    }
+
+    #[test]
+    fn the_parallel_log_sync_is_configured_per_node_and_off_unless_asked_for() {
+        let cfg = |value: Option<bool>| {
+            let mut metadata = serde_json::json!({
+                "listen": "127.0.0.1:0",
+                "peers": {},
+                "data_nodes": [{ "id": "d1", "addr": "d1:7000" }],
+                "replicas": 1,
+            });
+            if let Some(v) = value {
+                metadata["parallel_log_sync"] = v.into();
+            }
+            let node: super::NodeConfig = serde_json::from_value(serde_json::json!({
+                "node_id": "m1",
+                "data_dir": "/tmp/x",
+                "http_listen": "127.0.0.1:0",
+                "metadata": metadata,
+            }))
+            .unwrap();
+            node.metadata.unwrap().parallel_log_sync
+        };
+        // Unset takes the Raft default, which is off.
+        assert_eq!(cfg(None), None);
+        let raft = crate::raft::RaftConfig::new("m1", vec![], "/tmp/x");
+        assert_eq!(
+            raft.parallel_log_sync,
+            cfg!(feature = "parallel-log-sync-test")
+        );
+        assert_eq!(cfg(Some(true)), Some(true));
+        assert_eq!(cfg(Some(false)), Some(false));
     }
 
     #[test]

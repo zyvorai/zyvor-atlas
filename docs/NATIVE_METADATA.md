@@ -178,6 +178,34 @@ toward the leader's own vote; the catalog is checkpointed before the log is comp
 and an installed snapshot is durable in the swapped-in store before the log entries it covers
 are dropped.
 
+### Parallel leader log sync (opt-in)
+
+By default the leader sends an entry first and syncs its own copy afterwards, when a follower
+answers or at the next tick, holding the node lock for the sync. The two syncs of a commit then run
+one after the other. With `metadata.parallel_log_sync` (`RaftConfig::parallel_log_sync`, **off by
+default**) `RaftServer` syncs the leader's log on a thread of its own instead
+([Ongaro](https://web.stanford.edu/~ouster/cgi-bin/papers/OngaroPhD.pdf) §10.2.1):
+
+- the sync starts as soon as there is something unsynced, runs without the node lock, one at a
+  time, and covers what the log held when it began; entries appended meanwhile are covered by the
+  next one;
+- the leader counts itself towards a quorum only up to what a returned sync covers. When the
+  followers are a quorum without it (two of three voters, say), an entry can commit, and be
+  acknowledged, before the leader's own copy is durable. It is then on the same number of disks
+  as any commit needs (a majority of the voters), but the leader's need not be one of them, which
+  the inline sync always made it;
+- a compaction or log truncation waits for a running sync, and a sync that began before one
+  counts for nothing afterwards;
+- every sync of the log, inline or not, goes through the same `sync_guard` as device syncs, so a
+  sync cannot be told of success while another one is holding the kernel's writeback error. The
+  first failure stops the server, as without the option.
+
+The setting is per node and changes neither the log format nor the wire protocol, so members may
+differ. `atlas_native_raft_parallel_log_syncs_total` counts the syncs the thread made.
+Tests: `tests/raft_log_sync.rs` (what the leader may count, stale syncs, randomised partitions,
+restarts and power failures in both modes) and `src/fault_tests.rs` (failed and overlapping
+syncs). **No performance measurement of this option exists.**
+
 Proposals are validated on the leader against its applied catalog plus all uncommitted entries, so
 an invalid command is rejected instead of logged. If a committed command still fails to apply, it is
 a no-op that consumes its index on every replica, keeping replicas identical.
@@ -322,7 +350,8 @@ binary yet). All Raft series carry `node` and `group` labels:
 - Raft: `atlas_native_raft_{term,commit_index,applied_index,last_index,snapshot_index}`,
   `atlas_native_raft_role{role}` (one-hot), `atlas_native_raft_peer_match_index{peer}` (leader only),
   `atlas_native_raft_{elections,leader_terms,append_rejections}_total`,
-  `atlas_native_raft_wal_sync_seconds` (histogram of the log's fsyncs);
+  `atlas_native_raft_wal_sync_seconds` (histogram of the log's fsyncs),
+  `atlas_native_raft_parallel_log_syncs_total`;
 - transport, per peer: `atlas_native_transport_{sent,connect_failures,write_failures,dropped}_total`,
   plus `atlas_native_transport_rejected_frames_total` and the node-wide
   `atlas_native_transport_tls_handshake_failures_total`;

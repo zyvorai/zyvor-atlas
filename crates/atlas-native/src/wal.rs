@@ -3,8 +3,9 @@
 
 use std::{
     fs::{self, File, OpenOptions},
-    io::{BufRead, BufReader, Write},
+    io::{self, BufRead, BufReader, Write},
     path::{Path, PathBuf},
+    sync::Arc,
 };
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -13,6 +14,7 @@ use crate::{
     device::{DataSync, DeviceSync},
     durable::sync_dir,
     metrics::{Histogram, HistogramSnapshot},
+    sync_guard::SyncGuard,
 };
 
 #[derive(Debug, thiserror::Error)]
@@ -44,22 +46,71 @@ struct IndexOnly {
 /// The log. After any failed write or sync it refuses every later one until it is reopened: a
 /// failed `fdatasync` is reported once and leaves the unwritten records in the page cache marked
 /// clean, so syncing again would succeed without them being on disk.
+///
+/// A sync may also run on another thread ([`Wal::begin_sync`]) while the log is appended to and
+/// synced here. Every sync of the file goes through one [`SyncGuard`], because the kernel reports
+/// a writeback error to only one of the calls on an open file.
 #[derive(Debug)]
 pub struct Wal {
     dir: PathBuf,
     path: PathBuf,
-    file: File,
+    file: Arc<File>,
     last_index: u64,
     /// Highest index known to be on disk (written by an fsynced append or a rewrite).
     synced_index: u64,
     records: u64,
-    /// The fsyncs [`Wal::sync`] made (rewrites of the file are not among them). Boxed to keep
-    /// the log, which the engine holds in an enum, small.
-    syncs: Box<Histogram>,
-    /// What [`Wal::sync`] flushes `file` with.
-    sync: Box<dyn DeviceSync>,
+    /// The fsyncs of appended records (rewrites of the file are not among them). Behind a
+    /// pointer, which also keeps the log, which the engine holds in an enum, small.
+    syncs: Arc<Histogram>,
+    /// What `file` is flushed with.
+    sync: Arc<dyn DeviceSync>,
+    /// Orders the answers of syncs that overlap, and keeps the first one's failure.
+    guard: Arc<SyncGuard>,
+    /// Raised whenever the file is replaced, which cuts or renumbers what a sync begun earlier
+    /// covered.
+    generation: u64,
     /// The first failed write or sync.
     failed: Option<String>,
+}
+
+/// A sync of every record the log held when [`Wal::begin_sync`] made this, to be run without the
+/// log: records may be appended meanwhile.
+#[derive(Debug)]
+pub struct LogSync {
+    file: Arc<File>,
+    syncs: Arc<Histogram>,
+    sync: Arc<dyn DeviceSync>,
+    guard: Arc<SyncGuard>,
+    through: u64,
+    generation: u64,
+}
+
+impl LogSync {
+    /// The last index this sync covers.
+    pub fn through(&self) -> u64 {
+        self.through
+    }
+
+    /// Waits for the disk. The result goes to [`Wal::finish_sync`]; until then the log does not
+    /// count anything this covered.
+    pub fn run(self) -> LogSynced {
+        let result = self
+            .guard
+            .run(|| self.syncs.time(|| self.sync.sync_data(&self.file)));
+        LogSynced {
+            through: self.through,
+            generation: self.generation,
+            result,
+        }
+    }
+}
+
+/// What a [`LogSync`] did.
+#[derive(Debug)]
+pub struct LogSynced {
+    through: u64,
+    generation: u64,
+    result: io::Result<()>,
 }
 
 impl Wal {
@@ -68,7 +119,7 @@ impl Wal {
         fs::create_dir_all(&dir)?;
         let path = dir.join("metadata.wal");
         let (lines, torn) = scan(&path)?;
-        let file = open_append(&path)?;
+        let file = Arc::new(open_append(&path)?);
         let mut wal = Self {
             dir,
             path,
@@ -76,8 +127,10 @@ impl Wal {
             last_index: lines.last().map(|(i, _)| *i).unwrap_or(0),
             synced_index: lines.last().map(|(i, _)| *i).unwrap_or(0),
             records: lines.len() as u64,
-            syncs: Box::default(),
-            sync: Box::new(DataSync),
+            syncs: Arc::default(),
+            sync: Arc::new(DataSync),
+            guard: Arc::new(SyncGuard::new("metadata log")),
+            generation: 0,
             failed: None,
         };
         // What was just read may exist only in the page cache: a sync that failed before a
@@ -108,7 +161,7 @@ impl Wal {
         let mut line = serde_json::to_vec(record)?;
         line.push(b'\n');
         // A partial line must not end up in front of a later record.
-        self.file
+        (&*self.file)
             .write_all(&line)
             .map_err(|e| self.fail(e.into()))?;
         self.last_index = record.index;
@@ -120,19 +173,45 @@ impl Wal {
     pub fn sync(&mut self) -> Result<(), WalError> {
         self.check()?;
         if self.synced_index < self.last_index {
-            self.syncs
-                .time(|| self.sync.sync_data(&self.file))
+            self.guard
+                .run(|| self.syncs.time(|| self.sync.sync_data(&self.file)))
                 .map_err(|e| self.fail(e.into()))?;
             self.synced_index = self.last_index;
         }
         Ok(())
     }
 
-    /// Errors once a write or sync of the log has failed.
+    /// A sync of the unsynced appends for another thread to run, or `None` when there are none.
+    pub fn begin_sync(&self) -> Result<Option<LogSync>, WalError> {
+        self.check()?;
+        Ok((self.synced_index < self.last_index).then(|| LogSync {
+            file: self.file.clone(),
+            syncs: self.syncs.clone(),
+            sync: self.sync.clone(),
+            guard: self.guard.clone(),
+            through: self.last_index,
+            generation: self.generation,
+        }))
+    }
+
+    /// Counts what a [`LogSync`] of this log made durable. A failed one fails the log. One whose
+    /// file has been replaced since counts for nothing: the records at those indexes may be
+    /// others now.
+    pub fn finish_sync(&mut self, synced: LogSynced) -> Result<(), WalError> {
+        synced.result.map_err(|e| self.fail(e.into()))?;
+        self.check()?;
+        if synced.generation == self.generation {
+            self.synced_index = self.synced_index.max(synced.through.min(self.last_index));
+        }
+        Ok(())
+    }
+
+    /// Errors once a write or sync of the log has failed, including one that ran elsewhere and
+    /// has not been reported to [`Self::finish_sync`] yet.
     pub fn check(&self) -> Result<(), WalError> {
-        match &self.failed {
+        match self.failed.clone().or_else(|| self.guard.failure()) {
             None => Ok(()),
-            Some(cause) => Err(WalError::Failed(cause.clone())),
+            Some(cause) => Err(WalError::Failed(cause)),
         }
     }
 
@@ -152,7 +231,7 @@ impl Wal {
 
     #[cfg(test)]
     pub(crate) fn set_sync(&mut self, sync: Box<dyn DeviceSync>) {
-        self.sync = sync;
+        self.sync = Arc::from(sync);
     }
 
     pub fn replay<T: DeserializeOwned>(&self) -> Result<Vec<WalRecord<T>>, WalError> {
@@ -208,6 +287,8 @@ impl Wal {
     /// Replaces the file with one holding the records `keep` selects. A failure part-way (the
     /// new file may be in place while `file` still names the old one) fails the log.
     fn rewrite(&mut self, keep: impl Fn(u64) -> bool) -> Result<u64, WalError> {
+        // A sync running on the old file may be about to report that its data was lost.
+        self.guard.drain().map_err(|e| self.fail(e.into()))?;
         self.check()?;
         self.replace_file(keep).map_err(|e| self.fail(e))
     }
@@ -229,7 +310,8 @@ impl Wal {
         }
         fs::rename(&tmp, &self.path)?;
         sync_dir(&self.dir)?;
-        self.file = open_append(&self.path)?;
+        self.file = Arc::new(open_append(&self.path)?);
+        self.generation += 1;
         self.synced_index = self.last_index;
         let removed = self.records.saturating_sub(kept);
         self.records = kept;
@@ -286,6 +368,8 @@ fn scan(path: &Path) -> Result<(Vec<(u64, String)>, bool), WalError> {
 
 #[cfg(test)]
 mod tests {
+    use std::thread;
+
     use super::*;
 
     fn rec(index: u64) -> WalRecord<String> {
@@ -325,5 +409,32 @@ mod tests {
             .collect();
         assert_eq!(replayed, [1, 2]);
         assert_eq!(wal.synced_index(), 2);
+    }
+
+    #[test]
+    fn a_sync_run_elsewhere_counts_only_what_it_began_with() {
+        let td = tempfile::tempdir().unwrap();
+        let mut wal = Wal::open(td.path()).unwrap();
+        assert!(wal.begin_sync().unwrap().is_none());
+        wal.append_unsynced(&rec(1)).unwrap();
+        wal.append_unsynced(&rec(2)).unwrap();
+        let sync = wal.begin_sync().unwrap().unwrap();
+        wal.append_unsynced(&rec(3)).unwrap();
+        assert_eq!(sync.through(), 2);
+        let synced = thread::spawn(move || sync.run()).join().unwrap();
+        assert_eq!(wal.synced_index(), 0, "counted before it was reported");
+        wal.finish_sync(synced).unwrap();
+        assert_eq!(wal.synced_index(), 2);
+        assert_eq!(wal.sync_latency().count(), 1);
+
+        // The file is replaced and index 3 written again before the sync is reported: it says
+        // nothing about the new record.
+        let sync = wal.begin_sync().unwrap().unwrap();
+        wal.truncate_after(2).unwrap();
+        wal.append_unsynced(&rec(3)).unwrap();
+        wal.finish_sync(sync.run()).unwrap();
+        assert_eq!((wal.last_index(), wal.synced_index()), (3, 2));
+        wal.sync().unwrap();
+        assert_eq!(wal.synced_index(), 3);
     }
 }

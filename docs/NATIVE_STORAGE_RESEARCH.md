@@ -321,6 +321,9 @@ Do the experiment before the code. Stop at the first failure.
   matter more.
 - **Also helps** ordinary partial overwrites with delta writes off (3.8 IOPS in the quick run). It is not
   folding work.
+- **Status of the log sync half:** implemented, **off by default, not measured**
+  (`metadata.parallel_log_sync`, [NATIVE_METADATA](NATIVE_METADATA.md#parallel-leader-log-sync-opt-in)).
+  The disproof experiment above has not been run.
 
 ### Bet 2: make fork cost independent of file count
 
