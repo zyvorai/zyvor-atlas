@@ -288,10 +288,10 @@ impl<'a> Entries<'a> {
     /// The entries of a snapshot directory, which are all in its inode.
     fn frozen(dir: Option<&'a Inode>) -> Self {
         let memory = dir.and_then(|d| match &d.kind {
-            InodeKind::Dir { entries, .. } => Some(Box::new(
-                entries.in_memory().map(|(k, v)| (k.clone(), *v)),
-            )
-                as Box<dyn Iterator<Item = (String, u64)> + 'a>),
+            InodeKind::Dir { entries, .. } => {
+                Some(Box::new(entries.in_memory().map(|(k, v)| (k.clone(), *v)))
+                    as Box<dyn Iterator<Item = (String, u64)> + 'a>)
+            }
             _ => None,
         });
         Self {
@@ -700,23 +700,14 @@ fn keep(listing: Arc<Listing>) -> String {
     let id = uuid::Uuid::new_v4().simple().to_string();
     let mut cache = CACHE.lock().unwrap_or_else(PoisonError::into_inner);
     cache.retain(|c| c.at.elapsed() < CACHE_TTL);
-    while cache
-        .iter()
-        .filter(|c| c.listing.fs == listing.fs)
-        .count()
-        >= CACHED_PER_FS
-    {
+    while cache.iter().filter(|c| c.listing.fs == listing.fs).count() >= CACHED_PER_FS {
         if let Some(i) = cache.iter().position(|c| c.listing.fs == listing.fs) {
             cache.remove(i);
         }
     }
     while !cache.is_empty()
         && (cache.len() >= CACHED_LISTINGS
-            || cache
-                .iter()
-                .map(|c| c.listing.changes.len())
-                .sum::<usize>()
-                + listing.changes.len()
+            || cache.iter().map(|c| c.listing.changes.len()).sum::<usize>() + listing.changes.len()
                 > CACHED_CHANGES)
     {
         cache.remove(0);
@@ -804,33 +795,34 @@ impl NativeEngine {
         let started = Instant::now();
         // One look at the catalog fixes the live tree: the table's clone shares its inodes and
         // reads the rest from the store as of the same checkpoint.
-        let (base, created_ns, live, as_of_index) = self.with_catalog(|c| -> Result<_, MetaError> {
-            let f = c.filesystem(fs)?;
-            let base = f.source_snapshot.clone().ok_or_else(|| {
-                MetaError::Unsupported(format!(
-                    "filesystem {fs} was not cloned from a snapshot, so there is nothing to \
+        let (base, created_ns, live, as_of_index) =
+            self.with_catalog(|c| -> Result<_, MetaError> {
+                let f = c.filesystem(fs)?;
+                let base = f.source_snapshot.clone().ok_or_else(|| {
+                    MetaError::Unsupported(format!(
+                        "filesystem {fs} was not cloned from a snapshot, so there is nothing to \
                      compare it with"
-                ))
-            })?;
-            let s = c.fs_snapshots.get(&base).ok_or_else(|| {
-                MetaError::Unsupported(format!(
+                    ))
+                })?;
+                let s = c.fs_snapshots.get(&base).ok_or_else(|| {
+                    MetaError::Unsupported(format!(
                     "snapshot {base}, which filesystem {fs} was cloned from, has been deleted; \
                      the changes since it cannot be listed"
                 ))
-            })?;
-            if s.tree.next_ino > f.next_ino {
-                return Err(MetaError::Unsupported(format!(
-                    "snapshot {base} is not the one filesystem {fs} was cloned from"
-                )));
-            }
-            if f.inodes.len().max(s.tree.inodes.len()) > limits.max_inodes {
-                return Err(MetaError::TooBig(format!(
-                    "the filesystem has more than {} inodes; refused",
-                    limits.max_inodes
-                )));
-            }
-            Ok((base, s.created_ns, f.inodes.clone(), c.applied_index))
-        })??;
+                })?;
+                if s.tree.next_ino > f.next_ino {
+                    return Err(MetaError::Unsupported(format!(
+                        "snapshot {base} is not the one filesystem {fs} was cloned from"
+                    )));
+                }
+                if f.inodes.len().max(s.tree.inodes.len()) > limits.max_inodes {
+                    return Err(MetaError::TooBig(format!(
+                        "the filesystem has more than {} inodes; refused",
+                        limits.max_inodes
+                    )));
+                }
+                Ok((base, s.created_ns, f.inodes.clone(), c.applied_index))
+            })??;
         // A snapshot never changes, so it can be read a batch per lock.
         let mut frozen: Vec<Arc<Inode>> = Vec::new();
         let mut from = 0;

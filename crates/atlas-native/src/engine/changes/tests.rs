@@ -445,7 +445,10 @@ fn verify(
             }
         }
     }
-    assert!(modified.is_empty(), "modified without an old name: {modified:?}");
+    assert!(
+        modified.is_empty(),
+        "modified without an old name: {modified:?}"
+    );
     let unexplained: BTreeSet<String> = new
         .keys()
         .filter(|p| !image.contains(*p))
@@ -600,10 +603,7 @@ fn renames_replacements_and_swaps() {
         h.mv(WORK, "/a", "/t");
         h.mv(WORK, "/d/b", "/a");
         h.mv(WORK, "/t", "/d/b");
-        assert_eq!(
-            h.lines(),
-            ["renamed /a from /d/b", "renamed /d/b from /a"]
-        );
+        assert_eq!(h.lines(), ["renamed /a from /d/b", "renamed /d/b from /a"]);
 
         // Moved away and the name used again.
         let mut h = seeded(paged);
@@ -839,7 +839,11 @@ impl Rng {
 /// One random operation on `fs`; those the filesystem refuses change nothing.
 fn random_op(h: &mut H, rng: &mut Rng, fs: &str) {
     let tree = walk(&h.c.filesystems[fs]);
-    let dirs: Vec<u64> = tree.values().filter(|i| i.is_dir()).map(|i| i.ino).collect();
+    let dirs: Vec<u64> = tree
+        .values()
+        .filter(|i| i.is_dir())
+        .map(|i| i.ino)
+        .collect();
     let all: Vec<u64> = tree.values().map(|i| i.ino).collect();
     let entries: Vec<(u64, String, u64, bool)> = tree
         .iter()

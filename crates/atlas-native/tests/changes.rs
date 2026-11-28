@@ -20,8 +20,10 @@ use atlas_native::{
 const GRID: usize = 4096;
 
 fn root(name: &str) -> PathBuf {
-    let root =
-        std::env::temp_dir().join(format!("atlas-native-changes-{name}-{}", uuid::Uuid::new_v4()));
+    let root = std::env::temp_dir().join(format!(
+        "atlas-native-changes-{name}-{}",
+        uuid::Uuid::new_v4()
+    ));
     std::fs::create_dir_all(&root).unwrap();
     root
 }
@@ -71,7 +73,10 @@ fn mk(e: &NativeEngine, fs: &str, parent: u64, name: &str, kind: NodeType) -> u6
 }
 
 fn lines(changes: &[FsChange]) -> Vec<(ChangeKind, &str)> {
-    changes.iter().map(|c| (c.change, c.path.as_str())).collect()
+    changes
+        .iter()
+        .map(|c| (c.change, c.path.as_str()))
+        .collect()
 }
 
 /// Filesystem `ws`, cloned from snapshot `s` of `src`: `/dir/file` and `/f0`..`/f9`. Listings are
@@ -176,9 +181,7 @@ fn writes_are_listed_and_pages_describe_one_instant() {
     }
     // An offset past the end is an empty last page.
     let (id, _) = cursor.split_once('.').unwrap();
-    let past = e
-        .fs_changes("w", Some(&format!("{id}.999999")), 2)
-        .unwrap();
+    let past = e.fs_changes("w", Some(&format!("{id}.999999")), 2).unwrap();
     assert!(past.changes.is_empty() && past.next.is_none());
 
     // Reopened, the live filesystems are paged from the store and the answer is the same.

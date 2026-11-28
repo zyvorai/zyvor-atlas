@@ -265,8 +265,7 @@ fn path_id(id: &str) -> Result<&str, DriverError> {
 /// A change listing cursor is `<hex id>.<offset>`; anything else is refused before it reaches a
 /// query string.
 fn cursor_param(c: &str) -> Result<&str, DriverError> {
-    if !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
-    {
+    if !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.') {
         Ok(c)
     } else {
         Err(DriverError::Backend("invalid: malformed cursor".into()))
