@@ -910,6 +910,9 @@ impl RaftServer {
             &node,
             c.append_rejections,
         );
+        let name = "atlas_native_raft_wal_sync_seconds";
+        p.family(name, "histogram", "Fsyncs of the Raft log.")
+            .histogram(name, &node, &n.wal_sync_latency());
         p.family(
             "atlas_native_raft_peer_match_index",
             "gauge",

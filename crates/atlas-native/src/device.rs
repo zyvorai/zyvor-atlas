@@ -11,7 +11,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::engine::NativeError;
+use crate::{
+    engine::NativeError,
+    metrics::{Histogram, HistogramSnapshot},
+};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DeviceId(pub String);
@@ -36,6 +39,11 @@ pub trait BlockStore: std::fmt::Debug + Send + Sync {
     fn byte_granular(&self) -> Result<bool, NativeError> {
         Ok(false)
     }
+    /// Count and latency of the device's data syncs, for a device that syncs with a call of its
+    /// own. `None` otherwise: remote devices, and those that write through with `O_DSYNC`.
+    fn sync_latency(&self) -> Option<HistogramSnapshot> {
+        None
+    }
     /// Network address a client can read this device at directly, if it is remote.
     fn endpoint(&self) -> Option<&str> {
         None
@@ -58,6 +66,9 @@ impl BlockStore for FileDevice {
     fn len(&self) -> Result<u64, NativeError> {
         FileDevice::len(self)
     }
+    fn sync_latency(&self) -> Option<HistogramSnapshot> {
+        Some(self.syncs.snapshot())
+    }
 }
 
 /// Positional I/O on one file. An append only reserves its offset under a lock, then writes and
@@ -69,6 +80,8 @@ pub struct FileDevice {
     /// End of the space handed out to appends, including ones still being written.
     end: Mutex<u64>,
     positional: File,
+    /// The `sync_data` calls of appends and overwrites.
+    syncs: Histogram,
 }
 
 impl FileDevice {
@@ -89,6 +102,7 @@ impl FileDevice {
             path,
             end: Mutex::new(end),
             positional: file,
+            syncs: Histogram::default(),
         })
     }
 
@@ -112,7 +126,7 @@ impl FileDevice {
         let written = self
             .positional
             .write_all_at(data, off)
-            .and_then(|()| self.positional.sync_data());
+            .and_then(|()| self.sync_data());
         if let Err(e) = written {
             // Give the space back unless a later append already took the space after it; an
             // unacknowledged append is referenced by nothing either way.
@@ -136,8 +150,12 @@ impl FileDevice {
             )));
         }
         self.positional.write_all_at(data, offset)?;
-        self.positional.sync_data()?;
+        self.sync_data()?;
         Ok(())
+    }
+
+    fn sync_data(&self) -> std::io::Result<()> {
+        self.syncs.time(|| self.positional.sync_data())
     }
 
     pub fn len(&self) -> Result<u64, NativeError> {

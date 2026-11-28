@@ -11,7 +11,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc,
+        Arc, Mutex,
     },
     thread,
     time::{Duration, Instant},
@@ -23,9 +23,9 @@ use atlas_native::{
     object::DirObjectStore,
     raft::CAP_DELTA,
     wal::Wal,
-    BlockStore, DataNodeServer, DeviceBackend, EngineConfig, FailureDomain, FsOp, MetaBackend,
-    NativeEngine, NativeError, Node, NodeType, RaftConfig, RaftError, RaftServer, RemoteDevice,
-    SetAttr, TierPolicy, ROOT_INO,
+    BlockStore, DataNodeServer, DeviceBackend, EngineConfig, FailureDomain, FileDevice, FsOp,
+    MetaBackend, NativeEngine, NativeError, Node, NodeType, RaftConfig, RaftError, RaftServer,
+    RemoteDevice, SetAttr, TierPolicy, ROOT_INO,
 };
 
 const GRID: usize = 4096;
@@ -408,6 +408,120 @@ fn a_small_overwrite_is_a_delta_and_reads_as_the_new_bytes() {
     overwrite(&mut want, 2 * GRID - 2, &[6; 4]);
     overwrite(&mut want, 10, &[7; 2000]);
     assert_eq!(contents(&e, "f", ino), want);
+}
+
+/// The value of the sample line for `series` (name and labels).
+fn sample(text: &str, series: &str) -> f64 {
+    text.lines()
+        .find_map(|l| l.strip_prefix(series)?.strip_prefix(' ')?.parse().ok())
+        .unwrap_or_else(|| panic!("{series} missing:\n{text}"))
+}
+
+#[test]
+fn delta_writes_and_folds_show_in_the_metrics() {
+    let td = tempfile::tempdir().unwrap();
+    let e = local(config(td.path()));
+    let ino = one_file(&e, 2 * GRID);
+    let series = [
+        "atlas_native_delta_writes_total",
+        "atlas_native_delta_folds_total",
+        "atlas_native_delta_folded_deltas_total",
+        "atlas_native_delta_fold_conflicts_total",
+        r#"atlas_native_delta_write_seconds_count{phase="replicate"}"#,
+        r#"atlas_native_delta_write_seconds_count{phase="commit"}"#,
+        r#"atlas_native_delta_fold_seconds_count{phase="read"}"#,
+        r#"atlas_native_delta_fold_seconds_count{phase="write"}"#,
+        r#"atlas_native_delta_fold_seconds_count{phase="commit"}"#,
+    ];
+    let values = || {
+        let m = e.render_metrics().unwrap();
+        series.map(|s| sample(&m, s) as u64)
+    };
+    assert_eq!(values(), [0; 9]);
+    for at in [8, 100, GRID + 8] {
+        e.write_file("f", ino, at as u64, &[5; 8]).unwrap();
+    }
+    assert_eq!(values(), [3, 0, 0, 0, 3, 3, 0, 0, 0]);
+    assert_eq!(e.fold_all_deltas().unwrap(), 2);
+    assert_eq!(values(), [3, 2, 3, 0, 3, 3, 2, 2, 2]);
+    let m = e.render_metrics().unwrap();
+    for name in ["write_seconds", "fold_seconds"] {
+        let family = format!("# TYPE atlas_native_delta_{name} histogram");
+        assert_eq!(m.matches(&family).count(), 1, "{m}");
+    }
+    // Every fold synced three replicas, so its phases took measurable time.
+    for phase in ["read", "write", "commit"] {
+        let sum = format!("atlas_native_delta_fold_seconds_sum{{phase=\"{phase}\"}}");
+        assert!(sample(&m, &sum) > 0.0, "{m}");
+    }
+}
+
+type Interrupt = Arc<Mutex<Option<Box<dyn FnOnce() + Send>>>>;
+
+/// A local device that runs what `during` holds, once, inside its next append.
+struct Interrupted {
+    device: FileDevice,
+    during: Interrupt,
+}
+
+impl std::fmt::Debug for Interrupted {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.device.fmt(f)
+    }
+}
+
+impl BlockStore for Interrupted {
+    fn append(&self, _fence: u64, data: &[u8]) -> Result<u64, NativeError> {
+        let during = self.during.lock().unwrap().take();
+        if let Some(run) = during {
+            run();
+        }
+        self.device.append(data)
+    }
+    fn write_at(&self, _fence: u64, offset: u64, data: &[u8]) -> Result<(), NativeError> {
+        self.device.write_at(offset, data)
+    }
+    fn read_exact_at(&self, offset: u64, len: usize) -> Result<Vec<u8>, NativeError> {
+        self.device.read_exact_at(offset, len)
+    }
+    fn len(&self) -> Result<u64, NativeError> {
+        self.device.len()
+    }
+    fn byte_granular(&self) -> Result<bool, NativeError> {
+        Ok(true)
+    }
+}
+
+#[test]
+fn a_fold_that_loses_its_compare_and_swap_is_counted() {
+    let td = tempfile::tempdir().unwrap();
+    let during = Interrupt::default();
+    let stores = (1..=3)
+        .map(|i| {
+            let device = Interrupted {
+                device: FileDevice::open(td.path().join(format!("n{i}"))).unwrap(),
+                during: during.clone(),
+            };
+            (node(i), Arc::new(device) as Arc<dyn BlockStore>)
+        })
+        .collect();
+    let cfg = config(&td.path().join("e"));
+    let e = Arc::new(NativeEngine::open_with(cfg, stores, MetaBackend::Local).unwrap());
+    let ino = one_file(&e, GRID);
+    e.write_file("f", ino, 8, &[5; 8]).unwrap();
+    // While the fold writes its new base, the whole cell is rewritten under it.
+    let writer = e.clone();
+    *during.lock().unwrap() = Some(Box::new(move || {
+        writer.write_file("f", ino, 0, &[9; GRID]).unwrap();
+    }));
+    assert_eq!(e.fold_all_deltas().unwrap(), 0);
+    let t = e.telemetry.snapshot();
+    assert_eq!(
+        (t.delta_fold_conflicts, t.delta_folds, t.delta_folded_deltas),
+        (1, 0, 0)
+    );
+    assert_eq!(e.telemetry.fold_commit.snapshot().count(), 1);
+    assert_eq!(contents(&e, "f", ino), vec![9; GRID]);
 }
 
 #[test]

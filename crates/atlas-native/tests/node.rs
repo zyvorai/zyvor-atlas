@@ -53,6 +53,13 @@ fn api(addr: SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>
     http(addr, method, path, Some(TOKEN), body)
 }
 
+/// The value of the sample line for `series` (name and labels) in a node's `/metrics`.
+fn sample(text: &str, series: &str) -> f64 {
+    text.lines()
+        .find_map(|l| l.strip_prefix(series)?.strip_prefix(' ')?.parse().ok())
+        .unwrap_or_else(|| panic!("{series} missing:\n{text}"))
+}
+
 fn json(b: &[u8]) -> serde_json::Value {
     serde_json::from_slice(b).unwrap_or_else(|_| panic!("not JSON: {}", String::from_utf8_lossy(b)))
 }
@@ -483,14 +490,37 @@ fn http_api_round_trip_with_auth_and_leader_redirect() {
         "atlas_native_volumes ",
         "atlas_native_node_up{node=\"d1\"} 1",
         "atlas_native_repair_runs_total{",
+        "atlas_native_raft_elections_total{",
+        "# TYPE atlas_native_raft_wal_sync_seconds histogram",
+        "# TYPE atlas_native_delta_write_seconds histogram",
+        "# TYPE atlas_native_delta_fold_seconds histogram",
     ] {
         assert!(m.contains(series), "missing {series}:\n{m}");
     }
+    let labels = format!("{{node=\"{leader}\",group=\"0\"}}");
+    let syncs = sample(
+        &m,
+        &format!("atlas_native_raft_wal_sync_seconds_count{labels}"),
+    );
+    assert!(syncs > 0.0, "{m}");
+    assert!(
+        sample(
+            &m,
+            &format!("atlas_native_raft_wal_sync_seconds_sum{labels}")
+        ) > 0.0,
+        "{m}"
+    );
     let d1 = c.data["d1"].as_ref().unwrap().http_addr();
     let (_, dm) = http(d1, "GET", "/metrics", None, b"");
-    assert!(String::from_utf8(dm)
-        .unwrap()
-        .contains("atlas_native_data_fence{node=\"d1\",group=\"0\"}"));
+    let dm = String::from_utf8(dm).unwrap();
+    assert!(dm.contains("atlas_native_data_fence{node=\"d1\",group=\"0\"}"));
+    // The file device syncs with a call of its own; the aligned one writes through.
+    let file = "atlas_native_data_sync_seconds_count{node=\"d1\",device=\"0\"}";
+    assert!(sample(&dm, file) > 0.0, "{dm}");
+    assert!(
+        !dm.contains("atlas_native_data_sync_seconds_count{node=\"d1\",device=\"1\"}"),
+        "{dm}"
+    );
     assert_eq!(api(d1, "GET", "/v1/volumes", b"").0, 404);
 }
 
@@ -1172,6 +1202,16 @@ fn http_namespace_sharded_across_raft_groups() {
         let (_, b) = api(addr, "GET", "/metrics", b"");
         let m = String::from_utf8(b).unwrap();
         assert_eq!(m.matches("# TYPE atlas_native_volumes ").count(), 1, "{m}");
+        // One histogram family across the groups, each group with its own series.
+        for family in ["raft_wal_sync_seconds", "delta_fold_seconds"] {
+            let header = format!("# TYPE atlas_native_{family} histogram");
+            assert_eq!(m.matches(&header).count(), 1, "{m}");
+        }
+        for g in 0..GROUPS {
+            let fold =
+                format!("atlas_native_delta_fold_seconds_count{{group=\"{g}\",phase=\"read\"}}");
+            sample(&m, &fold);
+        }
         let per_group: Vec<u64> = (0..GROUPS)
             .map(|g| {
                 let key = format!("atlas_native_volumes{{group=\"{g}\"}} ");

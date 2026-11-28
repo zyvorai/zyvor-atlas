@@ -5,7 +5,67 @@
 //! `NativeEngine::render_metrics`. Callers serve the string on whatever `/metrics` endpoint hosts
 //! the node.
 
-use std::fmt::{Display, Write};
+use std::{
+    collections::HashSet,
+    fmt::{Display, Write},
+    sync::atomic::{AtomicU64, Ordering},
+    time::{Duration, Instant},
+};
+
+/// Upper bounds, in seconds, of the finite buckets of every latency [`Histogram`]: from a fast
+/// flash sync to a badly stalled disk.
+pub const LATENCY_BUCKETS: [f64; 17] = [
+    0.0001, 0.00025, 0.0005, 0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5,
+    5.0, 10.0, 30.0,
+];
+
+/// A latency distribution over [`LATENCY_BUCKETS`], updated with two relaxed atomic adds.
+#[derive(Debug, Default)]
+pub struct Histogram {
+    /// Observations per bucket, not cumulative; the last one is `+Inf`.
+    buckets: [AtomicU64; LATENCY_BUCKETS.len() + 1],
+    sum_ns: AtomicU64,
+}
+
+/// One look at a [`Histogram`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HistogramSnapshot {
+    /// As in [`Histogram`]: per bucket, not cumulative.
+    pub buckets: [u64; LATENCY_BUCKETS.len() + 1],
+    pub sum_ns: u64,
+}
+
+impl HistogramSnapshot {
+    /// Observations in all.
+    pub fn count(&self) -> u64 {
+        self.buckets.iter().sum()
+    }
+}
+
+impl Histogram {
+    pub fn observe(&self, took: Duration) {
+        let secs = took.as_secs_f64();
+        let bucket = LATENCY_BUCKETS.partition_point(|le| *le < secs);
+        self.buckets[bucket].fetch_add(1, Ordering::Relaxed);
+        let ns = u64::try_from(took.as_nanos()).unwrap_or(u64::MAX);
+        self.sum_ns.fetch_add(ns, Ordering::Relaxed);
+    }
+
+    /// Runs `f` and observes how long it took, whatever it returned.
+    pub fn time<T>(&self, f: impl FnOnce() -> T) -> T {
+        let started = Instant::now();
+        let out = f();
+        self.observe(started.elapsed());
+        out
+    }
+
+    pub fn snapshot(&self) -> HistogramSnapshot {
+        HistogramSnapshot {
+            buckets: std::array::from_fn(|i| self.buckets[i].load(Ordering::Relaxed)),
+            sum_ns: self.sum_ns.load(Ordering::Relaxed),
+        }
+    }
+}
 
 #[derive(Debug, Default)]
 pub struct PromText {
@@ -17,7 +77,7 @@ impl PromText {
         Self::default()
     }
 
-    /// Starts a metric family. `kind` is `gauge` or `counter`.
+    /// Starts a metric family. `kind` is `gauge`, `counter` or `histogram`.
     pub fn family(&mut self, name: &str, kind: &str, help: &str) -> &mut Self {
         let _ = writeln!(self.out, "# HELP {name} {help}");
         let _ = writeln!(self.out, "# TYPE {name} {kind}");
@@ -43,6 +103,27 @@ impl PromText {
         }
         let _ = writeln!(self.out, " {value}");
         self
+    }
+
+    /// One series of a `histogram` family: its cumulative buckets, sum (seconds) and count.
+    pub fn histogram(
+        &mut self,
+        name: &str,
+        labels: &[(&str, &str)],
+        h: &HistogramSnapshot,
+    ) -> &mut Self {
+        let bucket = format!("{name}_bucket");
+        let bounds = LATENCY_BUCKETS.iter().map(|le| le.to_string());
+        let mut below = 0;
+        for (le, n) in bounds.chain(["+Inf".to_string()]).zip(h.buckets) {
+            below += n;
+            let mut with_le = labels.to_vec();
+            with_le.push(("le", &le));
+            self.sample(&bucket, &with_le, below);
+        }
+        let sum = Duration::from_nanos(h.sum_ns).as_secs_f64();
+        self.sample(&format!("{name}_sum"), labels, sum);
+        self.sample(&format!("{name}_count"), labels, below)
     }
 
     /// A family with a single unlabelled sample.
@@ -89,14 +170,29 @@ pub fn merge(texts: &[String]) -> String {
     let mut families: std::collections::HashMap<String, (Vec<String>, Vec<String>)> =
         std::collections::HashMap::new();
     let mut current = String::new();
+    // A histogram's samples carry suffixed names but belong to the family its headers name.
+    let mut histograms = HashSet::new();
     for line in texts.iter().flat_map(|t| t.lines()) {
         let (name, header) = match line
             .strip_prefix("# HELP ")
             .or(line.strip_prefix("# TYPE "))
         {
-            Some(rest) => (rest.split(' ').next().unwrap_or_default(), true),
+            Some(rest) => {
+                let (name, kind) = rest.split_once(' ').unwrap_or((rest, ""));
+                if line.starts_with("# TYPE ") && kind == "histogram" {
+                    histograms.insert(name);
+                }
+                (name, true)
+            }
             None if line.is_empty() => continue,
-            None => (line.split(['{', ' ']).next().unwrap_or_default(), false),
+            None => {
+                let name = line.split(['{', ' ']).next().unwrap_or_default();
+                let family = ["_bucket", "_sum", "_count"]
+                    .iter()
+                    .filter_map(|suffix| name.strip_suffix(suffix))
+                    .find(|base| histograms.contains(base));
+                (family.unwrap_or(name), false)
+            }
         };
         if name != current {
             current = name.to_string();
@@ -154,6 +250,60 @@ mod tests {
         assert!(text.contains("# TYPE atlas_x gauge\natlas_x 3\n"));
         assert!(text.contains(r#"atlas_y_total{peer="a\"b\\c\nd"} 7"#));
     }
+    #[test]
+    fn histograms_bucket_cumulatively_and_merge_as_one_family() {
+        let h = Histogram::default();
+        // On a bound counts into it; past the last bound counts only into +Inf.
+        h.observe(Duration::from_millis(5));
+        h.observe(Duration::from_millis(3));
+        h.observe(Duration::from_secs(60));
+        assert_eq!(h.time(|| 7), 7);
+        let s = h.snapshot();
+        assert_eq!(s.count(), 4);
+        assert!(s.sum_ns >= 60_008_000_000);
+
+        let text = |node: &str| {
+            let mut p = PromText::new();
+            p.family("atlas_h_seconds", "histogram", "H.").histogram(
+                "atlas_h_seconds",
+                &[("node", node)],
+                &s,
+            );
+            p.single("atlas_other_count", "gauge", "Not part of a histogram.", 1);
+            p.finish()
+        };
+        let one = text("n1");
+        for line in [
+            "atlas_h_seconds_bucket{node=\"n1\",le=\"0.005\"} 3",
+            "atlas_h_seconds_bucket{node=\"n1\",le=\"30\"} 3",
+            "atlas_h_seconds_bucket{node=\"n1\",le=\"+Inf\"} 4",
+            "atlas_h_seconds_count{node=\"n1\"} 4",
+        ] {
+            assert!(one.lines().any(|l| l == line), "{line} not in:\n{one}");
+        }
+        assert!(one.contains("atlas_h_seconds_sum{node=\"n1\"} 60.0"));
+
+        // Both texts' samples stay under the one header, ahead of the next family.
+        let merged = merge(&[one.clone(), text("n2")]);
+        assert_eq!(
+            merged.matches("# TYPE atlas_h_seconds histogram").count(),
+            1
+        );
+        let names: Vec<&str> = merged
+            .lines()
+            .filter(|l| !l.starts_with('#'))
+            .map(|l| l.split(['{', ' ']).next().unwrap())
+            .collect();
+        let other = names
+            .iter()
+            .position(|n| *n == "atlas_other_count")
+            .unwrap();
+        assert_eq!(other, names.len() - 2);
+        assert!(names[..other].iter().all(|n| n.starts_with("atlas_h_")));
+        assert!(with_label("atlas_h_seconds_sum 1.5\n", "group", "1")
+            .contains("atlas_h_seconds_sum{group=\"1\"} 1.5"));
+    }
+
     #[test]
     fn labels_and_merges_expositions() {
         let mut a = PromText::new();

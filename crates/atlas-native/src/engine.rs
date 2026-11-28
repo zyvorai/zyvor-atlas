@@ -1765,8 +1765,43 @@ impl NativeEngine {
                 "Eligible writes that rewrote their cell instead.",
                 t.delta_fallbacks,
             ),
+            (
+                "atlas_native_delta_fold_conflicts_total",
+                "Folds the catalog rejected, normally because the cell changed first.",
+                t.delta_fold_conflicts,
+            ),
+            (
+                "atlas_native_delta_folded_deltas_total",
+                "Deltas consumed by committed folds.",
+                t.delta_folded_deltas,
+            ),
         ] {
             p.single(name, "counter", help, v);
+        }
+        let timers = &self.telemetry;
+        for (name, help, phases) in [
+            (
+                "atlas_native_delta_write_seconds",
+                "Delta write attempts: time to replicate the bytes and to commit them.",
+                &[
+                    ("replicate", &timers.delta_replicate),
+                    ("commit", &timers.delta_commit),
+                ][..],
+            ),
+            (
+                "atlas_native_delta_fold_seconds",
+                "Fold attempts: time to read the cell, write the new base and commit it.",
+                &[
+                    ("read", &timers.fold_read),
+                    ("write", &timers.fold_write),
+                    ("commit", &timers.fold_commit),
+                ][..],
+            ),
+        ] {
+            p.family(name, "histogram", help);
+            for (phase, h) in phases {
+                p.histogram(name, &[("phase", phase)], &h.snapshot());
+            }
         }
         p.single(
             "atlas_native_metadata_applied_index",

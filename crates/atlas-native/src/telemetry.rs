@@ -3,6 +3,8 @@
 
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use crate::metrics::Histogram;
+
 #[derive(Debug, Default)]
 pub struct NativeIoCounters {
     reads: AtomicU64,
@@ -21,6 +23,17 @@ pub struct NativeIoCounters {
     delta_writes: AtomicU64,
     delta_folds: AtomicU64,
     delta_fallbacks: AtomicU64,
+    delta_fold_conflicts: AtomicU64,
+    delta_folded_deltas: AtomicU64,
+    /// Where a fold's time goes: reading the cell, placing the new base on its replicas, and
+    /// committing it. Failed attempts count.
+    pub fold_read: Histogram,
+    pub fold_write: Histogram,
+    pub fold_commit: Histogram,
+    /// Where a delta write's time goes: placing its bytes on the replicas, and getting them
+    /// committed (the wait for a delta command included). Failed attempts count.
+    pub delta_replicate: Histogram,
+    pub delta_commit: Histogram,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,6 +57,9 @@ pub struct NativeIoSnapshot {
     pub delta_writes: u64,
     pub delta_folds: u64,
     pub delta_fallbacks: u64,
+    /// Folds the catalog rejected, and the deltas the successful ones consumed.
+    pub delta_fold_conflicts: u64,
+    pub delta_folded_deltas: u64,
 }
 
 impl NativeIoCounters {
@@ -85,8 +101,13 @@ impl NativeIoCounters {
     pub fn delta_written(&self) {
         self.delta_writes.fetch_add(1, Ordering::Relaxed);
     }
-    pub fn delta_folded(&self) {
+    pub fn delta_folded(&self, deltas: usize) {
         self.delta_folds.fetch_add(1, Ordering::Relaxed);
+        self.delta_folded_deltas
+            .fetch_add(deltas as u64, Ordering::Relaxed);
+    }
+    pub fn delta_fold_conflict(&self) {
+        self.delta_fold_conflicts.fetch_add(1, Ordering::Relaxed);
     }
     pub fn delta_fallback(&self) {
         self.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
@@ -109,6 +130,8 @@ impl NativeIoCounters {
             delta_writes: self.delta_writes.load(Ordering::Relaxed),
             delta_folds: self.delta_folds.load(Ordering::Relaxed),
             delta_fallbacks: self.delta_fallbacks.load(Ordering::Relaxed),
+            delta_fold_conflicts: self.delta_fold_conflicts.load(Ordering::Relaxed),
+            delta_folded_deltas: self.delta_folded_deltas.load(Ordering::Relaxed),
         }
     }
 }

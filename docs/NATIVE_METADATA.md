@@ -300,7 +300,8 @@ binary yet). All Raft series carry `node` and `group` labels:
 
 - Raft: `atlas_native_raft_{term,commit_index,applied_index,last_index,snapshot_index}`,
   `atlas_native_raft_role{role}` (one-hot), `atlas_native_raft_peer_match_index{peer}` (leader only),
-  `atlas_native_raft_{elections,leader_terms,append_rejections}_total`;
+  `atlas_native_raft_{elections,leader_terms,append_rejections}_total`,
+  `atlas_native_raft_wal_sync_seconds` (histogram of the log's fsyncs);
 - transport, per peer: `atlas_native_transport_{sent,connect_failures,write_failures,dropped}_total`,
   plus `atlas_native_transport_rejected_frames_total` and the node-wide
   `atlas_native_transport_tls_handshake_failures_total`;
@@ -309,7 +310,9 @@ binary yet). All Raft series carry `node` and `group` labels:
   `atlas_native_wal_records`, `atlas_native_{volumes,snapshots,extents}`,
   `atlas_native_allocator_free_{bytes,ranges}`, `atlas_native_device_bytes{node}`;
 - data node: `atlas_native_data_requests_total{op}`, `atlas_native_data_{fenced_writes,errors,
-  written_bytes,read_bytes}_total`, `atlas_native_data_fence{node,group}`, `atlas_native_data_device_bytes{node,device}`.
+  written_bytes,read_bytes}_total`, `atlas_native_data_fence{node,group}`, `atlas_native_data_device_bytes{node,device}`,
+  `atlas_native_data_sync_seconds{node,device}` (histogram, `file` devices only);
+- delta writes: see [NATIVE_DELTA_WRITES](NATIVE_DELTA_WRITES.md#metrics).
 
 ### Data nodes (`data_node` module)
 

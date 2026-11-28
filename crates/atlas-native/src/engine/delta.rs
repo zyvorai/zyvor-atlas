@@ -410,7 +410,12 @@ impl NativeEngine {
                 break;
             };
             let alloc = self.lease(fence)?;
-            let Some(extent) = self.place_delta(data, fence, &alloc)? else {
+            let started = Instant::now();
+            let placed = self.place_delta(data, fence, &alloc);
+            if !matches!(placed, Ok(None)) {
+                self.telemetry.delta_replicate.observe(started.elapsed());
+            }
+            let Some(extent) = placed? else {
                 break;
             };
             self.delta_point(DeltaPoint::Replicated);
@@ -421,7 +426,8 @@ impl NativeEngine {
                 extent,
                 now_ns: now_ns(),
             };
-            match self.submit_delta(fence, item, alloc.detach())? {
+            let timer = &self.telemetry.delta_commit;
+            match timer.time(|| self.submit_delta(fence, item, alloc.detach()))? {
                 Outcome::Applied => {
                     self.telemetry.delta_written();
                     self.telemetry.record_write(data.len());
@@ -509,12 +515,18 @@ impl NativeEngine {
         let Some(view) = view.filter(|v| !v.deltas.is_empty()) else {
             return Ok(false);
         };
-        let (view, content) = self.read_view(view, Some(&target))?;
+        let telemetry = &self.telemetry;
+        let read = telemetry
+            .fold_read
+            .time(|| self.read_view(view, Some(&target)));
+        let (view, content) = read?;
         if view.deltas.is_empty() {
             return Ok(false);
         }
         let alloc = self.lease(fence)?;
-        let mut extent = self.place_extent(&content, fence, &alloc)?;
+        let mut extent = telemetry
+            .fold_write
+            .time(|| self.place_extent(&content, fence, &alloc))?;
         extent.logical_offset = key.cell;
         let cmd = MetaCommand::FoldCell {
             cell: key.clone(),
@@ -522,15 +534,19 @@ impl NativeEngine {
             consumed: view.deltas.iter().map(|(_, e)| e.id.clone()).collect(),
             extent,
         };
-        match self
-            .commit(cmd, Some(fence))
+        match telemetry
+            .fold_commit
+            .time(|| self.commit(cmd, Some(fence)))
             .inspect_err(|e| alloc.settle(e))
         {
             Ok(()) => {
-                self.telemetry.delta_folded();
+                telemetry.delta_folded(view.deltas.len());
                 Ok(true)
             }
-            Err(e) if is_rejected(&e) => Ok(false),
+            Err(e) if is_rejected(&e) => {
+                telemetry.delta_fold_conflict();
+                Ok(false)
+            }
             Err(e) => Err(e),
         }
     }

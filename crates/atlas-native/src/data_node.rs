@@ -627,6 +627,19 @@ impl DataNodeServer {
                 fence,
             );
         }
+        let name = "atlas_native_data_sync_seconds";
+        p.family(
+            name,
+            "histogram",
+            "Data syncs of each file-backed device; block-aligned devices have no separate sync.",
+        );
+        for (i, d) in self.shared.devices.iter().enumerate() {
+            if let Some(h) = d.sync_latency() {
+                let index = i.to_string();
+                let labels = [("node", self.id.as_str()), ("device", index.as_str())];
+                p.histogram(name, &labels, &h);
+            }
+        }
         p.family(
             "atlas_native_data_device_bytes",
             "gauge",

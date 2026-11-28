@@ -102,10 +102,34 @@ background.
 
 ## Metrics
 
-`atlas_native_delta_writes_total`, `atlas_native_delta_folds_total`,
-`atlas_native_delta_fallbacks_total` (eligible writes that rewrote their cell instead),
-`atlas_native_delta_dirty_cells`, `atlas_native_delta_pending`,
-`atlas_native_delta_pending_bytes`, `atlas_native_dead_bytes`.
+On a metadata node (engine series carry a `group` label when the node runs several groups).
+They count what this node did while it led, since it started:
+
+| Metric | Meaning |
+|---|---|
+| `atlas_native_delta_writes_total` | Writes committed as deltas. |
+| `atlas_native_delta_fallbacks_total` | Eligible writes that rewrote their cell instead. |
+| `atlas_native_delta_write_seconds{phase}` | Histogram, one observation per delta attempt and phase. `replicate`: placing the bytes on the data nodes. `commit`: from joining the queue to the outcome, so it includes waiting for the previous delta command and for the write lock. |
+| `atlas_native_delta_folds_total` | Folds committed. |
+| `atlas_native_delta_folded_deltas_total` | Deltas those folds consumed; divided by the folds, deltas per fold. |
+| `atlas_native_delta_fold_conflicts_total` | Folds the catalog rejected at commit, normally because the cell changed first. Their reads and writes were wasted. |
+| `atlas_native_delta_fold_seconds{phase}` | Histogram, one observation per fold attempt and phase reached. `read`: the base and its deltas. `write`: placing the new base on its replicas. `commit`: the fold command. |
+| `atlas_native_delta_dirty_cells`, `atlas_native_delta_pending`, `atlas_native_delta_pending_bytes` | Backlog: cells with deltas, deltas not folded, and their device bytes. |
+| `atlas_native_dead_bytes` | Device bytes of dead extents not reclaimed yet. |
+
+Folds made for snapshots and truncates count like background ones. Both histograms include
+attempts that failed.
+
+Where the syncs and elections show:
+
+| Metric | Node | Meaning |
+|---|---|---|
+| `atlas_native_data_sync_seconds{node,device}` | data | Histogram of the `fdatasync` calls of a `file` device (appends and overwrites). `aligned` and `io_uring` devices write with `O_DSYNC` and have no series. Fence and high-water-mark files are not included. |
+| `atlas_native_raft_wal_sync_seconds{node,group}` | metadata | Histogram of the Raft log's `fdatasync` calls for appended records, leader or follower. Log compaction, catalog checkpoints and the vote file are not included. |
+| `atlas_native_raft_elections_total{node,group}` | metadata | Elections started after a successful pre-vote (not new). |
+
+Latency histograms have buckets from 0.1 ms to 30 s; `_count` is the number of calls. All of
+these start from zero when a process restarts.
 
 ## Known costs and limits
 

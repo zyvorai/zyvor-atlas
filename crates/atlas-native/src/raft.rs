@@ -40,6 +40,7 @@ use crate::{
     durable,
     membership::Membership,
     metadata::{Catalog, MetaCommand, MetaError},
+    metrics::HistogramSnapshot,
     raft_snapshot::{remove_staging, Incoming, Outgoing, SnapshotChunk},
     store::{
         load_checkpoint, remove_legacy_catalog, CatalogStore, CATALOG_STORE, DEFAULT_CACHE_INODES,
@@ -895,6 +896,10 @@ impl RaftNode {
 
     pub fn counters(&self) -> RaftCounters {
         self.counters
+    }
+    /// Count and latency of the log's fsyncs since this node was opened.
+    pub fn wal_sync_latency(&self) -> HistogramSnapshot {
+        self.wal.sync_latency()
     }
     /// Highest log index known to be replicated on each peer; empty unless leader.
     pub fn peer_match_index(&self) -> BTreeMap<NodeId, u64> {

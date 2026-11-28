@@ -9,7 +9,10 @@ use std::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::durable::sync_dir;
+use crate::{
+    durable::sync_dir,
+    metrics::{Histogram, HistogramSnapshot},
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalError {
@@ -44,6 +47,9 @@ pub struct Wal {
     /// Highest index known to be on disk (written by an fsynced append or a rewrite).
     synced_index: u64,
     records: u64,
+    /// The fsyncs [`Wal::sync`] made (rewrites of the file are not among them). Boxed to keep
+    /// the log, which the engine holds in an enum, small.
+    syncs: Box<Histogram>,
 }
 
 impl Wal {
@@ -60,6 +66,7 @@ impl Wal {
             last_index: lines.last().map(|(i, _)| *i).unwrap_or(0),
             synced_index: lines.last().map(|(i, _)| *i).unwrap_or(0),
             records: lines.len() as u64,
+            syncs: Box::default(),
         };
         if torn {
             // A torn final line was never fsynced as a whole record, so it was never acknowledged.
@@ -93,7 +100,7 @@ impl Wal {
     /// Flushes every unsynced append with one fsync; a no-op when there is none.
     pub fn sync(&mut self) -> Result<(), WalError> {
         if self.synced_index < self.last_index {
-            self.file.sync_data()?;
+            self.syncs.time(|| self.file.sync_data())?;
             self.synced_index = self.last_index;
         }
         Ok(())
@@ -101,6 +108,11 @@ impl Wal {
 
     pub fn synced_index(&self) -> u64 {
         self.synced_index
+    }
+
+    /// Count and latency of the fsyncs of appended records since the log was opened.
+    pub fn sync_latency(&self) -> HistogramSnapshot {
+        self.syncs.snapshot()
     }
 
     pub fn replay<T: DeserializeOwned>(&self) -> Result<Vec<WalRecord<T>>, WalError> {
@@ -243,11 +255,15 @@ mod tests {
         let mut wal = Wal::open(td.path()).unwrap();
         wal.append(&rec(1)).unwrap();
         assert_eq!(wal.synced_index(), 1);
+        assert_eq!(wal.sync_latency().count(), 1);
         wal.append_unsynced(&rec(2)).unwrap();
         wal.append_unsynced(&rec(3)).unwrap();
         assert_eq!((wal.last_index(), wal.synced_index()), (3, 1));
         wal.sync().unwrap();
         assert_eq!(wal.synced_index(), 3);
+        // A sync with nothing to flush is not counted.
+        wal.sync().unwrap();
+        assert_eq!(wal.sync_latency().count(), 2);
 
         wal.append_unsynced(&rec(4)).unwrap();
         wal.truncate_after(2).unwrap();
