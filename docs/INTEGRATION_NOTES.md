@@ -111,14 +111,15 @@ missing from it.
 
 | Route | Roles given | Reason |
 |---|---|---|
-| `GET v1/fs/{fs}/changes` | none (admin and the `api_token_file` token only) | Deny by default; it lists paths, including names the base snapshot had. |
+| `GET v1/fs/{fs}/changes` | `read-only`, `data` (limited tokens: their filesystems only) | Decided by the user on 2026-11-28; this branch had first left it admin only. |
 | `POST v1/fs/{fs}/rename-if` | `data`, as `rename` | Same effect as `rename` under extra conditions. Closed, every S3 PUT with a scoped `data` token would fail. |
 | `GET v1/fs/{fs}/inodes/{ino}/content-tag` | `read-only`, `data`, as `layout` | A digest of what `layout` and the attributes show; `--keep-cache` mounts use `data` tokens. |
 
-**Consequence to decide:** the chart's scoped `gateway` token (`lifecycle`, `data`) gets 403 on
-workspace changes. If the gateway is to list changes with scoped tokens, the route needs a role.
-Please review all three rows; they are authorization decisions. The role table in
-`NATIVE_NODE.md` was not updated for them.
+The chart's scoped `gateway` token holds `lifecycle` and `data`, so the gateway can list changes
+and is not refused with 403. A `lifecycle`-only or `replication` token is. Two limits of the grant
+(also in `NATIVE_NODE.md`): a node computes two listings at a time, so a `data` or `read-only` token
+can occupy both slots; and a token limited to a clone sees names that existed when the clone was
+made even if since removed. The role table in `NATIVE_NODE.md` covers all three routes.
 
 Test literals: `fault_tests.rs` (disk-failure-recovery) and
 `atlas-gateway/tests/workspace_changes.rs` build `NodeConfig`, `DataNodeRole` and `MetadataRole`

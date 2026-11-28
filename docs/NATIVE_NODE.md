@@ -459,8 +459,8 @@ and file, never a value.
 
 | Role | May call |
 | --- | --- |
-| `read-only` | `GET`s: status, members, listings, volume, snapshot and file data, filesystem metadata (content tags included), diffs, exports and transfers. Not `GET /v1/fs/{fs}/changes`, which no scoped role but `admin` may call. |
-| `data` | The data path of mounts, S3, NFS, SMB and `ublk`: everything under a filesystem's inodes (content tags included), rename and conditional rename (`rename-if`), sessions, locks, `statfs`, volume data (read and write), status and the volume and filesystem listings. |
+| `read-only` | `GET`s: status, members, listings, volume, snapshot and file data, filesystem metadata (content tags included), diffs, exports and transfers. Includes the changes list, `GET /v1/fs/{fs}/changes`. |
+| `data` | The data path of mounts, S3, NFS, SMB and `ublk`: everything under a filesystem's inodes (content tags included), rename and conditional rename (`rename-if`), sessions, locks, `statfs`, the changes list (`GET /v1/fs/{fs}/changes`), volume data (read and write), status and the volume and filesystem listings. |
 | `lifecycle` | Create, resize, delete, snapshot, clone and **lock** volumes, filesystems and snapshots; quotas; activity; reduction; listings. No file or volume data. The CSI controller's role. |
 | `replication` | What `atlas-native-replicate` calls on either side: filesystem listings, create filesystem, create and delete filesystem snapshots, diffs, file data reads, and `replica/apply`, `replica/inodes/*/data` and `replica/commit`. |
 | `admin` | Every route the node knows **except unlock**, including membership changes, repair, GC, tiering, export and import, locality pins, replica promote and demote. |
@@ -494,6 +494,10 @@ counted in `atlas_native_api_denied_total{reason}`.
   that session through its own filesystem's routes. Likewise `direct-commit` or `direct-abort`
   with another file's lease id ends that lease. Both ids are random UUIDs; a session id also shows
   in its filesystem's lock listing.
+- **Change listings.** A node computes at most two `GET /v1/fs/{fs}/changes` listings at a time,
+  so a `data` or `read-only` token can occupy both slots and leave other callers to retry. A
+  token limited to a clone sees, in its listing, names that existed when the clone was made even
+  if they have since been removed.
 - **Retention.** Only the node's snapshot locks need `retention-unlock`. S3 object retention is
   checked by the S3 gateway alone, so any token with `data` on that filesystem can delete the file
   ([`WORM.md`](WORM.md)). A `lifecycle` token can set a very long lock that only an unlock

@@ -722,6 +722,29 @@ impl Drop for Killed {
     }
 }
 
+/// The change list names a filesystem's paths: the roles that read the filesystem may call it,
+/// within their limits.
+#[test]
+fn the_change_list_is_for_tokens_that_read_the_filesystem() {
+    let td = tempfile::tempdir().unwrap();
+    let node = start(td.path(), true);
+    let a = node.http_addr();
+    populate(a, "gateway");
+
+    for who in ["reader", "reader-a", "data-a", "data-all", "gateway", "ops"] {
+        admitted(a, who, "GET", "/v1/fs/a/changes", b"");
+    }
+    // Limited to another filesystem, or to a volume only.
+    for who in ["reader-a", "data-a"] {
+        forbidden(a, who, "GET", "/v1/fs/b/changes");
+    }
+    forbidden(a, "block-v1", "GET", "/v1/fs/a/changes");
+    // Lifecycle, replication and unlock alone do not read a filesystem.
+    for who in ["csi", "replicate", "officer"] {
+        forbidden(a, who, "GET", "/v1/fs/a/changes");
+    }
+}
+
 #[test]
 fn the_node_logs_denials_and_never_a_token() {
     let td = tempfile::tempdir().unwrap();
