@@ -53,6 +53,7 @@ impl Cluster {
         dcfg.data_node = Some(DataNodeRole {
             listen: data_l.local_addr().unwrap(),
             devices: Vec::new(),
+            preallocate: Default::default(),
         });
         let spec = DataNodeSpec {
             id: "d1".into(),

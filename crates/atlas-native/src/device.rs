@@ -6,7 +6,7 @@ use std::{
     io,
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
-    sync::Mutex,
+    sync::Arc,
 };
 
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,7 @@ use uuid::Uuid;
 use crate::{
     engine::NativeError,
     metrics::{Histogram, HistogramSnapshot},
+    prealloc::{PreallocConfig, PreallocStats, Preparer, Tail},
     sync_guard::SyncGuard,
 };
 
@@ -55,6 +56,14 @@ pub trait BlockStore: std::fmt::Debug + Send + Sync {
     fn failure(&self) -> Option<String> {
         None
     }
+    /// Counters of a local device that prepares its space ahead of appends
+    /// (`crate::prealloc`); `None` for any other.
+    fn prealloc_stats(&self) -> Option<PreallocStats> {
+        None
+    }
+    /// Called before the process exits: a device that prepares ahead stops taking appends and
+    /// gives the unused space back. Nothing for any other.
+    fn seal(&self) {}
 }
 
 /// Makes the data written to a file durable. [`DataSync`] is what devices and the metadata log
@@ -95,6 +104,12 @@ impl BlockStore for FileDevice {
     fn failure(&self) -> Option<String> {
         self.guard.failure()
     }
+    fn prealloc_stats(&self) -> Option<PreallocStats> {
+        self.preparer.as_ref().map(Preparer::stats)
+    }
+    fn seal(&self) {
+        self.cut_to_used_length();
+    }
 }
 
 /// Positional I/O on one file. An append only reserves its offset under a lock, then writes and
@@ -104,17 +119,23 @@ impl BlockStore for FileDevice {
 /// until it is reopened, and a write is not acknowledged while a sync that could have been told
 /// about its data is still running (see `sync_guard.rs`). Reads go on: ranges acknowledged
 /// before the failure are unaffected, and nothing may refer to the others.
+///
+/// Nothing at or beyond the file's length was ever handed out, so a reopened device appends from
+/// there. With preallocation (`crate::prealloc`) the length runs ahead of the space in use while
+/// the device is open, and after an unclean stop.
 #[derive(Debug)]
 pub struct FileDevice {
     id: DeviceId,
     path: PathBuf,
     /// End of the space handed out to appends, including ones still being written.
-    end: Mutex<u64>,
+    tail: Arc<Tail>,
     positional: File,
     /// The `sync_data` calls of appends and overwrites.
     syncs: Histogram,
-    sync: Box<dyn DeviceSync>,
-    guard: SyncGuard,
+    sync: Arc<dyn DeviceSync>,
+    guard: Arc<SyncGuard>,
+    /// Zeroes the file ahead of appends, when preallocation is on.
+    preparer: Option<Preparer>,
 }
 
 impl FileDevice {
@@ -128,7 +149,34 @@ impl FileDevice {
         path: impl AsRef<Path>,
         sync: Box<dyn DeviceSync>,
     ) -> Result<Self, NativeError> {
-        let path = path.as_ref().to_path_buf();
+        // `sync` is for writers; what the `prealloc-test` feature adds syncs for real.
+        Self::open_inner(
+            path.as_ref(),
+            Arc::from(sync),
+            Arc::new(DataSync),
+            PreallocConfig::implicit(),
+        )
+    }
+
+    /// [`Self::open_with_sync`] with preallocation as `prealloc` says; `sync` is also what the
+    /// preparer syncs with.
+    #[doc(hidden)]
+    pub fn open_with_config(
+        path: impl AsRef<Path>,
+        sync: Box<dyn DeviceSync>,
+        prealloc: PreallocConfig,
+    ) -> Result<Self, NativeError> {
+        let sync: Arc<dyn DeviceSync> = Arc::from(sync);
+        Self::open_inner(path.as_ref(), sync.clone(), sync, prealloc)
+    }
+
+    fn open_inner(
+        path: &Path,
+        sync: Arc<dyn DeviceSync>,
+        prepare_sync: Arc<dyn DeviceSync>,
+        prealloc: PreallocConfig,
+    ) -> Result<Self, NativeError> {
+        let path = path.to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -138,15 +186,21 @@ impl FileDevice {
             .read(true)
             .write(true)
             .open(&path)?;
-        let end = file.metadata()?.len();
+        let tail = Arc::new(Tail::new(file.metadata()?.len()));
+        let guard = Arc::new(SyncGuard::new(format!("device {}", path.display())));
+        let preparer = prealloc
+            .enabled
+            .then(|| Preparer::start(&path, tail.clone(), prepare_sync, guard.clone(), prealloc))
+            .transpose()?;
         Ok(Self {
             id: DeviceId(Uuid::new_v4().to_string()),
-            guard: SyncGuard::new(format!("device {}", path.display())),
+            guard,
             path,
-            end: Mutex::new(end),
+            tail,
             positional: file,
             syncs: Histogram::default(),
             sync,
+            preparer,
         })
     }
 
@@ -165,23 +219,11 @@ impl FileDevice {
 
     pub fn append(&self, data: &[u8]) -> Result<u64, NativeError> {
         self.guard.check()?;
-        let off = {
-            let mut end = self
-                .end
-                .lock()
-                .map_err(|_| NativeError::Poisoned("device"))?;
-            let off = *end;
-            *end += data.len() as u64;
-            off
-        };
+        let off = self.tail.reserve(data.len() as u64)?;
         if let Err(e) = self.positional.write_all_at(data, off) {
             // Give the space back unless a later append already took the space after it; an
             // unacknowledged append is referenced by nothing either way.
-            if let Ok(mut end) = self.end.lock() {
-                if *end == off + data.len() as u64 {
-                    *end = off;
-                }
-            }
+            self.tail.unreserve(off, data.len() as u64);
             return Err(e.into());
         }
         // After a failed sync the space stays handed out: what the disk holds there is unknown.
@@ -189,7 +231,8 @@ impl FileDevice {
         Ok(off)
     }
 
-    /// Overwrites `data.len()` bytes at `offset` (reuse of a freed range). Never extends the file.
+    /// Overwrites `data.len()` bytes at `offset` (reuse of a freed range). Never extends the
+    /// space in use.
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<(), NativeError> {
         self.guard.check()?;
         let end = self.len()?;
@@ -203,11 +246,26 @@ impl FileDevice {
         self.make_durable()
     }
 
+    fn cut_to_used_length(&self) {
+        let keep_length = self.guard.failure().is_some();
+        if let Err(e) = self.tail.seal(&self.positional, keep_length) {
+            eprintln!(
+                "atlas-native: could not cut {} back to its used length: {e}",
+                self.path.display()
+            );
+        }
+    }
+
     fn sync_data(&self) -> std::io::Result<()> {
         self.syncs.time(|| self.sync.sync_data(&self.positional))
     }
 
+    /// Bytes of the device in use: the file's length, or the append position while the file is
+    /// prepared ahead of it.
     pub fn len(&self) -> Result<u64, NativeError> {
+        if self.preparer.is_some() {
+            return self.tail.end();
+        }
         Ok(self.positional.metadata()?.len())
     }
 
@@ -216,9 +274,30 @@ impl FileDevice {
     }
 
     pub fn read_exact_at(&self, offset: u64, len: usize) -> Result<Vec<u8>, NativeError> {
+        // Prepared space past the append position must not read as data.
+        if self.preparer.is_some() {
+            let end = self.tail.end()?;
+            if offset.checked_add(len as u64).is_none_or(|stop| stop > end) {
+                return Err(std::io::Error::new(
+                    std::io::ErrorKind::UnexpectedEof,
+                    format!("read {offset}+{len} past device end {end}"),
+                )
+                .into());
+            }
+        }
         let mut buf = vec![0u8; len];
         self.positional.read_exact_at(&mut buf, offset)?;
         Ok(buf)
+    }
+}
+
+impl Drop for FileDevice {
+    fn drop(&mut self) {
+        if let Some(preparer) = self.preparer.take() {
+            // Joined first, so that a failure of its last sync is known.
+            drop(preparer);
+            self.cut_to_used_length();
+        }
     }
 }
 

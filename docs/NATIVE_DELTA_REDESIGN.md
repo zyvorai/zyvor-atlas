@@ -4,7 +4,8 @@
 
 **Status (2026-11-28): phases 0 to 2 approved; phase 0 has a [first result](#phase-0-results) and
 phase 1 (parallel folding, `fold_concurrency`) is implemented but not yet benchmarked. Phases 3 and
-4 are not approved.**
+4 are not approved. One phase 4 candidate, [preallocated device files](#preallocated-device-files),
+is implemented, off by default and not measured.**
 
 ## The problem
 
@@ -214,6 +215,42 @@ race snapshots, truncates and clones, and compare byte for byte against a model.
 Only if phase 0 shows syncs are the limit. Candidates: preallocated device files, or one journal
 per device. Group commit of `fdatasync` was already tried (branch `exp/native-group-commit`) and
 was slower in our test, so it is not repeated without phase 0 data explaining why.
+
+### Preallocated device files
+
+Implemented, **off by default, not measured** on a cluster: `data_node.preallocate`
+([`NATIVE_NODE.md`](NATIVE_NODE.md), "Preallocation").
+
+The probe's preallocated files were written in full beforehand. So a background thread writes
+zeros ahead of each `file` device's append position and syncs them; `fallocate` was not probed and
+leaves unwritten extents. No on-disk format changes. What the probe's model does not include, and a
+node pays: the zeros double the bytes appended, the preparer shares the disk while writers run, and
+an unclean stop loses up to the prepared tail.
+
+To check, in this order, one at a time on an idle host:
+
+```
+# Mechanism (log forces per sync for each way of preparing a file) and the data writes through
+# FileDevice with the setting off and on, alternating. About 20 minutes plus a build; needs sudo
+# for bpftrace.
+deploy/bench-vs-ceph/prealloc-probe.sh <tag>
+
+# Atlas-native with delta writes, 128 KiB cells, the setting off and on, alternating (the long run
+# only: about 35 minutes a case, 3.5 hours for three rounds).
+ROUNDS=3 CASES="atlas-delta-128k atlas-delta-128k-prealloc" STEADY_ONLY=1 STEADY_SECS=1200 \
+  deploy/bench-vs-ceph/compare.sh <tag>
+```
+
+The probe counts only data writes, so a gain there is a ceiling. If most appends of a run report
+`prepared="false"` (`atlas_native_data_prealloc_appends_total`), the run did not test
+preallocation. Writes that reuse freed space overwrite in place either way.
+
+Not done: preallocating the metadata WAL. It is a file of JSON lines, appended with `O_APPEND` and
+replaced on every compaction. Recovery drops a torn last line and treats a bad line anywhere else
+as corruption; with a zeroed tail, records of one unsynced batch that reached the disk out of order
+would look like that corruption. Telling the two apart needs framed, checksummed records, a format
+change to the log the cluster's durability rests on. Raft's shared syncs already spread its cost
+over concurrent writes.
 
 ## Not covered
 

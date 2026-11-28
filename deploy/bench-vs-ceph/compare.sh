@@ -10,6 +10,10 @@
 # Usage: compare.sh <tag>
 #   PROFILE=quick|full
 #   CASES="ceph atlas atlas-delta"   (also atlas-128k and atlas-delta-128k: 128 KiB cells)
+#              An atlas case ending in -prealloc (atlas-delta-prealloc) is that case with the data
+#              nodes preallocating (docs/NATIVE_NODE.md).
+#   ATLAS_PREALLOC_EXTRA='"name": value, ...'   more members of the "preallocate" object in the
+#              -prealloc cases, e.g. '"ahead_bytes": 134217728'.
 #   ROUNDS=1   with more, all cases in turn, round after round (ceph, atlas-delta, ceph, atlas-delta,
 #              ...), result sets <tag>-r<n>-<case>; with 1 they are <tag>-<case>.
 #   ATLAS_DELTA_EXTRA='"name": value, ...'   more members of the "delta_writes" object in the delta
@@ -42,8 +46,9 @@ delta_cases=0
 seen=" "
 for case_ in $CASES; do
   case "$case_" in
-    ceph | atlas | atlas-128k) ;;
-    atlas-delta | atlas-delta-128k) delta_cases=$((delta_cases + 1)) ;;
+    ceph | atlas | atlas-128k | atlas-prealloc | atlas-128k-prealloc) ;;
+    atlas-delta | atlas-delta-128k | atlas-delta-prealloc | atlas-delta-128k-prealloc)
+      delta_cases=$((delta_cases + 1)) ;;
     *) echo "unknown case: $case_" >&2; exit 2 ;;
   esac
   [[ "$seen" != *" $case_ "* ]] || { echo "case listed twice: $case_" >&2; exit 2; }
@@ -90,12 +95,18 @@ for round in $(seq 1 "$ROUNDS"); do
     system="$(system_of "$case_")"
     delta='ATLAS_METADATA_EXTRA="delta_writes": {"enabled": true'"${ATLAS_DELTA_EXTRA:+, $ATLAS_DELTA_EXTRA}}"
     # ATLAS_DELTA_EXTRA is dropped where it does not apply, so result sets do not claim it.
-    case "$case_" in
+    case "${case_%-prealloc}" in
       ceph | atlas) extra=(-u ATLAS_DELTA_EXTRA) ;;
       atlas-128k) extra=(-u ATLAS_DELTA_EXTRA ATLAS_EXTENT_BYTES=131072) ;;
       atlas-delta) extra=("$delta") ;;
       atlas-delta-128k) extra=(ATLAS_EXTENT_BYTES=131072 "$delta") ;;
     esac
+    # env takes its -u options before the assignments.
+    if [[ "$case_" == *-prealloc ]]; then
+      extra+=('ATLAS_DATA_EXTRA="preallocate": {"enabled": true'"${ATLAS_PREALLOC_EXTRA:+, $ATLAS_PREALLOC_EXTRA}}")
+    else
+      extra=(-u ATLAS_DATA_EXTRA "${extra[@]}")
+    fi
     name="$case_"
     [ "$ROUNDS" = 1 ] || name="$case_-r$round"
     out_tag="$(result_tag "$round" "$case_")"

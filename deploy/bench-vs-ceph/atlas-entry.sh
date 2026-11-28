@@ -13,8 +13,9 @@ set -euo pipefail
 : "${ATLAS_READAHEAD_BYTES:=4194304}" "${ATLAS_MAX_IO_BYTES:=8388608}" "${ATLAS_RETRY_SECS:=60}"
 : "${ATLAS_DIRECT_READS:=0}" "${ATLAS_DIRECT_WRITES:=0}" "${ATLAS_START_TIMEOUT:=600}"
 # Escape hatches for variants: extra JSON members of the "metadata" config object (e.g.
-# '"compression": true'), and extra atlas-native-mount arguments (space separated).
-: "${ATLAS_METADATA_EXTRA:=}" "${ATLAS_MOUNT_EXTRA_ARGS:=}"
+# '"compression": true'), extra members of the "data_node" object of every data node (e.g.
+# '"preallocate": {"enabled": true}'), and extra atlas-native-mount arguments (space separated).
+: "${ATLAS_METADATA_EXTRA:=}" "${ATLAS_DATA_EXTRA:=}" "${ATLAS_MOUNT_EXTRA_ARGS:=}"
 
 SRV=/srv/bench
 RUN=/run/atlas
@@ -69,7 +70,7 @@ for i in 1 2 3; do
   cat >"$RUN/d$i.json" <<EOF
 {"node_id": "d$i", "data_dir": "$SRV/d$i", "http_listen": "127.0.0.1:720$i",
  "api_token_file": "$RUN/token", $GRANT
- "data_node": {"listen": "127.0.0.1:710$i"}}
+ "data_node": {"listen": "127.0.0.1:710$i"${ATLAS_DATA_EXTRA:+, $ATLAS_DATA_EXTRA}}}
 EOF
   cat >"$RUN/m$i.json" <<EOF
 {"node_id": "m$i", "data_dir": "$SRV/m$i", "http_listen": "127.0.0.1:740$i",
@@ -160,6 +161,7 @@ rm "$MNT/.atlas-ready-probe"
   echo "extent_bytes=$HAVE (verified through GET /v1/fs)"
   echo "mount_args=${MOUNT_ARGS[*]:6} ${EXTRA[*]}"
   jq -c '.metadata | del(.peers, .data_nodes, .listen)' "$RUN/m1.json"
+  echo "data_node=$(jq -c '.data_node | del(.listen)' "$RUN/d1.json")"
   atlas-native-mount --version
   fio --version
 } >"$SRV/settings.txt"

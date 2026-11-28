@@ -39,6 +39,7 @@ pub mod namespace;
 pub mod node;
 pub mod object;
 pub mod placement;
+pub mod prealloc;
 pub mod raft;
 pub mod raft_server;
 pub mod raft_snapshot;
@@ -75,6 +76,7 @@ pub use namespace::{
     FsId, FsOp, FsQuota, Inode, InodeKind, NodeType, SetAttr, XattrMode, ROOT_INO,
 };
 pub use placement::{FailureDomain, Node, PlacementPolicy};
+pub use prealloc::{PreallocConfig, PreallocStats};
 pub use raft::{Envelope, Message, RaftConfig, RaftCounters, RaftError, RaftNode, ReadLease, Role};
 pub use raft_server::{RaftMux, RaftServer, RaftStatus};
 pub use raw::{open_store, DeviceBackend};
