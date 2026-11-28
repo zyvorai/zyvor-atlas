@@ -20,7 +20,14 @@ use serde_json::{json, Value};
 const ADMIN: &str = "legacy-admin";
 
 /// `(name, roles, filesystems, volumes)`; each token's value is `value-of-<name>-0123456789`.
-const TOKENS: &[(&str, &[&str], &[&str], &[&str])] = &[
+type Spec = (
+    &'static str,
+    &'static [&'static str],
+    &'static [&'static str],
+    &'static [&'static str],
+);
+
+const TOKENS: &[Spec] = &[
     ("reader", &["read-only"], &[], &[]),
     ("reader-a", &["read-only"], &["a"], &[]),
     ("data-a", &["data"], &["a"], &[]),
