@@ -13,8 +13,10 @@ set -euo pipefail
 : "${ATLAS_READAHEAD_BYTES:=4194304}" "${ATLAS_MAX_IO_BYTES:=8388608}" "${ATLAS_RETRY_SECS:=60}"
 : "${ATLAS_DIRECT_READS:=0}" "${ATLAS_DIRECT_WRITES:=0}" "${ATLAS_START_TIMEOUT:=600}"
 # Escape hatches for variants: extra JSON members of the "metadata" config object (e.g.
-# '"compression": true'), and extra atlas-native-mount arguments (space separated).
+# '"compression": true'), of the "data_node" object, or of every node's whole configuration, and
+# extra atlas-native-mount arguments (space separated). A node refuses names it does not know.
 : "${ATLAS_METADATA_EXTRA:=}" "${ATLAS_MOUNT_EXTRA_ARGS:=}"
+: "${ATLAS_DATA_NODE_EXTRA:=}" "${ATLAS_NODE_EXTRA:=}"
 
 SRV=/srv/bench
 RUN=/run/atlas
@@ -69,7 +71,7 @@ for i in 1 2 3; do
   cat >"$RUN/d$i.json" <<EOF
 {"node_id": "d$i", "data_dir": "$SRV/d$i", "http_listen": "127.0.0.1:720$i",
  "api_token_file": "$RUN/token", $GRANT
- "data_node": {"listen": "127.0.0.1:710$i"}}
+ "data_node": {"listen": "127.0.0.1:710$i"${ATLAS_DATA_NODE_EXTRA:+, $ATLAS_DATA_NODE_EXTRA}}${ATLAS_NODE_EXTRA:+, $ATLAS_NODE_EXTRA}}
 EOF
   cat >"$RUN/m$i.json" <<EOF
 {"node_id": "m$i", "data_dir": "$SRV/m$i", "http_listen": "127.0.0.1:740$i",
@@ -78,7 +80,7 @@ EOF
    "replicas": $ATLAS_REPLICAS, "extent_bytes": $CLUSTER_EXTENT, "tick_ms": $ATLAS_TICK_MS,
    "proposal_timeout_ms": $ATLAS_PROPOSAL_TIMEOUT_MS,
    "repair_interval_secs": $ATLAS_REPAIR_INTERVAL_SECS,
-   "gc_interval_secs": $ATLAS_GC_INTERVAL_SECS${ATLAS_METADATA_EXTRA:+, $ATLAS_METADATA_EXTRA}}}
+   "gc_interval_secs": $ATLAS_GC_INTERVAL_SECS${ATLAS_METADATA_EXTRA:+, $ATLAS_METADATA_EXTRA}}${ATLAS_NODE_EXTRA:+, $ATLAS_NODE_EXTRA}}
 EOF
 done
 
@@ -160,6 +162,8 @@ rm "$MNT/.atlas-ready-probe"
   echo "extent_bytes=$HAVE (verified through GET /v1/fs)"
   echo "mount_args=${MOUNT_ARGS[*]:6} ${EXTRA[*]}"
   jq -c '.metadata | del(.peers, .data_nodes, .listen)' "$RUN/m1.json"
+  [ -z "$ATLAS_DATA_NODE_EXTRA" ] || echo "data_node_extra=$ATLAS_DATA_NODE_EXTRA"
+  [ -z "$ATLAS_NODE_EXTRA" ] || echo "node_extra=$ATLAS_NODE_EXTRA"
   atlas-native-mount --version
   fio --version
 } >"$SRV/settings.txt"
