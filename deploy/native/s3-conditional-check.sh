@@ -138,8 +138,9 @@ ok "multipart upload" put "$P/big" "$W/big" --tagging 'kind=big'
 ok "multipart copy with aws s3 cp" aws --endpoint-url "$E1" s3 cp --only-show-errors \
   "s3://$B/$P/big" "s3://$B/$P/big-copy"
 equals "multipart copy kept tags" 'kind=big' tags "$P/big-copy"
-ok "multipart copy content" bash -c "aws --endpoint-url '$E2' s3 cp --only-show-errors \
-  's3://$B/$P/big-copy' '$W/back' && cmp '$W/big' '$W/back'"
+ok "multipart copy downloads" aws --endpoint-url "$E2" s3 cp --only-show-errors \
+  "s3://$B/$P/big-copy" "$W/back"
+equals "multipart copy content" "$(sha256sum <"$W/big")" bash -c "sha256sum <'$W/back'"
 
 # Conditional multipart completion, from the second gateway.
 upload() { # key: prints the upload id and the part's ETag

@@ -187,7 +187,11 @@ impl Cluster {
 
     /// What `name` names, as the leader sees it.
     fn lookup(&self, name: &str) -> Option<u64> {
-        match self.on_leader(|e| e.fs_lookup("f", ROOT_INO, name)).1 {
+        let found = self.on_leader(|e| {
+            e.ensure_leader()?;
+            e.fs_lookup("f", ROOT_INO, name)
+        });
+        match found.1 {
             Ok(a) => Some(a.ino),
             Err(MetaError::NotFound(_)) => None,
             Err(e) => panic!("{e}"),
