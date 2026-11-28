@@ -10,6 +10,7 @@ use std::{
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
 use crate::{
+    device::{DataSync, DeviceSync},
     durable::sync_dir,
     metrics::{Histogram, HistogramSnapshot},
 };
@@ -24,6 +25,8 @@ pub enum WalError {
     IndexRegression { last: u64, next: u64 },
     #[error("wal corrupt at line {line}: {reason}")]
     Corrupt { line: usize, reason: String },
+    #[error("wal failed earlier, refusing writes until it is reopened: {0}")]
+    Failed(String),
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -38,6 +41,9 @@ struct IndexOnly {
     index: u64,
 }
 
+/// The log. After any failed write or sync it refuses every later one until it is reopened: a
+/// failed `fdatasync` is reported once and leaves the unwritten records in the page cache marked
+/// clean, so syncing again would succeed without them being on disk.
 #[derive(Debug)]
 pub struct Wal {
     dir: PathBuf,
@@ -50,6 +56,10 @@ pub struct Wal {
     /// The fsyncs [`Wal::sync`] made (rewrites of the file are not among them). Boxed to keep
     /// the log, which the engine holds in an enum, small.
     syncs: Box<Histogram>,
+    /// What [`Wal::sync`] flushes `file` with.
+    sync: Box<dyn DeviceSync>,
+    /// The first failed write or sync.
+    failed: Option<String>,
 }
 
 impl Wal {
@@ -67,9 +77,14 @@ impl Wal {
             synced_index: lines.last().map(|(i, _)| *i).unwrap_or(0),
             records: lines.len() as u64,
             syncs: Box::default(),
+            sync: Box::new(DataSync),
+            failed: None,
         };
-        if torn {
-            // A torn final line was never fsynced as a whole record, so it was never acknowledged.
+        // What was just read may exist only in the page cache: a sync that failed before a
+        // restart leaves its records there. Writing them to a new file makes them durable, as
+        // `synced_index` claims they are. A torn final line was never fsynced as a whole record,
+        // so it was never acknowledged, and is dropped.
+        if torn || wal.records > 0 {
             wal.rewrite(|_| true)?;
         }
         Ok(wal)
@@ -83,6 +98,7 @@ impl Wal {
     /// Writes the record without waiting for the disk; it is durable once [`Self::sync`] returns
     /// (or `synced_index()` covers it). A crash before that may lose it, never tear it.
     pub fn append_unsynced<T: Serialize>(&mut self, record: &WalRecord<T>) -> Result<(), WalError> {
+        self.check()?;
         if record.index <= self.last_index {
             return Err(WalError::IndexRegression {
                 last: self.last_index,
@@ -91,7 +107,10 @@ impl Wal {
         }
         let mut line = serde_json::to_vec(record)?;
         line.push(b'\n');
-        self.file.write_all(&line)?;
+        // A partial line must not end up in front of a later record.
+        self.file
+            .write_all(&line)
+            .map_err(|e| self.fail(e.into()))?;
         self.last_index = record.index;
         self.records += 1;
         Ok(())
@@ -99,11 +118,27 @@ impl Wal {
 
     /// Flushes every unsynced append with one fsync; a no-op when there is none.
     pub fn sync(&mut self) -> Result<(), WalError> {
+        self.check()?;
         if self.synced_index < self.last_index {
-            self.syncs.time(|| self.file.sync_data())?;
+            self.syncs
+                .time(|| self.sync.sync_data(&self.file))
+                .map_err(|e| self.fail(e.into()))?;
             self.synced_index = self.last_index;
         }
         Ok(())
+    }
+
+    /// Errors once a write or sync of the log has failed.
+    pub fn check(&self) -> Result<(), WalError> {
+        match &self.failed {
+            None => Ok(()),
+            Some(cause) => Err(WalError::Failed(cause.clone())),
+        }
+    }
+
+    fn fail(&mut self, error: WalError) -> WalError {
+        self.failed.get_or_insert_with(|| error.to_string());
+        error
     }
 
     pub fn synced_index(&self) -> u64 {
@@ -113,6 +148,11 @@ impl Wal {
     /// Count and latency of the fsyncs of appended records since the log was opened.
     pub fn sync_latency(&self) -> HistogramSnapshot {
         self.syncs.snapshot()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn set_sync(&mut self, sync: Box<dyn DeviceSync>) {
+        self.sync = sync;
     }
 
     pub fn replay<T: DeserializeOwned>(&self) -> Result<Vec<WalRecord<T>>, WalError> {
@@ -165,7 +205,14 @@ impl Wal {
         Ok(())
     }
 
+    /// Replaces the file with one holding the records `keep` selects. A failure part-way (the
+    /// new file may be in place while `file` still names the old one) fails the log.
     fn rewrite(&mut self, keep: impl Fn(u64) -> bool) -> Result<u64, WalError> {
+        self.check()?;
+        self.replace_file(keep).map_err(|e| self.fail(e))
+    }
+
+    fn replace_file(&mut self, keep: impl Fn(u64) -> bool) -> Result<u64, WalError> {
         let (lines, _) = scan(&self.path)?;
         let tmp = self.dir.join("metadata.wal.tmp");
         let mut kept = 0u64;

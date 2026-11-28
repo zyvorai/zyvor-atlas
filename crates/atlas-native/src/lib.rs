@@ -24,6 +24,8 @@ pub mod device;
 mod durable;
 pub mod ec;
 pub mod engine;
+#[cfg(test)]
+mod fault_tests;
 pub mod gc;
 pub mod gpu;
 pub mod grant;
@@ -48,6 +50,7 @@ pub mod rdma_pipeline;
 pub mod read_lease;
 pub mod rebuild;
 pub mod store;
+mod sync_guard;
 pub mod telemetry;
 pub mod tls;
 pub mod tracked;

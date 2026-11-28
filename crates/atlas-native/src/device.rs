@@ -3,6 +3,7 @@
 
 use std::{
     fs::{File, OpenOptions},
+    io,
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -14,6 +15,7 @@ use uuid::Uuid;
 use crate::{
     engine::NativeError,
     metrics::{Histogram, HistogramSnapshot},
+    sync_guard::SyncGuard,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -48,6 +50,27 @@ pub trait BlockStore: std::fmt::Debug + Send + Sync {
     fn endpoint(&self) -> Option<&str> {
         None
     }
+    /// Why this device refuses writes until it is reopened, if a local device does: making
+    /// data durable failed. `None` for a remote device, whose node knows.
+    fn failure(&self) -> Option<String> {
+        None
+    }
+}
+
+/// Makes the data written to a file durable. [`DataSync`] is what devices and the metadata log
+/// use; tests substitute one that stalls or fails.
+pub trait DeviceSync: std::fmt::Debug + Send + Sync {
+    fn sync_data(&self, file: &File) -> io::Result<()>;
+}
+
+/// `fdatasync` ([`File::sync_data`]).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DataSync;
+
+impl DeviceSync for DataSync {
+    fn sync_data(&self, file: &File) -> io::Result<()> {
+        file.sync_data()
+    }
 }
 
 impl BlockStore for FileDevice {
@@ -69,10 +92,18 @@ impl BlockStore for FileDevice {
     fn sync_latency(&self) -> Option<HistogramSnapshot> {
         Some(self.syncs.snapshot())
     }
+    fn failure(&self) -> Option<String> {
+        self.guard.failure()
+    }
 }
 
 /// Positional I/O on one file. An append only reserves its offset under a lock, then writes and
 /// syncs like an in-place write, so concurrent appends (and their syncs) overlap.
+///
+/// A write returns only once its data is durable. After a failed sync the device refuses writes
+/// until it is reopened, and a write is not acknowledged while a sync that could have been told
+/// about its data is still running (see `sync_guard.rs`). Reads go on: ranges acknowledged
+/// before the failure are unaffected, and nothing may refer to the others.
 #[derive(Debug)]
 pub struct FileDevice {
     id: DeviceId,
@@ -82,10 +113,21 @@ pub struct FileDevice {
     positional: File,
     /// The `sync_data` calls of appends and overwrites.
     syncs: Histogram,
+    sync: Box<dyn DeviceSync>,
+    guard: SyncGuard,
 }
 
 impl FileDevice {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, NativeError> {
+        Self::open_with_sync(path, Box::new(DataSync))
+    }
+
+    /// [`Self::open`] with `sync` in place of `fdatasync`.
+    #[doc(hidden)]
+    pub fn open_with_sync(
+        path: impl AsRef<Path>,
+        sync: Box<dyn DeviceSync>,
+    ) -> Result<Self, NativeError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -99,10 +141,12 @@ impl FileDevice {
         let end = file.metadata()?.len();
         Ok(Self {
             id: DeviceId(Uuid::new_v4().to_string()),
+            guard: SyncGuard::new(format!("device {}", path.display())),
             path,
             end: Mutex::new(end),
             positional: file,
             syncs: Histogram::default(),
+            sync,
         })
     }
 
@@ -113,7 +157,14 @@ impl FileDevice {
         &self.path
     }
 
+    /// Returns once the data this thread has written is durable.
+    fn make_durable(&self) -> Result<(), NativeError> {
+        self.guard.run(|| self.sync_data())?;
+        Ok(())
+    }
+
     pub fn append(&self, data: &[u8]) -> Result<u64, NativeError> {
+        self.guard.check()?;
         let off = {
             let mut end = self
                 .end
@@ -123,11 +174,7 @@ impl FileDevice {
             *end += data.len() as u64;
             off
         };
-        let written = self
-            .positional
-            .write_all_at(data, off)
-            .and_then(|()| self.sync_data());
-        if let Err(e) = written {
+        if let Err(e) = self.positional.write_all_at(data, off) {
             // Give the space back unless a later append already took the space after it; an
             // unacknowledged append is referenced by nothing either way.
             if let Ok(mut end) = self.end.lock() {
@@ -137,11 +184,14 @@ impl FileDevice {
             }
             return Err(e.into());
         }
+        // After a failed sync the space stays handed out: what the disk holds there is unknown.
+        self.make_durable()?;
         Ok(off)
     }
 
     /// Overwrites `data.len()` bytes at `offset` (reuse of a freed range). Never extends the file.
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<(), NativeError> {
+        self.guard.check()?;
         let end = self.len()?;
         if offset + data.len() as u64 > end {
             return Err(NativeError::Invalid(format!(
@@ -150,12 +200,11 @@ impl FileDevice {
             )));
         }
         self.positional.write_all_at(data, offset)?;
-        self.sync_data()?;
-        Ok(())
+        self.make_durable()
     }
 
     fn sync_data(&self) -> std::io::Result<()> {
-        self.syncs.time(|| self.positional.sync_data())
+        self.syncs.time(|| self.sync.sync_data(&self.positional))
     }
 
     pub fn len(&self) -> Result<u64, NativeError> {

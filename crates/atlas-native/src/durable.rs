@@ -43,6 +43,21 @@ pub(crate) fn sync_dir(dir: &Path) -> std::io::Result<()> {
     File::open(dir)?.sync_all()
 }
 
+/// Asks Linux to drop `path`'s clean pages from the page cache, so that they are next read from
+/// the disk. After a failed writeback the new data can stay cached, marked clean, although the
+/// disk never got it. Advisory (errors are ignored, a missing file is fine), and a no-op on
+/// other systems.
+pub(crate) fn drop_cached(path: &Path) {
+    #[cfg(target_os = "linux")]
+    if let Ok(file) = File::open(path) {
+        use std::os::fd::AsRawFd;
+        // SAFETY: the descriptor is open for the duration of the call, which touches no memory.
+        unsafe { libc::posix_fadvise(file.as_raw_fd(), 0, 0, libc::POSIX_FADV_DONTNEED) };
+    }
+    #[cfg(not(target_os = "linux"))]
+    let _ = path;
+}
+
 #[cfg(all(test, unix))]
 mod tests {
     use super::write_atomic;

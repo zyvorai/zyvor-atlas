@@ -14,6 +14,8 @@ pub mod direct_write;
 pub mod dirs;
 #[cfg(all(feature = "fuse", target_os = "linux"))]
 pub mod fuse;
+pub mod handles;
+pub mod invalidate;
 pub mod locks;
 pub mod nfs;
 pub mod ops;

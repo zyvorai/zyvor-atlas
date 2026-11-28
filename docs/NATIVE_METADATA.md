@@ -14,15 +14,35 @@ For every metadata mutation:
    here, leaves the catalog untouched (asserted in debug builds) and is never logged;
 3. append `{term,index,command}` to `metadata.wal`;
 4. `fsync` the WAL;
-5. release the lock, publishing the new state. If the append fails, the catalog is reloaded from
-   disk (the catalog store plus the WAL), since whether the record landed is unknown.
+5. release the lock, publishing the new state. If the append or its `fsync` fails, the catalog
+   goes back to the records acknowledged before it, and the engine commits and places nothing more
+   until it is reopened ([Failed writes and syncs](#failed-writes-and-syncs)).
 
 The catalog store is only written at a checkpoint (below), not on every commit, so a commit costs
 one fsync.
 
 On restart, Atlas loads the catalog store and replays every WAL record whose index is greater than
 `catalog.applied_index`. A torn final WAL line (a record that never finished its fsync, so was never
-acknowledged) is discarded on open; corruption anywhere else is a hard error.
+acknowledged) is discarded on open; corruption anywhere else is a hard error. Opening the log
+writes the records it read to a new file and syncs it, so that nothing counts as durable only
+because the page cache still holds it.
+
+## Failed writes and syncs
+
+Linux reports a writeback error to one `fsync` on an open file, then leaves the unwritten pages in
+the page cache marked clean: the next `fsync` succeeds and reads return the new bytes, although the
+disk never got them. Retrying therefore proves nothing, and neither does reading the file back
+([vfs.rst](https://docs.kernel.org/filesystems/vfs.html#handling-errors-during-writeback);
+Rebello et al., "Can Applications Recover from fsync Failures?", USENIX ATC '20). So:
+
+- the metadata log refuses every append, sync and rewrite after one of them has failed;
+- a Raft replica that failed to write its log, term and vote, checkpoint or snapshot no longer
+  ticks, steps, proposes or sends, so it neither acknowledges an unsynced entry nor counts it
+  toward a quorum; the server stops (`fatal_error()`) and the process exits to be restarted;
+- the catalog store (redb) refuses further I/O after a failed commit; when it is opened again
+  its cached pages are dropped first (`posix_fadvise`, Linux, advisory), so that recovery sees
+  what the disk holds;
+- data devices: see [`NATIVE_NODE.md`](NATIVE_NODE.md#failed-data-syncs).
 
 ## Catalog store
 
@@ -186,7 +206,8 @@ standard library:
 - `propose(cmd, timeout)` blocks until the entry is applied locally, or returns `NotLeader` (with a
   leader hint), `LeadershipLost` (outcome unknown), `Timeout` or `Shutdown`;
 - a storage error inside the node (e.g. a failed fsync) stops the server and is reported by
-  `fatal_error()`; it never keeps serving on a state it could not persist.
+  `fatal_error()`; it never keeps serving on a state it could not persist
+  ([Failed writes and syncs](#failed-writes-and-syncs)).
 
 Started without a `TlsIdentity` the transport has **no authentication or encryption**; bind it to a
 private metadata network only, or enable mutual TLS (below).

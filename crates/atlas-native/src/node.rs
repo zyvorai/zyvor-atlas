@@ -1738,11 +1738,16 @@ fn status(sh: &NodeShared) -> Response {
                 .collect()
         })
         .unwrap_or_default();
-    let fence = sh
-        .data
-        .lock()
-        .ok()
-        .and_then(|d| d.as_ref().map(DataNodeServer::fence));
+    let data_node = sh.data.lock().ok().and_then(|d| {
+        d.as_ref().map(|d| {
+            let failed: Vec<serde_json::Value> = d
+                .failed_devices()
+                .into_iter()
+                .map(|(device, error)| json!({ "device": device, "error": error }))
+                .collect();
+            json!({ "fence": d.fence(), "failed_devices": failed })
+        })
+    });
     Response::json(
         200,
         &json!({
@@ -1756,7 +1761,7 @@ fn status(sh: &NodeShared) -> Response {
             "last_tier": sh.last_tier.lock().ok().and_then(|l| *l),
             // The rebuild controller of each group this node leads.
             "rebuild": (!rebuild.is_empty()).then_some(&rebuild),
-            "data_node": fence.map(|f| json!({ "fence": f })),
+            "data_node": data_node,
             // Read-only probe from files at startup; no GPU I/O path exists. Unverified on GPUs.
             "gpu_io": sh.gpu_io,
         }),

@@ -14,6 +14,10 @@
 //! high-water mark in a sidecar file: no offset at or above it has ever been handed out. It is
 //! raised in [`HWM_CHUNK`] steps before an append that crosses it returns, and a restart resumes
 //! appending there, wasting at most one chunk.
+//!
+//! Writes through `O_DSYNC` share the file description's error reporting, so a failed write
+//! makes the device refuse writes until it is reopened, and no write is acknowledged while
+//! another that could have been told about its data is still running (see `sync_guard.rs`).
 
 use std::{
     alloc::{self, Layout},
@@ -27,7 +31,7 @@ use std::{
     sync::Mutex,
 };
 
-use crate::{device::BlockStore, durable, engine::NativeError};
+use crate::{device::BlockStore, durable, engine::NativeError, sync_guard::SyncGuard};
 
 /// I/O unit and alignment of every device access.
 pub const BLOCK: u64 = 4096;
@@ -209,6 +213,7 @@ pub struct RawDevice<B: AlignedIo> {
     hwm_path: PathBuf,
     alloc: Mutex<Alloc>,
     locks: Vec<Mutex<()>>,
+    guard: SyncGuard,
 }
 
 impl<B: AlignedIo> RawDevice<B> {
@@ -224,8 +229,10 @@ impl<B: AlignedIo> RawDevice<B> {
             Err(e) if e.kind() == io::ErrorKind::NotFound => align_up(existing_len),
             Err(e) => return Err(e.into()),
         };
+        let name = format!("device with high-water mark {}", hwm_path.display());
         Ok(Self {
             io,
+            guard: SyncGuard::new(name),
             hwm_path,
             alloc: Mutex::new(Alloc { end, hwm: end }),
             locks: (0..LOCK_STRIPES).map(|_| Mutex::new(())).collect(),
@@ -262,21 +269,29 @@ impl<B: AlignedIo> RawDevice<B> {
     fn stripe(&self, block: u64) -> usize {
         (block % LOCK_STRIPES as u64) as usize
     }
+
+    /// Writes whole blocks and returns once they are durable.
+    fn write_durably(&self, offset: u64, buf: &AlignedBuf) -> Result<(), NativeError> {
+        self.guard.run(|| self.io.write_at(offset, buf))?;
+        Ok(())
+    }
 }
 
 impl<B: AlignedIo> BlockStore for RawDevice<B> {
     fn append(&self, _fence: u64, data: &[u8]) -> Result<u64, NativeError> {
+        self.guard.check()?;
         let offset = self.reserve(data.len() as u64)?;
         if data.is_empty() {
             return Ok(offset);
         }
         let mut buf = AlignedBuf::zeroed(align_up(data.len() as u64) as usize);
         buf[..data.len()].copy_from_slice(data);
-        self.io.write_at(offset, &buf)?;
+        self.write_durably(offset, &buf)?;
         Ok(offset)
     }
 
     fn write_at(&self, _fence: u64, offset: u64, data: &[u8]) -> Result<(), NativeError> {
+        self.guard.check()?;
         if data.is_empty() {
             return Ok(());
         }
@@ -315,8 +330,7 @@ impl<B: AlignedIo> BlockStore for RawDevice<B> {
         }
         let at = (offset - start) as usize;
         buf[at..at + data.len()].copy_from_slice(data);
-        self.io.write_at(start, &buf)?;
-        Ok(())
+        self.write_durably(start, &buf)
     }
 
     fn read_exact_at(&self, offset: u64, len: usize) -> Result<Vec<u8>, NativeError> {
@@ -347,6 +361,10 @@ impl<B: AlignedIo> BlockStore for RawDevice<B> {
             .lock()
             .map_err(|_| NativeError::Poisoned("device alloc"))?
             .end)
+    }
+
+    fn failure(&self) -> Option<String> {
+        self.guard.failure()
     }
 }
 

@@ -56,11 +56,7 @@ impl UringIo {
                 // SAFETY: the entry's buffer outlives the operation (see above).
                 unsafe { ring.submission().push(&entry) }
                     .map_err(|_| io::Error::other("io_uring submission queue full"))?;
-                ring.submit_and_wait(1)?;
-                ring.completion()
-                    .next()
-                    .map(|c| c.result())
-                    .ok_or_else(|| io::Error::other("io_uring completion missing"))
+                wait_for_completion(ring)
             })?;
             if res < 0 {
                 return Err(io::Error::from_raw_os_error(-res));
@@ -80,13 +76,37 @@ impl UringIo {
     }
 }
 
+/// Submits the queued operation and returns its result once it has completed.
+///
+/// A signal can end the wait early: `io_uring_enter` then reports the submission, not the
+/// interruption. Returning without the completion would leave it in the ring, where the next
+/// operation would take it for its own and report success before its own write had finished.
+fn wait_for_completion(ring: &mut IoUring) -> io::Result<i32> {
+    loop {
+        match ring.submit_and_wait(1) {
+            Ok(_) => {}
+            Err(e) if e.kind() == io::ErrorKind::Interrupted => {}
+            Err(e) => return Err(e),
+        }
+        if let Some(c) = ring.completion().next() {
+            return Ok(c.result());
+        }
+    }
+}
+
+/// Runs `f` on this thread's ring. A ring that fails is dropped, so that nothing left queued or
+/// uncompleted in it can be mistaken for a later operation's.
 fn with_ring<R>(f: impl FnOnce(&mut IoUring) -> io::Result<R>) -> io::Result<R> {
     RING.with(|cell| {
         let mut slot = cell.borrow_mut();
         if slot.is_none() {
             *slot = Some(IoUring::new(RING_ENTRIES)?);
         }
-        f(slot.as_mut().expect("ring initialized"))
+        let result = f(slot.as_mut().expect("ring initialized"));
+        if result.is_err() {
+            *slot = None;
+        }
+        result
     })
 }
 
@@ -120,6 +140,55 @@ mod tests {
                 None
             }
         }
+    }
+
+    extern "C" fn interrupt_only(_: libc::c_int) {}
+
+    /// A signal that arrives while a thread waits for its completion must neither fail the
+    /// operation nor leave its completion for the next one to take as its own.
+    #[test]
+    fn signals_during_the_wait_do_not_mix_up_completions() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+
+        let dir = std::env::var("ATLAS_URING_TEST_DIR")
+            .unwrap_or_else(|_| env!("CARGO_MANIFEST_DIR").to_string());
+        let td = tempfile::tempdir_in(dir).unwrap();
+        let Some(d) = device(td.path()) else { return };
+        // SAFETY: installs a handler that does nothing, without SA_RESTART, for a signal
+        // nothing else in this test binary uses.
+        unsafe {
+            let mut action: libc::sigaction = std::mem::zeroed();
+            action.sa_sigaction = interrupt_only as *const () as usize;
+            assert_eq!(
+                libc::sigaction(libc::SIGUSR2, &action, std::ptr::null_mut()),
+                0
+            );
+        }
+        // SAFETY: always valid for the calling thread.
+        let writer = unsafe { libc::pthread_self() };
+        let stop = AtomicBool::new(false);
+        let outcome = std::thread::scope(|s| {
+            s.spawn(|| {
+                while !stop.load(Ordering::SeqCst) {
+                    // SAFETY: the writer outlives this thread, which the scope joins.
+                    unsafe { libc::pthread_kill(writer, libc::SIGUSR2) };
+                    std::thread::sleep(std::time::Duration::from_micros(20));
+                }
+            });
+            let outcome = (0..300u32).try_for_each(|i| {
+                let want = vec![i as u8; 256 << 10];
+                let at = d.append(0, &want).map_err(|e| format!("write {i}: {e}"))?;
+                let got = d
+                    .read_exact_at(at, want.len())
+                    .map_err(|e| format!("read {i}: {e}"))?;
+                (got == want)
+                    .then_some(())
+                    .ok_or_else(|| format!("read {i} returned other bytes"))
+            });
+            stop.store(true, Ordering::SeqCst);
+            outcome
+        });
+        assert_eq!(outcome, Ok(()));
     }
 
     #[test]

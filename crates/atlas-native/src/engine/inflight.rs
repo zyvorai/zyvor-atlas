@@ -11,7 +11,7 @@
 
 use std::{
     collections::BTreeMap,
-    sync::Mutex,
+    sync::{atomic::Ordering, Mutex},
     time::{Duration, Instant},
 };
 
@@ -19,6 +19,7 @@ use super::{NativeEngine, NativeError};
 use crate::{
     alloc::{FreeList, FreeRange},
     raft::RaftError,
+    wal::WalError,
 };
 
 /// How long a view may be reused before it is rebuilt from the applied free list (picking up
@@ -51,8 +52,22 @@ pub(super) struct Lease<'a> {
 }
 
 impl NativeEngine {
+    /// Errors once the local log has failed. Its unacknowledged record may still apply after a
+    /// restart, so nothing may then overwrite or delete what that record could refer to.
+    pub(super) fn check_log(&self) -> Result<(), NativeError> {
+        if self.log_failed.load(Ordering::SeqCst) {
+            return Err(NativeError::Wal(WalError::Failed(
+                "no data is placed or deleted until the engine is reopened".into(),
+            )));
+        }
+        Ok(())
+    }
+
     /// A claim on free space for data written under term `term`.
     pub(super) fn lease(&self, term: u64) -> Result<Lease<'_>, NativeError> {
+        // With a failed local log nothing placed now can commit, and writing it could
+        // overwrite ranges that the log's unacknowledged record refers to.
+        self.check_log()?;
         // Leases clients held and never committed come due here, so their space is reclaimed
         // by the next placement.
         self.reap_direct();
@@ -133,7 +148,10 @@ impl Lease<'_> {
                     | RaftError::Shutdown
                     | RaftError::Io(_)
                     | RaftError::Wal(_)
+                    | RaftError::StorageFailed(_)
             )
+            // The local log: a restart may find the record and apply it.
+            | NativeError::Wal(_)
         );
         if unknown {
             self.quarantine(QUARANTINE);

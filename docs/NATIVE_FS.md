@@ -122,13 +122,13 @@ modes and ownership.
   are absolute, so retrying after an ambiguous failure cannot apply twice; a remove that finds the
   entry already gone after such a failure counts as done.
 - **Write-back**: sequential writes to an open file are buffered per inode and sent when the buffer
-  fills, on `fsync`/`flush`/close, and before a read, truncate or unlink of that file; `getattr`
+  fills, on `fsync`/close, and before a read, truncate or unlink of that file; `getattr`
   already reports the buffered and in-flight size. Full runs go out in the background,
   `--writeback-parallel` at a time, so a writer keeps filling the next run while earlier ones are
   on the wire; runs of one file that overlap are sent in order. A full run is cut at a multiple
   of `--writeback-bytes`, so a stream that started mid-extent is sent in aligned runs from then
-  on. A failed send fails the next write to that file and is reported once by
-  `fsync`/`flush`/close, as with NFS.
+  on. A send that fails drops its bytes and is reported to every handle of the file; see
+  "Durability and write errors".
 - **Read-ahead**: a read that continues where the previous one ended fetches `--readahead-bytes`
   and serves following reads from it; random reads fetch only what was asked.
 - **Unlink while open**: removing a file another handle in the same mount still has open renames it
@@ -222,8 +222,9 @@ either limit may be left out, and `{}` removes the quota.
 - `max_inodes` caps the inode count, the root directory included. Hard links don't add inodes.
 - A refused change fails with code `quota` (HTTP 409); the FUSE client returns `EDQUOT`. With
   write-back on (the default), a buffered write can be refused after the `write` call returned,
-  so the error comes from a later `write`, `fsync` or `close`, as with NFS. The data a refused
-  write already sent to the data nodes is released straight away.
+  so the error comes from a later `write`, `fsync` or `close`, as with NFS (see "Durability and
+  write errors"). The data a refused write already sent to the data nodes is released straight
+  away.
 - Lowering a limit below current usage is allowed: nothing is removed, and growth stays refused
   until deletes bring usage back under it. Removing, truncating and rewriting always work.
 - Snapshots keep the quota they were taken with and clones inherit it. Extents that only a
@@ -272,11 +273,80 @@ with `FOPEN_DIRECT_IO`) and the mount's own caches:
   (the kernel restricts shared mappings of direct-I/O FUSE files); map the file through a handle
   opened without `O_DIRECT`.
 - `O_SYNC` and `O_DSYNC` without `O_DIRECT` keep write-back: the kernel follows each write with an
-  `fsync`, which sends the buffered data before the call returns.
+  `fsync`, which sends the buffered data before the call returns and fails the write if it cannot
+  be stored.
 - Cost: every direct write is one round trip to the cluster and waits for its commit, so small
   direct writes are latency-bound. On the lab k3s host (shared, spinning disks, one replica) a
   direct write took about 70–160 ms whatever its size up to 1 MiB; batch writes, or leave
   `O_DIRECT` off, where durability per call isn't needed. Not yet measured on NVMe.
+
+## Durability and write errors
+
+With write-back, `write` returns before the cluster has the bytes. They are stored once an
+`fsync` or `fdatasync` of the file returns success; so does a `close`, which sends what is
+buffered, if no `fsync` on that handle has reported a failure before. A send can fail after
+`write` returned: a quota (`EDQUOT`), the file removed through another mount (`ENOENT`), no
+space, or a cluster that stays unreachable for `--retry-secs` (`EIO`). The mount reports this as
+Linux reports write-back errors (`fsync(2)`; "Handling errors during writeback" in the kernel's
+`filesystems/vfs.rst`). "Handle" below is an open file description: one `open`, shared by the
+descriptors `dup` and `fork` make from it.
+
+| Caller | After a send of the file failed |
+|---|---|
+| `fsync`/`fdatasync` on a handle open at the time, read-only ones included | fails once with the errno; the next one succeeds unless something else failed. No other handle, process or internal flush can use this report up |
+| `close` of a descriptor of a writable handle open at the time | fails until an `fsync` on that handle has reported the loss. A `close` uses nothing up: the `fsync` is still due |
+| the next `write` on a writable handle open at the time | fails once with the errno and writes nothing; later writes are accepted |
+| `fsync` on a handle opened afterwards | fails once if no `fsync` anywhere had reported the loss when the handle was opened, so reopening a file to sync it still tells. Its `close` and `write` are unaffected |
+| `read` (buffered, or a page fault) | does not fail because of it; returns what the cluster holds |
+| `O_DIRECT` read or write | fails if a send failed while the call waited for buffered bytes to go first (as on Linux); this uses nothing up |
+| `truncate`, `unlink`, `rename` | succeed as usual, even when they are what sent the bytes; the reports stay due |
+
+- Several failures before one `fsync` make one report, with the latest errno.
+- Threads that share one handle share its report, as on Linux: the kernel runs the `fsync`s of
+  one file one after another, and the first gets it. Open the file once per thread that needs its
+  own answer.
+- `O_SYNC` and `O_DSYNC` writes are followed by an `fsync` from the kernel, so `write` itself
+  returns the error.
+- A call that fails only its own bytes (an `O_DIRECT` write, or any write with
+  `--writeback-bytes 0`) returns the error and leaves nothing for later calls to report.
+- **Shared mappings**: `msync(MS_SYNC)` is an `fsync` and reports as above. Pages written back
+  after the last `close` (stores made and unmapped later) have only the `release` call left,
+  whose result the kernel discards. Such a failure reaches other handles open at the time and, if
+  none has synced it first, the next `fsync` on a new handle; a writer that must know calls
+  `msync` before unmapping. The mount never refuses pages written back from a mapping because of
+  an earlier failure. With `--writeback-bytes 0` the kernel records these failures itself and
+  may report `EIO` in place of the errno.
+- **Directories**: every directory change is committed before its call returns, so `fsync` on a
+  directory succeeds and has nothing to report.
+- `sync` and `syncfs` are not forwarded to a FUSE mount like this one: they succeed without
+  sending or reporting anything. Use `fsync`.
+
+**The lost bytes** are dropped and not sent again (the client has already retried for
+`--retry-secs` what could be retried), so freeing space or restoring the cluster does not bring
+them back: the application has to write them again. When a send fails, the mount forgets its
+cached attributes and read-ahead for the file and has the kernel drop its cached pages and
+attributes. That is done before it answers the `fsync` or `close` that reports the loss, so a
+caller that has the error cannot read the lost bytes back; until the failure, and for the moment
+the invalidation takes, reads may still get them from the kernel's page cache. Afterwards the
+range holds whatever the cluster has: the old contents, zeros, or some or all of the new bytes
+when the outcome was ambiguous (a timeout after the commit). A file that was being extended can
+become shorter again, so touching a mapping beyond the new end raises `SIGBUS` and `O_APPEND`
+writes continue at the new end.
+
+**Unmount and crashes.** Unmounting sends what is still buffered and logs an error for every file
+with a loss that no `fsync` reported (`lost writes were never reported to an fsync`); `umount`
+itself cannot return it. Each failed send of buffered bytes is also logged when it happens,
+with inode, offset, length and errno. The record of failures lives in the mount process: after a
+restart or crash it is gone, together with any buffered bytes (open descriptors then fail with
+`ENOTCONN`). For files that no handle has open, at most 16384 unreported failures are kept; the
+oldest is forgotten beyond that, with a warning.
+
+**Gateways and libraries.** The NFS and SMB gateways reach the cluster through this mount, and the
+rules apply to the handles their servers open: a server that serves several clients through one
+handle gets one report for all of them. What NFS-Ganesha and Samba then tell each client has not
+been tested. Code that uses `Ops` by inode number (the S3 gateway) has no handle: its `write` fails
+while the file has a loss that no `fsync` has reported, and its `flush` reports such a loss
+once, taking nothing from open handles.
 
 ## Consistency
 
@@ -657,6 +727,14 @@ exactly as over TCP.
   clone isolation, concurrent creates, direct reads (across extents, after a rewrite) and their
   fallback to the leader; `crates/atlas-native-fuse/src/dirs.rs` unit tests page a 2500-entry
   listing through small kernel buffers with one request per page, and rewind on a seek back.
+- Lost write-back: unit tests in `crates/atlas-native-fuse/src/handles.rs` (who is told) and
+  `invalidate.rs`, and the "Lost write-back" cases of `tests/ops.rs`, which make a quota refuse
+  buffered bytes with runs sent in the background and in the calling thread. Through a kernel mount
+  (lab, Linux 7.0, rootless container, 3+3 node cluster in it, 2026-11-28): separate processes
+  with a quota or stopped data nodes covered `fsync`, `close`, `dup`, `O_SYNC`/`O_DSYNC`,
+  `O_DIRECT`, shared mappings, page-cache invalidation, directory `fsync`, the unmount log and a
+  30 s run of 8 processes against failing sends. Not tested: the NFS and SMB gateways, power
+  loss, and `--cache-leases`, `--direct-writes` or `--direct-reads` combined with failures.
 - `crates/atlas-native/tests/direct_writes.rs` and the `direct_writes_*` / `a_*` tests at the end of
   `crates/atlas-native-fuse/tests/ops.rs`: direct writes against in-process data nodes that
   require grants: grant scoping and expiry, a client dying between data and commit (space

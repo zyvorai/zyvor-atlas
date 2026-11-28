@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::{
     alloc::FreeList,
+    durable,
     inodes::{DirEntries, InodeTable},
     leases::Leases,
     membership::Membership,
@@ -164,6 +165,10 @@ impl CatalogStore {
         if let Some(dir) = path.parent() {
             fs::create_dir_all(dir)?;
         }
+        // redb refuses further I/O after a failed commit, but a restarted process would read
+        // the unwritten pages back from the page cache and build on them (and let the log that
+        // covers them be compacted). Read from the disk, so its recovery sees what is there.
+        durable::drop_cached(&path);
         Ok(Self {
             db: redb::Builder::new()
                 .set_cache_size(cache_bytes.max(1 << 20))

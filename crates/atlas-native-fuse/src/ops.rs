@@ -6,11 +6,12 @@
 //! TTL, or with cache leases for as long as the cluster's lease on them lasts (a change by
 //! another client recalls it first); writes are buffered per inode and sent on fsync, close, a
 //! non-sequential write, or once a run reaches the flush size. Full runs are sent in the
-//! background, several at once ([`crate::pipeline`]).
+//! background, several at once ([`crate::pipeline`]). Bytes a write call accepted that could
+//! not be stored are dropped and reported to every handle ([`crate::handles`]).
 
 use std::{
     collections::HashMap,
-    sync::{Arc, Mutex},
+    sync::{Arc, Mutex, OnceLock},
     time::{Duration, Instant},
 };
 
@@ -25,8 +26,9 @@ use serde_json::json;
 use crate::{
     cache::TtlCache,
     client::{encode, Body, Client, Error, Retry},
-    locks::{Conflict, Locks, Recall},
     direct_write::{DirectWriter, DirectWrites},
+    handles::Handles,
+    locks::{Conflict, Locks, Recall},
     pipeline::{Pipeline, SendRun},
     writeback::{Dirty, WriteBack},
 };
@@ -35,6 +37,62 @@ pub type Errno = i32;
 
 /// A read-ahead window: its file offset and the bytes read from there.
 type Window = (u64, Arc<Vec<u8>>);
+
+/// Told the inode of every loss, to drop copies held outside this layer.
+type LostHook = Box<dyn Fn(u64) + Send + Sync>;
+
+/// How a write on an open handle reaches the cluster.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WriteMode {
+    /// Through write-back.
+    Buffered,
+    /// `O_DIRECT`: committed before the call returns.
+    Direct,
+    /// The kernel writing back dirty pages of a mapping, through any writable handle of the
+    /// file: buffered, and never refused for an earlier loss, which would lose these bytes too.
+    Mapped,
+}
+
+/// What to do when accepted bytes cannot be stored.
+#[derive(Clone)]
+struct Losses {
+    handles: Arc<Handles>,
+    attrs: Arc<Mutex<TtlCache<u64, Attr>>>,
+    readahead: Arc<Mutex<TtlCache<u64, Window>>>,
+    hook: Arc<OnceLock<LostHook>>,
+}
+
+impl Losses {
+    /// Drops everything cached about a file after a send to it failed: caches here and,
+    /// through the hook, the kernel's, which holds the bytes it was told were written.
+    fn forget(&self, ino: u64) {
+        if let Ok(mut c) = self.attrs.lock() {
+            c.remove(&ino);
+        }
+        if let Ok(mut r) = self.readahead.lock() {
+            r.remove(&ino);
+        }
+        if let Some(hook) = self.hook.get() {
+            hook(ino);
+        }
+    }
+
+    /// Accepted bytes (`(inode, offset, length)`) could not be stored: forgets what is
+    /// cached, then makes the loss due to the file's handles. The bytes are not sent again
+    /// (the client already retried what could be retried).
+    fn record(&self, run: (u64, u64, usize), errno: Errno) {
+        let (ino, offset, len) = run;
+        tracing::error!(
+            ino,
+            offset,
+            len,
+            errno,
+            "write-back failed: accepted bytes were not stored"
+        );
+        self.forget(ino);
+        self.handles.fail(ino, errno);
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct OpsConfig {
@@ -146,11 +204,12 @@ pub struct Ops {
     dirty: Mutex<WriteBack>,
     /// Sends full runs in the background (with `writeback_parallel` > 0).
     pipeline: Option<Pipeline>,
-    readahead: Mutex<TtlCache<u64, Window>>,
+    readahead: Arc<Mutex<TtlCache<u64, Window>>>,
     /// Where each inode's last read ended: only a read that continues there reads ahead.
     last_read_end: Mutex<TtlCache<u64, u64>>,
-    /// Open handles per inode in this mount.
-    opens: Mutex<HashMap<u64, u32>>,
+    /// Open handles in this mount and the losses still to be reported to them.
+    handles: Arc<Handles>,
+    losses: Losses,
     /// Files unlinked while open here: renamed to a hidden name in their directory and removed
     /// on last close, so open handles keep working (as libfuse does without `hard_remove`).
     hidden: Mutex<HashMap<u64, (u64, String)>>,
@@ -233,11 +292,23 @@ impl Ops {
             .clone()
             .filter(|_| !fs.contains('@'))
             .map(|d| Arc::new(DirectWriter::new(client.clone(), &fs, d, locks.clone())));
+        let readahead = Arc::new(Mutex::new(TtlCache::new(if cfg.readahead_bytes > 0 {
+            cfg.ttl
+        } else {
+            Duration::ZERO
+        })));
+        let handles = Arc::new(Handles::default());
+        let losses = Losses {
+            handles: handles.clone(),
+            attrs: attrs.clone(),
+            readahead: readahead.clone(),
+            hook: Arc::default(),
+        };
         let pipeline = (cfg.writeback_parallel > 0 && cfg.writeback_bytes > 0).then(|| {
             let send: SendRun = {
                 let (client, fs, locks, attrs) =
                     (client.clone(), fs.clone(), locks.clone(), attrs.clone());
-                let dw = direct_writer.clone();
+                let (dw, losses) = (direct_writer.clone(), losses.clone());
                 let max_io = cfg.max_io_bytes;
                 Arc::new(move |run: &Dirty| {
                     let result =
@@ -246,7 +317,9 @@ impl Ops {
                     if let Ok(mut c) = attrs.lock() {
                         c.remove(&run.ino);
                     }
-                    result
+                    if let Err(e) = result {
+                        losses.record((run.ino, run.offset, run.data.len()), e);
+                    }
                 })
             };
             Pipeline::new(cfg.writeback_parallel, send)
@@ -260,13 +333,10 @@ impl Ops {
             names,
             recalled,
             dirty: Mutex::new(WriteBack::new(cfg.writeback_bytes)),
-            readahead: Mutex::new(TtlCache::new(if cfg.readahead_bytes > 0 {
-                cfg.ttl
-            } else {
-                Duration::ZERO
-            })),
+            readahead,
             last_read_end: Mutex::new(TtlCache::new(Duration::from_secs(10))),
-            opens: Mutex::new(HashMap::new()),
+            handles,
+            losses,
             hidden: Mutex::new(HashMap::new()),
             data_nodes: Mutex::new(HashMap::new()),
             direct_fallbacks: std::sync::atomic::AtomicU64::new(0),
@@ -439,34 +509,50 @@ impl Ops {
         a
     }
 
-    pub fn opened(&self, ino: u64) {
-        if let Ok(mut o) = self.opens.lock() {
-            *o.entry(ino).or_default() += 1;
-        }
+    /// Opens a handle on `ino` (`writable` unless opened read-only), for
+    /// [`Self::handle_write`], [`Self::fsync`], [`Self::close`] and [`Self::release`].
+    pub fn open(&self, ino: u64, writable: bool) -> Result<u64, Errno> {
+        self.handles.open(ino, writable)
     }
 
-    /// Drops one open handle; the last one sends buffered writes and removes the file if it
-    /// was unlinked while open.
-    pub fn released(&self, ino: u64) -> Result<(), Errno> {
-        let flushed = self.flush(ino);
-        let last = self.opens.lock().is_ok_and(|mut o| match o.get_mut(&ino) {
-            Some(n) if *n > 1 => {
-                *n -= 1;
-                false
-            }
-            _ => {
-                o.remove(&ino);
-                true
-            }
-        });
-        if last {
+    /// `fsync`/`fdatasync` of a handle: sends the file's buffered writes, waits for them, and
+    /// reports a loss this handle has not been told of by an earlier fsync.
+    pub fn fsync(&self, handle: u64) -> Result<(), Errno> {
+        // Read before waiting, so overlapping calls on one handle report the same loss.
+        let (ino, from) = self.handles.sync_from(handle)?;
+        self.drain(ino)?;
+        self.handles.report_sync(ino, from, Some(handle))
+    }
+
+    /// The close of one descriptor of a handle (FUSE `flush`): sends and waits like
+    /// [`Self::fsync`] and, if the handle can write, reports a loss since it was opened that
+    /// its fsync has not. The report stays due to a later fsync.
+    pub fn close(&self, handle: u64) -> Result<(), Errno> {
+        self.drain(self.handles.ino(handle)?)?;
+        self.handles.report_close(handle)
+    }
+
+    /// Drops a handle once its last descriptor and mapping are gone. Sends buffered writes
+    /// (a loss here stays due to later openers, as the kernel ignores this call's result)
+    /// and, on the file's last handle, removes it if it was unlinked while open.
+    pub fn release(&self, handle: u64) -> Result<(), Errno> {
+        let ino = self.handles.ino(handle)?;
+        let sent = self.drain_checked(ino);
+        if self.handles.release(handle)? {
             let parked = self.hidden.lock().ok().and_then(|mut h| h.remove(&ino));
             if let Some((parent, name)) = parked {
                 self.forget_attr(ino);
                 self.remove_entry(parent, &name)?;
             }
         }
-        flushed
+        sent
+    }
+
+    /// Calls `hook` with the inode of every loss from now on, so copies of the lost bytes
+    /// outside this layer (the kernel's page cache) can be dropped. It must not block. Only
+    /// the first hook is kept.
+    pub fn on_lost_writes(&self, hook: impl Fn(u64) + Send + Sync + 'static) {
+        let _ = self.losses.hook.set(Box::new(hook));
     }
 
     fn remove_entry(&self, parent: u64, name: &str) -> Result<(), Errno> {
@@ -726,7 +812,7 @@ impl Ops {
 
     pub fn unlink(&self, parent: u64, name: &str) -> Result<(), Errno> {
         if let Ok(a) = self.lookup(parent, name) {
-            let open = self.opens.lock().is_ok_and(|o| o.contains_key(&a.ino));
+            let open = self.handles.is_open(a.ino);
             if open && a.nlink == 1 && a.kind != NodeType::Dir {
                 let parked = format!(
                     "{HIDDEN_PREFIX}{}_{}",
@@ -740,7 +826,7 @@ impl Ops {
                 return Ok(());
             }
             // Buffered bytes must not land on an inode that is about to disappear.
-            self.flush(a.ino)?;
+            self.drain(a.ino)?;
         }
         self.drop_name(parent, name);
         self.remove_entry(parent, name)
@@ -787,7 +873,7 @@ impl Ops {
         self.drop_readahead(ino);
         if let Some(size) = attr.size {
             // Bytes buffered below the new size must reach the file before it is cut.
-            self.flush(ino)?;
+            self.drain(ino)?;
             if let Ok(mut d) = self.dirty.lock() {
                 d.truncate(ino, size);
             }
@@ -802,8 +888,12 @@ impl Ops {
         Ok(self.remember(a))
     }
 
+    /// Reads from the cluster (or the read-ahead window), after this mount's buffered writes
+    /// to the file are sent. Buffered bytes that turn out to be lost don't fail the read,
+    /// which returns what is stored: a failed read of a mapped page would kill its process
+    /// with SIGBUS. The report is for fsync and close.
     pub fn read(&self, ino: u64, offset: u64, len: usize) -> Result<Vec<u8>, Errno> {
-        self.flush(ino)?;
+        self.drain(ino)?;
         let cached = self.readahead.lock().ok().and_then(|mut r| r.get(&ino));
         if let Some((at, buf)) = cached {
             let end = at + buf.len() as u64;
@@ -932,14 +1022,19 @@ impl Ops {
     fn read_extent_direct(&self, d: &DirectReads, ext: &LayoutExtent) -> Result<Vec<u8>, String> {
         let payload = self.read_payload_direct(d, ext)?;
         if ext.payload_len > 0 {
-            return atlas_native::compress::decompress(&payload, ext.len).map_err(|e| e.to_string());
+            return atlas_native::compress::decompress(&payload, ext.len)
+                .map_err(|e| e.to_string());
         }
         Ok(payload)
     }
 
     /// The bytes the devices hold for `ext`: its data, or its LZ4 payload when compressed.
     fn read_payload_direct(&self, d: &DirectReads, ext: &LayoutExtent) -> Result<Vec<u8>, String> {
-        let stored = if ext.payload_len > 0 { ext.payload_len } else { ext.len };
+        let stored = if ext.payload_len > 0 {
+            ext.payload_len
+        } else {
+            ext.len
+        };
         if let Some(ec) = &ext.ec {
             let mut out = Vec::with_capacity(ec.data * ec.shard_len);
             for (i, r) in ext.replicas.iter().take(ec.data).enumerate() {
@@ -1018,58 +1113,114 @@ impl Ops {
         }
     }
 
+    /// A write on an open handle. The first one after a loss that the handle's fsync has not
+    /// reported fails with its errno and writes nothing (except [`WriteMode::Mapped`]).
+    pub fn handle_write(
+        &self,
+        handle: u64,
+        offset: u64,
+        data: &[u8],
+        mode: WriteMode,
+    ) -> Result<usize, Errno> {
+        if self.read_only() {
+            return Err(libc::EROFS);
+        }
+        let ino = self.handles.ino(handle)?;
+        if mode != WriteMode::Mapped {
+            self.handles.refuse_write(handle)?;
+        }
+        match mode {
+            WriteMode::Direct => self.send_through(ino, offset, data),
+            WriteMode::Buffered | WriteMode::Mapped => self.buffer(ino, offset, data),
+        }
+    }
+
+    /// A buffered write by inode number, for callers without a handle. Fails while the file
+    /// has a loss that no fsync has reported.
     pub fn write(&self, ino: u64, offset: u64, data: &[u8]) -> Result<usize, Errno> {
         if self.read_only() {
             return Err(libc::EROFS);
         }
-        self.drop_readahead(ino);
-        if let Some(e) = self.pipeline.as_ref().and_then(|p| p.failed(ino)) {
-            return Err(e);
-        }
-        // Runs are queued under the lock, so runs of one inode queue in write order.
-        let mut d = self.dirty.lock().map_err(|_| libc::EIO)?;
-        for run in d.write(ino, offset, data) {
-            self.dispatch(run)?;
-        }
-        Ok(data.len())
+        self.handles.unsynced(ino)?;
+        self.buffer(ino, offset, data)
     }
 
-    /// An `O_DIRECT` write: whatever this mount buffered for the file goes first, then `data` is
-    /// committed on its replicas before this returns, bypassing write-back.
+    /// An `O_DIRECT` write by inode number: whatever this mount buffered for the file goes
+    /// first, then `data` is committed on its replicas before this returns.
     pub fn write_through(&self, ino: u64, offset: u64, data: &[u8]) -> Result<usize, Errno> {
         if self.read_only() {
             return Err(libc::EROFS);
         }
+        self.send_through(ino, offset, data)
+    }
+
+    /// Fails if a run sent in this call that carries any of `data`'s range could not be
+    /// stored. A failed run of other bytes is only recorded: `data` stays buffered.
+    fn buffer(&self, ino: u64, offset: u64, data: &[u8]) -> Result<usize, Errno> {
         self.drop_readahead(ino);
-        self.flush(ino)?;
-        self.send(&Dirty {
+        let end = offset + data.len() as u64;
+        // Runs are queued under the lock, so runs of one inode queue in write order.
+        let mut d = self.dirty.lock().map_err(|_| libc::EIO)?;
+        // Sent in this call with nothing buffered before it, a run holds only this call's
+        // bytes: its failure concerns this caller alone, and is returned, not recorded.
+        let own = self.pipeline.is_none() && d.end(ino).is_none();
+        let mut result = Ok(data.len());
+        // Every run is dispatched, whatever happened to the one before.
+        for run in d.write(ino, offset, data) {
+            let carries = run.offset < end && offset < run.end();
+            let sent = if own {
+                self.send(&run).inspect_err(|_| self.losses.forget(ino))
+            } else {
+                self.dispatch(run)
+            };
+            if let Err(e) = sent {
+                if carries {
+                    result = Err(e);
+                }
+            }
+        }
+        result
+    }
+
+    fn send_through(&self, ino: u64, offset: u64, data: &[u8]) -> Result<usize, Errno> {
+        self.drop_readahead(ino);
+        self.drain_checked(ino)?;
+        let run = Dirty {
             ino,
             offset,
             data: data.to_vec(),
-        })?;
+        };
+        // The caller is told of a failure here, which may have stored part of the write.
+        self.send(&run).inspect_err(|_| self.losses.forget(ino))?;
         Ok(data.len())
     }
 
-    /// An `O_DIRECT` read: from the cluster, around the read-ahead window (after this mount's
-    /// buffered writes to the file are sent).
+    /// An `O_DIRECT` read: from the cluster, around the read-ahead window, after this mount's
+    /// buffered writes to the file are sent. As on Linux, it fails if bytes are lost while it
+    /// waits for them; that takes the report from no handle.
     pub fn read_direct(&self, ino: u64, offset: u64, len: usize) -> Result<Vec<u8>, Errno> {
-        self.flush(ino)?;
+        self.drain_checked(ino)?;
         self.fetch(ino, offset, len)
     }
 
+    /// Sends a run holding accepted bytes, recording a loss if it cannot be stored.
     fn dispatch(&self, run: Dirty) -> Result<(), Errno> {
-        match &self.pipeline {
+        let lost = (run.ino, run.offset, run.data.len());
+        let sent = match &self.pipeline {
             Some(p) => p.submit(run),
             None => self.send(&run),
-        }
+        };
+        sent.inspect_err(|e| self.losses.record(lost, *e))
     }
 
-    /// Sends any buffered bytes of `ino` and waits for its runs in flight.
-    pub fn flush(&self, ino: u64) -> Result<(), Errno> {
+    /// Sends any buffered bytes of `ino` and waits for its runs in flight. Losses are recorded
+    /// for the handles; an error here is only a failure to wait.
+    fn drain(&self, ino: u64) -> Result<(), Errno> {
         {
             let mut d = self.dirty.lock().map_err(|_| libc::EIO)?;
             if let Some(run) = d.take(ino) {
-                self.dispatch(run)?;
+                // Recorded by `dispatch`; the reports are made from that record.
+                let _ = self.dispatch(run);
             }
         }
         match &self.pipeline {
@@ -1078,19 +1229,37 @@ impl Ops {
         }
     }
 
+    /// [`Self::drain`], failing if the file lost bytes meanwhile, without using up a report.
+    fn drain_checked(&self, ino: u64) -> Result<(), Errno> {
+        let mark = self.handles.mark()?;
+        self.drain(ino)?;
+        self.handles.failed_since(ino, mark)
+    }
+
+    /// An fsync by inode number, for callers without a handle: sends and waits, then reports a
+    /// loss that no fsync had reported when it began. Handles open on the file are still told.
+    pub fn flush(&self, ino: u64) -> Result<(), Errno> {
+        let from = self.handles.sync_start(ino)?;
+        self.drain(ino)?;
+        self.handles.report_sync(ino, from, None)
+    }
+
     /// Sends every buffered write and removes files parked by unlink-while-open (at unmount).
+    /// Fails, logging each file, if a loss was never reported to an fsync.
     pub fn flush_all(&self) -> Result<(), Errno> {
         let mut result = Ok(());
         {
             let mut d = self.dirty.lock().map_err(|_| libc::EIO)?;
             for run in d.take_all() {
-                if let Err(e) = self.dispatch(run) {
-                    result = Err(e);
-                }
+                let _ = self.dispatch(run);
             }
         }
-        if let Some(Err(e)) = self.pipeline.as_ref().map(Pipeline::wait_all) {
-            result = Err(e);
+        if let Some(p) = &self.pipeline {
+            result = p.wait_all();
+        }
+        for (ino, errno) in self.handles.unreported() {
+            tracing::error!(ino, errno, "lost writes were never reported to an fsync");
+            result = Err(errno);
         }
         let parked: Vec<(u64, String)> = self
             .hidden

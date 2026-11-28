@@ -5,9 +5,8 @@
 //! filling the next run while earlier ones are on the wire, and several go at once.
 //!
 //! Runs of one inode that overlap are sent in order: a run waits until every overlapping run
-//! ahead of it is done. A failed run's errno is kept for its inode and returned by the next
-//! write to it and by [`Pipeline::wait`], which `flush`, `fsync` and `close` call, as with
-//! NFS's asynchronous writes.
+//! ahead of it is done. The pipeline keeps no errors: `send` records what it could not store
+//! ([`crate::handles`]) before the run counts as done, so whoever waited for it sees that.
 
 use std::{
     collections::{HashMap, VecDeque},
@@ -17,7 +16,7 @@ use std::{
 
 use crate::{ops::Errno, writeback::Dirty};
 
-pub type SendRun = Arc<dyn Fn(&Dirty) -> Result<(), Errno> + Send + Sync>;
+pub type SendRun = Arc<dyn Fn(&Dirty) + Send + Sync>;
 
 #[derive(Default)]
 struct State {
@@ -25,7 +24,6 @@ struct State {
     /// Runs queued or being sent, per inode: `(run id, start, end)`.
     inflight: HashMap<u64, Vec<(u64, u64, u64)>>,
     pending: usize,
-    errors: HashMap<u64, Errno>,
     next: u64,
     stop: bool,
 }
@@ -90,39 +88,30 @@ impl Pipeline {
         Ok(())
     }
 
-    /// The errno of a failed run of `ino` not yet reported by [`Self::wait`].
-    pub fn failed(&self, ino: u64) -> Option<Errno> {
-        self.lock().ok()?.errors.get(&ino).copied()
-    }
-
     /// End of the furthest run of `ino` not yet sent, which the file size must account for.
     pub fn end(&self, ino: u64) -> Option<u64> {
         let s = self.lock().ok()?;
         s.inflight.get(&ino)?.iter().map(|(_, _, end)| *end).max()
     }
 
-    /// Waits until every run of `ino` is sent; returns (and clears) the first failure.
+    /// Waits until `send` is done with every run of `ino` queued so far.
     pub fn wait(&self, ino: u64) -> Result<(), Errno> {
         let s = self.lock()?;
-        let mut s = self
-            .inner
+        self.inner
             .changed
             .wait_while(s, |s| s.inflight.contains_key(&ino))
-            .map_err(|_| libc::EIO)?;
-        s.errors.remove(&ino).map_or(Ok(()), Err)
+            .map(drop)
+            .map_err(|_| libc::EIO)
     }
 
-    /// Waits until every run is sent; returns (and clears) a failure, if any.
+    /// Waits until `send` is done with every run.
     pub fn wait_all(&self) -> Result<(), Errno> {
         let s = self.lock()?;
-        let mut s = self
-            .inner
+        self.inner
             .changed
             .wait_while(s, |s| s.pending > 0)
-            .map_err(|_| libc::EIO)?;
-        let first = s.errors.values().next().copied();
-        s.errors.clear();
-        first.map_or(Ok(()), Err)
+            .map(drop)
+            .map_err(|_| libc::EIO)
     }
 }
 
@@ -141,7 +130,7 @@ fn work(inner: &Inner, send: &SendRun) {
                 None => return,
             }
         };
-        let result = send(&run);
+        send(&run);
         let Ok(mut s) = inner.state.lock() else {
             return;
         };
@@ -152,9 +141,6 @@ fn work(inner: &Inner, send: &SendRun) {
             }
         }
         s.pending -= 1;
-        if let Err(e) = result {
-            s.errors.entry(run.ino).or_insert(e);
-        }
         inner.changed.notify_all();
     }
 }
@@ -199,7 +185,6 @@ mod tests {
                 thread::sleep(Duration::from_millis(20));
                 order.lock().unwrap().push((r.offset, r.data.len()));
                 now.fetch_sub(1, Ordering::SeqCst);
-                Ok(())
             })
         };
         let p = Pipeline::new(4, send);
@@ -219,23 +204,22 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_is_reported_to_its_inode_once() {
-        let send: SendRun = Arc::new(|r: &Dirty| {
-            if r.ino == 2 {
-                Err(libc::ENOSPC)
-            } else {
-                Ok(())
-            }
-        });
+    fn waiting_covers_what_send_does_with_a_run() {
+        let done = Arc::new(Mutex::new(Vec::new()));
+        let send: SendRun = {
+            let done = done.clone();
+            Arc::new(move |r: &Dirty| {
+                thread::sleep(Duration::from_millis(20));
+                done.lock().unwrap().push(r.ino);
+            })
+        };
         let p = Pipeline::new(2, send);
         p.submit(run(1, 0, 4)).unwrap();
-        p.submit(run(2, 0, 4)).unwrap();
         p.wait(1).unwrap();
-        assert_eq!(p.wait(2), Err(libc::ENOSPC));
-        assert_eq!(p.failed(2), None);
-        p.wait(2).unwrap();
-        p.submit(run(2, 4, 4)).unwrap();
-        assert_eq!(p.wait_all(), Err(libc::ENOSPC));
+        assert_eq!(*done.lock().unwrap(), [1]);
+        p.submit(run(2, 0, 4)).unwrap();
+        p.submit(run(3, 0, 4)).unwrap();
         p.wait_all().unwrap();
+        assert_eq!(done.lock().unwrap().len(), 3);
     }
 }
