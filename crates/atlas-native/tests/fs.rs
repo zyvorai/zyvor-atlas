@@ -1,9 +1,18 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 
+use std::{
+    collections::BTreeMap,
+    net::{SocketAddr, TcpListener},
+    sync::{mpsc, Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
+};
+
 use atlas_native::{
-    engine::NewNode, metadata::MetaError, EngineConfig, FailureDomain, FsQuota, NativeEngine,
-    NativeError, Node, NodeType, SetAttr, ROOT_INO,
+    engine::NewNode, metadata::MetaError, BlockStore, EngineConfig, FailureDomain, FileDevice,
+    FsQuota, MetaBackend, NativeEngine, NativeError, Node, NodeType, RaftConfig, RaftServer,
+    SetAttr, ROOT_INO,
 };
 
 fn engine(name: &str) -> (NativeEngine, std::path::PathBuf) {
@@ -389,4 +398,150 @@ fn gateway_temp_file_renames_do_not_count_as_mass_renaming() {
     assert_eq!(renamed, 0.0);
     assert!(modified >= 20.0, "S3-style writes are still seen as writes");
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// How long a test waits for something that must happen before it fails.
+const WAIT: Duration = Duration::from_secs(30);
+/// How long a snapshot is given to get between the two commits of a truncate.
+const WINDOW: Duration = Duration::from_secs(2);
+
+/// Runs `f` on its own thread. The receiver disconnects if it panics, and a test that gives up
+/// leaves the thread behind: a deadlock fails the test instead of hanging it.
+fn background<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static) -> mpsc::Receiver<T> {
+    let (tx, rx) = mpsc::channel();
+    thread::spawn(move || tx.send(f()));
+    rx
+}
+
+/// A truncate into an extent is two commits: the extent without its tail, then the size. Stops
+/// one between them and asks for a snapshot, which must hold the file from before the truncate
+/// or from after it.
+fn snapshot_during_a_truncate(e: Arc<NativeEngine>) {
+    e.create_fs_as("f".into(), "fs").unwrap();
+    let ino = e
+        .fs_mknode("f", ROOT_INO, node("a", NodeType::File))
+        .unwrap()
+        .ino;
+    // Two 16-byte extents, then a small overwrite in each: deltas, where those are on.
+    e.write_file("f", ino, 0, &[1; 32]).unwrap();
+    e.write_file("f", ino, 2, &[2; 4]).unwrap();
+    e.write_file("f", ino, 18, &[3; 4]).unwrap();
+    let before = e.read_file("f", ino, 0, 64).unwrap();
+    let after = before[..20].to_vec();
+
+    let (paused_tx, paused) = mpsc::channel();
+    let (resume, resume_rx) = mpsc::channel::<()>();
+    let resume_rx = Mutex::new(resume_rx);
+    e.set_truncate_hook(Some(Arc::new(move || {
+        let _ = paused_tx.send(());
+        // Ends when told to, or when a failing test drops the sender.
+        let _ = resume_rx.lock().unwrap().recv_timeout(WAIT);
+    })));
+    let engine = e.clone();
+    let truncated = background(move || engine.fs_setattr("f", ino, truncate(20)).map(drop));
+    paused
+        .recv_timeout(WAIT)
+        .expect("the truncate did not stop between two commits");
+    let engine = e.clone();
+    let snapshot = background(move || engine.snapshot_fs_as("s".into(), "f", "s").map(drop));
+    // A snapshot that has to wait for the truncate is still waiting when the window ends.
+    let early = snapshot.recv_timeout(WINDOW);
+    resume.send(()).unwrap();
+    truncated
+        .recv_timeout(WAIT)
+        .expect("the truncate did not return")
+        .unwrap();
+    match early {
+        Ok(taken) => taken,
+        Err(mpsc::RecvTimeoutError::Timeout) => snapshot
+            .recv_timeout(WAIT)
+            .expect("the snapshot did not return"),
+        Err(mpsc::RecvTimeoutError::Disconnected) => panic!("the snapshot panicked"),
+    }
+    .unwrap();
+
+    let held = e.read_file("f@s", ino, 0, 64).unwrap();
+    assert!(
+        held == before || held == after,
+        "the snapshot holds half a truncate: {held:?}"
+    );
+    assert_eq!(e.read_file("f", ino, 0, 64).unwrap(), after);
+}
+
+fn truncate_config(root: &std::path::Path, delta_writes: bool) -> EngineConfig {
+    let mut cfg = EngineConfig::new(root);
+    cfg.extent_bytes = 16;
+    cfg.delta_writes.enabled = delta_writes;
+    cfg
+}
+
+fn three_nodes() -> Vec<Node> {
+    (0..3)
+        .map(|i| Node {
+            id: format!("n{i}"),
+            failure_domain: FailureDomain {
+                zone: "z1".into(),
+                rack: format!("r{i}"),
+                host: format!("h{i}"),
+            },
+            free_bytes: 1 << 30,
+            healthy: true,
+        })
+        .collect()
+}
+
+fn snapshot_during_a_truncate_on_a_local_log(delta_writes: bool) {
+    let td = tempfile::tempdir().unwrap();
+    let cfg = truncate_config(td.path(), delta_writes);
+    let e = NativeEngine::open(cfg, three_nodes()).unwrap();
+    snapshot_during_a_truncate(Arc::new(e));
+}
+
+/// A Raft group of one voter, so that the engine commits through proposals.
+fn snapshot_during_a_truncate_through_raft(delta_writes: bool) {
+    let td = tempfile::tempdir().unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let rcfg = RaftConfig::new("m1", Vec::new(), td.path().join("raft"));
+    let peers = BTreeMap::<String, SocketAddr>::new();
+    let tick = Duration::from_millis(50);
+    let raft = Arc::new(RaftServer::start(rcfg, listener, peers, tick).unwrap());
+    let deadline = Instant::now() + WAIT;
+    while raft.leader_term().unwrap().is_none() {
+        assert!(Instant::now() < deadline, "no leader");
+        thread::sleep(Duration::from_millis(10));
+    }
+    let stores = three_nodes()
+        .into_iter()
+        .map(|n| {
+            let device = FileDevice::open(td.path().join(&n.id)).unwrap();
+            (n, Arc::new(device) as Arc<dyn BlockStore>)
+        })
+        .collect();
+    let meta = MetaBackend::Raft {
+        server: raft,
+        timeout: WAIT,
+    };
+    let cfg = truncate_config(&td.path().join("engine"), delta_writes);
+    let e = NativeEngine::open_with(cfg, stores, meta).unwrap();
+    snapshot_during_a_truncate(Arc::new(e));
+}
+
+#[test]
+fn a_snapshot_never_holds_half_a_truncate() {
+    snapshot_during_a_truncate_on_a_local_log(false);
+}
+
+#[test]
+fn a_snapshot_never_holds_half_a_truncate_with_delta_writes() {
+    snapshot_during_a_truncate_on_a_local_log(true);
+}
+
+#[test]
+fn a_snapshot_never_holds_half_a_truncate_through_raft() {
+    snapshot_during_a_truncate_through_raft(false);
+}
+
+#[test]
+fn a_snapshot_never_holds_half_a_truncate_through_raft_with_delta_writes() {
+    snapshot_during_a_truncate_through_raft(true);
 }
