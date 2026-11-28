@@ -15,6 +15,8 @@ import { fmtBytes, num } from "../lib/format";
 import { EmptyState } from "../graphics";
 import "./Buckets.css";
 
+const RETIRED_BACKEND_ID = "bkd_rustfs_lab";
+
 export default function Buckets() {
   const { data, isError, error, refetch: reload } = useBuckets();
   const { data: backends } = useBackends();
@@ -105,6 +107,10 @@ export default function Buckets() {
                 }
               }}>Stats</Button>
               <Button size="sm" onClick={() => setObjBucket(b)}>Objects</Button>
+              {/* The gateway only signs for a bound bucket, and has nothing to sign with for the retired backend. */}
+              {b.state === "bound" && b.backend_id !== RETIRED_BACKEND_ID && (
+                <Button size="sm" onClick={() => setSettingsBucket(b)}>Settings</Button>
+              )}
               <Button size="sm" variant="danger" onClick={() => del(`bucket ${b.bucket_name || b.name || b.id}`, () => submitJob("delete", `/buckets/${b.id}?force=true`, null, "delete bucket", refetch))}>Delete</Button>
             </>
           )}
