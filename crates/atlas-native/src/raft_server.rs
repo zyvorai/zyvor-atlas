@@ -919,7 +919,6 @@ impl RaftServer {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn with_node<R>(&self, f: impl FnOnce(&mut RaftNode) -> R) -> R {
         f(&mut self.shared.node.lock().unwrap())
     }

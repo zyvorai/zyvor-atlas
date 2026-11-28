@@ -6,7 +6,7 @@ use std::{
     fs,
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicU64, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
         Arc, Mutex, RwLock,
     },
     time::{Duration, Instant},
@@ -351,6 +351,8 @@ pub struct NativeEngine {
     cfg: EngineConfig,
     nodes: Vec<NodeRuntime>,
     meta: Meta,
+    /// A write or sync of the local metadata log failed; the engine must be reopened.
+    log_failed: AtomicBool,
     /// Serializes writes that read what they overwrite (partial extents) through their commit,
     /// and every write's commit; aligned whole-extent writes place their data without it.
     write_lock: Mutex<()>,
@@ -447,6 +449,7 @@ impl NativeEngine {
             cfg,
             nodes: runtimes,
             meta,
+            log_failed: AtomicBool::new(false),
             write_lock: Mutex::new(()),
             inflight: Default::default(),
             direct: Default::default(),
@@ -1696,7 +1699,6 @@ impl NativeEngine {
     }
 
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn set_log_sync(&self, sync: Box<dyn crate::device::DeviceSync>) {
         if let Meta::Local { wal, .. } = &self.meta {
             wal.lock().unwrap().set_sync(sync);
@@ -1721,7 +1723,15 @@ impl NativeEngine {
             .write()
             .map_err(|_| NativeError::Poisoned("catalog"))?;
         store.checkpoint(&mut c)?;
-        Ok(wal.compact_through(c.applied_index)?)
+        let removed = wal.compact_through(c.applied_index);
+        self.note_log_failure(&wal);
+        Ok(removed?)
+    }
+
+    fn note_log_failure(&self, wal: &Wal) {
+        if wal.check().is_err() {
+            self.log_failed.store(true, Ordering::SeqCst);
+        }
     }
 
     fn is_up(&self, n: &NodeRuntime) -> bool {
@@ -1948,16 +1958,22 @@ impl NativeEngine {
             return Err(e.into());
         }
         if let Err(e) = wal.append(&rec) {
-            // Whether the record reached disk is unknown: reload what a restart would see.
-            let (disk, reopened) = load_local(&self.cfg.root, store)?;
-            *c = disk;
-            *wal = reopened;
+            // Whether the record reached disk is unknown, and neither reading the log back nor
+            // syncing it again would tell: the page cache may hold what the disk does not. The
+            // log stays failed, so nothing more commits until the engine is reopened, and the
+            // catalog goes back to the records acknowledged before this one.
+            self.note_log_failure(&wal);
+            if let Ok(acknowledged) = load_catalog(&self.cfg.root, store, &wal, index) {
+                *c = acknowledged;
+            }
             return Err(e.into());
         }
         if self.cfg.wal_compact_after > 0 && wal.len() >= self.cfg.wal_compact_after {
             // Once the store durably covers `index`, every record up to it is redundant.
             store.checkpoint(&mut c)?;
-            wal.compact_through(index)?;
+            let compacted = wal.compact_through(index);
+            self.note_log_failure(&wal);
+            compacted?;
         }
         Ok(())
     }
@@ -2134,15 +2150,26 @@ impl NativeEngine {
 /// The checkpointed catalog plus every WAL record past it.
 fn load_local(root: &Path, store: &CatalogStore) -> Result<(Catalog, Wal), NativeError> {
     fs::create_dir_all(root)?;
-    let mut catalog = load_checkpoint(root, store)?;
     let mut wal = Wal::open(root.join("wal"))?;
+    let catalog = load_catalog(root, store, &wal, u64::MAX)?;
+    wal.raise_floor(catalog.applied_index);
+    Ok((catalog, wal))
+}
+
+/// The checkpointed catalog plus the WAL records past it with an index below `before`.
+fn load_catalog(
+    root: &Path,
+    store: &CatalogStore,
+    wal: &Wal,
+    before: u64,
+) -> Result<Catalog, NativeError> {
+    let mut catalog = load_checkpoint(root, store)?;
     for rec in wal.replay::<MetaCommand>()? {
-        if rec.index > catalog.applied_index {
+        if rec.index > catalog.applied_index && rec.index < before {
             catalog.apply(rec.term, rec.index, &rec.command)?;
         }
     }
-    wal.raise_floor(catalog.applied_index);
-    Ok((catalog, wal))
+    Ok(catalog)
 }
 
 /// Whether the catalog rejected a commit because an extent it was told to share was freed.

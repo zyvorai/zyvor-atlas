@@ -124,6 +124,33 @@ replicas. A client asking for device 1 or above first asks the data node how man
 serves; an older data node doesn't understand the question, so the request fails instead of
 silently landing on device 0. Requests for device 0 are unchanged on the wire.
 
+### Failed data syncs
+
+A data node answers a write with success only once its data is durable. When that fails (the
+`fdatasync` of the `file` backend, or a write of the `aligned` or `io_uring` backend):
+
+- the device refuses every later write until the node is restarted. Linux reports a writeback
+  error to one caller only and then calls the pages clean, so a later success would prove nothing;
+- writes in progress at the same time are not acknowledged either. Each write waits until every
+  sync that began before its own sync returned has returned, and fails if any of them failed:
+  one of those may be the caller that was told about this write's data. Syncs still run
+  concurrently; the cost is that a write's answer can wait for a slower, earlier sync;
+- the engine treats it like any failed write: it backs the node off and places the replica
+  elsewhere. The ranges of the failed writes are referenced by nothing;
+- reads go on, including everything written before the failure;
+- the node logs `atlas-native: device <path> failed, ...` once, reports
+  `atlas_native_data_device_failed{node,device}` = 1 on `/metrics` and the device under
+  `data_node.failed_devices` in `/v1/status`. `/readyz` stays 200, so that reads go on.
+
+Fix or replace the disk, then restart the node. Until then the engine still offers the device
+writes once each back-off expires (each fails at once and goes elsewhere); with no spare node,
+writes that need this one fail with `InsufficientReplicas`. With the `aligned` and `io_uring`
+backends any write error counts, `ENOSPC` included, because it cannot be told apart from a failed
+sync: keep a file-backed device's filesystem from filling up.
+
+`deploy/native/writeback-error-lab.sh` runs `tests/writeback_errors.rs` against real kernel
+writeback errors (a device-mapper target that fails chosen blocks; needs sudo on a lab host).
+
 ### Erasure coding
 
 With `"erasure": "4+2"` in the `metadata` section, each extent of at least `erasure_min_bytes` is
@@ -224,8 +251,8 @@ leading the group; resubmit them to the new leader. `GET /v1/transfers/{id}` rep
 | --- | --- | --- |
 | `GET /healthz` | no | Process is up. |
 | `GET /readyz` | no | 200 once every metadata group has a known leader (metadata role; a non-voter waiting to be added counts as ready) or the data node is serving; 503 otherwise, including after a fatal storage error. |
-| `GET /metrics` | no | Prometheus text: Raft/transport, engine (including `atlas_native_client_sessions` and `atlas_native_file_locks`), data node, `atlas_native_{repair,gc}_{runs,errors}_total`, `atlas_native_client_sessions_expired_total` and `atlas_native_cache_leases{group}` (cache leases this node holds out as a group leader). |
-| `GET /v1/status` | yes | Raft role/term/leader/indexes and voter flag (`metadata`, group 0; `metadata_groups` lists `{group, leader, ...}` for every group), `layout` (`extent_bytes`, `replicas`), per-data-node health, last repair result, data-node fence, `gpu_io` (a startup GPU/GDS capability probe, files only and unverified on real GPU hardware: [`NATIVE_GPU.md`](NATIVE_GPU.md)). |
+| `GET /metrics` | no | Prometheus text: Raft/transport, engine (including `atlas_native_client_sessions` and `atlas_native_file_locks`), data node (including `atlas_native_data_device_failed`), `atlas_native_{repair,gc}_{runs,errors}_total`, `atlas_native_client_sessions_expired_total` and `atlas_native_cache_leases{group}` (cache leases this node holds out as a group leader). |
+| `GET /v1/status` | yes | Raft role/term/leader/indexes and voter flag (`metadata`, group 0; `metadata_groups` lists `{group, leader, ...}` for every group), `layout` (`extent_bytes`, `replicas`), per-data-node health, last repair result, data-node fence and failed devices, `gpu_io` (a startup GPU/GDS capability probe, files only and unverified on real GPU hardware: [`NATIVE_GPU.md`](NATIVE_GPU.md)). |
 | `GET /v1/volumes` | yes | Volumes in the applied catalog. |
 | `POST /v1/volumes` | yes | `{"name": "...", "size_bytes": N, "id"?: "..."}` → 201 `{"id": "..."}`. An optional client-chosen `id` (1–64 of `[A-Za-z0-9-]`) makes the create idempotent: repeating it with the same parameters is a no-op, different parameters get 409. |
 | `DELETE /v1/volumes/{id}` | yes | 204. |
@@ -285,7 +312,9 @@ connection per request costs about 7 ms.
   (e.g. 200 for 2–4 s elections).
 - **Restart**: all Raft state and data are crash-safe on disk, so stopping the process (any signal)
   needs no graceful path. A fatal storage error inside the Raft replica (e.g. a failed fsync) makes
-  the process exit non-zero so its supervisor restarts it from disk.
+  the process exit non-zero so its supervisor restarts it from disk
+  ([`NATIVE_METADATA.md`](NATIVE_METADATA.md#failed-writes-and-syncs)). A failed sync of a data
+  device does not stop the process: see [Failed data syncs](#failed-data-syncs).
 - **Logging**: startup prints the bound addresses to stderr; everything else is in `/metrics` and
   `/v1/status`.
 

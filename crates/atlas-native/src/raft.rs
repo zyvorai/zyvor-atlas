@@ -9,7 +9,9 @@
 //! [`RaftNode::step`] and delivers whatever [`RaftNode::take_messages`] returns. Transport is the
 //! caller's concern. Durability is not: the vote is fsynced before any reply, log entries are
 //! fsynced before they are acknowledged or counted toward the leader's own quorum vote, and
-//! the catalog is checkpointed to its store before the log is compacted past it.
+//! the catalog is checkpointed to its store before the log is compacted past it. After any of
+//! those writes fails the node refuses to tick, step, propose or release messages until it is
+//! reopened: a repeated fsync would succeed without the data being on disk.
 //!
 //! Pre-vote keeps a partitioned node from inflating its term: it only starts a real election after
 //! a majority confirms it could win. Check-quorum makes a leader that has not heard from a
@@ -59,6 +61,8 @@ pub enum RaftError {
     Json(#[from] serde_json::Error),
     #[error("wal error: {0}")]
     Wal(#[from] WalError),
+    #[error("storage failed earlier, the replica must be reopened: {0}")]
+    StorageFailed(String),
     #[error("not the leader (leader hint: {leader:?})")]
     NotLeader { leader: Option<NodeId> },
     #[error("rejected by the metadata state machine: {0}")]
@@ -325,6 +329,8 @@ pub struct RaftNode {
     spec: Option<Catalog>,
     wal: Wal,
     store: CatalogStore,
+    /// The first failed write of durable state outside the log (the log remembers its own).
+    storage_failed: Option<String>,
     votes: BTreeSet<NodeId>,
     next_index: BTreeMap<NodeId, u64>,
     match_index: BTreeMap<NodeId, u64>,
@@ -439,6 +445,7 @@ impl RaftNode {
             spec: None,
             wal,
             store,
+            storage_failed: None,
             votes: BTreeSet::new(),
             next_index: BTreeMap::new(),
             match_index: BTreeMap::new(),
@@ -594,6 +601,7 @@ impl RaftNode {
         voters: BTreeSet<NodeId>,
         addrs: BTreeMap<NodeId, String>,
     ) -> Result<u64, RaftError> {
+        self.check_storage()?;
         if self.role != Role::Leader {
             return Err(RaftError::NotLeader {
                 leader: self.leader.clone(),
@@ -861,7 +869,6 @@ impl RaftNode {
         self.counters
     }
     #[cfg(test)]
-    #[allow(dead_code)]
     pub(crate) fn wal_mut(&mut self) -> &mut Wal {
         &mut self.wal
     }
@@ -883,6 +890,7 @@ impl RaftNode {
     /// The messages to send. A non-leader's log is made durable first: its outbox may hold
     /// AppendEntries acknowledgements for entries that were only written.
     pub fn take_messages(&mut self) -> Result<Vec<Envelope>, RaftError> {
+        self.check_storage()?;
         if self.role != Role::Leader {
             self.wal.sync()?;
         }
@@ -890,6 +898,7 @@ impl RaftNode {
     }
 
     pub fn tick(&mut self) -> Result<(), RaftError> {
+        self.check_storage()?;
         self.ticks += 1;
         if self.role == Role::Leader {
             if self.wal.synced_index() < self.last_index() {
@@ -926,6 +935,7 @@ impl RaftNode {
     /// `applied_index() >= index`. Validated against the leader's applied state plus every
     /// uncommitted entry, so a command that cannot apply is rejected here instead of being logged.
     pub fn propose(&mut self, command: MetaCommand) -> Result<u64, RaftError> {
+        self.check_storage()?;
         if self.role != Role::Leader {
             return Err(RaftError::NotLeader {
                 leader: self.leader.clone(),
@@ -963,6 +973,7 @@ impl RaftNode {
     }
 
     pub fn step(&mut self, env: Envelope) -> Result<(), RaftError> {
+        self.check_storage()?;
         let from = env.from;
         let term = env.msg.term();
         match env.msg {
@@ -1121,7 +1132,8 @@ impl RaftNode {
                     }
                     self.leader = Some(from.clone());
                     self.reset_election_timer();
-                    ack = self.handle_snapshot_chunk(index, seq, *chunk)?;
+                    let staged = self.handle_snapshot_chunk(index, seq, *chunk);
+                    ack = self.stored(staged)?;
                 }
                 self.send(
                     from,
@@ -1625,15 +1637,35 @@ impl RaftNode {
         });
     }
 
-    fn persist_hard(&self) -> Result<(), RaftError> {
+    fn persist_hard(&mut self) -> Result<(), RaftError> {
         let bytes = serde_json::to_vec(&self.hard)?;
-        durable::write_atomic(&self.cfg.root.join("raft_state.json"), &bytes)?;
-        Ok(())
+        let written = durable::write_atomic(&self.cfg.root.join("raft_state.json"), &bytes);
+        self.stored(written)
     }
 
     fn persist_catalog(&mut self) -> Result<(), RaftError> {
-        self.store.checkpoint(&mut self.catalog)?;
+        let written = self.store.checkpoint(&mut self.catalog);
+        self.stored(written)?;
         Ok(())
+    }
+
+    /// Errors once any write of this node's durable state has failed.
+    fn check_storage(&self) -> Result<(), RaftError> {
+        self.wal.check()?;
+        match &self.storage_failed {
+            None => Ok(()),
+            Some(cause) => Err(RaftError::StorageFailed(cause.clone())),
+        }
+    }
+
+    /// Remembers a failed write for [`Self::check_storage`]. The state in memory may then be
+    /// ahead of the disk (a term never persisted, say), so nothing may act on it.
+    fn stored<T, E: Into<RaftError>>(&mut self, result: Result<T, E>) -> Result<T, RaftError> {
+        result.map_err(|e| {
+            let e = e.into();
+            self.storage_failed.get_or_insert_with(|| e.to_string());
+            e
+        })
     }
 }
 

@@ -12,7 +12,7 @@ use std::{
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::engine::NativeError;
+use crate::{engine::NativeError, sync_guard::SyncGuard};
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct DeviceId(pub String);
@@ -34,6 +34,11 @@ pub trait BlockStore: std::fmt::Debug + Send + Sync {
     }
     /// Network address a client can read this device at directly, if it is remote.
     fn endpoint(&self) -> Option<&str> {
+        None
+    }
+    /// Why this device refuses writes until it is reopened, if a local device does: making
+    /// data durable failed. `None` for a remote device, whose node knows.
+    fn failure(&self) -> Option<String> {
         None
     }
 }
@@ -67,10 +72,18 @@ impl BlockStore for FileDevice {
     fn len(&self) -> Result<u64, NativeError> {
         FileDevice::len(self)
     }
+    fn failure(&self) -> Option<String> {
+        self.guard.failure()
+    }
 }
 
 /// Positional I/O on one file. An append only reserves its offset under a lock, then writes and
 /// syncs like an in-place write, so concurrent appends (and their syncs) overlap.
+///
+/// A write returns only once its data is durable. After a failed sync the device refuses writes
+/// until it is reopened, and a write is not acknowledged while a sync that could have been told
+/// about its data is still running (see `sync_guard.rs`). Reads go on: ranges acknowledged
+/// before the failure are unaffected, and nothing may refer to the others.
 #[derive(Debug)]
 pub struct FileDevice {
     id: DeviceId,
@@ -79,6 +92,7 @@ pub struct FileDevice {
     end: Mutex<u64>,
     positional: File,
     sync: Box<dyn DeviceSync>,
+    guard: SyncGuard,
 }
 
 impl FileDevice {
@@ -105,6 +119,7 @@ impl FileDevice {
         let end = file.metadata()?.len();
         Ok(Self {
             id: DeviceId(Uuid::new_v4().to_string()),
+            guard: SyncGuard::new(format!("device {}", path.display())),
             path,
             end: Mutex::new(end),
             positional: file,
@@ -119,7 +134,14 @@ impl FileDevice {
         &self.path
     }
 
+    /// Returns once the data this thread has written is durable.
+    fn make_durable(&self) -> Result<(), NativeError> {
+        self.guard.run(|| self.sync.sync_data(&self.positional))?;
+        Ok(())
+    }
+
     pub fn append(&self, data: &[u8]) -> Result<u64, NativeError> {
+        self.guard.check()?;
         let off = {
             let mut end = self
                 .end
@@ -129,11 +151,7 @@ impl FileDevice {
             *end += data.len() as u64;
             off
         };
-        let written = self
-            .positional
-            .write_all_at(data, off)
-            .and_then(|()| self.sync.sync_data(&self.positional));
-        if let Err(e) = written {
+        if let Err(e) = self.positional.write_all_at(data, off) {
             // Give the space back unless a later append already took the space after it; an
             // unacknowledged append is referenced by nothing either way.
             if let Ok(mut end) = self.end.lock() {
@@ -143,11 +161,14 @@ impl FileDevice {
             }
             return Err(e.into());
         }
+        // After a failed sync the space stays handed out: what the disk holds there is unknown.
+        self.make_durable()?;
         Ok(off)
     }
 
     /// Overwrites `data.len()` bytes at `offset` (reuse of a freed range). Never extends the file.
     pub fn write_at(&self, offset: u64, data: &[u8]) -> Result<(), NativeError> {
+        self.guard.check()?;
         let end = self.len()?;
         if offset + data.len() as u64 > end {
             return Err(NativeError::Invalid(format!(
@@ -156,8 +177,7 @@ impl FileDevice {
             )));
         }
         self.positional.write_all_at(data, offset)?;
-        self.sync.sync_data(&self.positional)?;
-        Ok(())
+        self.make_durable()
     }
 
     pub fn len(&self) -> Result<u64, NativeError> {

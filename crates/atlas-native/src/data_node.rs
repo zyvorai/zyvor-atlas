@@ -15,6 +15,10 @@
 //! client certificate nor a matching `Auth` bearer (`ATLAS_NATIVE_DATA_TOKEN`). Certificate files
 //! passed as [`crate::tls::TlsPaths`] are re-read when their mtimes change or on SIGHUP.
 //!
+//! A write is answered with success only once it is durable. A device on which that failed
+//! refuses further writes until the node is restarted (see [`crate::device::FileDevice`]); the
+//! engine places new replicas elsewhere, and `atlas_native_data_device_failed` reports it.
+//!
 //! Every write carries a fence (the writer's Raft term) and the metadata group it writes for.
 //! The node durably records the highest fence it has accepted from each group and rejects lower
 //! ones, so a deposed leader that has not noticed yet cannot overwrite a range the new leader of
@@ -542,6 +546,16 @@ impl DataNodeServer {
         self.shared.fence_values().get(&group).copied().unwrap_or(0)
     }
 
+    /// The devices that refuse writes until reopened (a restart of the node), with the reason.
+    pub fn failed_devices(&self) -> Vec<(usize, String)> {
+        self.shared
+            .devices
+            .iter()
+            .enumerate()
+            .filter_map(|(i, d)| Some((i, d.failure()?)))
+            .collect()
+    }
+
     /// Prometheus text exposition for this node's request counters and device size.
     pub fn render_metrics(&self) -> Result<String, NativeError> {
         let s = &self.shared.stats;
@@ -614,6 +628,20 @@ impl DataNodeServer {
                 "atlas_native_data_fence",
                 &[("node", self.id.as_str()), ("group", group.as_str())],
                 fence,
+            );
+        }
+        let name = "atlas_native_data_device_failed";
+        p.family(
+            name,
+            "gauge",
+            "1 if the device refuses writes until the node restarts, after a failed sync.",
+        );
+        for (i, d) in self.shared.devices.iter().enumerate() {
+            let index = i.to_string();
+            p.sample(
+                name,
+                &[("node", self.id.as_str()), ("device", index.as_str())],
+                u8::from(d.failure().is_some()),
             );
         }
         p.family(
