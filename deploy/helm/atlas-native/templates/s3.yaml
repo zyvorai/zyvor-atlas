@@ -135,7 +135,7 @@ spec:
           resources: {{- toYaml .Values.s3.resources | nindent 12 }}
       volumes:
         - name: api-token
-          secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+          {{- include "atlas-native.componentToken" (list . "s3") | nindent 10 }}
         - name: buckets
           configMap: { name: {{ $full }}-s3 }
         - name: credentials

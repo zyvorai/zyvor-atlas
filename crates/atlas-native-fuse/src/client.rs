@@ -74,6 +74,8 @@ impl Error {
                 "unsupported" => libc::EOPNOTSUPP,
                 "locked" => libc::EAGAIN,
                 "quota" => libc::EDQUOT,
+                // The token's roles or scope do not cover the request.
+                "forbidden" => libc::EACCES,
                 "no_session" => libc::ENOLCK,
                 _ if *status == 413 => libc::EFBIG,
                 _ => libc::EIO,
@@ -328,6 +330,7 @@ mod tests {
         };
         assert_eq!(e("not_found", 404).errno(), libc::ENOENT);
         assert_eq!(e("not_empty", 409).errno(), libc::ENOTEMPTY);
+        assert_eq!(e("forbidden", 403).errno(), libc::EACCES);
         assert_eq!(e("read_only", 409).errno(), libc::EROFS);
         assert_eq!(e("", 413).errno(), libc::EFBIG);
         assert_eq!(e("internal", 500).errno(), libc::EIO);

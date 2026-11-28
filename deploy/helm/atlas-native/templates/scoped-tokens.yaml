@@ -1,0 +1,44 @@
+{{/*
+Copyright (c) 2026 ZyvorAI Labs Private Limited.
+SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+
+Scoped API tokens (docs/NATIVE_NODE.md, "API tokens"): the node's token list and, unless
+scopedTokens.existingSecret is set, a Secret with a random token per entry.
+*/}}
+{{- if include "atlas-native.scopedEnabled" . }}
+{{- $list := include "atlas-native.scopedTokenList" . }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "atlas-native.fullname" . }}-api-tokens
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+data:
+  tokens.json: |
+    {{- $list | nindent 4 }}
+{{- if not .Values.scopedTokens.existingSecret }}
+{{- /* Reuse live tokens across upgrades; `helm template` cannot `lookup` and renders throwaways. */}}
+{{- $name := include "atlas-native.scopedTokenSecret" . }}
+{{- $existing := lookup "v1" "Secret" .Release.Namespace $name }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ $name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "atlas-native.labels" . | nindent 4 }}
+  annotations:
+    helm.sh/resource-policy: keep
+type: Opaque
+stringData:
+  {{- range (fromJson $list).tokens }}
+  {{- $old := "" }}
+  {{- if and $existing $existing.data (hasKey $existing.data .name) }}
+  {{- $old = index $existing.data .name | b64dec }}
+  {{- end }}
+  {{ .name }}: {{ default (randAlphaNum 48) $old | quote }}
+  {{- end }}
+{{- end }}
+{{- end }}
