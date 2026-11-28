@@ -124,6 +124,14 @@ echo "laying out $FILES files of ${FILE_MB} MiB"
 fio_run layout 1 0 "${ONE[@]}" --rw=write --bs=1m --file_service_type=sequential --end_fsync=1
 [ "$FAILED" -eq 0 ] || { echo "layout failed; nothing else would be meaningful" >&2; exit 1; }
 
+# Delta write counters of the three metadata nodes, kept before the container goes away.
+node_metrics() {
+  [ "$SYSTEM" = atlas ] || return 0
+  inct sh -c 'for p in 7401 7402 7403; do echo "# port $p"
+    curl -s --max-time 20 -H "Authorization: Bearer $(cat /run/atlas/token)" "http://127.0.0.1:$p/metrics" |
+      grep "^atlas_native_delta"; done' >"$OUT/metrics-$1.txt" || true
+}
+
 # measure <name> <fio args...>: REPEATS runs, reads start with a cold server cache.
 measure() {
   local name=$1 rep
@@ -153,6 +161,7 @@ if [ "$STEADY_SECS" -gt 0 ]; then
   awk -F, '{ m = int($1 / 60000) + 1; n[m]++; if (m > last) last = m }
     END { print "minute iops"; for (m = 1; m <= last; m++) printf "%d %.1f\n", m, n[m] / 60 }' \
     "$OUT/steady_clat.log" >"$OUT/steady_per_minute.txt"
+  node_metrics after-steady
 fi
 measure randread-4k-qd32-after "${MANY[@]}" --rw=randread --bs=4k
 measure seqread-1m-after "${ONE[@]}" --rw=read --bs=1m --file_service_type=sequential
@@ -170,6 +179,7 @@ done
 fio_run verify 1 0 --directory="$DIR" --filename=verify.dat "--size=${VERIFY_MB:-4}m" --rw=randwrite --bs=4k --sync=1 \
   --numjobs=1 --verify=crc32c --verify_fatal=1 --do_verify=1
 
+node_metrics end
 inct du -sk /srv/bench >"$OUT/space.txt" || true
 # Ceph's OSD files are preallocated, so du says nothing about its usage: ask the cluster as well.
 if [ "$SYSTEM" = ceph ]; then
