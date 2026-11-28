@@ -1022,7 +1022,7 @@ struct Latch {
     proposals: AtomicUsize,
 }
 
-struct Held<'a>(&'a NativeEngine, Arc<Latch>);
+struct Paused<'a>(&'a NativeEngine, Arc<Latch>);
 
 /// Opens a [`Latch`] when dropped.
 struct Release(Arc<Latch>);
@@ -1033,7 +1033,7 @@ impl Drop for Release {
     }
 }
 
-impl<'a> Held<'a> {
+impl<'a> Paused<'a> {
     fn new(e: &'a NativeEngine) -> Self {
         let latch = Arc::new(Latch::default());
         let l = latch.clone();
@@ -1074,7 +1074,7 @@ impl<'a> Held<'a> {
     }
 }
 
-impl Drop for Held<'_> {
+impl Drop for Paused<'_> {
     fn drop(&mut self) {
         self.release();
         self.0.set_delta_hook(None);
@@ -1099,7 +1099,7 @@ fn folds_that_wait_share_the_next_batch_up_to_the_limit() {
     let mut cfg = config(td.path());
     cfg.delta_writes.fold_batch_cells = 3;
     let (e, a) = dirty_file(cfg, 20);
-    let held = Held::new(&e);
+    let held = Paused::new(&e);
     with_pool(&e, None, |attempts| {
         let _release = held.releaser();
         // One to three cells in the batch being committed, three queued, and four folders each
@@ -1130,7 +1130,7 @@ fn folds_that_wait_share_the_next_batch_up_to_the_limit() {
 fn a_batch_keeps_the_changes_made_while_it_waited() {
     let td = tempfile::tempdir().unwrap();
     let (e, mut a) = dirty_file(config(td.path()), 6);
-    let held = Held::new(&e);
+    let held = Paused::new(&e);
     with_pool(&e, None, |attempts| {
         let _release = held.releaser();
         held.wait_for(6);
@@ -1161,7 +1161,7 @@ fn a_batch_keeps_the_changes_made_while_it_waited() {
 fn a_snapshot_waits_for_a_queued_fold() {
     let td = tempfile::tempdir().unwrap();
     let (e, a) = dirty_file(config(td.path()), 6);
-    let held = Held::new(&e);
+    let held = Paused::new(&e);
     with_pool(&e, None, |_| {
         let _release = held.releaser();
         held.wait_for(6);
@@ -1189,7 +1189,7 @@ fn a_snapshot_waits_for_a_queued_fold() {
 fn stopping_the_pool_commits_what_is_queued() {
     let td = tempfile::tempdir().unwrap();
     let (e, a) = dirty_file(config(td.path()), 6);
-    let held = Held::new(&e);
+    let held = Paused::new(&e);
     let stop = AtomicBool::new(false);
     thread::scope(|s| {
         let _finish = Finish(&stop, None);
@@ -1399,15 +1399,16 @@ fn batches_wait_until_every_metadata_node_decodes_them() {
 
     c.capabilities.clear();
     c.restart("m3");
+    // Before writing: until then the writes may rewrite their cells.
+    until("a leader that batches", || {
+        c.live()
+            .any(|(_, m)| m.engine.fold_batch_supported().unwrap_or(false))
+    });
     for cell in 0..6 {
         let at = cell * GRID + 80;
         c.on_leader("", |e| e.write_file("f", ino, at as u64, &[4; 8]));
         a.1[at..at + 8].fill(4);
     }
-    until("a leader that batches", || {
-        c.live()
-            .any(|(_, m)| m.engine.fold_batch_supported().unwrap_or(false))
-    });
     drain_and_converge(&c, ino, &a.1);
     assert!(batches(&c) > 0);
 }

@@ -121,10 +121,9 @@ fn only_an_undecided_batch_keeps_its_space() {
     for undecided in [false, true] {
         let td = tempfile::tempdir().unwrap();
         let e = engine(td.path());
-        // A free cell-sized range on every node.
-        e.write("v", 3 * GRID as u64, &[2; GRID]).unwrap();
-        e.gc_once().unwrap();
         e.write("v", 8, &[2; 8]).unwrap();
+        // Then a free cell-sized range on every node.
+        e.write("v", 3 * GRID as u64, &[2; GRID]).unwrap();
         e.gc_once().unwrap();
         let free = e.lease(0).unwrap().take("n1", 0, GRID as u64).unwrap();
         let mut rewrites = [rewrite(&e, 0)];
@@ -166,6 +165,7 @@ fn without_batching_each_fold_is_a_command_of_its_own() {
     assert_eq!(e.commit_rewrites(&rewrites), [FoldEnd::Folded; 2]);
     assert_eq!(e.applied_index().unwrap(), applied + 2);
     assert_eq!(e.telemetry.fold_batch.snapshot().count(), 0);
+    drop(rewrites);
     e.cfg.delta_writes.fold_batch_cells = 32;
     e.cfg.delta_writes.enabled = false;
     assert!(!e.fold_batch_supported().unwrap());
