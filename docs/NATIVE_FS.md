@@ -48,6 +48,7 @@ All routes need the API token (and client certificate where configured), like th
 | `GET /v1/fs/{fs}/locality?path=&max_inodes=` | Where a file or directory tree's data lives (see "Dataset locality"). `path` defaults to `/`, `max_inodes` to 100000. |
 | `POST /v1/fs/{fs}/locality/pin` | `{"hosts": [...], "path"?, "after"?, "max_extents"?, "max_inodes"?}` → `{examined, local, moved, bytes_moved, tiered, erasure_coded, deferred, next, truncated}`. Leader only. |
 | `POST /v1/fs/{fs}/rename` | `{parent, name, new_parent, new_name}` → 204. |
+| `POST /v1/fs/{fs}/rename-if` | A compare-and-swap rename: `{parent, name, ino, new_parent, new_name, expect?, retain_xattr?}` → 204. `name` must still name `ino`. `expect`: `{"kind":"absent"}`, or `{"kind":"unchanged", ino, size, mtime_ns, xattr, value}` for the destination as it was read (`value`: the bytes of extended attribute `xattr`, `null` if unset); 412 `precondition` otherwise. `retain_xattr` names an attribute holding Unix seconds until which the destination can't be replaced (409 `locked`). A repeat that finds `ino` already at the destination succeeds. 409 `unsupported` until every metadata node can decode it; see [NATIVE_S3](NATIVE_S3.md#conditional-writes). |
 | `POST /v1/fs/{fs}/snapshots` | `{"name", "id"?}` → 201 `{"id"}`. |
 | `GET /v1/fs-snapshots` | `{"snapshots": [{id, fs_id, name, created_ns, inodes}]}`. |
 | `DELETE /v1/fs-snapshots/{id}` | 204. |

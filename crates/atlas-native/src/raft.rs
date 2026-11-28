@@ -57,6 +57,8 @@ pub type Entry = WalRecord<MetaCommand>;
 /// Capability bit: this build decodes the delta commands and keeps the delta fields of a
 /// catalog. A leader proposes neither until every replica it feeds has advertised it.
 pub const CAP_DELTA: u64 = 1;
+/// Capability bit: this build decodes the conditional rename ([`crate::FsOp::RenameIf`]).
+pub const CAP_RENAME_IF: u64 = 1 << 4;
 
 #[derive(Debug, thiserror::Error)]
 pub enum RaftError {
@@ -110,8 +112,8 @@ pub struct RaftConfig {
     pub catalog_cache_inodes: usize,
     /// The catalog store's page cache.
     pub catalog_cache_bytes: usize,
-    /// Capability bits this node advertises to a leader ([`CAP_DELTA`]; tests clear them to
-    /// stand in for an older build).
+    /// Capability bits this node advertises to a leader ([`CAP_DELTA`], [`CAP_RENAME_IF`];
+    /// tests clear them to stand in for an older build).
     pub capabilities: u64,
 }
 
@@ -128,7 +130,7 @@ impl RaftConfig {
             compact_after: 1024,
             catalog_cache_inodes: DEFAULT_CACHE_INODES,
             catalog_cache_bytes: DEFAULT_STORE_CACHE_BYTES,
-            capabilities: CAP_DELTA,
+            capabilities: CAP_DELTA | CAP_RENAME_IF,
         }
     }
 }
