@@ -7,7 +7,10 @@
 
 use std::{
     path::{Path, PathBuf},
-    sync::atomic::{AtomicBool, Ordering},
+    sync::{
+        atomic::{AtomicBool, Ordering},
+        Mutex, MutexGuard, PoisonError,
+    },
 };
 
 use atlas_native::{
@@ -18,6 +21,13 @@ use atlas_native::{
 };
 
 const GRID: usize = 4096;
+
+/// A process computes at most two listings at once and refuses the next, so these tests, which
+/// share the process, take turns.
+fn alone() -> MutexGuard<'static, ()> {
+    static TURN: Mutex<()> = Mutex::new(());
+    TURN.lock().unwrap_or_else(PoisonError::into_inner)
+}
 
 fn root(name: &str) -> PathBuf {
     let root = std::env::temp_dir().join(format!(
@@ -103,6 +113,7 @@ fn unsupported<T: std::fmt::Debug>(r: Result<T, NativeError>, says: &str) {
 
 #[test]
 fn writes_are_listed_and_pages_describe_one_instant() {
+    let _turn = alone();
     let root = root("pages");
     let e = open(config(&root));
     let (dir, file) = forked(&e, "w");
@@ -205,6 +216,7 @@ fn writes_are_listed_and_pages_describe_one_instant() {
 
 #[test]
 fn only_a_clone_with_its_snapshot_can_be_listed() {
+    let _turn = alone();
     let root = root("refusals");
     let e = open(config(&root));
     forked(&e, "r");
@@ -240,6 +252,7 @@ fn only_a_clone_with_its_snapshot_can_be_listed() {
 
 #[test]
 fn small_overwrites_held_as_deltas_are_content_changes() {
+    let _turn = alone();
     let root = root("deltas");
     let mut cfg = config(&root);
     cfg.delta_writes = DeltaConfig {
@@ -276,6 +289,7 @@ impl Drop for StopOnDrop<'_> {
 /// at that instant.
 #[test]
 fn a_listing_is_one_instant_of_a_changing_filesystem() {
+    let _turn = alone();
     let root = root("concurrent");
     let e = open(config(&root));
     let (dir, file) = forked(&e, "c");
