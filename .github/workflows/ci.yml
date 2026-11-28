@@ -63,7 +63,7 @@ jobs:
       # — no external service/token, downloadable per-run, not enforced as a gate.
       # taiki-e/install-action's `@<tool-name>` shorthand can't be SHA-pinned (the tool name
       # lives in the ref itself); the documented SHA-pinned form is @<version> + `with: tool:`.
-      - uses: taiki-e/install-action@75a7c0f87bd666af3cdb75c5b9e9d03ab6044e6f # v2
+      - uses: taiki-e/install-action@fe3acb53a98b62c772db35de75ce0e4595e7ca8c # v2
         with:
           tool: cargo-llvm-cov
       - name: Test + coverage
