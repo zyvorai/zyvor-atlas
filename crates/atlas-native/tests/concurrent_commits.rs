@@ -428,6 +428,17 @@ fn concurrent_writers_stay_linearizable_under_snapshots() {
                         for i in 0..120 {
                             let cut = (rng.below(9) == 0).then(|| rng.below(want.len() + GRID));
                             let write = cut.is_none().then(|| rng.write(want.len()));
+                            // A cut into a cell is two commands, the cell without its tail and
+                            // then the size. With delta writes off a snapshot does not wait for
+                            // the write lock, so it may hold the state in between.
+                            if let Some(size) = cut.filter(|s| !mode.delta && *s < want.len()) {
+                                let mut between = want.clone();
+                                let cell_end = (size - size % GRID + GRID).min(want.len());
+                                if size % GRID > 0 {
+                                    between[size..cell_end].fill(0);
+                                }
+                                history.lock().unwrap().states.push(between);
+                            }
                             match (&cut, &write) {
                                 (Some(size), _) => want.resize(*size, 0),
                                 (None, Some((at, data))) => overwrite(&mut want, *at, data),

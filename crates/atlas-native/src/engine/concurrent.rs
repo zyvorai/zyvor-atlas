@@ -238,7 +238,7 @@ impl NativeEngine {
             let (placed, shared) = self.place_cells(&contents, fence, &alloc, dedup)?;
             self.commit_point(CommitPoint::Placed);
             let bytes: usize = placed.iter().map(ExtentRef::len).sum();
-            match self.commit_if(target, placed, shared, fence, &check, &alloc) {
+            match self.commit_if(target, placed, shared, fence, check, &alloc) {
                 Ok(true) => {
                     self.telemetry.record_write(bytes);
                     self.telemetry.concurrent_commit();
