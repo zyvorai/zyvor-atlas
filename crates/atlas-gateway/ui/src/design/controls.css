@@ -1,0 +1,358 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Controls: pill buttons, links, icon buttons, fields, chips, badges, choice tiles.
+ */
+
+/* ── Buttons ── */
+.at-btn,
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: var(--a-ctl-h);
+  padding: 0 16px;
+  border: 1px solid transparent;
+  border-radius: var(--a-pill);
+  background: var(--a-surface-3);
+  color: var(--a-ink);
+  font-family: var(--a-font);
+  font-size: 14px;
+  font-weight: 500;
+  letter-spacing: -0.006em;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+  user-select: none;
+  transition: background-color 0.2s var(--a-ease), color 0.2s var(--a-ease), border-color 0.2s var(--a-ease),
+    opacity 0.2s var(--a-ease);
+}
+.at-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--a-surface-3) 86%, var(--a-ink));
+}
+.at-btn:disabled,
+.btn:disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
+}
+.at-btn.primary {
+  background: var(--a-blue-fill);
+  color: var(--a-on-blue);
+}
+.at-btn.primary:hover:not(:disabled) {
+  background: var(--a-blue-hover);
+}
+.at-btn.danger {
+  background: var(--a-fail-wash);
+  color: var(--a-fail);
+}
+.at-btn.danger:hover:not(:disabled) {
+  background: var(--a-fail);
+  color: var(--a-on-fail);
+}
+.at-btn.compact {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 13px;
+}
+.at-btn.large {
+  min-height: 44px;
+  padding: 0 24px;
+  font-size: 17px;
+  font-weight: 400;
+}
+
+/* "Learn more ›" style text link. */
+.a-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--a-blue);
+  font: inherit;
+  text-decoration: none;
+  cursor: pointer;
+}
+.a-link:hover {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+/* Compact in-table actions. */
+.at-act {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 26px;
+  padding: 0 10px;
+  border: none;
+  border-radius: var(--a-pill);
+  background: transparent;
+  color: var(--a-blue);
+  font-family: var(--a-font);
+  font-size: 12.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.at-act:hover {
+  background: var(--a-blue-wash);
+}
+.at-act.danger {
+  color: var(--a-fail);
+}
+.at-act.danger:hover {
+  background: var(--a-fail-wash);
+}
+
+.at-iconbtn {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--a-ink);
+  cursor: pointer;
+  transition: background-color 0.2s var(--a-ease), opacity 0.2s var(--a-ease);
+}
+.at-iconbtn:hover,
+.at-iconbtn[aria-expanded="true"],
+.at-iconbtn[aria-pressed="true"] {
+  background: var(--a-surface-3);
+}
+
+/* ── Fields ── */
+.field,
+.at-chip-field {
+  height: var(--a-field-h);
+  border: 1px solid var(--a-line-strong);
+  border-radius: var(--a-radius-sm);
+  background: var(--a-surface);
+  color: var(--a-ink);
+  font-family: var(--a-font);
+  font-size: 14px;
+  padding: 0 12px;
+  transition: border-color 0.15s var(--a-ease), box-shadow 0.15s var(--a-ease);
+}
+.field {
+  width: 100%;
+}
+.at-chip-field {
+  height: 32px;
+  min-width: 140px;
+  border-radius: var(--a-pill);
+  font-size: 13px;
+}
+textarea.field {
+  height: auto;
+  min-height: 96px;
+  padding-block: 10px;
+}
+.field:focus,
+.at-chip-field:focus {
+  outline: none;
+  border-color: var(--a-blue);
+  box-shadow: 0 0 0 3px var(--a-blue-wash);
+}
+.field:focus-visible,
+.at-chip-field:focus-visible {
+  outline: 2px solid var(--a-blue);
+  outline-offset: 1px;
+}
+.field::placeholder,
+.at-chip-field::placeholder {
+  color: var(--a-ink-2);
+  opacity: 1;
+}
+.field:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.section-label {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--a-ink-2);
+}
+
+/* ── Chips (segmented filters) ── */
+.at-chips,
+.at-chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: var(--a-s4);
+}
+.at-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 14px;
+  border: 1px solid var(--a-line);
+  border-radius: var(--a-pill);
+  background: var(--a-surface);
+  color: var(--a-ink);
+  font-family: var(--a-font);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.2s var(--a-ease), border-color 0.2s var(--a-ease), color 0.2s var(--a-ease);
+}
+.at-chip:hover {
+  border-color: var(--a-line-strong);
+}
+.at-chip.on {
+  border-color: var(--a-ink);
+  background: var(--a-ink);
+  color: var(--a-bg);
+}
+.at-chip .n {
+  font-family: var(--a-mono);
+  font-size: 11px;
+  opacity: 0.75;
+}
+
+/* ── Badges ── */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 9px;
+  border-radius: var(--a-pill);
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.5;
+  text-transform: capitalize;
+  white-space: nowrap;
+}
+.badge .dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+.badge-success {
+  color: var(--a-ok);
+  background: var(--a-ok-wash);
+}
+.badge-warning,
+.badge-at-risk {
+  color: var(--a-warn);
+  background: var(--a-warn-wash);
+}
+.badge-danger {
+  color: var(--a-fail);
+  background: var(--a-fail-wash);
+}
+.badge-info {
+  color: var(--a-blue);
+  background: var(--a-blue-wash);
+}
+.badge-neutral {
+  color: var(--a-ink-2);
+  background: var(--a-surface-2);
+}
+
+.at-tag {
+  display: inline-flex;
+  align-items: center;
+  padding: 1px 7px;
+  border-radius: 6px;
+  background: var(--a-surface-2);
+  color: var(--a-ink-2);
+  font-family: var(--a-font);
+  font-size: 11px;
+  font-weight: 500;
+}
+
+/* ── Choice tiles ── */
+.at-choice-grid,
+.at-select-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+  gap: var(--a-s3);
+}
+.at-choice-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.at-choice-grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.at-choice,
+.at-select-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+  padding: 14px 16px;
+  border: 1px solid var(--a-line);
+  border-radius: var(--a-radius-sm);
+  background: var(--a-surface);
+  color: var(--a-ink);
+  font-family: var(--a-font);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.2s var(--a-ease), box-shadow 0.2s var(--a-ease);
+}
+.at-choice:hover,
+.at-select-tile:hover {
+  border-color: var(--a-line-strong);
+}
+.at-choice.on,
+.at-select-tile.on {
+  border-color: var(--a-blue);
+  box-shadow: inset 0 0 0 1px var(--a-blue);
+}
+.at-choice-title,
+.at-select-title {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.012em;
+}
+.at-choice-hint,
+.at-select-hint {
+  font-size: 12.5px;
+  color: var(--a-ink-2);
+}
+@media (max-width: 640px) {
+  .at-choice-grid,
+  .at-choice-grid-2 {
+    grid-template-columns: 1fr;
+  }
+}
+
+.at-kbd,
+.at-control-kbd {
+  display: inline-block;
+  min-width: 22px;
+  padding: 2px 7px;
+  border: 1px solid var(--a-line);
+  border-radius: 6px;
+  background: var(--a-surface-2);
+  color: var(--a-ink-2);
+  font-family: var(--a-mono);
+  font-size: 11px;
+  text-align: center;
+}
+
+.at-copyable {
+  border: none;
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  cursor: copy;
+}
+.at-copyable:hover {
+  color: var(--a-blue);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}

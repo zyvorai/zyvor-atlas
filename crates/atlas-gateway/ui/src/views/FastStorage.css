@@ -1,0 +1,37 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Fast storage (views/FastStorage.tsx).
+ */
+
+@layer components {
+  .fast-note {
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .fast-grow {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+  .fast-wear {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--a-s2);
+  }
+  .fast-wear .at-mini {
+    display: inline-block;
+    width: 56px;
+  }
+  .fast-shape {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .fast-device {
+    min-width: 110px;
+    font-size: 12.5px;
+  }
+  .fast-finding {
+    color: var(--a-warn);
+    font-size: 12.5px;
+  }
+}

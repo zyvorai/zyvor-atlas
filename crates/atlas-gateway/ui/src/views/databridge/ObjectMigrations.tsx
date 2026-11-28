@@ -12,6 +12,8 @@ import { navCrumbs } from "../../nav/routes";
 import { del } from "../../ui/confirm";
 import { Table } from "../../ui/Table";
 import { fmtBytes, num } from "../../lib/format";
+import { EmptyState } from "../../graphics";
+import "./ObjectMigrations.css";
 
 const stateKind = (s: string) =>
   s === "completed" ? "success" : s === "failed" ? "danger" : s === "running" ? "info" : "neutral";
@@ -19,7 +21,7 @@ const stateKind = (s: string) =>
 const EXTERNAL = "external";
 
 export default function ObjectMigrations() {
-  const { data } = useObjectMigrations();
+  const { data, isError } = useObjectMigrations();
   const { data: backends } = useBackends();
   const inv = useInvalidate();
   const refetch = () => inv("db-object");
@@ -42,7 +44,7 @@ export default function ObjectMigrations() {
     if ((vals.source_side || sideOptions[0]?.value) === EXTERNAL) {
       out.push(
         { name: "source_endpoint", label: "Source endpoint", placeholder: "https://s3.us-east-1.amazonaws.com" },
-        { name: "source_secret_ref", label: "Source credentials Secret", hint: "k8s Secret name — keys are never entered here." },
+        { name: "source_secret_ref", label: "Source credentials Secret", hint: "Kubernetes Secret name. Keys are never entered here." },
       );
     }
     out.push(
@@ -74,71 +76,94 @@ export default function ObjectMigrations() {
     return out;
   };
 
+  const newMigration = (
+    <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
+      <Plus size={14} /> New migration
+    </button>
+  );
+
   return (
     <ListPage
       crumbs={navCrumbs("object-migrations")}
-      eyebrow="DATABRIDGE · INDEX"
-      title="Object Migrations"
+      eyebrow="Object storage"
+      title="Object migrations"
       state={
-        n
-          ? `${n} object migration${n === 1 ? "" : "s"} — bucket-to-bucket copy, multipart, SHA-256 verified.`
-          : "No object migrations yet. Copy a bucket into Ceph RGW or another S3-compatible destination."
+        !data
+          ? isError
+            ? "Could not load object migrations."
+            : "Loading object migrations…"
+          : n
+            ? `${n} bucket-to-bucket migration${n === 1 ? "" : "s"}.`
+            : "No migrations yet. Copy one bucket into another."
       }
-      actions={
-        <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-          <Plus size={14} /> Migration
-        </button>
-      }
+      actions={newMigration}
     >
-      <Table
-        soundings
-        panelTitle="Object migration index"
-        rows={data}
-        rowKey={(m) => m.id}
-        empty="No object migrations yet."
-        cols={[
-          { h: "Name", f: (m) => m.name },
-          { h: "Source", f: (m) => `${m.source_bucket}${m.source_prefix ? `/${m.source_prefix}` : ""}`, mono: true },
-          { h: "Destination", f: (m) => m.dest_bucket, mono: true },
-          { h: "Mode", f: (m) => m.mode },
-          { h: "State", f: (m) => <Badge kind={stateKind(m.state)} dot>{m.state}</Badge> },
-          {
-            h: "Progress",
-            f: (m) => `${num(m.objects_done)}/${num(m.objects_total)} objs · ${fmtBytes(m.bytes_done)}${m.verified ? " · verified" : ""}`,
-          },
-          { h: "Error", f: (m) => (m.last_error ? <span style={{ color: "var(--at-danger, #e5484d)" }}>{m.last_error}</span> : "") },
-        ]}
-        actions={(m) => (
-          <>
-            <Button
-              size="sm"
-              icon={Play}
-              onClick={() =>
-                submitJob("post", `/databridge/object/${m.id}/start`, null, `migrate ${m.name}`, refetch).catch(() => {})
-              }
-            >
-              Start
-            </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={() =>
-                del(`migration ${m.name}`, async () => {
-                  await submit("delete", `/databridge/object/${m.id}`, null, "delete migration");
-                  refetch();
-                })
-              }
-            >
-              Del
-            </Button>
-          </>
-        )}
-      />
+      {data && !data.length ? (
+        <div className="at-panel">
+          <h2 className="sr-only">Migrations</h2>
+          <EmptyState art="bucket" title="No object migrations yet" description="Source and destination can be Ceph RGW or any S3-compatible endpoint.">
+            {newMigration}
+          </EmptyState>
+        </div>
+      ) : (
+        <Table
+          soundings
+          panelTitle="Migrations"
+          rows={data}
+          rowKey={(m) => m.id}
+          cols={[
+            { h: "Name", f: (m) => m.name },
+            { h: "Source", f: (m) => `${m.source_bucket}${m.source_prefix ? `/${m.source_prefix}` : ""}`, mono: true },
+            { h: "Destination", f: (m) => m.dest_bucket, mono: true },
+            { h: "Mode", f: (m) => m.mode },
+            { h: "State", f: (m) => <Badge kind={stateKind(m.state)} dot>{m.state}</Badge> },
+            {
+              h: "Progress",
+              f: (m) => (
+                <div className="om-progress">
+                  {m.objects_total > 0 && (
+                    <span className="at-mini" aria-hidden>
+                      <i style={{ width: `${Math.min(100, (m.objects_done / m.objects_total) * 100)}%` }} />
+                    </span>
+                  )}
+                  <span>{`${num(m.objects_done)}/${num(m.objects_total)} objects · ${fmtBytes(m.bytes_done)}${m.verified ? " · verified" : ""}`}</span>
+                </div>
+              ),
+            },
+            { h: "Error", f: (m) => (m.last_error ? <span className="om-error">{m.last_error}</span> : "") },
+          ]}
+          actions={(m) => (
+            <>
+              <Button
+                size="sm"
+                icon={Play}
+                onClick={() =>
+                  submitJob("post", `/databridge/object/${m.id}/start`, null, `migrate ${m.name}`, refetch).catch(() => {})
+                }
+              >
+                Start
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() =>
+                  del(`migration ${m.name}`, async () => {
+                    await submit("delete", `/databridge/object/${m.id}`, null, "delete migration");
+                    refetch();
+                  })
+                }
+              >
+                Delete
+              </Button>
+            </>
+          )}
+        />
+      )}
 
       <FormModal
         open={create}
         onClose={() => setCreate(false)}
-        title="Object migration"
+        title="New object migration"
         submitLabel="Create"
         fields={fields}
         onSubmit={async (v) => {

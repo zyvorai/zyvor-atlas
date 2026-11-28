@@ -2,21 +2,21 @@
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 import { useEffect } from "react";
 import { useParams } from "react-router-dom";
-import { Check, Circle, Loader2 } from "lucide-react";
+import { AlertTriangle, Check, Circle, CircleDot, Loader2, OctagonAlert } from "lucide-react";
 import { submitJob } from "../../api/client";
 import { usePlan, useSource, useInvalidate } from "../../api/hooks";
 import { Badge, Button } from "../../ui/kit";
 import { DetailPage } from "../../ui/templates/DetailPage";
-import { SwipeRail } from "../../ui/SwipeRail";
 import { confirmThen } from "../../ui/confirm";
 import { planStateKind, planStateLabel } from "./Plans";
 import { stageBadge, verificationFor } from "../../lib/engineVerification";
+import "./PlanDetail.css";
 
 // Pipeline stages in order. `state` values from migration_plans map to how far we've progressed.
 const STAGES = ["discover", "assess", "provision", "full-load", "cdc", "validate", "cutover"] as const;
 const STAGE_LABEL: Record<string, string> = {
   discover: "Discover", assess: "Assess", provision: "Provision edge",
-  "full-load": "Full-load", cdc: "CDC replication", validate: "Validate", cutover: "Cutover",
+  "full-load": "Full load", cdc: "CDC replication", validate: "Validate", cutover: "Cutover",
 };
 // migration_plans.state -> index of the last COMPLETED stage.
 const COMPLETED_THROUGH: Record<string, number> = {
@@ -27,6 +27,8 @@ const COMPLETED_THROUGH: Record<string, number> = {
 };
 // All pipeline stages are wired (fake pipeline runs end-to-end).
 const IMPLEMENTED = new Set(STAGES as readonly string[]);
+// States in which the gateway is working on a stage right now; only these spin.
+const WORKING = new Set(["provisioning", "full_loading", "validating", "cutover_in_progress"]);
 
 export default function PlanDetail() {
   const { id = "" } = useParams();
@@ -39,9 +41,10 @@ export default function PlanDetail() {
     if (plan) document.title = `Atlas · ${plan.name}`;
   }, [plan]);
 
-  if (!plan) return <div className="p-6 text-muted-foreground">Loading plan…</div>;
+  if (!plan) return <div className="at-loading">Loading plan…</div>;
   const done = COMPLETED_THROUGH[plan.state] ?? -1;
   const current = done + 1; // the next actionable stage index
+  const completed = Math.max(0, done + 1);
   const a = plan.assessment as any;
   const rollbackDeadline = plan.cutover_at ? new Date(Date.parse(plan.cutover_at) + plan.rollback_window_secs * 1000) : null;
   const engineKind = source?.kind || "";
@@ -68,13 +71,13 @@ export default function PlanDetail() {
         { label: "Migration Plans", to: "/databridge/plans" },
         { label: plan.name },
       ]}
-      eyebrow="DATABRIDGE · DETAIL"
+      eyebrow="Migration plan"
       title={plan.name}
       state={`Plan ${plan.id} · source ${source?.name || plan.source_id} · ${planStateLabel(plan.state)}${engVer ? ` · ${engVer.engine}` : ""}`}
-      actions={<div className="flex gap-2 items-center">
+      actions={<div className="flex flex-wrap gap-2 items-center">
         {engVer && (
-          <Badge kind={cdcLive && cutoverLive ? "success" : "warning"} title={engVer.note}>
-            CDC/cutover {cdcLive && cutoverLive ? "live" : "pending infra"}
+          <Badge kind={cdcLive && cutoverLive ? "success" : "warning"} title={engVer.note} className="normal-case">
+            {cdcLive && cutoverLive ? "CDC and cutover verified live" : "CDC and cutover not verified live"}
           </Badge>
         )}
         {plan.state === "cdc_streaming" && (
@@ -85,8 +88,8 @@ export default function PlanDetail() {
         )}
         {plan.state === "cutover_complete" && (
           <>
-            {rollbackDeadline && <span className="at-sub" style={{ margin: 0 }}>Rollback available until {rollbackDeadline.toLocaleString()}</span>}
-            <button type="button" className="at-btn" style={{ color: "var(--at-fail)", borderColor: "rgba(255, 90, 110, 0.35)" }} onClick={() => confirmThen({
+            {rollbackDeadline && <span className="pd-deadline">Rollback available until {rollbackDeadline.toLocaleString()}</span>}
+            <button type="button" className="at-btn danger" onClick={() => confirmThen({
               title: "Roll back this migration?",
               message: rollbackDeadline
                 ? `Reverts cutover and switches traffic back to the source database. Only available until ${rollbackDeadline.toLocaleString()}. This cannot be undone.`
@@ -100,50 +103,50 @@ export default function PlanDetail() {
       </div>}
     >
 
-      <div className="at-panel">
+      <section className="at-panel" aria-labelledby="pd-pipeline-title">
         <div className="at-panel-bar">
-          <span className="at-caption">Pipeline</span>
+          <h2 id="pd-pipeline-title" className="at-caption">Pipeline</h2>
           <span className="grow" />
-          <span className="at-sub" style={{ margin: 0 }}>
-            {Math.max(0, done + 1)} / {STAGES.length} stages · swipe
+          <span className="pd-count">
+            {completed} of {STAGES.length} stages done
           </span>
         </div>
-        <div style={{ padding: "12px 16px 16px" }}>
-          <SwipeRail label="Migration stages">
+        <div className="pd-pipeline">
+          <div
+            className="at-trough pd-trough"
+            role="progressbar"
+            aria-label="Stages done"
+            aria-valuemin={0}
+            aria-valuemax={STAGES.length}
+            aria-valuenow={completed}
+          >
+            <span className="at-level" style={{ width: `${(completed / STAGES.length) * 100}%` }} />
+          </div>
+          <ol className="pd-stages" aria-label="Migration stages">
             {STAGES.map((stage, i) => {
               const status = i <= done ? "done" : i === current ? "current" : "upcoming";
-              const Icon = status === "done" ? Check : status === "current" ? Loader2 : Circle;
+              const working = status === "current" && WORKING.has(plan.state);
+              const Icon = status === "done" ? Check : working ? Loader2 : status === "current" ? CircleDot : Circle;
               const actionable = status === "current" && IMPLEMENTED.has(stage);
-              const tickColor =
-                status === "done" ? "var(--at-cyan)" : status === "current" ? "var(--at-cyan-2)" : "var(--at-ink-4)";
               return (
-                <div key={stage} className="at-instr" style={{ minHeight: 140 }}>
-                  <div className="at-caption" style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ color: tickColor, display: "flex" }}>
-                      <Icon size={16} className={status === "current" ? "animate-spin" : undefined} />
-                    </span>
+                <li key={stage} className={`pd-stage ${status}`} aria-current={status === "current" ? "step" : undefined}>
+                  <div className="pd-stage-top">
+                    <Icon size={18} className={working ? "animate-spin" : undefined} aria-hidden />
                     <span className="mono">{String(i + 1).padStart(2, "0")}</span>
                   </div>
-                  <div
-                    className="at-val md"
-                    style={{
-                      fontSize: 18,
-                      color: status === "upcoming" ? "var(--at-ink-4)" : "var(--at-ink)",
-                    }}
-                  >
-                    {STAGE_LABEL[stage]}
-                  </div>
-                  <div className="at-delta" style={{ display: "flex", flexWrap: "wrap", gap: 8, marginTop: 8 }}>
+                  <h3 className="pd-stage-name">{STAGE_LABEL[stage]}</h3>
+                  <div className="pd-stage-badges">
                     {status === "done" && <Badge kind="success">done</Badge>}
                     {status === "current" && <Badge kind="info">current</Badge>}
+                    {status === "upcoming" && <span className="sr-only">upcoming</span>}
                     {(stage === "cdc" || stage === "cutover") && engVer && (
-                      <Badge kind={stageBadge(engVer, stage) === "live" ? "success" : "warning"}>
-                        {stageBadge(engVer, stage) === "live" ? "live verified" : "needs Kafka"}
+                      <Badge kind={stageBadge(engVer, stage) === "live" ? "success" : "warning"} className="normal-case">
+                        {stageBadge(engVer, stage) === "live" ? "Verified live" : "Needs Kafka"}
                       </Badge>
                     )}
                   </div>
                   {actionable && stage === "cutover" && (
-                    <div style={{ marginTop: 12 }}>
+                    <div className="pd-stage-run">
                       <Button size="sm" variant="danger" onClick={() => confirmThen({
                         title: "Run cutover?",
                         message: (a?.blockers?.length
@@ -155,69 +158,81 @@ export default function PlanDetail() {
                     </div>
                   )}
                   {actionable && stage !== "cutover" && (
-                    <div style={{ marginTop: 12 }}>
+                    <div className="pd-stage-run">
                       <Button size="sm" variant="primary" onClick={() => act(stage)?.catch(() => {})}>Run</Button>
                     </div>
                   )}
-                </div>
+                </li>
               );
             })}
-          </SwipeRail>
+          </ol>
         </div>
-      </div>
+      </section>
 
       {a && typeof a === "object" && "score" in a && (
-        <div className="at-panel">
+        <section className="at-panel" aria-labelledby="pd-assessment-title">
           <div className="at-panel-bar">
-            <span className="at-caption">Assessment</span>
+            <h2 id="pd-assessment-title" className="at-caption">Assessment</h2>
             <span className="grow" />
             <Badge kind={a.risk === "low" ? "success" : a.risk === "medium" ? "warning" : "danger"}>
               {a.risk} risk
             </Badge>
           </div>
-          <div className="at-list-row" style={{ alignItems: "center", gap: 24 }}>
+          <dl className="pd-figures">
             <div>
-              <div className="at-val lg mono">
+              <dt>Readiness</dt>
+              <dd>
                 {a.score}
-                <span style={{ fontSize: 14, color: "var(--at-ink-3)" }}>/100</span>
-              </div>
+                <span className="at-unit">/100</span>
+              </dd>
+              {typeof a.score === "number" && (
+                <dd className="at-trough" aria-hidden>
+                  <span className="at-level" style={{ width: `${Math.max(0, Math.min(100, a.score))}%` }} />
+                </dd>
+              )}
             </div>
-            <div className="at-sub" style={{ margin: 0 }}>
-              Est. downtime: <span style={{ color: "var(--at-ink)", fontWeight: 500 }}>{a.downtime_estimate}</span>
-              {" · "}
-              {a.table_count} tables
+            <div>
+              <dt>Estimated downtime</dt>
+              <dd>{a.downtime_estimate || "—"}</dd>
             </div>
-          </div>
+            <div>
+              <dt>Tables</dt>
+              <dd>{a.table_count ?? "—"}</dd>
+            </div>
+          </dl>
           {!!a.blockers?.length && (
-            <>
-              <div className="at-list-row" style={{ paddingBottom: 4 }}>
-                <span className="at-caption" style={{ color: "var(--at-fail)" }}>Blockers</span>
-              </div>
-              {a.blockers.map((b: string, k: number) => (
-                <div key={k} className="at-list-row" style={{ color: "var(--at-fail)", paddingTop: 8, paddingBottom: 8 }}>
-                  <span style={{ flex: 1 }}>{b}</span>
-                </div>
-              ))}
-            </>
+            <div className="pd-issues fail">
+              <h3>Blockers</h3>
+              <ul>
+                {a.blockers.map((b: string, k: number) => (
+                  <li key={k}>
+                    <OctagonAlert size={15} aria-hidden />
+                    <span>{b}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {!!a.warnings?.length && (
-            <>
-              <div className="at-list-row" style={{ paddingBottom: 4 }}>
-                <span className="at-caption" style={{ color: "var(--at-warn)" }}>Warnings</span>
-              </div>
-              {a.warnings.map((w: string, k: number) => (
-                <div key={k} className="at-list-row" style={{ color: "var(--at-warn)", paddingTop: 8, paddingBottom: 8 }}>
-                  <span style={{ flex: 1 }}>{w}</span>
-                </div>
-              ))}
-            </>
-          )}
-          {!a.blockers?.length && !a.warnings?.length && (
-            <div className="at-list-row" style={{ color: "var(--at-ok)" }}>
-              No blockers or warnings — ready to provision.
+            <div className="pd-issues warn">
+              <h3>Warnings</h3>
+              <ul>
+                {a.warnings.map((w: string, k: number) => (
+                  <li key={k}>
+                    <AlertTriangle size={15} aria-hidden />
+                    <span>{w}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
-        </div>
+          {!a.blockers?.length && !a.warnings?.length && (
+            <p className="pd-clear">
+              <Check size={15} aria-hidden />
+              No blockers or warnings. Ready to provision.
+            </p>
+          )}
+        </section>
       )}
     </DetailPage>
   );

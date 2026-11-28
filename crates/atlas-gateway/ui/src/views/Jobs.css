@@ -1,0 +1,50 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Jobs page (views/Jobs.tsx).
+ */
+
+@layer components {
+  .jobs-live {
+    margin-bottom: var(--a-s4);
+  }
+  .jobs-bar {
+    width: 112px;
+    height: 6px;
+    overflow: hidden;
+    border-radius: var(--a-pill);
+    background: var(--a-surface-3);
+  }
+  .jobs-bar > i {
+    display: block;
+    height: 100%;
+    border-radius: var(--a-pill);
+    background: var(--a-blue);
+  }
+  .jobs-bar[data-state="succeeded"] > i {
+    background: var(--a-ok);
+  }
+  .jobs-bar[data-state="failed"] > i {
+    background: var(--a-fail);
+  }
+  .jobs-detail {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1px;
+    margin: 0;
+    background: var(--a-line);
+  }
+  .jobs-detail > div {
+    padding: 10px 14px;
+    background: var(--a-surface);
+  }
+  .jobs-detail dt {
+    color: var(--a-ink-2);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .jobs-detail dd {
+    margin: 4px 0 0;
+    overflow-wrap: anywhere;
+  }
+}

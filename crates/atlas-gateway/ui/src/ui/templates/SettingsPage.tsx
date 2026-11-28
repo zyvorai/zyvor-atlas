@@ -1,6 +1,6 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Apple System Settings-style preference pane: a panel of labelled radio-tile blocks.
+// Preference page: a panel of labelled radio-tile blocks.
 // See docs/ATLAS_UI_CONTRACT.md's page-archetypes table ("Reference (settings)").
 import type { ReactNode } from "react";
 import { PageHead, type PageCrumb } from "../PageHead";

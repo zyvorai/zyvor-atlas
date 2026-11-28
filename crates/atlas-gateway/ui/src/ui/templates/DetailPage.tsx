@@ -1,8 +1,7 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Apple "Configurator" detail/drill-down page: breadcrumb-heavy header, an optional instrument
-// (stat-tile) strip, then free-form content — typically `DashboardModule` blocks (see
-// DashboardHero.tsx) for static sections, or a stage rail + active panel for a wizard.
+// Detail / drill-down page: breadcrumb header, an optional stat-tile strip, then free-form
+// content — typically `DashboardModule` blocks for static sections, or a stage rail for a wizard.
 // See docs/ATLAS_UI_CONTRACT.md's page-archetypes table ("Detail").
 import type { CSSProperties, ReactNode } from "react";
 import { PageHead, type PageCrumb } from "../PageHead";

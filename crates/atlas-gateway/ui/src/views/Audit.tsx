@@ -7,6 +7,7 @@ import { ListPage } from "../ui/templates/ListPage";
 import { navCrumbs } from "../nav/routes";
 import { Table } from "../ui/Table";
 import { stateKind, timeAgo } from "../lib/format";
+import "./Audit.css";
 
 export default function Audit() {
   const [actor, setActor] = useState("");
@@ -19,29 +20,30 @@ export default function Audit() {
   return (
     <ListPage
       crumbs={navCrumbs("audit")}
-      eyebrow="GOVERNANCE · INDEX"
+      eyebrow="Observability"
       title="Audit"
       state={
         data
           ? n
-            ? `${n} entr${n === 1 ? "y" : "ies"} — compliance trail of state-changing and sensitive actions.`
+            ? `${n} entr${n === 1 ? "y" : "ies"} of state-changing and sensitive actions.`
             : "No audit entries match these filters."
-          : "Loading compliance trail…"
+          : "Loading audit entries…"
       }
     >
       <div className="at-chips">
         <input
           className="at-chip-field"
           placeholder="Filter actor…"
+          aria-label="Filter by actor"
           value={actor}
           onChange={(e) => setActor(e.target.value)}
         />
         <input
-          className="at-chip-field"
+          className="at-chip-field aud-action"
           placeholder="Filter action…"
+          aria-label="Filter by action"
           value={action}
           onChange={(e) => setAction(e.target.value)}
-          style={{ minWidth: 180 }}
         />
       </div>
       <Table
@@ -51,7 +53,7 @@ export default function Audit() {
         rowKey={(a) => String(a.id)}
         empty="No audit entries."
         cols={[
-          { h: "When", f: (a) => <span style={{ color: "var(--at-ink-4)" }}>{timeAgo(a.created_at)}</span> },
+          { h: "When", f: (a) => <span className="text-muted-foreground">{timeAgo(a.created_at)}</span> },
           { h: "Actor", f: (a) => a.actor_id, mono: true },
           { h: "Action", f: (a) => a.action, mono: true },
           { h: "Resource", f: (a) => <span className="mono">{a.resource_type}/{a.resource_id}</span> },

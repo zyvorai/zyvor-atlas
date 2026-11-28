@@ -1,0 +1,149 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Plan detail: pipeline stages and assessment figures. Used only by PlanDetail.tsx.
+ */
+
+@layer components {
+  .pd-deadline,
+  .pd-count {
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .pd-pipeline {
+    padding: var(--a-s4) var(--a-s5) var(--a-s3);
+  }
+  .pd-pipeline .pd-trough {
+    margin: 0 0 var(--a-s4);
+  }
+  .pd-stages {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+    gap: var(--a-s3);
+    margin: 0;
+    padding: 0 0 var(--a-s2);
+    list-style: none;
+  }
+  .pd-stage {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: var(--a-s2);
+    min-width: 0;
+    min-height: 156px;
+    padding: var(--a-s4);
+    border-radius: var(--a-radius-sm);
+    background: var(--a-surface-2);
+  }
+  /* The current stage sits on the panel surface so its blue badge keeps its contrast. */
+  .pd-stage.current {
+    background: var(--a-surface);
+    box-shadow: inset 0 0 0 2px var(--a-blue);
+  }
+  .pd-stage-top {
+    display: flex;
+    align-items: center;
+    gap: var(--a-s2);
+    color: var(--a-ink-2);
+    font-size: 12px;
+  }
+  .pd-stage.done .pd-stage-top svg {
+    color: var(--a-ok);
+  }
+  .pd-stage.current .pd-stage-top svg {
+    color: var(--a-blue);
+  }
+  .pd-stage-name {
+    margin: 0;
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.016em;
+    line-height: 1.2;
+  }
+  .pd-stage.upcoming .pd-stage-name {
+    color: var(--a-ink-2);
+  }
+  .pd-stage-badges {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .pd-stage-run {
+    margin-top: auto;
+    padding-top: var(--a-s2);
+  }
+
+  .pd-figures {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: var(--a-s5);
+    margin: 0;
+    padding: var(--a-s5);
+  }
+  .pd-figures dt {
+    color: var(--a-ink-2);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .pd-figures dd {
+    margin: 4px 0 0;
+    font-size: 28px;
+    font-weight: 600;
+    letter-spacing: -0.028em;
+    line-height: 1.15;
+    font-variant-numeric: tabular-nums;
+  }
+  .pd-figures dd.at-trough {
+    max-width: 220px;
+    margin-top: var(--a-s3);
+  }
+  @media (max-width: 640px) {
+    .pd-figures {
+      grid-template-columns: minmax(0, 1fr);
+      gap: var(--a-s4);
+    }
+  }
+
+  .pd-issues {
+    padding: var(--a-s4) var(--a-s5);
+    border-top: 1px solid var(--a-line);
+  }
+  .pd-issues h3 {
+    margin: 0 0 var(--a-s2);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .pd-issues ul {
+    display: grid;
+    gap: var(--a-s2);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .pd-issues li,
+  .pd-clear {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--a-s2);
+    overflow-wrap: anywhere;
+  }
+  .pd-issues li svg,
+  .pd-clear svg {
+    flex: 0 0 auto;
+    margin-top: 2px;
+  }
+  .pd-issues.fail h3,
+  .pd-issues.fail li svg {
+    color: var(--a-fail);
+  }
+  .pd-issues.warn h3,
+  .pd-issues.warn li svg {
+    color: var(--a-warn);
+  }
+  .pd-clear {
+    margin: 0;
+    padding: var(--a-s4) var(--a-s5);
+    border-top: 1px solid var(--a-line);
+    color: var(--a-ok);
+  }
+}

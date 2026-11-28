@@ -9,13 +9,12 @@ import { useUi } from "./store/ui";
 
 function NotFound() {
   return (
-    <div className="at-empty-box max-w-lg mx-auto mt-10">
-      <Compass size={28} style={{ color: "var(--at-ink-4)" }} aria-hidden />
-      <div className="at-empty-title">Page not found</div>
+    <div className="at-empty-box mt-10">
+      <Compass size={28} aria-hidden />
+      <h1 className="at-empty-title">Page not found</h1>
       <p className="at-empty-copy">There&apos;s nothing at this address.</p>
       <Link to="/" className="at-btn primary">
         Back to Overview
-
       </Link>
     </div>
   );
@@ -24,16 +23,15 @@ function NotFound() {
 function AccessDenied({ module }: { module: NavModule }) {
   const label = module.minRole === "admin" ? "Admin" : module.minRole === "operator" ? "Operator" : "Viewer";
   return (
-    <div className="at-empty-box max-w-lg mx-auto mt-8">
-      <Lock size={28} style={{ color: "var(--at-ink-4)" }} aria-hidden />
-      <div className="at-empty-title">{label} access required</div>
+    <div className="at-empty-box mt-8">
+      <Lock size={28} aria-hidden />
+      <h1 className="at-empty-title">{label} access required</h1>
       <p className="at-empty-copy">
         Your session does not have permission to open <strong>{module.label}</strong>. Ask an admin to
         upgrade your role or use a token with {label.toLowerCase()} privileges.
       </p>
       <Link to="/" className="at-btn primary">
         Back to Overview
-
       </Link>
     </div>
   );

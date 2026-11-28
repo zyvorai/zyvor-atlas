@@ -9,6 +9,7 @@ import { DashboardHero } from "../ui/templates/DashboardHero";
 import { navCrumbs } from "../nav/routes";
 import { Table } from "../ui/Table";
 import { confirmThen } from "../ui/confirm";
+import "./DR.css";
 
 export default function DR() {
   const inv = useInvalidate();
@@ -27,17 +28,18 @@ export default function DR() {
   const refresh = () => inv("dr-status", "dr-peers", "dr-mirrors", "dr-preflight");
 
   const blockVols = (volumes || []).filter((v) => v.state === "bound" || v.state === "ready" || !v.state);
+  const verified = !!(status?.dataplane_verified || status?.verified);
 
   return (
     <DashboardHero
       className="at-stack"
       crumbs={navCrumbs("dr")}
-      eyebrow="INFRASTRUCTURE · OPS"
+      eyebrow="Infrastructure"
       title="Disaster Recovery"
       state={
         status
-          ? `${status.peers ?? 0} peer${(status.peers ?? 0) === 1 ? "" : "s"} · ${status.mirrors ?? 0} mirror${(status.mirrors ?? 0) === 1 ? "" : "s"} — control plane ${status.control_plane_ready ? "ready" : "incomplete"}; dataplane ${status.dataplane_verified || status.verified ? "verified" : "unverified (needs 2nd Ceph site)"}.`
-          : "Cross-cluster RBD mirroring & failover — control plane ready; live mirror needs a peer cluster."
+          ? `${status.peers ?? 0} peer${(status.peers ?? 0) === 1 ? "" : "s"} · ${status.mirrors ?? 0} mirror${(status.mirrors ?? 0) === 1 ? "" : "s"}. Control plane ${status.control_plane_ready ? "ready" : "incomplete"}, data plane ${verified ? "verified" : "unverified (needs a second Ceph site)"}.`
+          : "Cross-cluster RBD mirroring and failover. A live mirror needs a peer cluster."
       }
     >
 
@@ -60,49 +62,51 @@ export default function DR() {
         </div>
         <div className="at-instr">
           <div className="at-caption">Worst RPO</div>
-          <div className="at-val md mono">
+          <div className="at-val md">
             {status?.worst_rpo_seconds != null ? `${status.worst_rpo_seconds}s` : "—"}
           </div>
         </div>
-        <div className="at-instr">
-          <div className="at-caption">Dataplane</div>
-          <div className="at-val md" style={{ fontSize: 14 }}>
-            <Badge kind={status?.dataplane_verified || status?.verified ? "success" : "warning"}>
-              {status?.dataplane_verified || status?.verified ? "verified" : "unverified"}
-            </Badge>
+        <div className="at-instr dr-plane">
+          <div className="at-caption">Data plane</div>
+          <div className="at-val md">
+            {status ? (
+              <Badge kind={verified ? "success" : "warning"}>{verified ? "verified" : "unverified"}</Badge>
+            ) : (
+              "—"
+            )}
           </div>
         </div>
       </div>
 
       <div className="at-panel">
         <div className="at-panel-bar">
-          <span className="at-caption">Preflight</span>
+          <h2 className="at-caption">Preflight</h2>
           <span className="grow" />
-          <Badge kind={preflight?.ready ? "success" : "warning"}>
-            {preflight?.ready ? "ready" : "blocked"}
-          </Badge>
+          {preflight && (
+            <Badge kind={preflight.ready ? "success" : "warning"}>{preflight.ready ? "ready" : "blocked"}</Badge>
+          )}
         </div>
         <div className="at-list-row">
-          <span className="at-sub" style={{ margin: 0 }}>
-            {status?.note || "Run before failover drills. Live rbd mirror image status needs a second cluster — see docs/DR.md."}
+          <span className="dr-note">
+            {status?.note || "Run before failover drills. Live rbd mirror image status needs a second cluster (docs/DR.md)."}
           </span>
         </div>
         {(preflight?.checks ?? []).map((c: any) => (
-          <div key={c.id} className="at-list-row" style={{ alignItems: "center" }}>
+          <div key={c.id} className="at-list-row dr-check">
             <Badge kind={c.ok ? "success" : "danger"}>{c.ok ? "ok" : "fail"}</Badge>
-            <span className="mono" style={{ fontSize: 12 }}>{c.id}</span>
-            <span className="at-sub" style={{ margin: 0, flex: 1 }}>{c.detail}</span>
+            <span className="mono dr-id">{c.id}</span>
+            <span className="dr-note dr-grow">{c.detail}</span>
           </div>
         ))}
         {(preflight?.warnings ?? []).map((w: string, i: number) => (
-          <div key={`w-${i}`} className="at-list-row" style={{ alignItems: "center" }}>
+          <div key={`w-${i}`} className="at-list-row dr-check">
             <Badge kind="warning">warn</Badge>
-            <span className="at-sub" style={{ margin: 0, flex: 1 }}>{w}</span>
+            <span className="dr-note dr-grow">{w}</span>
           </div>
         ))}
         {(preflight?.checks ?? []).length === 0 && (
           <div className="at-list-row">
-            <span className="at-sub" style={{ margin: 0 }}>No preflight checks yet.</span>
+            <span className="dr-note">No preflight checks yet.</span>
           </div>
         )}
       </div>
@@ -110,57 +114,6 @@ export default function DR() {
       <Table
         soundings
         panelTitle="Mirroring peers"
-        panelExtra={
-          <div className="flex flex-wrap items-end gap-2">
-            <div>
-              <Label>Name</Label>
-              <Field className="w-28" value={peerName} onChange={(e) => setPeerName(e.target.value)} placeholder="dc2" />
-            </div>
-            <div>
-              <Label>Cluster FSID</Label>
-              <Field className="w-40" value={peerFsid} onChange={(e) => setPeerFsid(e.target.value)} placeholder="optional" />
-            </div>
-            <div>
-              <Label>Secret ref</Label>
-              <Field className="w-36" value={peerSecret} onChange={(e) => setPeerSecret(e.target.value)} placeholder="k8s secret" />
-            </div>
-            <div>
-              <Label>Direction</Label>
-              <Select value={peerDir} onChange={(e) => setPeerDir(e.target.value)}>
-                <option value="rx-tx">rx-tx</option>
-                <option value="rx">rx</option>
-                <option value="tx">tx</option>
-              </Select>
-            </div>
-            <button
-              type="button"
-              className="at-btn primary"
-              style={{ height: 32 }}
-              disabled={!peerName.trim()}
-              onClick={() =>
-                submit(
-                  "post",
-                  "/dr/peers",
-                  {
-                    name: peerName.trim(),
-                    cluster_fsid: peerFsid.trim() || undefined,
-                    secret_ref: peerSecret.trim() || undefined,
-                    direction: peerDir,
-                  },
-                  "peer registered",
-                  () => {
-                    setPeerName("");
-                    setPeerFsid("");
-                    setPeerSecret("");
-                    refresh();
-                  },
-                ).catch(() => {})
-              }
-            >
-              Register
-            </button>
-          </div>
-        }
         rows={peers}
         rowKey={(p) => p.id}
         cols={[
@@ -177,12 +130,66 @@ export default function DR() {
 
       <div className="at-panel">
         <div className="at-panel-bar">
-          <span className="at-caption">Enable mirror</span>
+          <h2 className="at-caption">Register peer</h2>
         </div>
-        <div className="at-form-grid" style={{ padding: "12px var(--page-inset) 16px" }}>
+        <div className="dr-form">
           <div>
-            <Label>Block volume</Label>
-            <Select value={volId} onChange={(e) => setVolId(e.target.value)}>
+            <Label htmlFor="dr-peer-name">Name</Label>
+            <Field id="dr-peer-name" value={peerName} onChange={(e) => setPeerName(e.target.value)} placeholder="dc2" />
+          </div>
+          <div>
+            <Label htmlFor="dr-peer-fsid">Cluster FSID</Label>
+            <Field id="dr-peer-fsid" value={peerFsid} onChange={(e) => setPeerFsid(e.target.value)} placeholder="optional" />
+          </div>
+          <div>
+            <Label htmlFor="dr-peer-secret">Secret ref</Label>
+            <Field id="dr-peer-secret" value={peerSecret} onChange={(e) => setPeerSecret(e.target.value)} placeholder="k8s secret" />
+          </div>
+          <div>
+            <Label htmlFor="dr-peer-direction">Direction</Label>
+            <Select id="dr-peer-direction" value={peerDir} onChange={(e) => setPeerDir(e.target.value)}>
+              <option value="rx-tx">rx-tx</option>
+              <option value="rx">rx</option>
+              <option value="tx">tx</option>
+            </Select>
+          </div>
+          <button
+            type="button"
+            className="at-btn primary dr-submit"
+            disabled={!peerName.trim()}
+            onClick={() =>
+              submit(
+                "post",
+                "/dr/peers",
+                {
+                  name: peerName.trim(),
+                  cluster_fsid: peerFsid.trim() || undefined,
+                  secret_ref: peerSecret.trim() || undefined,
+                  direction: peerDir,
+                },
+                "peer registered",
+                () => {
+                  setPeerName("");
+                  setPeerFsid("");
+                  setPeerSecret("");
+                  refresh();
+                },
+              ).catch(() => {})
+            }
+          >
+            Register
+          </button>
+        </div>
+      </div>
+
+      <div className="at-panel">
+        <div className="at-panel-bar">
+          <h2 className="at-caption">Enable mirror</h2>
+        </div>
+        <div className="dr-form">
+          <div>
+            <Label htmlFor="dr-mirror-volume">Block volume</Label>
+            <Select id="dr-mirror-volume" value={volId} onChange={(e) => setVolId(e.target.value)}>
               <option value="">Select volume…</option>
               {blockVols.map((v) => (
                 <option key={v.id} value={v.id}>
@@ -192,8 +199,8 @@ export default function DR() {
             </Select>
           </div>
           <div>
-            <Label>Peer</Label>
-            <Select value={mirrorPeer} onChange={(e) => setMirrorPeer(e.target.value)}>
+            <Label htmlFor="dr-mirror-peer">Peer</Label>
+            <Select id="dr-mirror-peer" value={mirrorPeer} onChange={(e) => setMirrorPeer(e.target.value)}>
               <option value="">Select peer…</option>
               {(peers || []).map((p: any) => (
                 <option key={p.id} value={p.id}>
@@ -203,13 +210,13 @@ export default function DR() {
             </Select>
           </div>
           <div>
-            <Label>Mode</Label>
-            <Select value={mirrorMode} onChange={(e) => setMirrorMode(e.target.value)}>
+            <Label htmlFor="dr-mirror-mode">Mode</Label>
+            <Select id="dr-mirror-mode" value={mirrorMode} onChange={(e) => setMirrorMode(e.target.value)}>
               <option value="snapshot">snapshot</option>
               <option value="journal">journal</option>
             </Select>
           </div>
-          <div style={{ display: "flex", alignItems: "flex-end" }}>
+          <div className="dr-submit">
             <Button
               variant="primary"
               disabled={!volId || !mirrorPeer}
@@ -241,7 +248,7 @@ export default function DR() {
         soundings
         panelTitle={
           <>
-            Mirrored images <Badge kind="neutral">{mirrors?.length ?? 0}</Badge>
+            Mirrored images {mirrors && <Badge kind="neutral">{mirrors.length}</Badge>}
           </>
         }
         rows={mirrors}
@@ -256,7 +263,7 @@ export default function DR() {
           { h: "Last failover", f: (m) => m.last_failover_at || "—" },
         ]}
         actions={(m) => (
-          <div className="flex flex-wrap gap-1">
+          <div className="dr-actions">
             {m.role === "secondary" ? (
               <>
                 <Button size="sm" onClick={() => confirmThen({ title: "Fail over (promote)?", message: `Promote ${m.pool}/${m.image} to primary on this cluster.`, confirmLabel: "Promote", danger: true }, () => submitJob("post", `/dr/mirrors/${m.id}/promote`, null, "promote", refresh))}>Promote</Button>

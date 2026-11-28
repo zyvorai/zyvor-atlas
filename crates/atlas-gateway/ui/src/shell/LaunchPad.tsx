@@ -1,6 +1,6 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-/** Atlas Launch Pad — Mission Control analog: sectioned app grid over the canvas. */
+/** Atlas Launch Pad — every page, sectioned, over the canvas. */
 import { useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { useNavigate } from "react-router-dom";
@@ -8,7 +8,6 @@ import { X } from "lucide-react";
 import { modulesForRole, SECTION_META, SECTIONS } from "../nav/routes";
 import { NavAppIcon } from "../nav/NavAppIcon";
 import { useUi } from "../store/ui";
-import { cx } from "../lib/format";
 
 export function LaunchPad({ open, onClose }: { open: boolean; onClose: () => void }) {
   const nav = useNavigate();
@@ -49,8 +48,8 @@ export function LaunchPad({ open, onClose }: { open: boolean; onClose: () => voi
             <div className="at-launchpad-kicker">Atlas</div>
             <h2 className="at-launchpad-title">Launch pad</h2>
           </div>
-          <button type="button" className="at-iconbtn" aria-label="Close launch pad" onClick={onClose}>
-            <X size={16} />
+          <button type="button" className="at-iconbtn" aria-label="Close launch pad" autoFocus onClick={onClose}>
+            <X size={18} aria-hidden />
           </button>
         </div>
         <div className="at-launchpad-body">
@@ -68,7 +67,7 @@ export function LaunchPad({ open, onClose }: { open: boolean; onClose: () => voi
                       onClose();
                     }}
                   >
-                    <NavAppIcon icon={m.icon} section={m.section} size={22} className="at-appicon-lg" />
+                    <NavAppIcon icon={m.icon} size={22} className="at-appicon-lg" />
                     <span className="at-launchpad-tile-label">{m.label}</span>
                   </button>
                 ))}
@@ -76,7 +75,7 @@ export function LaunchPad({ open, onClose }: { open: boolean; onClose: () => voi
             </section>
           ))}
         </div>
-        <p className={cx("at-launchpad-hint")}>Esc to close · ⌘⌥L / Ctrl-Alt-L</p>
+        <p className="at-launchpad-hint">Esc to close · ⌘⌥L / Ctrl-Alt-L</p>
       </div>
     </div>,
     document.body,

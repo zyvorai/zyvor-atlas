@@ -1,0 +1,11 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Audit page (views/Audit.tsx).
+ */
+
+@layer components {
+  .aud-action {
+    min-width: 180px;
+  }
+}

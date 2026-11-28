@@ -1,0 +1,105 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Observatory page layout. Nothing outside views/Observatory.tsx uses these.
+ */
+
+@layer components {
+  .obs-top {
+    display: grid;
+    grid-template-columns: minmax(0, 7fr) minmax(0, 5fr);
+    gap: var(--a-s5);
+  }
+  /* The grid spaces the two panels; the shared sibling margin would offset the second. */
+  .obs-top > .at-panel + .at-panel {
+    margin-top: 0;
+  }
+  .obs-io {
+    display: flex;
+    flex-direction: column;
+    gap: var(--a-s5);
+    padding: var(--a-s5);
+  }
+  .obs-capacity {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: var(--a-s4);
+    padding: var(--a-s5);
+    text-align: center;
+  }
+  .obs-figures {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--a-s3) var(--a-s7);
+    margin: 0;
+  }
+  .obs-figures dt {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .obs-figures dd {
+    margin: 2px 0 0;
+    font-size: 26px;
+    font-weight: 600;
+    letter-spacing: -0.022em;
+    font-variant-numeric: tabular-nums;
+  }
+  .obs-figures dd small,
+  .obs-figures dd.sub {
+    color: var(--a-ink-2);
+    font-size: 12.5px;
+    font-weight: 400;
+    letter-spacing: 0;
+  }
+  /* Same marks as the chart legend: read is solid blue, write is dashed. */
+  .obs-key line {
+    stroke: var(--a-blue);
+    stroke-width: 2;
+    stroke-linecap: round;
+  }
+  .obs-key-write line {
+    stroke: var(--a-ink-2);
+    stroke-dasharray: 6 5;
+  }
+
+  .obs-grid {
+    margin-bottom: clamp(24px, 4vw, 44px);
+  }
+  .obs-bars {
+    min-height: 120px;
+  }
+
+  .obs-lens {
+    padding: var(--a-s4) var(--a-s4) var(--a-s3);
+  }
+  .obs-lens > .at-sub {
+    margin: 0 var(--a-s2) var(--a-s2);
+  }
+  .obs-canvas {
+    position: relative;
+    height: min(52vh, 480px);
+    min-height: 320px;
+  }
+  .obs-canvas canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+  }
+
+  @media (max-width: 1100px) {
+    .obs-top {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+}
+
+/* Placement of the shared graphics. Unlayered, because graphics.css is. */
+.obs-bars .ag-pools {
+  padding: var(--a-s2) var(--a-s5);
+}

@@ -6,8 +6,8 @@ import { SettingsPage, type SettingsBlock } from "../ui/templates/SettingsPage";
 import { navCrumbs } from "../nav/routes";
 
 const DENSITY_OPTIONS: { id: Density; title: string; hint: string }[] = [
-  { id: "comfortable", title: "Comfortable", hint: "Default spacing for charts and tables" },
-  { id: "compact", title: "Compact", hint: "Tighter rows — more density on large fleets" },
+  { id: "comfortable", title: "Comfortable", hint: "Roomier charts and tables" },
+  { id: "compact", title: "Compact", hint: "Tighter rows for large fleets" },
 ];
 
 export default function Settings() {
@@ -18,16 +18,16 @@ export default function Settings() {
 
   const blocks: SettingsBlock<Theme | Density>[] = [
     {
-      label: "Shell theme",
-      hint: "Night is graphite (#0b0b0f) with electric blue. Day is classic light shop (#F5F5F7 + Apple Blue). Cosmic Orange is reserved for the brand mark only.",
+      label: "Theme",
+      hint: "System follows this device. Light and Dark stay fixed.",
       value: theme,
       onChange: (v) => setTheme(v as Theme),
       options: THEME_OPTIONS,
-      ariaLabel: "Shell theme",
+      ariaLabel: "Theme",
     },
     {
       label: "Density",
-      hint: "Applies to tables and page padding in this console.",
+      hint: "Sets table rows and spacing.",
       value: density,
       onChange: (v) => setDensity(v as Density),
       options: DENSITY_OPTIONS,
@@ -39,9 +39,9 @@ export default function Settings() {
   return (
     <SettingsPage
       crumbs={navCrumbs("settings")}
-      eyebrow="CONSOLE · APPEARANCE"
+      eyebrow="This browser"
       title="Settings"
-      state="Look & feel and density for this browser. Night is the dark graphite shell; Day is the light shop shell."
+      state="Choose how the console looks."
       panelLabel="Appearance"
       blocks={blocks}
     />

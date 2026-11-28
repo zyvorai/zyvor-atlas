@@ -1,0 +1,24 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Mac disk lifecycle (views/MacDisks.tsx), shown inside the Disks page.
+ */
+
+@layer components {
+  /* One line of actions per disk; a narrow screen scrolls the table sideways. */
+  .mac-actions {
+    display: inline-flex;
+    gap: 6px;
+  }
+  .mac-picker {
+    display: flex;
+    align-items: center;
+    gap: var(--a-s2);
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .mac-picker .field {
+    width: auto;
+    min-width: 200px;
+  }
+}

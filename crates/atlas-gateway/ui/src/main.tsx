@@ -1,5 +1,7 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+// The design system must be the first stylesheet so its cascade layer order wins (see index.css).
+import "./index.css";
 import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -10,7 +12,6 @@ import { useUi } from "./store/ui";
 import type { NavRole } from "./lib/auth";
 import { Toaster } from "./ui/Toaster";
 import { ConfirmHost } from "./ui/confirm";
-import "./index.css";
 
 // After a successful OIDC round-trip, `/auth/oidc/callback` (server-side) redirects the browser
 // back to `/?atlas_token=...&atlas_role=...` — this is a same-origin SPA reload, so pick the

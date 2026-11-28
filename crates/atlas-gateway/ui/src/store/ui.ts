@@ -10,6 +10,13 @@ import {
   persistNavRecents,
   type NavRecent,
 } from "../lib/navRecents";
+import {
+  THEME_STORAGE_KEY,
+  applyTheme,
+  parseThemePref,
+  watchSystemTheme,
+  type ThemePref,
+} from "../lib/themes";
 
 interface TrackedJob {
   id: string;
@@ -19,7 +26,7 @@ interface TrackedJob {
   error?: string | null;
 }
 
-export type Theme = "night" | "day";
+export type Theme = ThemePref;
 export type Density = "comfortable" | "compact";
 
 interface UiState {
@@ -71,23 +78,13 @@ const initialRole: NavRole =
     ? savedRoleRaw
     : roleFromToken(savedToken);
 const initialRoleLevel = roleLevel(initialRole);
-const THEMES = new Set<Theme>(["night", "day"]);
-const LEGACY_THEME: Record<string, Theme> = { carbon: "night", "apple-lite": "day" };
-const rawTheme = ls?.getItem("atlas.theme") || "";
-const migratedTheme: Theme =
-  THEMES.has(rawTheme as Theme)
-    ? (rawTheme as Theme)
-    : LEGACY_THEME[rawTheme] ?? "night";
-if (rawTheme && rawTheme !== migratedTheme) {
-  ls?.setItem("atlas.theme", migratedTheme);
-}
-const savedTheme: Theme = migratedTheme;
+const rawTheme = ls?.getItem(THEME_STORAGE_KEY) || "";
+const savedTheme: Theme = parseThemePref(rawTheme);
+// Rewrite values from earlier versions once, so storage only ever holds the current names.
+if (rawTheme && rawTheme !== savedTheme) ls?.setItem(THEME_STORAGE_KEY, savedTheme);
 const savedDensity = (ls?.getItem("atlas.density") as Density) || "comfortable";
 const savedSidebarCollapsed = ls?.getItem("atlas.sidebar-collapsed") === "1";
 
-function applyTheme(t: Theme) {
-  if (typeof document !== "undefined") document.documentElement.dataset.uiShell = t;
-}
 function applyDensity(d: Density) {
   if (typeof document !== "undefined") document.documentElement.dataset.density = d;
 }
@@ -130,7 +127,7 @@ export const useUi = create<UiState>((set) => ({
   },
   theme: savedTheme,
   setTheme: (t) => {
-    ls?.setItem("atlas.theme", t);
+    ls?.setItem(THEME_STORAGE_KEY, t);
     applyTheme(t);
     set({ theme: t });
   },
@@ -173,6 +170,11 @@ export const useUi = create<UiState>((set) => ({
       return { jobs };
     }),
 }));
+
+// While the preference is "system", follow the OS live.
+watchSystemTheme(() => {
+  if (useUi.getState().theme === "system") applyTheme("system");
+});
 
 export function jobIsTerminal(state: string) {
   return state === "succeeded" || state === "failed";

@@ -3,6 +3,7 @@
 // Client-side rolling history of /metrics/summary so the Command Deck can draw live trends
 // (the gateway keeps only point-in-time snapshots; real time-series lives in Prometheus).
 import type { MetricHistoryPoint, MetricsSummary } from "../api/types";
+import type { TrendSeries } from "../graphics/types";
 
 export interface Sample {
   t: number;
@@ -68,4 +69,30 @@ export function onHistory(fn: () => void): () => void {
   return () => {
     subs.delete(fn);
   };
+}
+
+/**
+ * Longest silence an IOPS line bridges. Live samples arrive every few seconds but the seeded ones
+ * follow the gateway's sampling interval (60 s by default, configurable), so the limit is three of
+ * the slower cadence, and never under 150 s.
+ */
+export function iopsMaxGapMs(samples: readonly Sample[]): number {
+  const slow = samples
+    .slice(1)
+    .map((s, i) => s.t - samples[i].t)
+    .filter((ms) => ms > 30_000)
+    .sort((a, b) => a - b);
+  return Math.max(150_000, (slow[Math.floor(slow.length / 2)] ?? 0) * 3);
+}
+
+/**
+ * The buffer as chart series. A rate is the difference between two counter readings, so the first
+ * sample has none and is left out rather than drawn as zero.
+ */
+export function iopsTrend(samples: readonly Sample[]): TrendSeries[] {
+  const measured = samples.slice(1);
+  return [
+    { id: "read", label: "Read", points: measured.map((s) => ({ t: s.t, v: s.readIops })) },
+    { id: "write", label: "Write", points: measured.map((s) => ({ t: s.t, v: s.writeIops })) },
+  ];
 }

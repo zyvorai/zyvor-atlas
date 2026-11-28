@@ -1,0 +1,38 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Cloud databases: the live-verification matrix. Used only by Sources.tsx.
+ */
+
+@layer components {
+  .db-verify {
+    min-width: 1040px;
+  }
+  .db-verify tbody th {
+    padding: var(--a-row-y) var(--a-row-x) var(--a-row-y) var(--a-s5);
+    border-bottom: 1px solid var(--a-line);
+    font-weight: 600;
+    text-align: left;
+    white-space: nowrap;
+  }
+  .db-verify tbody tr:last-child th {
+    border-bottom: none;
+  }
+  .db-verify .db-verify-stage {
+    width: 84px;
+    text-align: center;
+  }
+  .db-verify-yes {
+    display: inline-block;
+    color: var(--a-ok);
+  }
+  .db-verify-note {
+    min-width: 220px;
+    color: var(--a-ink-2);
+    font-size: 12.5px;
+  }
+  .db-verify-hint {
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+}

@@ -1,0 +1,118 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Data tables. Deliberately dense: 13px, tabular numerals, hairline rows. .at-tbl and .ztable
+ * look the same; row padding follows the density setting.
+ */
+
+.at-tbl,
+.ztable {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+  font-variant-numeric: tabular-nums;
+}
+.at-tbl th,
+.ztable th {
+  height: 36px;
+  padding: 0 var(--a-row-x);
+  border-bottom: 1px solid var(--a-line);
+  background: var(--a-surface);
+  color: var(--a-ink-2);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: left;
+  white-space: nowrap;
+}
+.at-tbl td,
+.ztable td {
+  padding: var(--a-row-y) var(--a-row-x);
+  border-bottom: 1px solid var(--a-line);
+  vertical-align: middle;
+}
+.ztable td {
+  white-space: nowrap;
+}
+.at-tbl th:first-child,
+.at-tbl td:first-child,
+.ztable th:first-child,
+.ztable td:first-child {
+  padding-left: var(--a-s5);
+}
+.at-tbl th:last-child,
+.at-tbl td:last-child,
+.ztable th:last-child,
+.ztable td:last-child {
+  padding-right: var(--a-s5);
+}
+.at-tbl tbody tr:last-child td,
+.ztable tbody tr:last-child td {
+  border-bottom: none;
+}
+.at-tbl tbody tr,
+.ztable tbody tr {
+  transition: background-color 0.12s linear;
+}
+.at-tbl tbody tr:hover,
+.ztable tbody tr:hover {
+  background: color-mix(in srgb, var(--a-surface-2) 70%, transparent);
+}
+.at-tbl tbody tr.selected,
+.ztable tbody tr.selected {
+  background: var(--a-blue-wash);
+}
+.at-tbl tbody tr:focus-visible,
+.ztable tbody tr:focus-visible {
+  outline-offset: -2px;
+}
+.at-tbl .mono,
+.ztable .mono {
+  font-size: 12.5px;
+}
+.at-tbl th.sortable,
+.ztable th.sortable {
+  cursor: pointer;
+  user-select: none;
+}
+.at-tbl th.sortable:hover,
+.ztable th.sortable:hover {
+  color: var(--a-ink);
+}
+.at-th-sort {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+/* Identifiers and figures stay on one line; wide tables scroll sideways instead. */
+.at-tbl td.mono,
+.at-tbl span.mono {
+  white-space: nowrap;
+}
+.at-row-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 4px;
+  white-space: nowrap;
+}
+.at-table-error {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: var(--a-s2);
+  padding: 40px var(--a-s4);
+  color: var(--a-fail);
+  font-size: 14px;
+  text-align: center;
+}
+.at-table-error .detail {
+  max-width: 28rem;
+  color: var(--a-ink-2);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}

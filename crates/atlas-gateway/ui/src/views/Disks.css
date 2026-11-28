@@ -1,0 +1,17 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Disks page (views/Disks.tsx).
+ */
+
+@layer components {
+  .dsk-embedded-actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+}
+
+/* Placement of the shared graphics. Unlayered, because graphics.css is. */
+.dsk-usage .ag-pools {
+  padding: var(--a-s2) var(--a-s5);
+}

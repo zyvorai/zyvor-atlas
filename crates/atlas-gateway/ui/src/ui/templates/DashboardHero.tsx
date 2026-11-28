@@ -1,10 +1,9 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Apple product-hero / tech-specs dashboard page: header, then a sequence of `.at-mod` module
-// blocks (an optional titled bar over free-form content). Covers both "full hero" pages
-// (Overview) and instrument-panel-only ops consoles (Ceph, Maintenance, DR, Observatory) — the
-// difference is only which modules a page composes, not the template.
-// See docs/ATLAS_UI_CONTRACT.md's page-archetypes table ("Product hero" / "Instrument / Ops console").
+// Dashboard page: header, then a sequence of `.at-mod` module blocks (an optional headline over
+// free-form content). `hero` gives the centred product-style headline (Overview); without it the
+// same template serves dense ops consoles (Ceph, Maintenance, DR, Observatory).
+// See docs/ATLAS_UI_CONTRACT.md's page-archetypes table ("Product hero" / "Ops console").
 import type { ReactNode } from "react";
 import { PageHead, type PageCrumb } from "../PageHead";
 import { cx } from "../../lib/format";
@@ -18,33 +17,35 @@ export interface DashboardHeroProps {
   /** Passed through to the root div — e.g. "at-stack" for pages that space their body with flex+gap
    * instead of `.at-mod` module blocks (Maintenance, DR). */
   className?: string;
+  /** Centred hero headline instead of the left-aligned page head. */
+  hero?: boolean;
   children: ReactNode;
 }
 
-export function DashboardHero({ crumbs, eyebrow, title, state, actions, className, children }: DashboardHeroProps) {
+export function DashboardHero({ crumbs, eyebrow, title, state, actions, className, hero, children }: DashboardHeroProps) {
   return (
     <div className={className}>
-      <PageHead crumbs={crumbs} eyebrow={eyebrow} title={title} state={state} actions={actions} />
+      <PageHead crumbs={crumbs} eyebrow={eyebrow} title={title} state={state} actions={actions} hero={hero} />
       {children}
     </div>
   );
 }
 
 export interface DashboardModuleProps {
-  /** Omit for a bare module (e.g. the hero capacity module) — no `.at-modhead` label bar. */
+  /** Omit for a bare module with no `.at-modhead` headline. */
   title?: ReactNode;
   note?: ReactNode;
   className?: string;
   children: ReactNode;
 }
 
-/** The repeated `.at-mod` block: an optional titled bar over free-form module content. */
+/** The repeated `.at-mod` block: an optional headline over free-form module content. */
 export function DashboardModule({ title, note, className, children }: DashboardModuleProps) {
   return (
     <div className={cx("at-mod", className)}>
       {title != null ? (
         <div className="at-modhead">
-          <span className="at-modtitle">{title}</span>
+          <h2 className="at-modtitle">{title}</h2>
           <span className="at-modrule" />
           {note != null ? <span className="at-modnote">{note}</span> : null}
         </div>

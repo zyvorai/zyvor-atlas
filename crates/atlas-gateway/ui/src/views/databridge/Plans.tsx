@@ -9,6 +9,8 @@ import { Badge, Button, FormModal } from "../../ui/kit";
 import { ListPage } from "../../ui/templates/ListPage";
 import { navCrumbs } from "../../nav/routes";
 import { Table } from "../../ui/Table";
+import { EmptyState } from "../../graphics";
+import "./Plans.css";
 
 export const planStateKind = (s: string) =>
   s.includes("failed") || s === "rolled_back" ? "danger"
@@ -21,7 +23,7 @@ export const planStateKind = (s: string) =>
 export const planStateLabel = (s: string) => s.replace(/_/g, " ");
 
 export default function Plans() {
-  const { data } = usePlans();
+  const { data, isError } = usePlans();
   const { data: sources } = useSources();
   const inv = useInvalidate();
   const nav = useNavigate();
@@ -29,49 +31,71 @@ export default function Plans() {
   const srcName = (id: string) => sources?.find((s) => s.id === id)?.name || id;
   const n = data?.length || 0;
 
+  const newPlan = (
+    <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
+      <Plus size={14} /> New plan
+    </button>
+  );
+
   return (
     <ListPage
       crumbs={navCrumbs("migration-plans")}
-      eyebrow="DATABRIDGE · INDEX"
-      title="Migration Plans"
+      eyebrow="Database migration"
+      title="Migration plans"
       state={
-        n
-          ? `${n} plan${n === 1 ? "" : "s"} — assess, provision, full-load, CDC, validate, cutover.`
-          : "No migration plans yet. Create one after registering a cloud source."
+        !data
+          ? isError
+            ? "Could not load plans."
+            : "Loading plans…"
+          : n
+            ? `${n} plan${n === 1 ? "" : "s"}. Open one to run its stages.`
+            : "No plans yet. Register a source, then create a plan."
       }
-      actions={
-        <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-          <Plus size={14} /> New plan
-        </button>
-      }
+      actions={newPlan}
     >
-      <Table
-        soundings
-        panelTitle="Plan index"
-        rows={data}
-        rowKey={(r) => r.id}
-        empty="No migration plans yet."
-        emptyCta={
-          <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-            <Plus size={14} /> New plan
-          </button>
-        }
-        cols={[
-          { h: "Name", f: (r) => r.name, mono: true },
-          { h: "Source", f: (r) => srcName(r.source_id) },
-          { h: "Readiness", f: (r) => r.readiness_score ? `${r.readiness_score}%` : "—" },
-          { h: "State", f: (r) => <Badge kind={planStateKind(r.state)} dot>{planStateLabel(r.state)}</Badge> },
-        ]}
-        actions={(r) => <Button size="sm" onClick={() => nav(`/databridge/plans/${r.id}`)}>Open</Button>}
-      />
+      {data && !data.length ? (
+        <div className="at-panel">
+          <h2 className="sr-only">Plans</h2>
+          <EmptyState art="volume" title="No migration plans yet" description="A plan moves one source database to an edge cluster.">
+            {newPlan}
+          </EmptyState>
+        </div>
+      ) : (
+        <Table
+          soundings
+          panelTitle="Plans"
+          rows={data}
+          rowKey={(r) => r.id}
+          cols={[
+            { h: "Name", f: (r) => r.name, mono: true },
+            { h: "Source", f: (r) => srcName(r.source_id) },
+            {
+              h: "Readiness",
+              f: (r) =>
+                r.readiness_score ? (
+                  <span className="db-score">
+                    <span className="at-mini" aria-hidden>
+                      <i style={{ width: `${Math.max(0, Math.min(100, r.readiness_score))}%` }} />
+                    </span>
+                    {r.readiness_score}%
+                  </span>
+                ) : (
+                  "—"
+                ),
+            },
+            { h: "State", f: (r) => <Badge kind={planStateKind(r.state)} dot>{planStateLabel(r.state)}</Badge> },
+          ]}
+          actions={(r) => <Button size="sm" onClick={() => nav(`/databridge/plans/${r.id}`)}>Open</Button>}
+        />
+      )}
 
       <FormModal open={create} onClose={() => setCreate(false)} title="New migration plan" submitLabel="Create"
         fields={[
           { name: "name", label: "Plan name" },
           {
-            name: "source_id", label: "Source (from Cloud Databases)",
+            name: "source_id", label: "Source database",
             options: (sources || []).map((s) => ({ value: s.id, label: s.name })),
-            hint: "No sources registered yet — register one on the Cloud Databases page first.",
+            hint: "No sources yet. Register one on the Cloud databases page.",
           },
         ]}
         onSubmit={(v) => submit("post", "/databridge/plans", { name: v.name, source_id: v.source_id }, "create plan", () => inv("db-plans"))} />

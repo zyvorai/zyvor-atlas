@@ -1,0 +1,24 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ */
+
+@layer components {
+  .bu-dim {
+    color: var(--a-ink-2);
+  }
+  /* Object browser toolbar: the prefix field takes the room, the rest wraps under it. */
+  .bu-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--a-s2);
+    margin-bottom: var(--a-s3);
+  }
+  .bu-toolbar .bu-prefix {
+    flex: 1 1 180px;
+    width: auto;
+  }
+  .bu-toolbar .bu-keep {
+    width: 84px;
+  }
+}

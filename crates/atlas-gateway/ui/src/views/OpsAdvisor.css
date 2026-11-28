@@ -1,0 +1,156 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Ops Advisor (views/OpsAdvisor.tsx).
+ */
+
+@layer components {
+  .adv-form {
+    display: grid;
+    gap: var(--a-s4);
+    padding: var(--a-s5);
+  }
+  .adv-question {
+    resize: vertical;
+  }
+  .adv-chips {
+    margin: 0;
+  }
+  .adv-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--a-s3) var(--a-s4);
+  }
+  .adv-grow {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+  .adv-note {
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+  .adv-small {
+    font-size: 11px;
+  }
+  .adv-line {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px var(--a-s2);
+  }
+  .adv-copy {
+    max-width: 78ch;
+    margin: 6px 0 var(--a-s2);
+    color: var(--a-ink-2);
+    font-size: 13.5px;
+  }
+  .adv-code {
+    font-size: 11.5px;
+    overflow-wrap: anywhere;
+  }
+  .adv-step {
+    margin: 0;
+    font-size: 14px;
+    font-weight: 600;
+  }
+  .adv-eye {
+    flex: 0 0 auto;
+    margin-top: 2px;
+    color: var(--a-ink-2);
+  }
+
+  .adv-assessment {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: var(--a-s5) var(--a-s7);
+    padding: var(--a-s5) var(--a-s5) var(--a-s6);
+  }
+  .adv-meter {
+    flex: 0 1 240px;
+    min-width: 200px;
+  }
+  .adv-score {
+    font-size: 72px;
+    font-weight: 700;
+    letter-spacing: -0.035em;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  .adv-track {
+    height: 8px;
+    margin-top: var(--a-s3);
+    overflow: hidden;
+    border-radius: var(--a-pill);
+    background: var(--a-surface-3);
+  }
+  .adv-track > i {
+    display: block;
+    height: 100%;
+    border-radius: var(--a-pill);
+    background: var(--a-ok);
+  }
+  .adv-meter.warning .adv-track > i {
+    background: var(--a-warn);
+  }
+  .adv-meter.danger .adv-track > i {
+    background: var(--a-fail);
+  }
+  .adv-summary {
+    flex: 1 1 360px;
+    min-width: 0;
+  }
+  .adv-level {
+    text-transform: capitalize;
+  }
+  .adv-warning {
+    display: flex;
+    align-items: baseline;
+    gap: 6px;
+    margin-top: var(--a-s2);
+    color: var(--a-warn);
+    font-size: 13px;
+  }
+  .adv-warning svg {
+    flex: 0 0 auto;
+  }
+
+  .adv-fields {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+    gap: var(--a-s3);
+  }
+  .adv-fields .field {
+    margin-top: 6px;
+  }
+  .adv-check {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+  }
+  .adv-toolbar > .at-btn:last-child {
+    margin-left: auto;
+  }
+  .adv-result {
+    display: grid;
+    gap: var(--a-s4);
+    padding-top: var(--a-s4);
+    border-top: 1px solid var(--a-line);
+    text-align: center;
+  }
+  .adv-compare {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: center;
+    gap: var(--a-s5);
+  }
+  .adv-compare > div {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+  }
+}

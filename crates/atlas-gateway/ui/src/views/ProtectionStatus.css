@@ -1,0 +1,74 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Verdict summary: one proportional bar over five counts.
+ */
+
+@layer components {
+  .at-panel.ps-summary {
+    display: flex;
+    flex-direction: column;
+    gap: var(--a-s5);
+    padding: var(--a-s5);
+  }
+  .ps-bar {
+    display: flex;
+    gap: 2px;
+    height: 12px;
+    overflow: hidden;
+    border-radius: var(--a-pill);
+  }
+  .ps-seg {
+    flex-basis: 0;
+    min-width: 6px;
+  }
+  .ps-healthy {
+    background: var(--a-ok);
+  }
+  .ps-degraded {
+    background: var(--a-warn);
+  }
+  .ps-rebuilding {
+    background: var(--a-blue);
+  }
+  .ps-critical {
+    background: var(--a-fail);
+  }
+  /* Striped, so it differs from critical by more than position. */
+  .ps-at_risk {
+    background: repeating-linear-gradient(135deg, var(--a-fail) 0 4px, var(--a-fail-wash) 4px 7px);
+  }
+  .ps-counts {
+    display: grid;
+    grid-template-columns: repeat(5, minmax(0, 1fr));
+    gap: var(--a-s4);
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .ps-counts li {
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    min-width: 0;
+  }
+  .ps-count {
+    font-size: 36px;
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+    font-variant-numeric: tabular-nums;
+  }
+  /* Nine columns: one line per volume, scrolling sideways when narrow. */
+  .ps-table .at-tbl td {
+    white-space: nowrap;
+  }
+  .ps-verdict {
+    display: flex;
+  }
+  @media (max-width: 720px) {
+    .ps-counts {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+}

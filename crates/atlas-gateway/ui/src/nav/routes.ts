@@ -88,10 +88,8 @@ export interface NavModule {
   icon: LucideIcon;
   section: SectionId;
   minRole?: NavRole;
-  /** Keyboard shortcuts + Control Center quick list (no vertical icon rail). */
+  /** Reachable by a single-key shortcut. */
   pinned?: boolean;
-  /** Apple.com-style top primary strip. */
-  topPrimary?: boolean;
   shortcut?: string;
   hiddenFromNav?: boolean;
   element?: ComponentType;
@@ -124,11 +122,10 @@ export const MODULES: NavModule[] = [
     icon: LayoutDashboard,
     section: "STORAGE",
     pinned: true,
-    topPrimary: true,
     shortcut: "H",
     element: Overview,
   },
-  { id: "volumes", codename: "atlas", label: "Volumes", path: "/volumes", icon: HardDrive, section: "STORAGE", minRole: "operator", pinned: true, topPrimary: true, shortcut: "V", element: Volumes },
+  { id: "volumes", codename: "atlas", label: "Volumes", path: "/volumes", icon: HardDrive, section: "STORAGE", minRole: "operator", pinned: true, shortcut: "V", element: Volumes },
   { id: "rbd", codename: "hephaestus", label: "RBD Images", path: "/rbd", icon: Layers, section: "STORAGE", minRole: "operator", element: Rbd },
   { id: "snapshots", codename: "mnemosyne", label: "Snapshots", path: "/snapshots", icon: Camera, section: "STORAGE", minRole: "operator", element: Snapshots },
   { id: "schedules", codename: "chronos", label: "Schedules", path: "/schedules", icon: Timer, section: "STORAGE", minRole: "operator", element: Schedules },
@@ -137,19 +134,19 @@ export const MODULES: NavModule[] = [
   { id: "buckets", codename: "poseidon", label: "Buckets", path: "/buckets", icon: Cloud, section: "DATA PROTECTION", minRole: "operator", element: Buckets },
   { id: "protection", codename: "asclepius", label: "Protection Status", path: "/protection", icon: HeartPulse, section: "DATA PROTECTION", element: ProtectionStatus },
 
-  { id: "cloud-databases", codename: "prometheus", label: "DataBridge", path: "/databridge/sources", icon: CloudCog, section: "DATABRIDGE", minRole: "operator", topPrimary: true, element: Sources },
+  { id: "cloud-databases", codename: "prometheus", label: "DataBridge", path: "/databridge/sources", icon: CloudCog, section: "DATABRIDGE", minRole: "operator", element: Sources },
   { id: "migration-plans", codename: "iris", label: "Migration Plans", path: "/databridge/plans", icon: RouteIcon, section: "DATABRIDGE", minRole: "operator", element: Plans },
   { id: "edge-clusters", codename: "epimetheus", label: "Edge DB Clusters", path: "/databridge/edge-clusters", icon: Database, section: "DATABRIDGE", minRole: "operator", element: EdgeClusters },
   { id: "replication", codename: "echo", label: "Replication", path: "/databridge/replication", icon: Radio, section: "DATABRIDGE", minRole: "operator", element: Replication },
   { id: "validation", codename: "astraea", label: "Validation", path: "/databridge/validation", icon: BadgeCheck, section: "DATABRIDGE", minRole: "operator", element: Validation },
   { id: "object-migrations", codename: "hyperion", label: "Object Migrations", path: "/databridge/object", icon: Database, section: "DATABRIDGE", minRole: "operator", element: ObjectMigrations },
 
-  { id: "observatory", codename: "orrery", label: "Observatory", path: "/observatory", icon: Orbit, section: "OBSERVABILITY", pinned: true, topPrimary: true, shortcut: "O", element: Observatory },
+  { id: "observatory", codename: "orrery", label: "Observatory", path: "/observatory", icon: Orbit, section: "OBSERVABILITY", pinned: true, shortcut: "O", element: Observatory },
   { id: "ops-advisor", codename: "metis", label: "Ops Advisor", path: "/ops-advisor", icon: BrainCircuit, section: "OBSERVABILITY", minRole: "operator", element: OpsAdvisor },
   { id: "activity", codename: "kairos", label: "Activity", path: "/activity", icon: Activity, section: "OBSERVABILITY", element: ActivityView },
-  { id: "alerts", codename: "hermes", label: "Alerts", path: "/alerts", icon: Bell, section: "OBSERVABILITY", minRole: "operator", pinned: true, topPrimary: true, shortcut: "A", element: Alerts },
+  { id: "alerts", codename: "hermes", label: "Alerts", path: "/alerts", icon: Bell, section: "OBSERVABILITY", minRole: "operator", pinned: true, shortcut: "A", element: Alerts },
   { id: "metrics", codename: "helios", label: "Metrics", path: "/metrics-dashboard", icon: Gauge, section: "OBSERVABILITY", element: Metrics },
-  { id: "jobs", codename: "nike", label: "Jobs", path: "/jobs", icon: Clock, section: "OBSERVABILITY", minRole: "operator", pinned: true, topPrimary: true, shortcut: "J", element: Jobs },
+  { id: "jobs", codename: "nike", label: "Jobs", path: "/jobs", icon: Clock, section: "OBSERVABILITY", minRole: "operator", pinned: true, shortcut: "J", element: Jobs },
   { id: "audit", codename: "themis", label: "Audit", path: "/audit", icon: FileClock, section: "OBSERVABILITY", element: Audit },
 
   { id: "tenants", codename: "athena", label: "Tenants", path: "/tenants", icon: Users, section: "GOVERNANCE", minRole: "admin", element: Tenants },
@@ -161,7 +158,7 @@ export const MODULES: NavModule[] = [
   { id: "backends", codename: "gaia", label: "Backends", path: "/backends", icon: Server, section: "INFRASTRUCTURE", minRole: "admin", element: Backends },
   { id: "kubernetes", codename: "talos", label: "Kubernetes", path: "/kubernetes", icon: Boxes, section: "INFRASTRUCTURE", minRole: "operator", element: Kubernetes },
   { id: "cluster", codename: "oracle", label: "Cluster", path: "/cluster", icon: Database, section: "INFRASTRUCTURE", minRole: "operator", element: Cluster },
-  { id: "ceph", codename: "kraken", label: "Ceph", path: "/ceph", icon: Aperture, section: "INFRASTRUCTURE", minRole: "operator", pinned: true, topPrimary: true, shortcut: "C", element: Ceph },
+  { id: "ceph", codename: "kraken", label: "Ceph", path: "/ceph", icon: Aperture, section: "INFRASTRUCTURE", minRole: "operator", pinned: true, shortcut: "C", element: Ceph },
   { id: "fast-storage", codename: "boreas", label: "Fast storage", path: "/fast-storage", icon: Zap, section: "INFRASTRUCTURE", minRole: "operator", element: FastStorage },
   { id: "maintenance", codename: "hestia", label: "Maintenance", path: "/maintenance", icon: Wrench, section: "INFRASTRUCTURE", minRole: "operator", element: Maintenance },
   { id: "dr", codename: "styx", label: "Disaster Recovery", path: "/dr", icon: GitBranch, section: "INFRASTRUCTURE", minRole: "admin", element: DR },
@@ -188,17 +185,12 @@ export function pinnedModules(actorLevel: number): NavModule[] {
   return modulesForRole(actorLevel).filter((m) => m.pinned);
 }
 
-/** Top primary strip (Apple.com grammar), role-filtered. */
-export function topPrimaryModules(actorLevel: number): NavModule[] {
-  return modulesForRole(actorLevel).filter((m) => m.topPrimary);
-}
-
-/** Section menus for modules not on the top primary strip. */
-export function topOverflowBySection(actorLevel: number): { sec: SectionId; short: string; items: NavModule[] }[] {
+/** Role-filtered sections for the global nav flyouts and local nav. Overview is its own nav item. */
+export function navSections(actorLevel: number): { sec: SectionId; short: string; items: NavModule[] }[] {
   return SECTIONS.map((sec) => ({
     sec,
     short: SECTION_META[sec].short,
-    items: modulesForRole(actorLevel).filter((m) => m.section === sec && !m.topPrimary),
+    items: modulesForRole(actorLevel).filter((m) => m.section === sec && m.id !== "overview"),
   })).filter((g) => g.items.length > 0);
 }
 

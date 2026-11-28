@@ -9,6 +9,7 @@ import { submitJob } from "../api/client";
 import { useBackends, useInvalidate, useMacDevices, useMacSnapshots, type MacDevice } from "../api/hooks";
 import { Badge, FormModal, type FormField } from "../ui/kit";
 import { Table } from "../ui/Table";
+import "./MacDisks.css";
 
 type Action =
   | { kind: "erase"; device: string }
@@ -120,6 +121,20 @@ export default function MacDisks() {
       <Table
         soundings
         panelTitle={`Mac disks · ${backend}`}
+        panelExtra={
+          macs.length > 1 ? (
+            <label className="mac-picker">
+              Mac
+              <select className="field" value={backend} onChange={(e) => setChosen(e.target.value)}>
+                {macs.map((m) => (
+                  <option key={m.id} value={m.id}>
+                    {m.name ?? m.id}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : undefined
+        }
         rows={devices || []}
         rowKey={(d: MacDevice) => d.device}
         empty="No external disks reported."
@@ -139,21 +154,21 @@ export default function MacDisks() {
               d.internal ? (
                 <span title={d.erase_refusal ?? ""}>refused by Atlas</span>
               ) : (
-                <span style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                  <button type="button" className="at-btn danger" disabled={!!d.erase_refusal} title={d.erase_refusal ?? ""} onClick={() => setAction({ kind: "erase", device: d.device })}>
+                <span className="mac-actions">
+                  <button type="button" className="at-btn danger compact" disabled={!!d.erase_refusal} title={d.erase_refusal ?? ""} onClick={() => setAction({ kind: "erase", device: d.device })}>
                     Erase…
                   </button>
                   {d.containers.map((c) => (
-                    <span key={c} style={{ display: "inline-flex", gap: 6 }}>
-                      <button type="button" className="at-btn" onClick={() => setAction({ kind: "add", container: c })}>
+                    <span key={c} className="mac-actions">
+                      <button type="button" className="at-btn compact" onClick={() => setAction({ kind: "add", container: c })}>
                         Add volume ({c})…
                       </button>
-                      <button type="button" className="at-btn" onClick={() => setAction({ kind: "resize", container: c })}>
+                      <button type="button" className="at-btn compact" onClick={() => setAction({ kind: "resize", container: c })}>
                         Resize ({c})…
                       </button>
                     </span>
                   ))}
-                  <button type="button" className="at-btn" onClick={() => setAction({ kind: "eject", device: d.device })}>
+                  <button type="button" className="at-btn compact" onClick={() => setAction({ kind: "eject", device: d.device })}>
                     Eject
                   </button>
                 </span>
@@ -164,41 +179,26 @@ export default function MacDisks() {
       <Table
         soundings
         panelTitle="Local snapshots (the whole Mac, purgeable)"
+        panelExtra={
+          <button
+            type="button"
+            className="at-btn compact"
+            title="macOS cannot snapshot one volume; this snapshots the Mac (tmutil localsnapshot)"
+            onClick={() => void submitJob("post", `/macos/snapshots${q}`, {}, "create local snapshot", refresh)}
+          >
+            Create local snapshot
+          </button>
+        }
         rows={(snapshots || []).map((date) => ({ date }))}
         rowKey={(r: { date: string }) => r.date}
         empty="No local snapshots."
-        cols={[
-          { h: "Date", f: (r: { date: string }) => r.date, mono: true },
-          {
-            h: "",
-            f: (r: { date: string }) => (
-              <button type="button" className="at-btn danger" onClick={() => setAction({ kind: "snap-delete", date: r.date })}>
-                Delete…
-              </button>
-            ),
-          },
-        ]}
+        cols={[{ h: "Date", f: (r: { date: string }) => r.date, mono: true }]}
+        actions={(r: { date: string }) => (
+          <button type="button" className="at-btn danger compact" onClick={() => setAction({ kind: "snap-delete", date: r.date })}>
+            Delete…
+          </button>
+        )}
       />
-      <button
-        type="button"
-        className="at-btn"
-        title="macOS cannot snapshot one volume; this snapshots the Mac (tmutil localsnapshot)"
-        onClick={() => void submitJob("post", `/macos/snapshots${q}`, {}, "create local snapshot", refresh)}
-      >
-        Create local snapshot
-      </button>
-      {macs.length > 1 && (
-        <label style={{ display: "block", margin: "8px 0" }}>
-          Mac{" "}
-          <select value={backend} onChange={(e) => setChosen(e.target.value)}>
-            {macs.map((m) => (
-              <option key={m.id} value={m.id}>
-                {m.name ?? m.id}
-              </option>
-            ))}
-          </select>
-        </label>
-      )}
       <FormModal
         open={action !== null && action.kind !== "eject"}
         onClose={close}

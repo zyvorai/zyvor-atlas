@@ -6,6 +6,7 @@ import {
   activeModuleFromPath,
   canModuleAccess,
   modulesForRole,
+  navSections,
   shortcutTargets,
   type NavModule,
 } from "./routes";
@@ -27,6 +28,15 @@ describe("routes", () => {
     expect(viewerIds.has("volumes")).toBe(false);
     expect(viewerIds.has("tenants")).toBe(false);
     expect(viewerIds.has("ops-advisor")).toBe(false);
+  });
+
+  it("navSections lists every visible page once, role-filtered", () => {
+    for (const level of [ROLE_VIEWER, ROLE_OPERATOR, ROLE_ADMIN]) {
+      const inNav = navSections(level).flatMap((g) => g.items.map((m) => m.id));
+      const expected = modulesForRole(level).map((m) => m.id).filter((id) => id !== "overview");
+      expect([...inNav].sort()).toEqual([...expected].sort());
+    }
+    expect(navSections(ROLE_VIEWER).some((g) => g.items.some((m) => m.id === "volumes"))).toBe(false);
   });
 
   it("canModuleAccess respects minRole on detail routes", () => {

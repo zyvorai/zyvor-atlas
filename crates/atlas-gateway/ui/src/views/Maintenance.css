@@ -1,0 +1,29 @@
+/* Copyright (c) 2026 ZyvorAI Labs Private Limited.
+ * SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
+ *
+ * Maintenance (views/Maintenance.tsx).
+ */
+
+@layer components {
+  .mnt-icon {
+    flex: 0 0 auto;
+    margin-top: 2px;
+  }
+  .mnt-grow {
+    flex: 1 1 240px;
+    min-width: 0;
+  }
+  .mnt-check {
+    flex-wrap: wrap;
+    align-items: center;
+  }
+  .mnt-id {
+    font-size: 12.5px;
+    overflow-wrap: anywhere;
+  }
+  .mnt-note {
+    margin: 0;
+    color: var(--a-ink-2);
+    font-size: 13px;
+  }
+}

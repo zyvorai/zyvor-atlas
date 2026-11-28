@@ -2,7 +2,7 @@
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 import { useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { Download, Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
+import { ChevronDown, ChevronUp, Download, Plus, RefreshCw, SlidersHorizontal } from "lucide-react";
 import { apiError, http, isUnauthorized, submit, submitJob, toast } from "../api/client";
 import { useBackends, useBuckets, useInvalidate, useVolumes } from "../api/hooks";
 import type { StorageVolume } from "../api/types";
@@ -11,11 +11,36 @@ import { fmtBytes, gib, stateKind } from "../lib/format";
 import { del } from "../ui/confirm";
 import { Badge, Button, FormModal, SlideOver } from "../ui/kit";
 import { ListPage } from "../ui/templates/ListPage";
+import { useDismiss } from "../ui/useDismiss";
 import { navCrumbs } from "../nav/routes";
+import { CapacityRing, EmptyState } from "../graphics";
+import "./Volumes.css";
 
 const POLICIES = ["database", "production", "development", "shared", "ai"];
 const STATES = ["bound", "available", "creating", "deleting", "failed"] as const;
 const KINDS = ["block", "filesystem", "object"] as const;
+/** Capacity turns amber and red at the same points as lib/depth.ts. */
+const FILL = { warnAt: 75, failAt: 90 };
+
+/** Used space, with a bar when the size is known too. Draws nothing for a figure nobody reported. */
+export function UsageCell({ used, size }: { used?: number | null; size?: number | null }) {
+  if (used == null) return <span className="vl-used-text">—</span>;
+  const pct = size != null && size > 0 ? (used / size) * 100 : null;
+  const d = pct === null ? null : depth(pct);
+  return (
+    <div className="vl-used">
+      {d ? (
+        <div className={`at-mini ${d.cls}`} title={`${Math.round(pct!)}% · ${d.name}`} aria-hidden>
+          <i style={{ width: depthWidth(pct) }} />
+        </div>
+      ) : null}
+      <span className="vl-used-text">
+        {fmtBytes(used)}
+        {pct !== null ? ` · ${Math.round(pct)}%` : ""}
+      </span>
+    </div>
+  );
+}
 
 export default function Volumes() {
   const [state, setState] = useState("");
@@ -23,6 +48,7 @@ export default function Volumes() {
   const [backend, setBackend] = useState("");
   const [kind, setKind] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
+  const filtersRef = useDismiss<HTMLDivElement>(filtersOpen, () => setFiltersOpen(false));
   const secondaryCount = [kind, backend, tenant].filter(Boolean).length;
   const { data: vols } = useVolumes(state || undefined, tenant || undefined, backend || undefined, kind || undefined);
   const { data: backends } = useBackends();
@@ -130,153 +156,150 @@ export default function Volumes() {
   const keys = (sorted || []).map((v) => v.id);
   const allSelected = keys.length > 0 && keys.every((k) => picked.has(k));
 
+  const filtered = !!(state || tenant || backend || kind);
   const stateLine = (() => {
-    if (!vols) return "Surveying volumes…";
-    if (!vols.length) {
-      return state || tenant || backend || kind
-        ? "No volumes match the current filter set."
-        : "No volumes yet — provision the first block or filesystem volume.";
+    if (!vols) return "Loading volumes…";
+    if (!vols.length) return filtered ? "No volumes match these filters." : "No volumes yet.";
+    if (counts.failed) {
+      return `${counts.failed} volume${counts.failed === 1 ? "" : "s"} in failed state. Check before expanding.`;
     }
-    if (counts.failed) return `${counts.failed} volume${counts.failed === 1 ? "" : "s"} in failed state — inspect before expanding.`;
-    return `${counts.total} volume${counts.total === 1 ? "" : "s"} · ${counts.bound} bound · ${counts.block} block · ${counts.fs} filesystem.`;
+    return `${counts.total} volume${counts.total === 1 ? "" : "s"} · ${counts.bound} bound · ${counts.block} block · ${counts.fs} filesystem`;
   })();
 
   const clickSort = (key: string) =>
     setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: 1 }));
 
+  // The button makes the header keyboard operable; its click bubbles to the cell, which sorts.
+  const sortHeader = (key: string, label: string) => (
+    <th
+      className="sortable"
+      onClick={() => clickSort(key)}
+      aria-sort={sort.key === key ? (sort.dir === 1 ? "ascending" : "descending") : undefined}
+    >
+      <button type="button" className="at-th-sort">
+        {label}
+        {sort.key === key &&
+          (sort.dir === 1 ? <ChevronUp size={12} aria-hidden /> : <ChevronDown size={12} aria-hidden />)}
+      </button>
+    </th>
+  );
+
   return (
     <ListPage
       crumbs={navCrumbs("volumes")}
-      eyebrow="STORAGE · INDEX"
+      eyebrow={null}
       title="Volumes"
       state={stateLine}
       actions={
         <>
           <button type="button" className="at-btn" onClick={refetch}>
-            <RefreshCw size={14} /> Refresh
+            <RefreshCw size={14} aria-hidden /> Refresh
           </button>
           <button type="button" className="at-btn" onClick={exportCsv}>
-            <Download size={14} /> Export CSV
+            <Download size={14} aria-hidden /> Export CSV
           </button>
           <button type="button" className="at-btn primary" onClick={() => setCreateOpen(true)}>
-            <Plus size={14} /> Volume
+            <Plus size={14} aria-hidden /> Volume
           </button>
         </>
       }
     >
       <div className="at-chips">
-        <button type="button" className={`at-chip${!state ? " on" : ""}`} onClick={() => setState("")}>
-          All <span className="n">{counts.total || "—"}</span>
+        <button type="button" className={`at-chip${!state ? " on" : ""}`} aria-pressed={!state} onClick={() => setState("")}>
+          All <span className="n">{vols ? counts.total : "—"}</span>
         </button>
         {STATES.map((s) => (
           <button
             key={s}
             type="button"
-            className={`at-chip${state === s ? " on" : ""}`}
+            className={`at-chip vl-cap${state === s ? " on" : ""}`}
+            aria-pressed={state === s}
             onClick={() => setState(state === s ? "" : s)}
           >
             {s}
           </button>
         ))}
         <span className="grow" />
-        <div className="relative">
+        <div className="vl-filter-anchor" ref={filtersRef}>
           <button
             type="button"
             className="at-btn compact"
             aria-expanded={filtersOpen}
-            aria-haspopup="menu"
+            aria-haspopup="dialog"
             onClick={() => setFiltersOpen((v) => !v)}
           >
-            <SlidersHorizontal size={13} />
+            <SlidersHorizontal size={13} aria-hidden />
             Filters
-            {secondaryCount > 0 && (
-              <span
-                style={{
-                  fontFamily: "var(--at-mono)",
-                  fontSize: 11,
-                  color: "var(--at-cyan)",
-                  opacity: 0.9,
-                }}
-              >
-                {secondaryCount}
-              </span>
-            )}
+            {secondaryCount > 0 && <span className="vl-filter-count">{secondaryCount}</span>}
           </button>
           {filtersOpen && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setFiltersOpen(false)} />
-              <div className="at-theme-menu" style={{ minWidth: 260, padding: "6px 6px 10px" }}>
-                <div className="at-theme-menu-label">Filters</div>
-                <div style={{ padding: "2px 12px 10px" }}>
-                  <div style={{ fontSize: 11, color: "var(--at-ink-4)", marginBottom: 6 }}>Kind</div>
-                  <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-                    {KINDS.map((k) => (
-                      <button
-                        key={k}
-                        type="button"
-                        className={`at-chip${kind === k ? " on" : ""}`}
-                        onClick={() => setKind(kind === k ? "" : k)}
-                      >
-                        {k}
-                      </button>
-                    ))}
-                  </div>
+            <div className="at-theme-menu vl-filters" role="dialog" aria-label="Filters">
+              <div>
+                <div className="section-label">Kind</div>
+                <div className="vl-filter-kinds" role="group" aria-label="Kind">
+                  {KINDS.map((k) => (
+                    <button
+                      key={k}
+                      type="button"
+                      className={`at-chip vl-cap${kind === k ? " on" : ""}`}
+                      aria-pressed={kind === k}
+                      onClick={() => setKind(kind === k ? "" : k)}
+                    >
+                      {k}
+                    </button>
+                  ))}
                 </div>
-                <div style={{ padding: "2px 12px 10px" }}>
-                  <div style={{ fontSize: 11, color: "var(--at-ink-4)", marginBottom: 6 }}>Backend</div>
-                  <select
-                    className="at-chip-field"
-                    style={{ width: "100%" }}
-                    value={backend}
-                    onChange={(e) => setBackend(e.target.value)}
-                    aria-label="Backend filter"
-                  >
-                    <option value="">All backends</option>
-                    {(backends || []).map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name} ({b.backend_type})
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div style={{ padding: "2px 12px 10px" }}>
-                  <div style={{ fontSize: 11, color: "var(--at-ink-4)", marginBottom: 6 }}>Tenant</div>
-                  <input
-                    className="at-chip-field"
-                    style={{ width: "100%" }}
-                    placeholder="Filter tenant…"
-                    value={tenant}
-                    onChange={(e) => setTenant(e.target.value)}
-                  />
-                </div>
-                {secondaryCount > 0 && (
-                  <button
-                    type="button"
-                    className="at-theme-item"
-                    onClick={() => {
-                      setKind("");
-                      setBackend("");
-                      setTenant("");
-                    }}
-                  >
-                    Clear filters
-                  </button>
-                )}
               </div>
-            </>
+              <label>
+                <span className="section-label">Backend</span>
+                <select
+                  className="at-chip-field"
+                  value={backend}
+                  onChange={(e) => setBackend(e.target.value)}
+                  aria-label="Backend filter"
+                >
+                  <option value="">All backends</option>
+                  {(backends || []).map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name} ({b.backend_type})
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                <span className="section-label">Tenant</span>
+                <input
+                  className="at-chip-field"
+                  placeholder="Any tenant"
+                  value={tenant}
+                  onChange={(e) => setTenant(e.target.value)}
+                />
+              </label>
+              {secondaryCount > 0 && (
+                <button
+                  type="button"
+                  className="at-theme-item"
+                  onClick={() => {
+                    setKind("");
+                    setBackend("");
+                    setTenant("");
+                  }}
+                >
+                  Clear filters
+                </button>
+              )}
+            </div>
           )}
         </div>
       </div>
 
       <div className="at-panel">
         <div className="at-panel-bar">
-          <span className="at-caption">Volume index</span>
+          <span className="at-caption">{filtered ? "Matching volumes" : "All volumes"}</span>
           <span className="grow" />
           {picked.size > 0 ? (
             <>
-              <span className="at-sub" style={{ margin: 0 }}>
-                {picked.size} selected
-              </span>
+              <span className="at-sub vl-bar-note">{picked.size} selected</span>
               <button type="button" className="at-btn compact" onClick={bulkDelete}>
                 Delete selected
               </button>
@@ -285,62 +308,51 @@ export default function Volumes() {
               </button>
             </>
           ) : (
-            <span className="at-sub" style={{ margin: 0 }}>
-              {sorted ? `${sorted.length} shown` : "…"}
-            </span>
+            <span className="at-sub vl-bar-note">{sorted ? `${sorted.length} shown` : "…"}</span>
           )}
         </div>
 
         {!sorted ? (
-          <div style={{ padding: 32, color: "var(--at-ink-4)", fontSize: 13 }}>Loading volumes…</div>
+          <div className="at-loading">Loading volumes…</div>
         ) : !sorted.length ? (
-          <div className="at-empty-box" style={{ margin: 16, boxShadow: "none" }}>
-            <div className="at-empty-title">
-              {state || tenant || backend || kind ? "No volumes match your filters" : "No volumes yet"}
-            </div>
-            {!(state || tenant || backend || kind) && (
+          <EmptyState
+            art="volume"
+            title={filtered ? "No volumes match your filters" : "No volumes yet"}
+            description={filtered ? undefined : "Create a block or filesystem volume to get started."}
+          >
+            {!filtered && (
               <button type="button" className="at-btn primary" onClick={() => setCreateOpen(true)}>
-                <Plus size={14} /> Create volume
+                <Plus size={14} aria-hidden /> Create volume
               </button>
             )}
-          </div>
+          </EmptyState>
         ) : (
           <div className="overflow-x-auto">
-            <table className="at-tbl">
+            <table className="at-tbl vl-table">
               <thead>
                 <tr>
                   <th style={{ width: 36 }}>
                     <input type="checkbox" checked={allSelected} onChange={() => toggleAll(keys)} aria-label="Select all" />
                   </th>
-                  <th className="sortable" onClick={() => clickSort("name")}>
-                    Name
-                  </th>
-                  <th className="sortable" onClick={() => clickSort("kind")}>
-                    Kind
-                  </th>
-                  <th className="sortable" onClick={() => clickSort("size")}>
-                    Size
-                  </th>
-                  <th>Depth</th>
-                  <th className="sortable" onClick={() => clickSort("state")}>
-                    State
-                  </th>
+                  {sortHeader("name", "Name")}
+                  {sortHeader("kind", "Kind")}
+                  {sortHeader("size", "Size")}
+                  <th>Used</th>
+                  {sortHeader("state", "State")}
                   <th>Class</th>
                   <th>PVC / RBD</th>
-                  <th />
+                  <th>
+                    <span className="sr-only">Actions</span>
+                  </th>
                 </tr>
               </thead>
               <tbody>
                 {sorted.map((v) => {
-                  const pct =
-                    v.size_bytes > 0 && v.used_bytes != null ? (v.used_bytes / v.size_bytes) * 100 : 0;
-                  const d = depth(pct);
                   return (
                     <tr
                       key={v.id}
-                      className={picked.has(v.id) ? "selected" : undefined}
+                      className={picked.has(v.id) ? "selected cursor-pointer" : "cursor-pointer"}
                       onClick={() => setSel(v)}
-                      style={{ cursor: "pointer" }}
                     >
                       <td onClick={(e) => e.stopPropagation()}>
                         <input
@@ -350,18 +362,16 @@ export default function Volumes() {
                           aria-label={`Select ${v.name}`}
                         />
                       </td>
-                      <td className="mono">{v.name}</td>
+                      <td className="mono">
+                        {/* Keyboard route to the details panel: the click bubbles to the row. */}
+                        <button type="button" className="a-link vl-name">
+                          {v.name}
+                        </button>
+                      </td>
                       <td>{v.kind}</td>
                       <td className="mono">{fmtBytes(v.size_bytes)}</td>
                       <td>
-                        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                          <div className={`at-mini ${d.cls}`} title={`${Math.round(pct)}% · ${d.name}`}>
-                            <i style={{ width: depthWidth(pct) }} />
-                          </div>
-                          <span className="mono" style={{ fontSize: 11, color: "var(--at-ink-4)" }}>
-                            {v.used_bytes != null ? fmtBytes(v.used_bytes) : "—"}
-                          </span>
-                        </div>
+                        <UsageCell used={v.used_bytes} size={v.size_bytes} />
                       </td>
                       <td>
                         <Badge kind={stateKind(v.state)} dot>
@@ -369,13 +379,15 @@ export default function Volumes() {
                         </Badge>
                       </td>
                       <td className="mono">{v.storage_class_name || "—"}</td>
-                      <td className="mono" style={{ color: "var(--at-ink-4)" }}>
-                        {v.pvc_name || v.backend_native_id || "—"}
+                      <td className="mono vl-dim">
+                        <span className="vl-source" title={v.pvc_name || v.backend_native_id || undefined}>
+                          {v.pvc_name || v.backend_native_id || "—"}
+                        </span>
                       </td>
                       <td onClick={(e) => e.stopPropagation()}>
                         <div className="at-row-actions">
                           <button type="button" className="at-act" onClick={() => setModal({ v, kind: "snapshot" })}>
-                            Snap
+                            Snapshot
                           </button>
                           <button type="button" className="at-act" onClick={() => setModal({ v, kind: "expand" })}>
                             Expand
@@ -392,7 +404,7 @@ export default function Volumes() {
                               )
                             }
                           >
-                            Del
+                            Delete
                           </button>
                         </div>
                       </td>
@@ -446,7 +458,7 @@ export default function Volumes() {
               label: "Snapshot name (optional)",
               optional: true,
               pattern: /^[a-zA-Z0-9_.-]+$/,
-              hint: "Letters, digits, dot, dash, underscore only — leave blank to auto-generate.",
+              hint: "Letters, digits, dot, dash, underscore only. Leave blank to auto-generate.",
             },
           ]}
           onSubmit={(x) =>
@@ -467,7 +479,7 @@ export default function Volumes() {
               type: "number",
               value: String(Math.ceil(modal.v.size_bytes / 1073741824) + 1),
               min: Math.ceil(modal.v.size_bytes / 1073741824) + 1,
-              hint: `Current size: ${fmtBytes(modal.v.size_bytes)} — expand only grows.`,
+              hint: `Current size: ${fmtBytes(modal.v.size_bytes)}. Expand only grows.`,
             },
           ]}
           onSubmit={(x) =>
@@ -550,6 +562,9 @@ function VolumeDrawer({ vol, onClose, refetch }: { vol: StorageVolume | null; on
   return (
     <SlideOver open={!!vol} onClose={close} title={<span className="mono">{vol.name}</span>} width={480}>
       <div className="space-y-4 text-sm">
+        <div>
+          <CapacityRing label="Volume usage" usedBytes={vol.used_bytes} totalBytes={vol.size_bytes} size={168} {...FILL} />
+        </div>
         <div className="grid grid-cols-2 gap-2">
           <Kv k="ID" v={vol.id} mono />
           <Kv k="Kind" v={vol.kind} />
@@ -559,7 +574,7 @@ function VolumeDrawer({ vol, onClose, refetch }: { vol: StorageVolume | null; on
           <Kv k="Class" v={vol.storage_class_name || "—"} mono />
           <Kv k="Namespace" v={vol.kubernetes_namespace || "—"} />
           <Kv k="PVC" v={vol.pvc_name || "—"} mono />
-          <Kv k="Native" v={vol.backend_native_id || "—"} mono />
+          <Kv k="Native ID" v={vol.backend_native_id || "—"} mono />
         </div>
         <div>
           <div className="section-label mb-1">Labels</div>
@@ -573,8 +588,8 @@ function VolumeDrawer({ vol, onClose, refetch }: { vol: StorageVolume | null; on
               : <span className="text-muted-foreground">none</span>}
           </div>
           <div className="flex gap-2">
-            <input className="field" placeholder="key" value={lk} onChange={(e) => setLk(e.target.value)} />
-            <input className="field" placeholder="value" value={lv} onChange={(e) => setLv(e.target.value)} />
+            <input className="field" placeholder="key" aria-label="Label key" value={lk} onChange={(e) => setLk(e.target.value)} />
+            <input className="field" placeholder="value" aria-label="Label value" value={lv} onChange={(e) => setLv(e.target.value)} />
             <Button
               variant="primary"
               size="sm"
@@ -631,7 +646,7 @@ function Kv({ k, v, mono }: { k: string; v: string; mono?: boolean }) {
   return (
     <div>
       <div className="section-label">{k}</div>
-      <div className={mono ? "mono" : ""}>{v}</div>
+      <div className={mono ? "mono vl-wrap" : "vl-wrap"}>{v}</div>
     </div>
   );
 }

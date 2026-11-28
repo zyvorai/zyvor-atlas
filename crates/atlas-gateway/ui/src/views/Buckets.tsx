@@ -12,9 +12,11 @@ import { del } from "../ui/confirm";
 import { Table } from "../ui/Table";
 import BucketSettings from "./BucketSettings";
 import { fmtBytes, num } from "../lib/format";
+import { EmptyState } from "../graphics";
+import "./Buckets.css";
 
 export default function Buckets() {
-  const { data } = useBuckets();
+  const { data, isError, error, refetch: reload } = useBuckets();
   const { data: backends } = useBackends();
   const inv = useInvalidate();
   const refetch = () => inv("buckets", "summary");
@@ -22,6 +24,7 @@ export default function Buckets() {
   const [objBucket, setObjBucket] = useState<StorageBucket | null>(null);
   const [settingsBucket, setSettingsBucket] = useState<StorageBucket | null>(null);
   const n = data?.length || 0;
+  const bound = data?.filter((b) => b.state === "bound").length || 0;
 
   // NB: /backends records are keyed `id` (only /backends/summary uses `backend_id`).
   // Object backends: Ceph RGW is the default. Retired `rustfs` rows stay visible as labels only.
@@ -37,65 +40,76 @@ export default function Buckets() {
   return (
     <ListPage
       crumbs={navCrumbs("buckets")}
-      eyebrow="DATA PROTECTION · INDEX"
+      eyebrow={null}
       title="Buckets"
       state={
-        n
-          ? `${n} bucket${n === 1 ? "" : "s"} on Ceph RGW — stats, browse / upload / download.`
-          : "No buckets yet. Create the first bucket to begin exports and backups."
+        !data
+          ? isError
+            ? "Couldn't load buckets."
+            : "Loading buckets…"
+          : n
+            ? `${n} bucket${n === 1 ? "" : "s"} · ${bound} bound`
+            : "No buckets yet. Create one to store backups and objects."
       }
       actions={
         <>
           <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-            <Plus size={14} /> Bucket
+            <Plus size={14} aria-hidden /> Bucket
           </button>
         </>
       }
     >
-      <Table
-        soundings
-        panelTitle="Bucket index"
-        rows={data}
-        rowKey={(b) => b.id}
-        empty="No buckets yet."
-        emptyCta={
-          <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
-            <Plus size={14} /> Create bucket
-          </button>
-        }
-        cols={[
-          { h: "Name", f: (b) => b.bucket_name || b.name || b.id, mono: true },
-          { h: "Backend", f: (b) => <Badge kind="info">{bucketBackend(b)}</Badge> },
-          { h: "State", f: (b) => <Badge kind={b.state === "bound" ? "success" : "warning"} dot>{b.state}</Badge> },
-          { h: "Namespace", f: (b) => b.namespace },
-          { h: "Endpoint", f: (b) => <span className="mono" style={{ color: "var(--at-ink-4)" }}>{b.endpoint || "—"}</span> },
-        ]}
-        actions={(b) => (
-          <>
-            <Button size="sm" onClick={async () => {
-              try {
-                const s = await http.get(`/buckets/${b.id}/stats`, { timeout: 14000 });
-                const d = s.data;
-                if (d?.available === false) {
-                  toast(d.reason ? `Stats unavailable: ${d.reason}` : "Stats unavailable right now", "info");
-                  return;
+      {data && !data.length ? (
+        <div className="at-panel">
+          <EmptyState art="bucket" title="No buckets yet" description="Buckets hold backups and uploaded objects.">
+            <button type="button" className="at-btn primary" onClick={() => setCreate(true)}>
+              <Plus size={14} aria-hidden /> Create bucket
+            </button>
+          </EmptyState>
+        </div>
+      ) : (
+        <Table
+          soundings
+          panelTitle="All buckets"
+          rows={data}
+          error={isError}
+          errorDetail={isError ? apiError(error) : undefined}
+          onRetry={() => reload()}
+          rowKey={(b) => b.id}
+          cols={[
+            { h: "Name", f: (b) => b.bucket_name || b.name || b.id, mono: true },
+            { h: "Backend", f: (b) => <Badge kind="info">{bucketBackend(b)}</Badge> },
+            { h: "State", f: (b) => <Badge kind={b.state === "bound" ? "success" : "warning"} dot>{b.state}</Badge> },
+            { h: "Namespace", f: (b) => b.namespace },
+            { h: "Endpoint", f: (b) => <span className="mono bu-dim">{b.endpoint || "—"}</span> },
+          ]}
+          actions={(b) => (
+            <>
+              <Button size="sm" onClick={async () => {
+                try {
+                  const s = await http.get(`/buckets/${b.id}/stats`, { timeout: 14000 });
+                  const d = s.data;
+                  if (d?.available === false) {
+                    toast(d.reason ? `Stats unavailable: ${d.reason}` : "Stats unavailable right now", "info");
+                    return;
+                  }
+                  toast(`${d.bucket}: ${num(d.num_objects)} objs, ${fmtBytes(d.size_bytes)}`, "ok");
+                } catch (e) {
+                  const msg = apiError(e);
+                  const soft =
+                    /timeout|timed out|network|ECONNABORTED|unavailable|no bucket_name/i.test(msg)
+                    || (e as { code?: string })?.code === "ECONNABORTED"
+                    || (e as { response?: { status?: number } })?.response?.status === 400
+                    || (e as { response?: { status?: number } })?.response?.status === 504;
+                  toast(soft ? "Stats unavailable right now" : `stats: ${msg}`, soft ? "info" : "err");
                 }
-                toast(`${d.bucket}: ${num(d.num_objects)} objs, ${fmtBytes(d.size_bytes)}`, "ok");
-              } catch (e) {
-                const msg = apiError(e);
-                const soft =
-                  /timeout|timed out|network|ECONNABORTED|unavailable|no bucket_name/i.test(msg)
-                  || (e as { code?: string })?.code === "ECONNABORTED"
-                  || (e as { response?: { status?: number } })?.response?.status === 400
-                  || (e as { response?: { status?: number } })?.response?.status === 504;
-                toast(soft ? "Stats unavailable right now" : `stats: ${msg}`, soft ? "info" : "err");
-              }
-            }}>Stats</Button>
-            <Button size="sm" onClick={() => setObjBucket(b)}>Objects</Button>
-            <Button size="sm" variant="danger" onClick={() => del(`bucket ${b.bucket_name || b.name || b.id}`, () => submitJob("delete", `/buckets/${b.id}?force=true`, null, "delete bucket", refetch))}>Del</Button>
-          </>
-        )}
-      />
+              }}>Stats</Button>
+              <Button size="sm" onClick={() => setObjBucket(b)}>Objects</Button>
+              <Button size="sm" variant="danger" onClick={() => del(`bucket ${b.bucket_name || b.name || b.id}`, () => submitJob("delete", `/buckets/${b.id}?force=true`, null, "delete bucket", refetch))}>Delete</Button>
+            </>
+          )}
+        />
+      )}
 
       <FormModal open={create} onClose={() => setCreate(false)} title="Create bucket" submitLabel="Create"
         fields={(vals): FormField[] => {
@@ -197,22 +211,26 @@ function ObjectBrowser({ bucket, onClose }: { bucket: StorageBucket | null; onCl
 
   return (
     <SlideOver open={!!bucket} onClose={close} title={<span className="mono">{bucket.bucket_name || bucket.name || bucket.id} · objects</span>} width={560}>
-      <div className="flex gap-2 mb-3 items-center">
-        <input className="field" placeholder="prefix / folder…" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
+      <div className="bu-toolbar">
+        <input className="field bu-prefix" placeholder="prefix / folder…" aria-label="Prefix" value={prefix} onChange={(e) => setPrefix(e.target.value)} />
         <Button onClick={() => load(prefix)}>List</Button>
-        <input className="field" style={{ width: 84 }} type="number" min={0} title="Keep N timestamped versions per file (0 = overwrite in place)" placeholder="keep" value={keep} onChange={(e) => setKeep(Math.max(0, +e.target.value || 0))} />
+        <input className="field bu-keep" type="number" min={0} aria-label="Versions to keep" title="Keep N timestamped versions per file (0 = overwrite in place)" placeholder="keep" value={keep} onChange={(e) => setKeep(Math.max(0, +e.target.value || 0))} />
         <Button variant="primary" icon={Upload} loading={busy} onClick={() => fileRef.current?.click()}>Upload</Button>
         <input ref={fileRef} type="file" multiple hidden onChange={(e) => { upload(e.target.files); e.currentTarget.value = ""; }} />
       </div>
-      <Table rows={objs ?? undefined} rowKey={(o) => o.key}
-        cols={[{ h: "Key", f: (o) => o.key, mono: true }, { h: "Size", f: (o) => fmtBytes(o.size_bytes) }]}
-        actions={(o) => (
-          <>
-            <Button size="sm" icon={Download} onClick={() => download(o.key)}>Get</Button>
-            <Button size="sm" variant="danger" onClick={() => remove(o.key)}>Del</Button>
-          </>
-        )}
-        empty={listError ? "Couldn't list objects (see toast for the error)." : "No objects — upload one above."} />
+      {objs && !objs.length && !listError ? (
+        <EmptyState art="bucket" title="No objects" description="Upload one above." compact />
+      ) : (
+        <Table rows={objs ?? undefined} rowKey={(o) => o.key}
+          cols={[{ h: "Key", f: (o) => o.key, mono: true }, { h: "Size", f: (o) => fmtBytes(o.size_bytes) }]}
+          actions={(o) => (
+            <>
+              <Button size="sm" icon={Download} onClick={() => download(o.key)}>Download</Button>
+              <Button size="sm" variant="danger" onClick={() => remove(o.key)}>Delete</Button>
+            </>
+          )}
+          empty="Couldn't list objects (see toast for the error)." />
+      )}
     </SlideOver>
   );
 }

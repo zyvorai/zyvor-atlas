@@ -2,7 +2,6 @@
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { submitJob } from "../api/client";
 import { useInvalidate, useSnapshots } from "../api/hooks";
 import type { StorageSnapshot } from "../api/types";
 import { Badge, Button, FormModal } from "../ui/kit";
@@ -11,10 +10,13 @@ import { navCrumbs } from "../nav/routes";
 import { del } from "../ui/confirm";
 import { Table } from "../ui/Table";
 import { stateKind, timeAgo } from "../lib/format";
+import { apiError, submitJob } from "../api/client";
+import { EmptyState } from "../graphics";
+import "./Snapshots.css";
 
 export default function Snapshots() {
   const nav = useNavigate();
-  const { data } = useSnapshots();
+  const { data, isError, error, refetch: reload } = useSnapshots();
   const inv = useInvalidate();
   const refetch = () => inv("snapshots", "volumes");
   const [modal, setModal] = useState<{ s: StorageSnapshot; kind: string } | null>(null);
@@ -37,84 +39,93 @@ export default function Snapshots() {
   return (
     <ListPage
       crumbs={navCrumbs("snapshots")}
-      eyebrow="STORAGE · INDEX"
+      eyebrow={null}
       title="Snapshots"
       state={
-        n
-          ? `${n} point-in-time ${n === 1 ? "copy" : "copies"} — clone or restore into new volumes.`
-          : "No point-in-time copies yet. Snapshot a volume from the Volumes index."
+        !data
+          ? isError
+            ? "Couldn't load snapshots."
+            : "Loading snapshots…"
+          : n
+            ? `${n} point-in-time ${n === 1 ? "copy" : "copies"}. Clone or restore one into a new volume.`
+            : "No snapshots yet. Take one from the Volumes page."
       }
       actions={
         !n ? (
-          <button type="button" className="at-btn primary" onClick={() => nav("/volumes")}>
+          <button type="button" className="at-btn" onClick={() => nav("/volumes")}>
             Volumes
           </button>
         ) : undefined
       }
     >
-      <Table
-        soundings
-        panelTitle="Snapshot index"
-        panelExtra={
-          picked.size > 0 ? (
+      {data && !data.length ? (
+        <div className="at-panel">
+          <EmptyState art="snapshot" title="No snapshots yet" description="A snapshot is a point-in-time copy of a volume.">
+            <button type="button" className="at-btn primary" onClick={() => nav("/volumes")}>
+              Open Volumes
+            </button>
+          </EmptyState>
+        </div>
+      ) : (
+        <Table
+          soundings
+          panelTitle="All snapshots"
+          panelExtra={
+            picked.size > 0 ? (
+              <>
+                <span className="at-sub sn-bar-note">{picked.size} selected</span>
+                <button type="button" className="at-btn compact" onClick={bulkDelete}>
+                  Delete selected
+                </button>
+                <button type="button" className="at-btn compact" onClick={() => setPicked(new Set())}>
+                  Clear
+                </button>
+              </>
+            ) : undefined
+          }
+          rows={data}
+          error={isError}
+          errorDetail={isError ? apiError(error) : undefined}
+          onRetry={() => reload()}
+          rowKey={(s) => s.id}
+          selectable
+          selected={picked}
+          onToggle={toggle}
+          onToggleAll={toggleAll}
+          cols={[
+            { h: "Name", f: (s) => s.name, mono: true, sortKey: (s) => s.name },
+            { h: "Volume", f: (s) => s.volume_id, mono: true, sortKey: (s) => s.volume_id },
+            { h: "State", f: (s) => <Badge kind={stateKind(s.state)} dot>{s.state}</Badge>, sortKey: (s) => s.state },
+            { h: "Protected", f: (s) => (s.protected ? "yes" : "no") },
+            {
+              h: "Created",
+              f: (s) => <span className="sn-dim">{timeAgo(s.created_at)}</span>,
+              sortKey: (s) => s.created_at || "",
+            },
+          ]}
+          actions={(s) => (
             <>
-              <span className="at-sub" style={{ margin: 0 }}>
-                {picked.size} selected
-              </span>
-              <button type="button" className="at-btn compact" onClick={bulkDelete}>
-                Delete selected
-              </button>
-              <button type="button" className="at-btn compact" onClick={() => setPicked(new Set())}>
-                Clear
-              </button>
+              <Button size="sm" onClick={() => setModal({ s, kind: "clone" })}>
+                Clone
+              </Button>
+              <Button size="sm" onClick={() => setModal({ s, kind: "restore" })}>
+                Restore
+              </Button>
+              <Button
+                size="sm"
+                variant="danger"
+                onClick={() =>
+                  del(`snapshot ${s.name}`, () =>
+                    submitJob("delete", `/snapshots/${s.id}?force=true`, null, "delete snapshot", refetch),
+                  )
+                }
+              >
+                Delete
+              </Button>
             </>
-          ) : undefined
-        }
-        rows={data}
-        rowKey={(s) => s.id}
-        selectable
-        selected={picked}
-        onToggle={toggle}
-        onToggleAll={toggleAll}
-        empty="No point-in-time copies yet."
-        emptyCta={
-          <button type="button" className="at-btn primary" onClick={() => nav("/volumes")}>
-            Open Volumes
-          </button>
-        }
-        cols={[
-          { h: "Name", f: (s) => s.name, mono: true, sortKey: (s) => s.name },
-          { h: "Volume", f: (s) => s.volume_id, mono: true, sortKey: (s) => s.volume_id },
-          { h: "State", f: (s) => <Badge kind={stateKind(s.state)} dot>{s.state}</Badge>, sortKey: (s) => s.state },
-          { h: "Protected", f: (s) => (s.protected ? "yes" : "no") },
-          {
-            h: "Created",
-            f: (s) => <span style={{ color: "var(--at-ink-4)" }}>{timeAgo(s.created_at)}</span>,
-            sortKey: (s) => s.created_at || "",
-          },
-        ]}
-        actions={(s) => (
-          <>
-            <Button size="sm" onClick={() => setModal({ s, kind: "clone" })}>
-              Clone
-            </Button>
-            <Button size="sm" onClick={() => setModal({ s, kind: "restore" })}>
-              Restore
-            </Button>
-            <Button
-              size="sm"
-              variant="danger"
-              onClick={() =>
-                del(`snapshot ${s.name}`, () =>
-                  submitJob("delete", `/snapshots/${s.id}?force=true`, null, "delete snapshot", refetch),
-                )
-              }
-            >
-              Del
-            </Button>
-          </>
-        )}
-      />
+          )}
+        />
+      )}
       {modal && (
         <FormModal
           open

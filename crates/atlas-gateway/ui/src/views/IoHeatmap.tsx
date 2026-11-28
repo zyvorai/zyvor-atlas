@@ -1,20 +1,37 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // Latency heatmap for the Observatory. Cells are the atlas-io agent's /io/heatmap columns,
-// proxied by the gateway as GET /api/atlas/v1/io/heatmap. Colour follows the busiest log2-µs
-// bucket in that minute. An unconfigured agent says unavailable; it never looks healthy.
+// proxied by the gateway as GET /api/atlas/v1/io/heatmap. A cell shows the busiest log2-µs
+// bucket in that minute, by colour and by bar height. An unconfigured agent says unavailable;
+// it never looks healthy.
 import { useIoHeatmap } from "../api/hooks";
+import type { IoHeatSeries } from "../api/types";
+import { EmptyState } from "../graphics";
+import "./IoHeatmap.css";
 
-function cellColor(peakUs: number): string {
-  if (peakUs <= 0) return "transparent";
-  if (peakUs < 1_000) return "color-mix(in srgb, var(--d1, #34d399) 70%, transparent)";
-  if (peakUs < 10_000) return "color-mix(in srgb, #fbbf24 75%, transparent)";
-  return "color-mix(in srgb, #f87171 80%, transparent)";
+const BANDS = [
+  { id: "fast", label: "Under 1 ms" },
+  { id: "slow", label: "1 to 10 ms" },
+  { id: "slower", label: "10 ms or more" },
+  { id: "none", label: "No I/O" },
+] as const;
+
+function band(peakUs: number): (typeof BANDS)[number]["id"] {
+  if (peakUs <= 0) return "none";
+  if (peakUs < 1_000) return "fast";
+  if (peakUs < 10_000) return "slow";
+  return "slower";
 }
 
 function latency(us: number): string {
   if (us >= 1000) return `${(us / 1000).toFixed(us >= 10_000 ? 0 : 1)} ms`;
   return `${us} µs`;
+}
+
+function describe(s: IoHeatSeries): string {
+  const total = s.columns.reduce((sum, c) => sum + c.count, 0);
+  const peak = Math.max(0, ...s.columns.map((c) => c.peak_us));
+  return `${s.device} ${s.op} latency: ${total} I/Os over ${s.columns.length} minutes, peak ${peak > 0 ? latency(peak) : "none"}`;
 }
 
 export default function IoHeatmap() {
@@ -23,60 +40,44 @@ export default function IoHeatmap() {
   const series = report?.status === "ok" ? report.series : [];
 
   return (
-    <div className="at-panel" style={{ padding: "18px 20px 16px" }}>
-      <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-        <div>
-          <div className="at-caption">I/O latency heatmap</div>
-          <div className="at-sub" style={{ marginTop: 4 }}>
-            One cell per minute, coloured by the busiest latency bucket. From the node agent.
-          </div>
-        </div>
-        <div className="at-sub" style={{ display: "flex", gap: 12, alignItems: "center" }}>
-          <span><i style={{ display: "inline-block", width: 10, height: 10, background: cellColor(100), marginRight: 4 }} /> &lt; 1 ms</span>
-          <span><i style={{ display: "inline-block", width: 10, height: 10, background: cellColor(2_000), marginRight: 4 }} /> &lt; 10 ms</span>
-          <span><i style={{ display: "inline-block", width: 10, height: 10, background: cellColor(20_000), marginRight: 4 }} /> slower</span>
-        </div>
-      </div>
-      {q.isLoading && !report && (
-        <div className="at-sub" style={{ marginTop: 14 }}>Loading heatmap…</div>
-      )}
+    <div className="at-panel hm">
+      {q.isLoading && !report && <p className="hm-note">Loading heatmap…</p>}
       {report?.status === "unavailable" && (
-        <div className="at-sub" style={{ marginTop: 14 }}>
-          Heatmap unavailable{report.detail ? ` — ${report.detail}` : ""}.
-        </div>
+        <EmptyState art="chart" title="Heatmap unavailable" description={report.detail ?? undefined} compact />
       )}
-      {q.isError && !report && (
-        <div className="at-sub" style={{ marginTop: 14 }}>Heatmap unavailable.</div>
-      )}
+      {q.isError && !report && <EmptyState art="chart" title="Heatmap unavailable" compact />}
       {report?.status === "ok" && series.length === 0 && (
-        <div className="at-sub" style={{ marginTop: 14 }}>No I/O in the last 15 minutes.</div>
+        <EmptyState art="chart" title="No I/O in the last 15 minutes" compact />
       )}
       {series.length > 0 && (
-        <div style={{ marginTop: 14, display: "flex", flexDirection: "column", gap: 8 }}>
+        <>
+          <ul className="hm-legend" aria-label="Peak latency per minute">
+            {BANDS.map((b) => (
+              <li key={b.id}>
+                <i className="hm-cell" data-band={b.id} aria-hidden />
+                {b.label}
+              </li>
+            ))}
+          </ul>
           {series.map((s) => (
-            <div key={`${s.device}-${s.op}`} style={{ display: "flex", gap: 10, alignItems: "center" }}>
-              <div className="mono" style={{ width: 160, flex: "0 0 160px", fontSize: 12 }}>
+            <div key={`${s.device}-${s.op}`} className="hm-row">
+              <div className="hm-name mono">
                 {s.device}
-                <span className="at-tag" style={{ marginLeft: 6 }}>{s.op}</span>
+                <span className="at-tag">{s.op}</span>
               </div>
-              <div style={{ display: "flex", gap: 2, flexWrap: "wrap" }} aria-label={`${s.device} ${s.op} latency`}>
+              <div className="hm-cells" role="img" aria-label={describe(s)}>
                 {s.columns.map((c) => (
                   <i
                     key={c.start_unix}
+                    className="hm-cell"
+                    data-band={band(c.peak_us)}
                     title={`${c.count} I/Os, peak ${latency(c.peak_us)}`}
-                    style={{
-                      width: 14,
-                      height: 18,
-                      borderRadius: 2,
-                      background: cellColor(c.peak_us),
-                      display: "inline-block",
-                    }}
                   />
                 ))}
               </div>
             </div>
           ))}
-        </div>
+        </>
       )}
     </div>
   );

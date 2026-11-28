@@ -1,20 +1,48 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
-// Pool Detail — Soundings archetype C (instruments → cross-section → seabed → ledger).
+// Pool detail: headline figures, how full the pool is, its open alerts, then its volumes (or the
+// cluster's disks when none are linked). Fill levels come from lib/poolUsage, never used / max.
 import { useEffect, useMemo } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { useAlerts, useClusters, useOsds, usePools, useVolumes } from "../api/hooks";
-import { depth, depthWidth } from "../lib/depth";
-import { fmtBytes, fmtPct } from "../lib/format";
+import { useAlerts, useBackendsSummary, useCephDf, useClusters, useOsds, usePools, useVolumes } from "../api/hooks";
+import type { Osd } from "../api/types";
+import { CapacityRing, EmptyState, HealthIndicator, PoolUsageBars, StatusGlyph, healthMeta } from "../graphics";
+import { formatPercent } from "../graphics/format";
+import { fmtBytes, fmtBytesParts } from "../lib/format";
+import { poolFill, poolUsage } from "../lib/poolUsage";
 import { sendPrompt } from "../lib/prompts";
 import { DetailPage, type DetailStat } from "../ui/templates/DetailPage";
 import { DashboardModule } from "../ui/templates/DashboardHero";
+import { UsageCell } from "./Volumes";
+import "./PoolDetail.css";
+
+/** Capacity turns amber and red at the same points as lib/depth.ts. */
+const FILL = { warnAt: 75, failAt: 90 };
+const VOLUME_ROWS = 48;
+
+const CRUMBS = [
+  { label: "Storage", to: "/" },
+  { label: "Pools", to: "/ceph" },
+];
+
+const bytesStat = (label: string, bytes: number | null, delta: string): DetailStat => {
+  const parts = fmtBytesParts(bytes);
+  return { label, value: parts?.mag ?? "—", unit: parts?.unit, delta };
+};
+
+function diskState(o: Osd) {
+  if (!o.up) return { tone: "fail", word: "down" } as const;
+  if (!o.in_cluster) return { tone: "warn", word: "up, out" } as const;
+  return { tone: "ok", word: "up, in" } as const;
+}
 
 export default function PoolDetail() {
   const { id = "" } = useParams();
   const nav = useNavigate();
   const { data: pools } = usePools();
   const { data: clusters } = useClusters();
+  const { data: backends } = useBackendsSummary();
+  const { data: cephDf } = useCephDf();
   const { data: vols } = useVolumes();
   const { data: osds } = useOsds();
   const { data: alerts } = useAlerts("open");
@@ -28,137 +56,98 @@ export default function PoolDetail() {
     () => (vols || []).filter((v) => v.pool_id === id || (!v.pool_id && pool && v.name.includes(pool.name))),
     [vols, id, pool],
   );
+  const clusterOsds = useMemo(
+    () =>
+      (osds || [])
+        .filter((o) => o.cluster_id === pool?.cluster_id)
+        .sort((a, b) => (a.osd_num ?? a.id) - (b.osd_num ?? b.id)),
+    [osds, pool],
+  );
+  const usage = useMemo(
+    () => (pool ? poolUsage([pool], { clusters, backends, cephDf })![0] : null),
+    [pool, clusters, backends, cephDf],
+  );
 
   useEffect(() => {
     if (pool) document.title = `Atlas · ${pool.name}`;
   }, [pool]);
 
-  const used = pool?.used_bytes ?? 0;
-  const max = pool?.max_bytes ?? 0;
-  const free = Math.max(0, max - used);
-  const pct = max > 0 ? (used / max) * 100 : 0;
-  const d = depth(pct);
-
-  const stateLine = !pool
-    ? pools
-      ? "Pool not found in inventory — it may have been removed from discovery."
-      : "Sounding this pool…"
-    : pool.health !== "ok"
-      ? `${pool.name} reports ${pool.health.toUpperCase()} at ${fmtPct(pct)}% · ${d.name}.`
-      : pct >= 75
-        ? `${pool.name} is ${d.name} — ${fmtPct(pct)}% of ${fmtBytes(max)} provisioned.`
-        : `${pool.name} · ${pool.kind} · ${fmtPct(pct)}% occupied · health ${pool.health}.`;
-
-  const ledger = useMemo(() => {
-    const items: { t: string; cls: string; text: string }[] = [];
-    for (const a of (alerts || []).slice(0, 5)) {
-      if (
-        a.resource_id === id ||
-        a.resource_id === pool?.name ||
-        a.title.toLowerCase().includes((pool?.name || "").toLowerCase())
-      ) {
-        items.push({
-          t: a.created_at
-            ? new Date(a.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
-            : "—",
-          cls: a.severity === "critical" ? "dp5" : a.severity === "warning" ? "dp4" : "dp3",
-          text: a.title,
-        });
-      }
-    }
-    if (!items.length && pool) {
-      items.push({
-        t: "now",
-        cls: d.cls,
-        text: `Depth ${d.name} · ${fmtBytes(used)} of ${fmtBytes(max)}`,
-      });
-    }
-    return items;
-  }, [alerts, id, pool, d.cls, d.name, used, max]);
-
-  const seabed = useMemo(() => {
-    if (poolVols.length) {
-      return poolVols.slice(0, 48).map((v) => {
-        const p = v.size_bytes > 0 && v.used_bytes != null ? (v.used_bytes / v.size_bytes) * 100 : 0;
-        return { cls: depth(p).cls, title: `${v.name} · ${v.state}` };
-      });
-    }
-    const rows = osds || [];
-    const n = Math.max(rows.length, 24);
-    return Array.from({ length: n }, (_, i) => {
-      const o = rows[i % Math.max(rows.length, 1)];
-      const cls = !o ? "dp2" : !o.up ? "dp5" : o.in_cluster ? "dp1" : "dp3";
-      return { cls, title: o ? `osd.${o.osd_num ?? o.id}` : `cell ${i}` };
-    });
-  }, [poolVols, osds]);
-
-  const waterY = 18 + (100 - Math.max(pct, 1.5)) * 0.9;
+  const poolAlerts = useMemo(() => {
+    if (!pool) return [];
+    return (alerts || [])
+      .slice(0, 5)
+      .filter(
+        (a) =>
+          a.resource_id === id ||
+          a.resource_id === pool.name ||
+          a.title.toLowerCase().includes(pool.name.toLowerCase()),
+      );
+  }, [alerts, id, pool]);
 
   if (!pool && pools) {
     return (
       <DetailPage
-        crumbs={[
-          { label: "Storage", to: "/" },
-          { label: "Pools", to: "/ceph" },
-          { label: "Not found" },
-        ]}
-        eyebrow="POOL · DETAIL"
+        crumbs={[...CRUMBS, { label: "Not found" }]}
+        eyebrow={null}
         title="Pool not found"
-        state={stateLine}
+        state="This pool is not in the inventory. Discovery may have removed it."
         actions={
           <button type="button" className="at-btn" onClick={() => nav("/")}>
             Overview
           </button>
         }
-      />
+      >
+        <div className="at-panel">
+          <EmptyState art="pool" title="Nothing to show" description="Open the Overview to pick another pool." />
+        </div>
+      </DetailPage>
     );
   }
 
+  const pct = usage ? poolFill(usage) : null;
+  const used = usage?.usedBytes ?? null;
+  const capacity = usage?.capacityBytes ?? null;
+  const available = usage?.availableBytes ?? null;
+  const fill = pct === null ? "fill level not reported" : `${formatPercent(pct)} full`;
+  const pressure = pct === null || pct < FILL.warnAt ? "" : pct >= FILL.failAt ? " Nearly full." : " Filling up.";
+
+  const stateLine = !pool
+    ? "Loading pool…"
+    : pool.health === "ok"
+      ? `Healthy ${pool.kind} pool, ${fill}.${pressure}`
+      : `Health: ${healthMeta(pool.health).word.toLowerCase()}. ${pool.kind} pool, ${fill}.${pressure}`;
+
+  // Ceph reports space still available; other drivers report a total, so free is the remainder.
+  const free = capacity !== null && used !== null ? Math.max(0, capacity - used) : null;
   const stats: DetailStat[] = [
-    {
-      label: "Used",
-      value: fmtBytes(used).replace(/ .*/, ""),
-      unit: fmtBytes(used).split(" ").slice(-1)[0],
-      delta: `${fmtPct(pct)}% of provisioned`,
-    },
-    {
-      label: "Free",
-      value: fmtBytes(free).replace(/ .*/, ""),
-      unit: fmtBytes(free).split(" ").slice(-1)[0],
-      delta: max ? `${fmtPct(100 - pct)}% remaining` : "capacity unknown",
-    },
+    bytesStat("Used", used, pool ? fill : "—"),
+    available !== null
+      ? bytesStat("Available", available, "Space still free")
+      : bytesStat("Free", free, capacity !== null && capacity > 0 ? `of ${fmtBytes(capacity)}` : "Capacity not reported"),
     {
       label: "Health",
-      value: pool?.health || "—",
-      style: { textTransform: "uppercase" },
-      delta: `cluster ${cluster?.health || "—"}`,
+      value: <HealthIndicator health={pool?.health} size="lg" />,
+      delta: `Cluster: ${healthMeta(cluster?.health).word.toLowerCase()}`,
     },
     {
-      label: "Replica / class",
+      label: "Replicas",
       value: pool?.replica_size ?? "—",
-      delta: <span className="mono" style={{ fontSize: 11 }}>{pool?.device_class || pool?.kind || "—"}</span>,
+      delta: <span className="mono">{pool?.device_class || pool?.kind || "—"}</span>,
     },
   ];
 
+  const shownVols = poolVols.slice(0, VOLUME_ROWS);
+
   return (
     <DetailPage
-      crumbs={[
-        { label: "Storage", to: "/" },
-        { label: "Pools", to: "/ceph" },
-        { label: pool?.name || id },
-      ]}
-      eyebrow={
-        <>
-          POOL · {cluster?.name || pool?.cluster_id || "…"}
-          {pool ? ` · ${pool.kind}` : ""}
-        </>
-      }
+      crumbs={[...CRUMBS, { label: pool?.name || id }]}
+      eyebrow={pool ? `${cluster?.name || pool.cluster_id} · ${pool.kind}` : null}
       title={pool?.name || "Pool"}
       state={stateLine}
       actions={
         <>
           <button type="button" className="at-btn" onClick={() => nav("/")}>
-            Deck
+            Overview
           </button>
           <Link to="/volumes" className="at-btn">
             Volumes
@@ -168,7 +157,7 @@ export default function PoolDetail() {
             className="at-btn primary"
             onClick={() =>
               sendPrompt(
-                `Analyse pool ${pool?.name || id}: depth ${fmtPct(pct)}%, health ${pool?.health}, and recommend capacity actions.`,
+                `Analyse pool ${pool?.name || id}: ${fill}, health ${pool?.health}, and recommend capacity actions.`,
               )
             }
           >
@@ -178,98 +167,123 @@ export default function PoolDetail() {
       }
       stats={stats}
     >
-      <DashboardModule title="Cross-section" note={`${d.name} · ${fmtPct(pct)}%`}>
-        <div className="at-cross">
-          <svg className="at-cross-svg" viewBox="0 0 800 140" preserveAspectRatio="none" aria-hidden>
-            <defs>
-              <linearGradient id="poolFill" x1="0" y1="0" x2="0" y2="1">
-                <stop offset="0%" stopColor="var(--d2)" stopOpacity=".65" />
-                <stop offset="100%" stopColor="var(--d3)" stopOpacity=".3" />
-              </linearGradient>
-            </defs>
-            <path
-              d="M0 28 C120 10, 200 40, 320 22 S520 8, 640 30 S760 20, 800 26 L800 140 L0 140 Z"
-              fill="var(--at-ridge)"
-              stroke="var(--at-line-2)"
-            />
-            <path
-              d={`M0 ${waterY + 40} C160 ${waterY + 20}, 320 ${waterY + 50}, 480 ${waterY + 28} S700 ${waterY + 36}, 800 ${waterY + 44} L800 140 L0 140 Z`}
-              fill="url(#poolFill)"
-            />
-            <line
-              x1="0"
-              y1={waterY + 40}
-              x2="800"
-              y2={waterY + 44}
-              stroke="var(--d1)"
-              strokeWidth="1.6"
-              opacity=".95"
-            />
-            <text x="16" y="18" fill="var(--at-ink-3)" style={{ fontFamily: "var(--at-mono)", fontSize: 11 }}>
-              waterline · {fmtBytes(used)} / {fmtBytes(max)}
-            </text>
-          </svg>
-          <div className={`at-mini ${d.cls}`} style={{ width: "100%", height: 10, marginTop: 12 }}>
-            <i style={{ width: depthWidth(pct) }} />
-          </div>
-        </div>
-      </DashboardModule>
-
       <div className="at-2col">
-        <DashboardModule
-          title="Seabed"
-          note={poolVols.length ? `${poolVols.length} volumes` : `${(osds || []).length || "—"} OSD health tiles`}
-        >
-          <div className="at-seabed">
-            {seabed.map((c, i) => (
-              <span key={i} className={`at-pg ${c.cls}`} title={c.title} />
-            ))}
+        <DashboardModule title="Capacity">
+          <div className="at-panel pd-fill">
+            {usage && capacity !== null ? (
+              <CapacityRing label={usage.name} usedBytes={used} totalBytes={capacity} {...FILL} />
+            ) : (
+              <>
+                <PoolUsageBars pools={usage ? [usage] : null} loading={!pool} {...FILL} />
+                {typeof usage?.percentUsed === "number" ? (
+                  <p className="pd-note">Fill level and available space as Ceph reports them.</p>
+                ) : null}
+              </>
+            )}
           </div>
-          {!poolVols.length ? (
-            <div className="at-fill-hint" style={{ marginTop: 10 }}>
-              No volumes bound to this pool id yet — tiles show OSD health as a proxy.
-            </div>
-          ) : null}
         </DashboardModule>
-        <DashboardModule title="Ledger" note="alerts · soundings">
-          <div className="at-ledger">
-            {ledger.map((row, i) => (
-              <div key={i} className="at-entry">
-                <time>{row.t}</time>
-                <span className={`mk ${row.cls}`} />
-                <span className="txt">{row.text}</span>
-              </div>
-            ))}
+        <DashboardModule title="Alerts" note="Open, for this pool">
+          <div className="at-panel at-ledger">
+            {!alerts ? (
+              <div className="at-loading">Loading alerts…</div>
+            ) : !poolAlerts.length ? (
+              <EmptyState art="alert" title="No open alerts for this pool" compact />
+            ) : (
+              poolAlerts.map((a) => (
+                <div key={a.id} className="at-entry">
+                  <time>
+                    {a.created_at
+                      ? new Date(a.created_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })
+                      : "—"}
+                  </time>
+                  <span
+                    className={`mk ${a.severity === "critical" ? "dp5" : a.severity === "warning" ? "dp4" : "dp3"}`}
+                    aria-hidden
+                  />
+                  <span className="txt">
+                    <span className="sr-only">{a.severity}: </span>
+                    {a.title}
+                  </span>
+                </div>
+              ))
+            )}
           </div>
         </DashboardModule>
       </div>
 
-      {poolVols.length > 0 && (
-        <DashboardModule title="Volumes on this pool" note={poolVols.length}>
+      {poolVols.length > 0 ? (
+        <DashboardModule
+          title="Volumes on this pool"
+          note={
+            poolVols.length > shownVols.length
+              ? `${shownVols.length} of ${poolVols.length} shown`
+              : `${poolVols.length} volume${poolVols.length === 1 ? "" : "s"}`
+          }
+        >
           <div className="at-panel">
-            <table className="at-tbl">
-              <thead>
-                <tr>
-                  <th>Name</th>
-                  <th>Kind</th>
-                  <th>Size</th>
-                  <th>State</th>
-                </tr>
-              </thead>
-              <tbody>
-                {poolVols.slice(0, 20).map((v) => (
-                  <tr key={v.id} onClick={() => nav(`/volumes?focus=${v.id}`)} style={{ cursor: "pointer" }}>
-                    <td className="mono">{v.name}</td>
-                    <td>{v.kind}</td>
-                    <td className="mono">{fmtBytes(v.size_bytes)}</td>
-                    <td>{v.state}</td>
+            <div className="overflow-x-auto">
+              <table className="at-tbl">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Kind</th>
+                    <th>Size</th>
+                    <th>Used</th>
+                    <th>State</th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  {shownVols.map((v) => (
+                    <tr key={v.id} className="cursor-pointer" onClick={() => nav(`/volumes?focus=${v.id}`)}>
+                      <td className="mono">
+                        {/* Keyboard route to the volume: the click bubbles to the row. */}
+                        <button type="button" className="a-link">
+                          {v.name}
+                        </button>
+                      </td>
+                      <td>{v.kind}</td>
+                      <td className="mono">{fmtBytes(v.size_bytes)}</td>
+                      <td>
+                        <UsageCell used={v.used_bytes} size={v.size_bytes} />
+                      </td>
+                      <td>{v.state}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           </div>
         </DashboardModule>
-      )}
+      ) : pool && vols ? (
+        clusterOsds.length ? (
+          <DashboardModule
+            title="Disks in this cluster"
+            note={`${clusterOsds.length} OSD${clusterOsds.length === 1 ? "" : "s"}`}
+          >
+            <div className="at-panel">
+              <p className="pd-note pd-osd-note">
+                No volumes are linked to this pool. These disks belong to the whole cluster, not only this pool.
+              </p>
+              <ul className="pd-osds" aria-label="OSDs in this cluster">
+                {clusterOsds.map((o) => {
+                  const s = diskState(o);
+                  return (
+                    <li key={o.id}>
+                      <StatusGlyph tone={s.tone} size={14} />
+                      <span className="mono">osd.{o.osd_num ?? o.id}</span>
+                      <span className="pd-osd-state">{s.word}</span>
+                    </li>
+                  );
+                })}
+              </ul>
+            </div>
+          </DashboardModule>
+        ) : (
+          <div className="at-panel">
+            <EmptyState art="volume" title="No volumes on this pool" compact />
+          </div>
+        )
+      ) : null}
     </DetailPage>
   );
 }
