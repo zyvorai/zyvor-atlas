@@ -9,8 +9,8 @@
 use std::{
     collections::BTreeMap,
     fs::{self, File},
-    io,
-    net::TcpListener,
+    io::{self, Read, Write},
+    net::{SocketAddr, TcpListener, TcpStream},
     os::unix::fs::MetadataExt,
     path::Path,
     sync::{
@@ -23,8 +23,9 @@ use std::{
 };
 
 use crate::{
-    device::{DeviceSync, FileDevice},
+    device::{DataSync, DeviceSync, FileDevice},
     metadata::MetaCommand,
+    node::{DataNodeRole, DataNodeSpec, Listeners, MetadataRole, NativeNode, NodeConfig},
     object::DirObjectStore,
     raw::{AlignedBuf, AlignedIo, PreadIo, RawDevice},
     wal::{Wal, WalRecord},
@@ -589,4 +590,237 @@ fn replicas_move_off_a_data_node_whose_device_failed() {
     );
     let status = engine.node_status();
     assert!(status[first].failures >= 1, "{status:?}");
+}
+
+const BLOCK: usize = 4096;
+
+/// One HTTP request; the status and body.
+fn http(addr: SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
+    let mut s = TcpStream::connect(addr).unwrap();
+    let head = format!(
+        "{method} {path} HTTP/1.1\r\nHost: test\r\nConnection: close\r\nContent-Length: {}\r\n\r\n",
+        body.len()
+    );
+    s.write_all(head.as_bytes()).unwrap();
+    s.write_all(body).unwrap();
+    let mut out = Vec::new();
+    s.read_to_end(&mut out).unwrap();
+    let split = out.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
+    let status = std::str::from_utf8(&out[9..12]).unwrap().parse().unwrap();
+    (status, out[split + 4..].to_vec())
+}
+
+/// Three nodes in one process, each a metadata voter and a data node with one device, with
+/// three replicas.
+struct Trio {
+    td: tempfile::TempDir,
+    data_addrs: Vec<SocketAddr>,
+    raft_addrs: Vec<SocketAddr>,
+    nodes: Vec<Option<NativeNode>>,
+}
+
+impl Trio {
+    /// `syncs[i]` replaces `fdatasync` on node `i`'s device until the node is restarted.
+    fn start(syncs: [Box<dyn DeviceSync>; 3]) -> Self {
+        let td = tempfile::tempdir().unwrap();
+        let bind = || TcpListener::bind("127.0.0.1:0").unwrap();
+        let data: Vec<TcpListener> = (0..3).map(|_| bind()).collect();
+        let raft: Vec<TcpListener> = (0..3).map(|_| bind()).collect();
+        let addrs = |l: &[TcpListener]| l.iter().map(|l| l.local_addr().unwrap()).collect();
+        let mut trio = Self {
+            data_addrs: addrs(&data),
+            raft_addrs: addrs(&raft),
+            td,
+            nodes: Vec::new(),
+        };
+        for (i, ((d, r), sync)) in data.into_iter().zip(raft).zip(syncs).enumerate() {
+            let path = trio.root(i).join("data").join("nvme0.data");
+            let device = FileDevice::open_with_sync(path, sync).unwrap();
+            let node = NativeNode::start_with_devices(
+                trio.config(i),
+                Listeners {
+                    http: Some(bind()),
+                    data_node: Some(d),
+                    metadata: Some(r),
+                },
+                vec![Arc::new(device)],
+            )
+            .unwrap();
+            trio.nodes.push(Some(node));
+        }
+        trio
+    }
+
+    fn root(&self, i: usize) -> std::path::PathBuf {
+        self.td.path().join(format!("n{i}"))
+    }
+
+    fn config(&self, i: usize) -> NodeConfig {
+        let data_nodes = self
+            .data_addrs
+            .iter()
+            .enumerate()
+            .map(|(i, a)| DataNodeSpec {
+                id: format!("n{i}"),
+                addr: a.to_string(),
+                zone: None,
+                rack: None,
+                host: None,
+                free_bytes: 1 << 30,
+                devices: 1,
+            })
+            .collect();
+        NodeConfig {
+            node_id: format!("n{i}"),
+            data_dir: self.root(i),
+            http_listen: "127.0.0.1:0".parse().unwrap(),
+            api_token_file: None,
+            tls: None,
+            http_tls: None,
+            data_node: Some(DataNodeRole {
+                listen: self.data_addrs[i],
+                devices: Vec::new(),
+            }),
+            metadata: Some(MetadataRole {
+                listen: self.raft_addrs[i],
+                peers: self
+                    .raft_addrs
+                    .iter()
+                    .enumerate()
+                    .map(|(i, a)| (format!("n{i}"), a.to_string()))
+                    .collect(),
+                bootstrap: None,
+                data_nodes,
+                replicas: 3,
+                erasure: None,
+                erasure_min_bytes: 64 << 10,
+                compression: false,
+                dedup: false,
+                cross_group_dedup: false,
+                rebuild_delay_secs: 60,
+                rebuild_bytes_per_sec: 0,
+                scrub_bytes_per_sec: 0,
+                tiering: None,
+                extent_bytes: BLOCK,
+                tick_ms: 10,
+                proposal_timeout_ms: 3000,
+                repair_interval_secs: 0,
+                gc_interval_secs: 0,
+                groups: 1,
+                cache_inodes: crate::store::DEFAULT_CACHE_INODES,
+                store_cache_bytes: crate::store::DEFAULT_STORE_CACHE_BYTES,
+            }),
+            max_request_bytes: 1 << 20,
+            grant_key_file: None,
+        }
+    }
+
+    /// What a liveness-probing supervisor does: restarts, from disk and with the real device,
+    /// every node whose `/healthz` does not answer 200. Returns the nodes restarted.
+    fn supervise(&mut self) -> Vec<usize> {
+        let mut restarted = Vec::new();
+        for i in 0..self.nodes.len() {
+            let node = self.nodes[i].as_ref().unwrap();
+            if http(node.http_addr(), "GET", "/healthz", b"").0 == 200 {
+                continue;
+            }
+            // The process exits first: its sockets close.
+            self.nodes[i] = None;
+            let node = NativeNode::start_with(
+                self.config(i),
+                Listeners {
+                    http: Some(TcpListener::bind("127.0.0.1:0").unwrap()),
+                    data_node: Some(TcpListener::bind(self.data_addrs[i]).unwrap()),
+                    metadata: Some(TcpListener::bind(self.raft_addrs[i]).unwrap()),
+                },
+            )
+            .unwrap();
+            self.nodes[i] = Some(node);
+            restarted.push(i);
+        }
+        restarted
+    }
+
+    /// The leader's answer to a request (421 means ask another node).
+    fn on_leader(&self, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            for node in self.nodes.iter().flatten() {
+                let (status, body) = http(node.http_addr(), method, path, body);
+                if status != 421 {
+                    return (status, body);
+                }
+            }
+            assert!(Instant::now() < deadline, "no leader for {method} {path}");
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
+    fn write(&self, block: usize, byte: u8) -> u16 {
+        let path = format!("/v1/volumes/v/data?offset={}", block * BLOCK);
+        self.on_leader("PUT", &path, &[byte; BLOCK]).0
+    }
+
+    fn assert_block(&self, block: usize, byte: u8) {
+        let path = format!("/v1/volumes/v/data?offset={}&len={BLOCK}", block * BLOCK);
+        let (status, got) = self.on_leader("GET", &path, b"");
+        assert_eq!(status, 200, "block {block}");
+        assert!(got == [byte; BLOCK], "block {block} reads other bytes");
+    }
+
+    fn create_volume(&self) {
+        let body = br#"{"id":"v","name":"v","size_bytes":1048576}"#;
+        wait_for("the volume", || {
+            self.on_leader("POST", "/v1/volumes", body).0 == 201
+        });
+    }
+}
+
+/// One failed sync on one of three nodes, with three replicas: no write can have its replicas
+/// until that device is reopened, so a supervisor must be told to restart the node.
+#[test]
+fn one_failed_sync_does_not_stop_writes_for_good() {
+    let sync = FailOnce::default();
+    let mut trio = Trio::start([
+        Box::new(DataSync),
+        Box::new(sync.clone()),
+        Box::new(DataSync),
+    ]);
+    trio.create_volume();
+    wait_for("the first write", || trio.write(0, 1) == 204);
+
+    sync.arm();
+    assert_ne!(trio.write(1, 2), 204, "acknowledged without three replicas");
+
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let (mut failed, mut restarts) = (1, Vec::new());
+    loop {
+        restarts.extend(trio.supervise());
+        if trio.write(1, 2) == 204 {
+            break;
+        }
+        failed += 1;
+        assert!(
+            Instant::now() < deadline,
+            "{failed} writes failed, nodes restarted: {restarts:?}"
+        );
+        thread::sleep(Duration::from_millis(100));
+    }
+    assert_eq!(
+        restarts,
+        [1],
+        "only the node with the failed device restarts"
+    );
+    for i in 0..100 {
+        assert_eq!(
+            trio.write(2 + i, i as u8),
+            204,
+            "write {i} after the restart"
+        );
+    }
+    trio.assert_block(0, 1);
+    trio.assert_block(1, 2);
+    for i in 0..100 {
+        trio.assert_block(2 + i, i as u8);
+    }
 }

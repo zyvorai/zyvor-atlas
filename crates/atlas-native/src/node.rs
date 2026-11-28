@@ -568,6 +568,24 @@ impl NativeNode {
     }
 
     pub fn start_with(cfg: NodeConfig, listeners: Listeners) -> Result<Self, NativeError> {
+        Self::start_inner(cfg, listeners, None)
+    }
+
+    /// [`Self::start_with`] serving `devices` on the data node in place of the configured ones.
+    #[cfg(test)]
+    pub(crate) fn start_with_devices(
+        cfg: NodeConfig,
+        listeners: Listeners,
+        devices: Vec<Arc<dyn BlockStore>>,
+    ) -> Result<Self, NativeError> {
+        Self::start_inner(cfg, listeners, Some(devices))
+    }
+
+    fn start_inner(
+        cfg: NodeConfig,
+        listeners: Listeners,
+        injected: Option<Vec<Arc<dyn BlockStore>>>,
+    ) -> Result<Self, NativeError> {
         cfg.validate()?;
         std::fs::create_dir_all(&cfg.data_dir)?;
         let tls = cfg
@@ -618,7 +636,9 @@ impl NativeNode {
                     None => TcpListener::bind(role.listen)?,
                 };
                 let root = cfg.data_dir.join("data");
-                let devices = if role.devices.is_empty() {
+                let devices = if let Some(devices) = injected {
+                    devices
+                } else if role.devices.is_empty() {
                     let device: Arc<dyn BlockStore> =
                         Arc::new(crate::device::FileDevice::open(root.join("nvme0.data"))?);
                     vec![device]
