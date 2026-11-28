@@ -253,3 +253,5 @@ than the Ceph run it is set against (the host was quieter when this one started)
 
 Smaller cells do not make delta writes beat Ceph here. A change that folds more cheaply, or does
 not need to rewrite whole cells, would be needed.
+
+What to change next is proposed in [NATIVE_DELTA_REDESIGN](NATIVE_DELTA_REDESIGN.md).
