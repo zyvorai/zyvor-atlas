@@ -31,7 +31,8 @@ const RECOUNT_SECS: u64 = 10;
 pub enum DeviceRestart {
     /// As soon as any device refuses writes.
     Any,
-    /// Only once no device of the node accepts writes.
+    /// Only once no device of the node accepts writes: at once for a node with one device,
+    /// while a node with healthy ones goes on serving them. The default.
     Last,
     Never,
 }
@@ -49,7 +50,7 @@ impl Default for RestartPolicy {
         Self {
             max_restarts: DEFAULT_MAX_RESTARTS,
             window: DEFAULT_RESTART_WINDOW,
-            devices: DeviceRestart::Any,
+            devices: DeviceRestart::Last,
         }
     }
 }
@@ -303,12 +304,12 @@ mod tests {
         let p = env(&[
             ("ATLAS_NATIVE_FAILURE_RESTARTS", "5"),
             ("ATLAS_NATIVE_FAILURE_WINDOW_SECS", "60"),
-            ("ATLAS_NATIVE_DEVICE_FAILURE_RESTART", "last"),
+            ("ATLAS_NATIVE_DEVICE_FAILURE_RESTART", "any"),
         ])
         .unwrap();
         assert_eq!(
             (p.max_restarts, p.window, p.devices),
-            (5, Duration::from_secs(60), DeviceRestart::Last)
+            (5, Duration::from_secs(60), DeviceRestart::Any)
         );
         assert!(env(&[("ATLAS_NATIVE_FAILURE_RESTARTS", "-1")]).is_err());
         assert!(env(&[("ATLAS_NATIVE_DEVICE_FAILURE_RESTART", "all")]).is_err());

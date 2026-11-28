@@ -143,6 +143,9 @@ spec:
             - name: POD_NAME
               valueFrom:
                 fieldRef: { fieldPath: metadata.name }
+            # A failed data device asks for a restart only when no device of the pod accepts
+            # writes (at once here, with one device per pod).
+            - { name: ATLAS_NATIVE_DEVICE_FAILURE_RESTART, value: "last" }
           ports:
             - { name: http, containerPort: 7480 }
             - { name: data, containerPort: 7481 }

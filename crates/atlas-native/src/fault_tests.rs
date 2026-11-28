@@ -617,32 +617,48 @@ fn http(addr: SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8
     (status, out[split + 4..].to_vec())
 }
 
-/// Three nodes in one process, each a metadata voter and a data node with one device, with
-/// three replicas.
+/// Three nodes in one process, each a metadata voter and a data node with the same number of
+/// devices, with three replicas.
 struct Trio {
     td: tempfile::TempDir,
+    devices: usize,
     data_addrs: Vec<SocketAddr>,
     raft_addrs: Vec<SocketAddr>,
     nodes: Vec<Option<NativeNode>>,
 }
 
 impl Trio {
-    /// `syncs[i]` replaces `fdatasync` on node `i`'s device until the node is restarted.
+    /// One device per node; `syncs[i]` replaces `fdatasync` on node `i`'s until the node is
+    /// restarted.
     fn start(syncs: [Box<dyn DeviceSync>; 3]) -> Self {
+        Self::start_devices(syncs.map(|sync| vec![sync]))
+    }
+
+    /// `syncs[i][d]` replaces `fdatasync` on device `d` of node `i`, each node having as many
+    /// devices as the first.
+    fn start_devices(syncs: [Vec<Box<dyn DeviceSync>>; 3]) -> Self {
         let td = tempfile::tempdir().unwrap();
         let bind = || TcpListener::bind("127.0.0.1:0").unwrap();
         let data: Vec<TcpListener> = (0..3).map(|_| bind()).collect();
         let raft: Vec<TcpListener> = (0..3).map(|_| bind()).collect();
         let addrs = |l: &[TcpListener]| l.iter().map(|l| l.local_addr().unwrap()).collect();
         let mut trio = Self {
+            devices: syncs[0].len(),
             data_addrs: addrs(&data),
             raft_addrs: addrs(&raft),
             td,
             nodes: Vec::new(),
         };
-        for (i, ((d, r), sync)) in data.into_iter().zip(raft).zip(syncs).enumerate() {
-            let path = trio.root(i).join("data").join("nvme0.data");
-            let device = FileDevice::open_with_sync(path, sync).unwrap();
+        for (i, ((d, r), syncs)) in data.into_iter().zip(raft).zip(syncs).enumerate() {
+            let devices = syncs
+                .into_iter()
+                .enumerate()
+                .map(|(device, sync)| {
+                    let path = trio.device_path(i, device);
+                    let device = FileDevice::open_with_sync(path, sync).unwrap();
+                    Arc::new(device) as Arc<dyn BlockStore>
+                })
+                .collect();
             let node = NativeNode::start_with_devices(
                 trio.config(i),
                 Listeners {
@@ -650,12 +666,22 @@ impl Trio {
                     data_node: Some(d),
                     metadata: Some(r),
                 },
-                vec![Arc::new(device)],
+                devices,
             )
             .unwrap();
             trio.nodes.push(Some(node));
         }
         trio
+    }
+
+    /// Where node `i` keeps its device `device`: with one, where a node keeps it unconfigured.
+    fn device_path(&self, i: usize, device: usize) -> std::path::PathBuf {
+        let data = self.root(i).join("data");
+        if self.devices == 1 {
+            data.join("nvme0.data")
+        } else {
+            data.join(format!("d{device}"))
+        }
     }
 
     fn root(&self, i: usize) -> std::path::PathBuf {
@@ -674,7 +700,7 @@ impl Trio {
                 rack: None,
                 host: None,
                 free_bytes: 1 << 30,
-                devices: 1,
+                devices: self.devices,
             })
             .collect();
         NodeConfig {
@@ -686,7 +712,13 @@ impl Trio {
             http_tls: None,
             data_node: Some(DataNodeRole {
                 listen: self.data_addrs[i],
-                devices: Vec::new(),
+                devices: (0..self.devices)
+                    .filter(|_| self.devices > 1)
+                    .map(|device| DeviceConfig {
+                        path: self.device_path(i, device),
+                        backend: DeviceBackend::File,
+                    })
+                    .collect(),
             }),
             metadata: Some(MetadataRole {
                 listen: self.raft_addrs[i],
@@ -731,21 +763,26 @@ impl Trio {
             if http(node.http_addr(), "GET", "/healthz", b"").0 == 200 {
                 continue;
             }
-            // The process exits first: its sockets close.
-            self.nodes[i] = None;
-            let node = NativeNode::start_with(
-                self.config(i),
-                Listeners {
-                    http: Some(TcpListener::bind("127.0.0.1:0").unwrap()),
-                    data_node: Some(TcpListener::bind(self.data_addrs[i]).unwrap()),
-                    metadata: Some(TcpListener::bind(self.raft_addrs[i]).unwrap()),
-                },
-            )
-            .unwrap();
-            self.nodes[i] = Some(node);
+            self.restart(i);
             restarted.push(i);
         }
         restarted
+    }
+
+    /// Restarts node `i` from disk, with real devices.
+    fn restart(&mut self, i: usize) {
+        // The process exits first: its sockets close.
+        self.nodes[i] = None;
+        let node = NativeNode::start_with(
+            self.config(i),
+            Listeners {
+                http: Some(TcpListener::bind("127.0.0.1:0").unwrap()),
+                data_node: Some(TcpListener::bind(self.data_addrs[i]).unwrap()),
+                metadata: Some(TcpListener::bind(self.raft_addrs[i]).unwrap()),
+            },
+        )
+        .unwrap();
+        self.nodes[i] = Some(node);
     }
 
     /// The leader's answer to a request (421 means ask another node).
@@ -1317,13 +1354,9 @@ fn a_disk_bad_for_good_gets_a_bounded_number_of_restarts() {
 }
 
 #[test]
-fn restart_on_the_last_device_waits_until_no_device_accepts_writes() {
+fn by_default_a_restart_waits_until_no_device_accepts_writes() {
     let td = tempfile::tempdir().unwrap();
     let node = data_node(td.path(), vec![Box::new(BadDisk), Box::new(BadDisk)]);
-    node.set_restart_policy(RestartPolicy {
-        devices: DeviceRestart::Last,
-        ..RestartPolicy::default()
-    });
     assert!(client(&node, 0).append(0, b"x").is_err());
     assert_eq!(health(&node), (200, 200));
     assert!(node.restart_reason().is_none());
@@ -1332,13 +1365,78 @@ fn restart_on_the_last_device_waits_until_no_device_accepts_writes() {
 }
 
 #[test]
-fn by_default_one_failed_device_of_several_asks_for_a_restart() {
+fn any_asks_for_a_restart_on_the_first_failed_device() {
     let td = tempfile::tempdir().unwrap();
     let node = data_node(td.path(), vec![Box::new(BadDisk), Box::new(DataSync)]);
+    node.set_restart_policy(RestartPolicy {
+        devices: DeviceRestart::Any,
+        ..RestartPolicy::default()
+    });
     assert!(client(&node, 0).append(0, b"x").is_err());
     assert_eq!(health(&node), (503, 503));
     // The other device serves meanwhile.
     client(&node, 1).append(0, b"y").unwrap();
+}
+
+/// The same failed sync as in `one_failed_sync_does_not_stop_writes_for_good`, on nodes with a
+/// second device: no write fails, nothing is restarted, the failed device is visible, and a
+/// restart by hand brings it back.
+#[test]
+fn a_node_with_a_healthy_device_keeps_writing_and_is_not_restarted() {
+    let sound = || Box::new(DataSync) as Box<dyn DeviceSync>;
+    let sync = FailOnce::default();
+    let mut trio = Trio::start_devices([
+        vec![sound(), sound()],
+        vec![Box::new(sync.clone()), sound()],
+        vec![sound(), sound()],
+    ]);
+    trio.create_volume();
+    wait_for("the first write", || trio.write(0, 1) == 204);
+
+    sync.arm();
+    for i in 0..100 {
+        assert_eq!(trio.write(1 + i, i as u8), 204, "write {i}");
+        assert!(trio.supervise().is_empty(), "restarted after write {i}");
+    }
+    trio.assert_block(0, 1);
+    for i in 0..100 {
+        trio.assert_block(1 + i, i as u8);
+    }
+
+    let node = trio.nodes[1].as_ref().unwrap();
+    assert_eq!(health(node), (200, 200));
+    assert!(node.restart_reason().is_none());
+    let m = metrics(node);
+    for line in [
+        "atlas_native_data_device_failed{node=\"n1\",device=\"0\"} 1",
+        "atlas_native_data_device_failed{node=\"n1\",device=\"1\"} 0",
+        "atlas_native_failed_without_restart{node=\"n1\",component=\"device0\"} 1",
+        "atlas_native_restart_required{node=\"n1\"} 0",
+    ] {
+        assert!(m.contains(line), "{line} is not in {m}");
+    }
+    let (_, status) = http(node.http_addr(), "GET", "/v1/status", b"");
+    let status = String::from_utf8(status).unwrap();
+    assert!(status.contains("\"restart_wanted\":false"), "{status}");
+    // The metadata leader says which node has a failed device.
+    let seen = "atlas_native_node_failed_devices{node=\"n1\"} 1";
+    assert!(
+        trio.nodes
+            .iter()
+            .flatten()
+            .any(|n| metrics(n).contains(seen)),
+        "no node reports {seen}"
+    );
+
+    trio.restart(1);
+    let device = RemoteDevice::new(trio.data_addrs[1], WAIT);
+    assert_eq!(device.probe().unwrap(), None);
+    let before = device.len().unwrap();
+    let block = Cell::new(0);
+    wait_for("the leader to place data on the device again", || {
+        block.set(1 + block.get() % 100);
+        trio.write(block.get(), 7) == 204 && device.len().unwrap() > before
+    });
 }
 
 #[test]
@@ -1354,10 +1452,6 @@ fn a_node_starts_with_a_device_it_cannot_open() {
         })
         .to_vec();
     let node = NativeNode::start(data_config(td.path(), devices)).unwrap();
-    node.set_restart_policy(RestartPolicy {
-        max_restarts: 0,
-        ..RestartPolicy::default()
-    });
     assert!(client(&node, 0).append(0, b"x").is_err());
     assert!(client(&node, 0).probe().unwrap().is_some());
     let at = client(&node, 1).append(0, b"y").unwrap();
