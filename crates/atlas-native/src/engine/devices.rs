@@ -106,7 +106,10 @@ impl NativeEngine {
                 Ok(false)
             }
             Err(e) => {
-                self.back_off(node, i);
+                // A node that cannot be reached is the node's state, not the device's.
+                if !node_unreachable(node.devices[i].as_ref(), &e) {
+                    self.back_off(node, i);
+                }
                 Err(e)
             }
         }
