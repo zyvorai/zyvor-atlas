@@ -258,9 +258,9 @@ Covered by tests:
   writers, snapshots, truncates and reclaim racing four folders over three reopens against a
   model, turning the mode off, reclaim with every folder stuck, writes failing as on a full
   device, a panic in a fold, shutdown with a fold in progress, a leader halted mid-fold whose
-  successor rewrites the cells, a leader losing its quorum mid-fold, and a single node folding,
-  reclaiming, shutting down with a backlog and restarting. The device failures, halts and stalls
-  are injected inside the test process;
+  successor rewrites the cells, a leader losing its quorum mid-fold (its folders then stop),
+  idle followers, and a single node folding, reclaiming, shutting down with a backlog and
+  restarting. The device failures, halts and stalls are injected inside the test process;
 - a FUSE operations-layer client with direct reads on a cell with deltas
   (`crates/atlas-native-fuse/tests/ops.rs`);
 - the `atlas-native` and `atlas-native-fuse` tests with the mode off, and again with it on by

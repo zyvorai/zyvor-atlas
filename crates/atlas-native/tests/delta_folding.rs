@@ -24,7 +24,7 @@ use atlas_native::{
     raft::CAP_DELTA,
     run_folders, BlockStore, DataNodeServer, EngineConfig, FailureDomain, FileDevice, MetaBackend,
     NativeEngine, NativeError, Node, NodeType, RaftConfig, RaftError, RaftServer, RemoteDevice,
-    SetAttr, ROOT_INO,
+    Role, SetAttr, ROOT_INO,
 };
 
 const GRID: usize = 4096;
@@ -967,7 +967,17 @@ fn folds_that_cannot_commit_leave_the_data_as_it_was() {
         until("both folds to fail", || {
             attempts.failed.load(Ordering::SeqCst) >= 2
         });
+        // Once it has stepped down, its folders start nothing more.
+        until("the leader to step down", || {
+            cut.raft.status().unwrap().role != Role::Leader
+        });
+        let all = || attempts.ok.load(Ordering::SeqCst) + attempts.failed.load(Ordering::SeqCst);
+        thread::sleep(SETTLE);
+        let before = all();
+        thread::sleep(SETTLE);
+        assert_eq!(all(), before, "folded without leading");
         assert_eq!(attempts.ok.load(Ordering::SeqCst), 0);
+        assert_eq!(cut.engine.pending_deltas().unwrap(), (2, 2));
     });
     drop(cut);
     for id in &followers {
