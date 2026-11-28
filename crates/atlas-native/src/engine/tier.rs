@@ -129,6 +129,9 @@ impl NativeEngine {
             .repair_lock
             .lock()
             .map_err(|_| NativeError::Poisoned("repair"))?;
+        // A tiering record whose log sync failed is not in the catalog, yet a restart may
+        // apply it: its object must stay. Checked under the lock tiering commits under.
+        self.check_log()?;
         let prefix = self.object_key("");
         let keys = store.list(&prefix)?;
         let live: BTreeSet<String> = self.with_catalog(|c| {

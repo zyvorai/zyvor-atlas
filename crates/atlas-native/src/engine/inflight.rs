@@ -48,14 +48,21 @@ pub(super) struct Lease<'a> {
 }
 
 impl NativeEngine {
+    /// Errors once the local log has failed. Its unacknowledged record may still apply after a
+    /// restart, so nothing may then overwrite or delete what that record could refer to.
+    pub(super) fn check_log(&self) -> Result<(), NativeError> {
+        if self.log_failed.load(Ordering::SeqCst) {
+            return Err(NativeError::Wal(WalError::Failed(
+                "no data is placed or deleted until the engine is reopened".into(),
+            )));
+        }
+        Ok(())
+    }
+
     pub(super) fn lease(&self) -> Result<Lease<'_>, NativeError> {
         // With a failed local log nothing placed now can commit, and writing it could
         // overwrite ranges that the log's unacknowledged record refers to.
-        if self.log_failed.load(Ordering::SeqCst) {
-            return Err(NativeError::Wal(WalError::Failed(
-                "no data is placed until the engine is reopened".into(),
-            )));
-        }
+        self.check_log()?;
         // Leases clients held and never committed come due here, so their space is reclaimed
         // by the next placement.
         self.reap_direct();

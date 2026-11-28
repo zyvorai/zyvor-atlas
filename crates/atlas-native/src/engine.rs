@@ -1933,6 +1933,9 @@ impl NativeEngine {
             }
         };
         let mut wal = wal.lock().map_err(|_| NativeError::Poisoned("wal"))?;
+        // Before anything is applied: the rollback below replays the log up to this command's
+        // index, which after an earlier failure would bring the unacknowledged record back.
+        wal.check()?;
         let mut c = catalog
             .write()
             .map_err(|_| NativeError::Poisoned("catalog"))?;

@@ -25,10 +25,11 @@ use std::{
 use crate::{
     device::{DeviceSync, FileDevice},
     metadata::MetaCommand,
+    object::DirObjectStore,
     raw::{AlignedBuf, AlignedIo, PreadIo, RawDevice},
     wal::{Wal, WalRecord},
     BlockStore, DataNodeServer, EngineConfig, Envelope, FailureDomain, Message, MetaBackend,
-    NativeEngine, Node, RaftConfig, RaftNode, RaftServer, RemoteDevice,
+    NativeEngine, Node, RaftConfig, RaftNode, RaftServer, RemoteDevice, TierPolicy,
 };
 
 const WAIT: Duration = Duration::from_secs(10);
@@ -466,6 +467,68 @@ fn a_local_engine_neither_shows_nor_follows_an_unsynced_command() {
     let engine = NativeEngine::open(cfg, nodes()).unwrap();
     engine.create_volume_as("v3".into(), "v3", 4096).unwrap();
     engine.write("v1", 0, &[1; 4096]).unwrap();
+}
+
+#[test]
+fn a_local_engine_keeps_hiding_an_unsynced_command_after_later_ones() {
+    let td = tempfile::tempdir().unwrap();
+    let nodes = || ["n0", "n1", "n2"].map(node).to_vec();
+    let engine = NativeEngine::open(EngineConfig::new(td.path()), nodes()).unwrap();
+    engine.create_volume_as("v1".into(), "v1", 4096).unwrap();
+    let sync = FailOnce::default();
+    engine.set_log_sync(Box::new(sync.clone()));
+    sync.arm();
+    assert!(engine.create_volume_as("v2".into(), "v2", 4096).is_err());
+    // Every later command is refused, and none of them may bring v2 back.
+    for id in ["v3", "v4"] {
+        assert!(engine.create_volume_as(id.into(), id, 4096).is_err());
+        let ids: Vec<String> = engine
+            .volumes()
+            .unwrap()
+            .into_iter()
+            .map(|v| v.id)
+            .collect();
+        assert_eq!(ids, ["v1"], "an unacknowledged command is visible");
+    }
+}
+
+#[test]
+fn a_local_engine_keeps_the_object_an_unsynced_tiering_record_names() {
+    const EXTENT: usize = 4096;
+    let td = tempfile::tempdir().unwrap();
+    let nodes = || ["n0", "n1", "n2"].map(node).to_vec();
+    let mut cfg = EngineConfig::new(td.path().join("meta"));
+    cfg.extent_bytes = EXTENT;
+    cfg.objects = Some(Arc::new(
+        DirObjectStore::new(td.path().join("objects")).unwrap(),
+    ));
+    let engine = NativeEngine::open(cfg.clone(), nodes()).unwrap();
+    engine
+        .create_volume_as("v".into(), "v", EXTENT as u64)
+        .unwrap();
+    engine.write("v", 0, &[7; EXTENT]).unwrap();
+    let policy = TierPolicy {
+        cold_after: Duration::ZERO,
+        min_bytes: 0,
+    };
+    let cold = engine.cold_extents(&policy).unwrap();
+    assert_eq!(cold.len(), 1);
+    let sync = FailOnce::default();
+    engine.set_log_sync(Box::new(sync.clone()));
+    sync.arm();
+    assert!(engine.tier_extent(&cold[0]).is_err());
+    // A later maintenance pass. Whether the record reached the log is unknown, so the object
+    // it names must stay: here it is still in the page cache, and a restart applies it.
+    let swept = engine.sweep_objects();
+    drop(engine);
+
+    let engine = NativeEngine::open(cfg, nodes()).unwrap();
+    let got = engine.read("v", 0, EXTENT);
+    assert!(
+        matches!(&got, Ok(b) if *b == [7; EXTENT]),
+        "acknowledged data lost (sweep: {swept:?}): {:?}",
+        got.map(|_| "other bytes")
+    );
 }
 
 #[test]
