@@ -765,6 +765,7 @@ fn delta_log() -> Vec<MetaCommand> {
         fold(volume("v"), 0, "v0", &["d3"], n("n3", 1024)),
         snapshot_volume("vs"),
         volume_deltas(vec![item(volume("v"), GRID, 9, "d6", 8)]),
+        volume_deltas(vec![item(volume("v"), 0, 1, "d7", 8)]),
         MetaCommand::FoldCells {
             folds: vec![
                 // Stale: that base was folded away above.
@@ -775,7 +776,6 @@ fn delta_log() -> Vec<MetaCommand> {
             ],
         },
         MetaCommand::FoldCells { folds: Vec::new() },
-        volume_deltas(vec![item(volume("v"), 0, 1, "d7", 8)]),
     ]);
     log
 }
