@@ -226,3 +226,30 @@ host and 1 GiB data set, queue depth 32, a single run.
 
 **Conclusion:** on this host, atlas-native with delta writes does not beat Ceph at sustained small
 random writes. It is not ready to be enabled by default.
+
+## Measured: the same 20 minutes with 128 KiB cells (2026-11-28)
+
+`ATLAS_EXTENT_BYTES=131072`, delta writes on, commit `d9b9d843`, a single run in a later session
+than the Ceph run it is set against (the host was quieter when this one started).
+
+| | Ceph | delta writes, 1 MiB cells | delta writes, 128 KiB cells |
+|---|---:|---:|---:|
+| Mean write IOPS over 1200 s | 37.8 | 23.8 | 39.2 |
+| p50 / p99 write latency (ms) | 868 / 1334 | 994 / 3808 | 726 / 2022 |
+| 1 MiB sequential read afterwards (MiB/s) | 103 | 5.1 | 3.0 |
+| 4 KiB random read afterwards, queue depth 32 (IOPS) | 145 | 797 | 52 |
+| Sequential layout write (MiB/s) | 6.1 | 4.7 | 2.9 |
+
+- Write IOPS stayed between 37 and 44 per minute for 17 minutes, then 25 to 34 in the last three.
+- **The write rate rests on postponed work.** Summed over the metadata nodes, 47,856 delta writes
+  were taken and 2,330 folds had run when the test ended; 39,326 deltas (82%) in 7,791 cells were
+  still waiting. No write fell back to the old path.
+- `max_pending_deltas` is 65,536. At that rate it would be reached about 11 minutes later, after
+  which writes go back to rewriting the cell. That was not run.
+- Reads afterwards were far behind Ceph's.
+- More than one metadata node counted delta writes, so leadership changed during the run. The cause
+  was not investigated.
+- Disk write totals are not compared: most of this run's folding had not happened yet.
+
+Smaller cells do not make delta writes beat Ceph here. A change that folds more cheaply, or does
+not need to rewrite whole cells, would be needed.
