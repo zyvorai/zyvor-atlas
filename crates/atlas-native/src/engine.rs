@@ -42,6 +42,7 @@ mod delta;
 mod direct;
 mod export;
 mod files;
+mod fold_batch;
 mod folder;
 mod inflight;
 mod leases;
@@ -60,6 +61,7 @@ pub use files::{
     Attr, DirEntry, FileLayout, FsInfo, FsSnapshotInfo, FsStat, LayoutEc, LayoutExtent,
     LayoutReplica, NewNode,
 };
+pub use fold_batch::MAX_FOLD_BATCH;
 pub(crate) use folder::nap;
 pub use folder::{run_folders, MAX_FOLD_CONCURRENCY};
 pub use leases::{now_ms, LockRequest, LockTable};
@@ -1809,6 +1811,13 @@ impl NativeEngine {
                 p.histogram(name, &[("phase", phase)], &h.snapshot());
             }
         }
+        let name = "atlas_native_delta_fold_batch_cells";
+        p.family(
+            name,
+            "histogram",
+            "Folds in each batched fold command that reached the log.",
+        )
+        .size_histogram(name, &[], &timers.fold_batch.snapshot());
         p.single(
             "atlas_native_metadata_applied_index",
             "gauge",
@@ -2186,6 +2195,8 @@ impl NativeEngine {
                 store,
             } => {
                 let mut wal = wal.lock().map_err(|_| NativeError::Poisoned("wal"))?;
+                // As in [`Self::commit`]: nothing is applied once the log has failed.
+                wal.check()?;
                 let mut c = catalog
                     .write()
                     .map_err(|_| NativeError::Poisoned("catalog"))?;

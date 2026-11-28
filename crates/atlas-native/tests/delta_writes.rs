@@ -22,6 +22,7 @@ use atlas_native::{
     metadata::{Catalog, MetaCommand},
     object::DirObjectStore,
     raft::CAP_DELTA,
+    run_folders,
     wal::Wal,
     BlockStore, DataNodeServer, DeviceBackend, EngineConfig, FailureDomain, FileDevice, FsOp,
     MetaBackend, NativeEngine, NativeError, Node, NodeType, RaftConfig, RaftError, RaftServer,
@@ -181,10 +182,31 @@ impl Model {
     }
 }
 
+/// Runs the pool of folders until nothing is pending.
+fn pool_drain(e: &NativeEngine) {
+    let stop = AtomicBool::new(false);
+    thread::scope(|s| {
+        let _stop = StopOnDrop(&stop);
+        s.spawn(|| run_folders(&[e], &stop, |ok| assert!(ok, "a fold failed")));
+        let deadline = Instant::now() + WAIT;
+        while e.pending_deltas().unwrap() != (0, 0) {
+            assert!(Instant::now() < deadline, "the pool never drained");
+            thread::sleep(Duration::from_millis(2));
+        }
+    });
+}
+
 /// Random writes, truncates, renames, deletes, snapshots, clones, folds, GC and reopens, checked
-/// byte for byte against a model.
-fn random_run(seed: u64, steps: usize) {
+/// byte for byte against a model. `pooled` also folds with the pool, whose commits are batched.
+fn random_run(seed: u64, steps: usize, pooled: bool) {
     let td = tempfile::tempdir().unwrap();
+    let config = |root: &Path| {
+        let mut cfg = config(root);
+        if pooled {
+            cfg.delta_writes.fold_interval_ms = 5;
+        }
+        cfg
+    };
     let mut e = local(config(td.path()));
     let mut m = Model::default();
     let mut rng = Rng(seed);
@@ -205,7 +227,7 @@ fn random_run(seed: u64, steps: usize) {
     m.volumes.insert("v".into(), v);
 
     let (mut next, mut files) = (0, 0);
-    let (mut delta_writes, mut folds) = (0, 0);
+    let (mut delta_writes, mut folds, mut batched) = (0, 0, 0);
     for step in 0..steps {
         next += 1;
         let fs = rng.pick(&m.filesystems).unwrap().clone();
@@ -330,7 +352,11 @@ fn random_run(seed: u64, steps: usize) {
                     m.volumes.remove(&id);
                 }
             }
-            16 | 17 => {
+            16 => {
+                e.delta_maintenance_once().unwrap();
+            }
+            17 if pooled => pool_drain(&e),
+            17 => {
                 e.delta_maintenance_once().unwrap();
             }
             18 => {
@@ -341,6 +367,7 @@ fn random_run(seed: u64, steps: usize) {
                     let stats = e.telemetry.snapshot();
                     delta_writes += stats.delta_writes;
                     folds += stats.delta_folds;
+                    batched += e.telemetry.fold_batch.snapshot().sum;
                     drop(e);
                     e = local(config(td.path()));
                     m.verify(&e);
@@ -364,16 +391,23 @@ fn random_run(seed: u64, steps: usize) {
     assert_eq!(e.pending_deltas().unwrap(), (0, 0));
     e.gc_once().unwrap();
     m.verify(&e);
+    let batched = batched + e.telemetry.fold_batch.snapshot().sum;
+    assert_eq!(batched > 0, pooled, "{batched} folds in batches");
 }
 
 #[test]
 fn random_operations_match_a_model_across_reopens() {
-    random_run(0x9e37_79b9_7f4a_7c15, 700);
+    random_run(0x9e37_79b9_7f4a_7c15, 700, false);
 }
 
 #[test]
 fn random_operations_match_a_model_with_another_seed() {
-    random_run(0x0123_4567_89ab_cdef, 500);
+    random_run(0x0123_4567_89ab_cdef, 500, false);
+}
+
+#[test]
+fn random_operations_match_a_model_with_batched_folds() {
+    random_run(0x5851_f42d_4c95_7f2d, 600, true);
 }
 
 #[test]
@@ -986,6 +1020,7 @@ fn the_mode_can_be_turned_off_and_emits_nothing_when_never_on() {
             r.command,
             MetaCommand::AppendDeltas { .. }
                 | MetaCommand::FoldCell { .. }
+                | MetaCommand::FoldCells { .. }
                 | MetaCommand::ReclaimExtents { .. }
                 | MetaCommand::Fs {
                     op: FsOp::AppendDeltas { .. }

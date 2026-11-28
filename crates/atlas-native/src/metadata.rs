@@ -15,7 +15,7 @@ use crate::{
 
 mod delta;
 pub(crate) use delta::{device_cost, dirty_cells};
-pub use delta::{DeltaCell, DeltaItem, DeltaMap, DeltaRef, DeltaTarget, DeltaTotals};
+pub use delta::{CellFold, DeltaCell, DeltaItem, DeltaMap, DeltaRef, DeltaTarget, DeltaTotals};
 
 pub type VolumeId = String;
 pub type SnapshotId = String;
@@ -312,6 +312,11 @@ pub enum MetaCommand {
     /// [`MetaCommand::MarkExtentReclaimed`] for several extents, applied all or none.
     ReclaimExtents {
         extent_ids: Vec<ExtentId>,
+    },
+    /// Several [`MetaCommand::FoldCell`]s in one entry. Not all or none: a fold whose cell
+    /// changed is skipped, the rest apply. Proposed only once every metadata node decodes it.
+    FoldCells {
+        folds: Vec<CellFold>,
     },
 }
 
@@ -766,6 +771,7 @@ impl Catalog {
                 extent,
             } => self.fold_cell(cell, base, consumed, extent, &mut gc_candidates)?,
             MetaCommand::ReclaimExtents { extent_ids } => self.reclaim_extents(extent_ids)?,
+            MetaCommand::FoldCells { folds } => self.fold_cells(folds, &mut gc_candidates)?,
         }
         self.applied(term, index, gc_candidates)
     }

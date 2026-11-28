@@ -21,10 +21,10 @@ use std::{
 use atlas_native::{
     engine::{DeltaConfig, NewNode},
     node::{Listeners, NativeNode, NodeConfig},
-    raft::CAP_DELTA,
-    run_folders, BlockStore, DataNodeServer, EngineConfig, FailureDomain, FileDevice, MetaBackend,
-    NativeEngine, NativeError, Node, NodeType, RaftConfig, RaftError, RaftServer, RemoteDevice,
-    Role, SetAttr, ROOT_INO,
+    raft::{CAPABILITIES, CAP_DELTA},
+    run_folders, BlockStore, DataNodeServer, DeltaPoint, EngineConfig, FailureDomain, FileDevice,
+    MetaBackend, NativeEngine, NativeError, Node, NodeType, RaftConfig, RaftError, RaftServer,
+    RemoteDevice, Role, SetAttr, ROOT_INO,
 };
 
 const GRID: usize = 4096;
@@ -438,7 +438,7 @@ fn writers_snapshots_truncates_and_reclaim_race_the_pool() {
     // Snapshots with the contents they must keep.
     let mut taken: Vec<(String, Vec<Vec<u8>>)> = Vec::new();
     let mut volume_taken: Vec<(String, Vec<u8>)> = Vec::new();
-    let mut folds = 0;
+    let (mut folds, mut batches) = (0, 0);
     for round in 0..3u64 {
         let (e, _) = gated(cfg());
         let stop = AtomicBool::new(false);
@@ -537,6 +537,7 @@ fn writers_snapshots_truncates_and_reclaim_race_the_pool() {
             assert_eq!(attempts.failed.load(Ordering::SeqCst), 0);
         });
         folds += e.telemetry.snapshot().delta_folds;
+        batches += e.telemetry.fold_batch.snapshot().count();
         files = models
             .into_iter()
             .map(|m| m.into_inner().unwrap())
@@ -549,6 +550,7 @@ fn writers_snapshots_truncates_and_reclaim_race_the_pool() {
         e.check_delta_invariants().unwrap();
     }
     assert!(folds > 20, "only {folds} folds");
+    assert!(batches > 0, "no fold was committed in a batch");
     let (e, _) = gated(cfg());
     with_pool(&e, None, |_| until("the pool to drain", || drained(&e)));
     e.gc_once().unwrap();
@@ -588,6 +590,7 @@ fn the_pool_folds_everything_once_delta_writes_are_off() {
     with_pool(&e, None, |_| until("the pool to drain", || drained(&e)));
     write(&e, &mut a, 9, &[3; 8]);
     assert_eq!(e.telemetry.snapshot().delta_writes, 0);
+    assert_eq!(e.telemetry.fold_batch.snapshot().count(), 0);
     assert_eq!(contents(&e, "f", a.0), a.1);
 }
 
@@ -714,10 +717,17 @@ struct Cluster {
     data_addrs: Vec<SocketAddr>,
     addrs: BTreeMap<String, SocketAddr>,
     metas: BTreeMap<String, Option<Meta>>,
+    /// What each replica advertises when opened, if not this build's capabilities.
+    capabilities: BTreeMap<String, u64>,
+    compact_after: u64,
 }
 
 impl Cluster {
     fn start() -> Self {
+        Self::start_with(BTreeMap::new(), 1024)
+    }
+
+    fn start_with(capabilities: BTreeMap<String, u64>, compact_after: u64) -> Self {
         let td = tempfile::tempdir().unwrap();
         let data: Vec<DataNodeServer> = (1..=3)
             .map(|i| {
@@ -738,6 +748,8 @@ impl Cluster {
                 .map(|(id, l)| (id.clone(), l.local_addr().unwrap()))
                 .collect(),
             metas: BTreeMap::new(),
+            capabilities,
+            compact_after,
         };
         for (id, l) in listeners {
             c.open(&id, l);
@@ -754,7 +766,8 @@ impl Cluster {
             .collect();
         let root = self.td.path().join(id);
         let mut rcfg = RaftConfig::new(id, peers.keys().cloned().collect(), root.join("raft"));
-        rcfg.capabilities = CAP_DELTA;
+        rcfg.capabilities = self.capabilities.get(id).copied().unwrap_or(CAPABILITIES);
+        rcfg.compact_after = self.compact_after;
         let raft = Arc::new(RaftServer::start(rcfg, listener, peers, RAFT_TICK).unwrap());
         let gate = Arc::new(Gate::default());
         let stores = self
@@ -792,6 +805,7 @@ impl Cluster {
     fn kill(&mut self, id: &str) {
         if let Some(m) = self.metas.insert(id.into(), None).flatten() {
             m.raft.halt();
+            m.engine.set_delta_hook(None);
         }
     }
 
@@ -997,6 +1011,502 @@ fn folds_that_cannot_commit_leave_the_data_as_it_was() {
         until("the pool to drain", || drained(&engine))
     });
     c.converged(ino, &a.1);
+}
+
+/// Holds the committer of fold batches until released (also when dropped, so that a failing
+/// test does not hang), and counts the rewrites handed over meanwhile.
+#[derive(Default)]
+struct Latch {
+    open: AtomicBool,
+    rewritten: AtomicUsize,
+    proposals: AtomicUsize,
+}
+
+struct Held<'a>(&'a NativeEngine, Arc<Latch>);
+
+/// Opens a [`Latch`] when dropped.
+struct Release(Arc<Latch>);
+
+impl Drop for Release {
+    fn drop(&mut self) {
+        self.0.open.store(true, Ordering::SeqCst);
+    }
+}
+
+impl<'a> Held<'a> {
+    fn new(e: &'a NativeEngine) -> Self {
+        let latch = Arc::new(Latch::default());
+        let l = latch.clone();
+        e.set_delta_hook(Some(Arc::new(move |point| match point {
+            DeltaPoint::FoldReplicated => {
+                l.rewritten.fetch_add(1, Ordering::SeqCst);
+            }
+            DeltaPoint::FoldBeforePropose => {
+                l.proposals.fetch_add(1, Ordering::SeqCst);
+                let deadline = Instant::now() + 2 * WAIT;
+                while !l.open.load(Ordering::SeqCst) && Instant::now() < deadline {
+                    thread::sleep(TICK);
+                }
+            }
+            _ => {}
+        })));
+        Self(e, latch)
+    }
+
+    fn rewritten(&self) -> usize {
+        self.1.rewritten.load(Ordering::SeqCst)
+    }
+
+    /// Until `n` rewrites are on the data nodes and a batch is waiting to be proposed.
+    fn wait_for(&self, n: usize) {
+        until("rewrites to wait for the committer", || {
+            self.rewritten() >= n && self.1.proposals.load(Ordering::SeqCst) > 0
+        });
+    }
+
+    fn release(&self) {
+        drop(self.releaser());
+    }
+
+    /// For a scope that waits for the committer: releases it also if the scope panics.
+    fn releaser(&self) -> Release {
+        Release(self.1.clone())
+    }
+}
+
+impl Drop for Held<'_> {
+    fn drop(&mut self) {
+        self.release();
+        self.0.set_delta_hook(None);
+    }
+}
+
+/// A local engine with a file of `cells` cells, each with a delta on it.
+fn dirty_file(cfg: EngineConfig, cells: usize) -> (NativeEngine, (u64, Vec<u8>)) {
+    let (e, _) = gated(cfg);
+    let mut a = file(&e, "a", cells);
+    for cell in 0..cells {
+        write(&e, &mut a, cell * GRID + 3, &[2; 8]);
+    }
+    (e, a)
+}
+
+/// While a batch is being committed, rewritten cells queue up for the next one, which takes all
+/// of them. The folders stop once the queue is full.
+#[test]
+fn folds_that_wait_share_the_next_batch_up_to_the_limit() {
+    let td = tempfile::tempdir().unwrap();
+    let mut cfg = config(td.path());
+    cfg.delta_writes.fold_batch_cells = 3;
+    let (e, a) = dirty_file(cfg, 20);
+    let held = Held::new(&e);
+    with_pool(&e, None, |attempts| {
+        let _release = held.releaser();
+        // One to three cells in the batch being committed, three queued, and four folders each
+        // waiting to queue one more.
+        held.wait_for(1 + 3 + 4);
+        thread::sleep(SETTLE);
+        assert!(held.rewritten() <= 3 + 3 + 4, "{}", held.rewritten());
+        assert_eq!(e.telemetry.snapshot().delta_folds, 0);
+        assert_eq!(contents(&e, "f", a.0), a.1);
+        held.release();
+        until("the pool to drain", || drained(&e));
+        until("every fold to be reported", || {
+            attempts.ok.load(Ordering::SeqCst) == 20
+        });
+        assert_eq!(attempts.failed.load(Ordering::SeqCst), 0);
+    });
+    let batches = e.telemetry.fold_batch.snapshot();
+    assert_eq!(batches.sum, 20);
+    assert!(batches.count() < 20, "no folds shared a command");
+    // Nothing over the limit of 3 (the bucket up to 4 is the third).
+    assert_eq!(batches.buckets[..3].iter().sum::<u64>(), batches.count());
+    assert_eq!(e.telemetry.snapshot().delta_folds, 20);
+    assert_eq!(contents(&e, "f", a.0), a.1);
+    e.check_delta_invariants().unwrap();
+}
+
+#[test]
+fn a_batch_keeps_the_changes_made_while_it_waited() {
+    let td = tempfile::tempdir().unwrap();
+    let (e, mut a) = dirty_file(config(td.path()), 6);
+    let held = Held::new(&e);
+    with_pool(&e, None, |attempts| {
+        let _release = held.releaser();
+        held.wait_for(6);
+        // Cut away, rewritten whole, appended to; the rest are left alone.
+        truncate(&e, &mut a, 5 * GRID);
+        write(&e, &mut a, 0, &[5; GRID]);
+        write(&e, &mut a, GRID + 100, &[6; 8]);
+        held.release();
+        until("the pool to drain", || drained(&e));
+        until("every fold to be reported", || {
+            attempts.ok.load(Ordering::SeqCst) == 7
+        });
+        assert_eq!(attempts.failed.load(Ordering::SeqCst), 0);
+    });
+    let t = e.telemetry.snapshot();
+    // The cut and the rewritten cell lost; the appended one folded, and then again.
+    assert_eq!((t.delta_folds, t.delta_fold_conflicts), (5, 2));
+    e.gc_once().unwrap();
+    for i in 0..6 {
+        write(&e, &mut a, i * 700, &[i as u8 + 10; GRID]);
+        e.gc_once().unwrap();
+    }
+    assert_eq!(contents(&e, "f", a.0), a.1);
+    e.check_delta_invariants().unwrap();
+}
+
+#[test]
+fn a_snapshot_waits_for_a_queued_fold() {
+    let td = tempfile::tempdir().unwrap();
+    let (e, a) = dirty_file(config(td.path()), 6);
+    let held = Held::new(&e);
+    with_pool(&e, None, |_| {
+        let _release = held.releaser();
+        held.wait_for(6);
+        thread::scope(|s| {
+            let _release = held.releaser();
+            let snapshot = s.spawn(|| {
+                let r = e.snapshot_fs_as("s".into(), "f", "s");
+                (r, e.pending_deltas().unwrap())
+            });
+            thread::sleep(SETTLE);
+            let early = snapshot.is_finished();
+            held.release();
+            assert!(!early, "the snapshot did not wait for the queued folds");
+            let (taken, pending) = snapshot.join().unwrap();
+            taken.unwrap();
+            assert_eq!(pending, (0, 0));
+        });
+    });
+    assert_eq!(e.telemetry.snapshot().delta_folds, 6);
+    assert_eq!(contents(&e, "f@s", a.0), a.1);
+    e.check_delta_invariants().unwrap();
+}
+
+#[test]
+fn stopping_the_pool_commits_what_is_queued() {
+    let td = tempfile::tempdir().unwrap();
+    let (e, a) = dirty_file(config(td.path()), 6);
+    let held = Held::new(&e);
+    let stop = AtomicBool::new(false);
+    thread::scope(|s| {
+        let _finish = Finish(&stop, None);
+        let _release = held.releaser();
+        let pool = s.spawn(|| run_folders(&[&e], &stop, |_| {}));
+        held.wait_for(6);
+        stop.store(true, Ordering::SeqCst);
+        thread::sleep(SETTLE);
+        let early = pool.is_finished();
+        held.release();
+        assert!(!early, "returned with folds queued");
+        until("the pool to stop", || pool.is_finished());
+    });
+    assert!(drained(&e), "queued folds were abandoned");
+    assert_eq!(contents(&e, "f", a.0), a.1);
+    e.check_delta_invariants().unwrap();
+}
+
+#[test]
+fn a_committer_survives_a_batch_that_panics() {
+    let td = tempfile::tempdir().unwrap();
+    let (e, a) = dirty_file(config(td.path()), 8);
+    let panicked = Arc::new(AtomicBool::new(false));
+    let once = panicked.clone();
+    e.set_delta_hook(Some(Arc::new(move |point| {
+        if point == DeltaPoint::FoldBeforePropose && !once.swap(true, Ordering::SeqCst) {
+            panic!("the committer failed (injected by the test)");
+        }
+    })));
+    with_pool(&e, None, |attempts| {
+        until("the pool to drain", || drained(&e));
+        assert!(attempts.failed.load(Ordering::SeqCst) >= 1);
+    });
+    assert!(panicked.load(Ordering::SeqCst));
+    assert_eq!(contents(&e, "f", a.0), a.1);
+    e.check_delta_invariants().unwrap();
+}
+
+/// Runs the pools of every live replica beside `f`; only the leader's folds.
+fn with_pools<R>(c: &Cluster, f: impl FnOnce() -> R) -> R {
+    let engines: Vec<Arc<NativeEngine>> = c.live().map(|(_, m)| m.engine.clone()).collect();
+    let stop = AtomicBool::new(false);
+    thread::scope(|s| {
+        let _finish = Finish(&stop, None);
+        for e in &engines {
+            let stop = &stop;
+            s.spawn(move || run_folders(&[e], stop, |_| {}));
+        }
+        f()
+    })
+}
+
+/// Folds everything pending, and checks that the replicas agree on `want`.
+fn drain_and_converge(c: &Cluster, ino: u64, want: &[u8]) {
+    with_pools(c, || {
+        until("the pools to drain", || {
+            c.live().any(|(_, m)| {
+                m.engine.ensure_leader().is_ok() && m.engine.pending_deltas().unwrap() == (0, 0)
+            })
+        })
+    });
+    c.converged(ino, want);
+}
+
+impl Cluster {
+    /// A leader with a file of `cells` cells and a delta on each.
+    fn with_dirty_cells(&self, cells: usize) -> (String, (u64, Vec<u8>)) {
+        let (_, (ino, mut want)) = self.with_deltas();
+        self.on_leader("", |e| {
+            e.write_file("f", ino, 3 * GRID as u64, &vec![1; (cells - 3) * GRID])
+        });
+        want.resize(cells * GRID, 1);
+        let deadline = Instant::now() + WAIT;
+        loop {
+            for cell in 0..cells {
+                let at = cell * GRID + 40;
+                self.on_leader("", |e| e.write_file("f", ino, at as u64, &[3; 8]));
+                want[at..at + 8].fill(3);
+            }
+            let (leader, pending) = self.on_leader("", |e| {
+                e.ensure_leader()?;
+                e.pending_deltas()
+            });
+            if pending.0 == cells {
+                return (leader, (ino, want));
+            }
+            // A change of leader made some writes rewrite their cell instead.
+            assert!(Instant::now() < deadline, "{pending:?} of {cells} dirty");
+        }
+    }
+
+    /// Small and whole-cell writes that take whatever space is free, with reclaim between.
+    fn churn(&self, ino: u64, want: &mut [u8]) {
+        for i in 0..10usize {
+            let (at, len) = match i % 3 {
+                0 => ((i % 4) * GRID, GRID),
+                _ => (i * 700 + 11, 900),
+            };
+            let data = vec![i as u8 + 20; len];
+            self.on_leader("", |e| e.write_file("f", ino, at as u64, &data));
+            want[at..at + len].copy_from_slice(&data);
+            self.on_leader("", |e| e.gc_once());
+        }
+    }
+}
+
+/// The leader is lost when its batched fold reaches `point`; `committed` waits for the command
+/// to commit first. Whatever became of it, every replica reads the same bytes as before, and
+/// later writes and folds keep them.
+fn leader_lost_during_a_batch(point: DeltaPoint, committed: bool) {
+    const CELLS: usize = 8;
+    let mut c = Cluster::start();
+    let (leader, mut a) = c.with_dirty_cells(CELLS);
+    let ino = a.0;
+    let old = c.meta(&leader);
+    until("every replica to advertise batches", || {
+        old.engine.fold_batch_supported().unwrap_or(false)
+    });
+    let pending = old.engine.pending_deltas().unwrap();
+    assert_eq!(pending.0, CELLS);
+    let reached = Arc::new(AtomicBool::new(false));
+    let (flag, raft) = (reached.clone(), old.raft.clone());
+    old.engine.set_delta_hook(Some(Arc::new(move |at| {
+        if at != point || flag.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        if committed {
+            // Until this replica has applied a fold, so the batch has committed.
+            let deadline = Instant::now() + WAIT;
+            while raft.catalog().unwrap().dirty.len() == CELLS && Instant::now() < deadline {
+                thread::sleep(TICK);
+            }
+        }
+        raft.halt();
+    })));
+    with_pool(&old.engine, None, |attempts| {
+        until("a fold to fail", || {
+            attempts.failed.load(Ordering::SeqCst) >= 1
+        });
+        assert!(reached.load(Ordering::SeqCst));
+        // A batch committed before its leader died is reported as unknown, not as done. (After
+        // a rewrite, another folder's may already have been committed.)
+        if point != DeltaPoint::FoldReplicated {
+            assert_eq!(attempts.ok.load(Ordering::SeqCst), 0);
+        }
+    });
+    drop(old);
+    c.kill(&leader);
+    c.converged(ino, &a.1);
+    if committed {
+        let (new, ()) = c.on_leader("", |e| e.ensure_leader());
+        assert!(c.meta(&new).engine.pending_deltas().unwrap().0 < CELLS);
+    }
+    c.churn(ino, &mut a.1);
+    c.converged(ino, &a.1);
+    drain_and_converge(&c, ino, &a.1);
+    c.restart(&leader);
+    c.churn(ino, &mut a.1);
+    drain_and_converge(&c, ino, &a.1);
+}
+
+#[test]
+fn a_leader_lost_after_rewriting_a_cell_loses_no_data() {
+    leader_lost_during_a_batch(DeltaPoint::FoldReplicated, false);
+}
+
+#[test]
+fn a_leader_lost_before_proposing_a_batch_loses_no_data() {
+    leader_lost_during_a_batch(DeltaPoint::FoldBeforePropose, false);
+}
+
+#[test]
+fn a_leader_lost_while_a_batch_replicates_loses_no_data() {
+    leader_lost_during_a_batch(DeltaPoint::FoldProposed, false);
+}
+
+#[test]
+fn a_leader_lost_after_a_batch_commits_loses_no_data() {
+    leader_lost_during_a_batch(DeltaPoint::FoldProposed, true);
+}
+
+/// A replica advertising only what a build without batched folds does gets single folds.
+#[test]
+fn batches_wait_until_every_metadata_node_decodes_them() {
+    let older = BTreeMap::from([("m3".to_string(), CAP_DELTA)]);
+    let mut c = Cluster::start_with(older, 1024);
+    let (_, mut a) = c.with_dirty_cells(6);
+    let ino = a.0;
+    // Time enough for every follower to have answered.
+    thread::sleep(SETTLE);
+    let batches = |c: &Cluster| -> u64 {
+        c.live()
+            .map(|(_, m)| m.engine.telemetry.fold_batch.snapshot().count())
+            .sum()
+    };
+    let folds = |c: &Cluster| -> u64 {
+        c.live()
+            .map(|(_, m)| m.engine.telemetry.snapshot().delta_folds)
+            .sum()
+    };
+    for (id, m) in c.live() {
+        assert!(!m.engine.fold_batch_supported().unwrap(), "{id}");
+    }
+    drain_and_converge(&c, ino, &a.1);
+    assert!(folds(&c) >= 6);
+    assert_eq!(batches(&c), 0);
+
+    c.capabilities.clear();
+    c.restart("m3");
+    for cell in 0..6 {
+        let at = cell * GRID + 80;
+        c.on_leader("", |e| e.write_file("f", ino, at as u64, &[4; 8]));
+        a.1[at..at + 8].fill(4);
+    }
+    until("a leader that batches", || {
+        c.live()
+            .any(|(_, m)| m.engine.fold_batch_supported().unwrap_or(false))
+    });
+    drain_and_converge(&c, ino, &a.1);
+    assert!(batches(&c) > 0);
+}
+
+/// A replica that was away while batches were committed and the log compacted catches up from a
+/// snapshot, and applies the batches that follow it.
+#[test]
+fn a_replica_catches_up_from_a_snapshot_taken_after_batches() {
+    let mut c = Cluster::start_with(BTreeMap::new(), 4);
+    let (leader, mut a) = c.with_dirty_cells(6);
+    let ino = a.0;
+    until("every replica to advertise batches", || {
+        c.meta(&leader)
+            .engine
+            .fold_batch_supported()
+            .unwrap_or(false)
+    });
+    c.converged(ino, &a.1);
+    let away = c.metas.keys().find(|id| **id != leader).unwrap().clone();
+    let had = c.meta(&away).engine.applied_index().unwrap();
+    c.kill(&away);
+    for _ in 0..2 {
+        drain_and_converge(&c, ino, &a.1);
+        c.churn(ino, &mut a.1);
+    }
+    let batches: u64 = c
+        .live()
+        .map(|(_, m)| m.engine.telemetry.fold_batch.snapshot().count())
+        .sum();
+    assert!(batches > 0);
+    c.restart(&away);
+    c.converged(ino, &a.1);
+    let snapshot = sum_of(
+        &c.meta(&away).raft.render_metrics().unwrap(),
+        "atlas_native_raft_snapshot_index",
+    );
+    assert!(
+        snapshot > had as f64,
+        "caught up from the log, not a snapshot"
+    );
+    c.churn(ino, &mut a.1);
+    drain_and_converge(&c, ino, &a.1);
+}
+
+/// Random small writes, whole-cell writes and truncates while every replica's pool runs, with
+/// the leader lost in the middle of each round, compared with a model.
+#[test]
+fn random_writes_and_batched_folds_survive_leader_changes() {
+    const CELLS: usize = 6;
+    let mut c = Cluster::start();
+    let (_, mut a) = c.with_dirty_cells(CELLS);
+    let ino = a.0;
+    let mut rng = Rng(20_261_128);
+    let mut batches = 0;
+    for round in 0..4 {
+        let (leader, ()) = c.on_leader("", |e| e.ensure_leader());
+        with_pools(&c, || {
+            for step in 0..40 {
+                if step == 15 + round * 5 {
+                    c.meta(&leader).raft.halt();
+                }
+                match rng.below(12) {
+                    0 => {
+                        let size = rng.below(CELLS * GRID);
+                        for size in [size, CELLS * GRID] {
+                            let attr = SetAttr {
+                                size: Some(size as u64),
+                                ..SetAttr::default()
+                            };
+                            c.on_leader("", |e| e.fs_setattr("f", ino, attr.clone()));
+                            a.1.resize(size, 0);
+                        }
+                    }
+                    n => {
+                        let len = if n == 1 { GRID } else { 1 + rng.below(600) };
+                        let mut at = rng.below(CELLS * GRID - len);
+                        if len == GRID {
+                            at -= at % GRID;
+                        }
+                        let data = vec![rng.below(251) as u8; len];
+                        // An unknown outcome is retried: the same bytes at the same place.
+                        c.on_leader("", |e| e.write_file("f", ino, at as u64, &data));
+                        a.1[at..at + len].copy_from_slice(&data);
+                    }
+                }
+                if step % 8 == 0 {
+                    c.on_leader("", |e| e.gc_once());
+                }
+            }
+        });
+        batches += c
+            .live()
+            .map(|(_, m)| m.engine.telemetry.fold_batch.snapshot().count())
+            .sum::<u64>();
+        c.restart(&leader);
+        c.converged(ino, &a.1);
+    }
+    assert!(batches > 0, "no fold was committed in a batch");
+    drain_and_converge(&c, ino, &a.1);
 }
 
 fn http(addr: SocketAddr, method: &str, path: &str, body: &[u8]) -> (u16, Vec<u8>) {

@@ -395,6 +395,74 @@ fn fold_is_compare_and_swap_on_the_base_and_the_oldest_deltas() {
     assert_eq!(t.c.delta_totals.pending, 0);
 }
 
+fn cell_fold(
+    target: DeltaTarget,
+    cell: u64,
+    base: &str,
+    consumed: &[&str],
+    new: ExtentRef,
+) -> CellFold {
+    CellFold {
+        cell: DeltaCell { target, cell },
+        base: base.into(),
+        consumed: consumed.iter().map(|s| s.to_string()).collect(),
+        extent: new,
+    }
+}
+
+#[test]
+fn a_fold_batch_applies_what_still_fits_and_skips_the_rest() {
+    let mut t = T::new();
+    t.ok(file_deltas(vec![
+        item(file("f", 2), 0, 0, "d1", 8),
+        item(file("f", 2), 0, 8, "d2", 8),
+        item(file("f", 2), GRID, 0, "d3", 8),
+        item(file("f", 3), 0, 0, "d4", 8),
+    ]));
+    t.ok(volume_deltas(vec![
+        item(volume("v"), 0, 0, "d5", 8),
+        item(volume("v"), GRID, 0, "d6", 8),
+    ]));
+    let g = GRID as usize;
+    // Device offsets of their own, so that all could be installed.
+    let new = |id: &str, at: u64, len| extent(id, (1 << 30) + (at << 12), len, false);
+    let f2 = || file("f", 2);
+    let batch = MetaCommand::FoldCells {
+        folds: vec![
+            // Applies, leaving the newer delta on the new base.
+            cell_fold(f2(), 0, "a0", &["d1"], new("n0", 0, g)),
+            // The same cell again: its base has just changed.
+            cell_fold(f2(), 0, "a0", &["d1"], new("n1", 1, g)),
+            // Not the cell's base, not its oldest delta, no such file, the wrong length.
+            cell_fold(f2(), GRID, "a0", &["d3"], new("n2", 2, 512)),
+            cell_fold(file("f", 3), 0, "b0", &["d3"], new("n3", 3, g)),
+            cell_fold(file("f", 99), 0, "b0", &["d4"], new("n4", 4, g)),
+            cell_fold(volume("v"), 0, "v0", &["d5"], new("n5", 5, g - 1)),
+            // An extent id taken by a fold before it.
+            cell_fold(volume("v"), 0, "v0", &["d5"], new("n0", 6, g)),
+            cell_fold(volume("v"), GRID, "v1", &["d6"], new("n6", 7, g)),
+        ],
+    };
+    let gc = t.ok(batch);
+    assert_eq!(gc, ["a0", "d1", "v1", "d6"]);
+    assert_eq!(t.ids(&f2(), 0), ["d2"]);
+    assert_eq!(t.ids(&f2(), GRID), ["d3"]);
+    assert_eq!(t.ids(&file("f", 3), 0), ["d4"]);
+    assert_eq!(t.ids(&volume("v"), 0), ["d5"]);
+    assert!(t.ids(&volume("v"), GRID).is_empty());
+    for skipped in ["n1", "n2", "n3", "n4", "n5"] {
+        assert!(!t.c.extents.contains_key(skipped), "{skipped}");
+    }
+    assert_eq!(t.c.extents["n0"].extent.replicas[0].offset, 1 << 30);
+
+    // With every fold stale it applies and changes nothing.
+    let before = state(&t.c);
+    let stale = vec![cell_fold(f2(), 0, "a0", &["d1"], new("n7", 8, g))];
+    assert!(t.ok(MetaCommand::FoldCells { folds: stale }).is_empty());
+    assert_eq!(state(&t.c), before);
+    t.rejected(MetaCommand::FoldCells { folds: Vec::new() });
+}
+
 #[test]
 fn batched_reclaim_is_all_or_nothing() {
     let mut t = T::new();
@@ -697,6 +765,17 @@ fn delta_log() -> Vec<MetaCommand> {
         fold(volume("v"), 0, "v0", &["d3"], n("n3", 1024)),
         snapshot_volume("vs"),
         volume_deltas(vec![item(volume("v"), GRID, 9, "d6", 8)]),
+        MetaCommand::FoldCells {
+            folds: vec![
+                // Stale: that base was folded away above.
+                cell_fold(file("f", 2), 0, "a0", &["d4"], n("m0", 1024)),
+                cell_fold(file("f", 3), 0, "n2", &["d5"], n("m1", 1024)),
+                cell_fold(volume("v"), GRID, "v1", &["d6"], n("m2", 1024)),
+                cell_fold(file("f", 2), 0, "n1", &["d4"], n("m3", 1024)),
+            ],
+        },
+        MetaCommand::FoldCells { folds: Vec::new() },
+        volume_deltas(vec![item(volume("v"), 0, 1, "d7", 8)]),
     ]);
     log
 }

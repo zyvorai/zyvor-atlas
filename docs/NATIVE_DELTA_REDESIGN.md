@@ -2,8 +2,9 @@
 <!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Delta writes: redesign plan
 
-**Status (2026-11-28): phases 0 to 2 approved; phase 0 has a [first result](#phase-0-results) and
-phase 1 (parallel folding, `fold_concurrency`) is implemented but not yet benchmarked. Phases 3 and
+**Status (2026-11-28): phases 0 to 2 approved; phase 0 has a [first result](#phase-0-results);
+phase 1 (parallel folding, `fold_concurrency`) and phase 2 (batched fold commits,
+`fold_batch_cells`) are implemented. No benchmark result of either is recorded here. Phases 3 and
 4 are not approved.**
 
 ## The problem
@@ -169,6 +170,14 @@ Risk: more folding takes disk time from foreground writes. Measure at several co
 A `FoldCells` command carrying many compare-and-swap folds, so they share one Raft round. A cell
 that changed is skipped on every replica identically; the rest apply. Needs the same capability
 gate as delta writes, and replay and snapshot tests.
+
+**Implemented, not benchmarked.** See [batched commits](NATIVE_DELTA_WRITES.md#batched-commits):
+one committer per metadata group proposes whatever the folders have queued, without waiting for a
+batch to fill, at most `fold_batch_cells` (32) at a time. `fold_batch_cells` 1 gives phase 1's one
+command per fold, for comparing the two on one build
+(`ATLAS_DELTA_EXTRA='"fold_batch_cells": 1'`).
+`atlas_native_delta_fold_batch_cells` shows the batch sizes reached. Snapshot folds are not
+batched.
 
 **If the gate is met after phase 1 or 2, stop here.**
 

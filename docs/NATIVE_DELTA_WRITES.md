@@ -7,7 +7,7 @@ extent, writes it again to every replica and commits, one write at a time. With
 `metadata.delta_writes.enabled` a small overwrite instead stores only its bytes, as a **delta**
 extent listed beside the cell's base extent, and many writers share one metadata commit. A
 background **fold** later rewrites the base with its deltas applied. Several cells are folded at
-once: see [How folding works](#how-folding-works).
+once, and their commits are batched: see [How folding works](#how-folding-works).
 
 Off by default. No performance result is claimed here: see
 [What is verified](#what-is-verified-and-what-is-not).
@@ -57,8 +57,9 @@ A write is a delta when all of these hold. Anything else takes the previous path
 
 A node runs one pool of `fold_concurrency` folder threads over all the metadata groups it
 replicates. A folder folds only in a group this node leads, one cell at a time, so at most
-`fold_concurrency` background folds run on a node at once. Between two folds a busy folder does
-not wait: there is no per-second bound other than the number of folders.
+`fold_concurrency` cells are being rewritten by background folds on a node at once. Between two
+folds a busy folder does not wait: there is no per-second bound other than the number of folders
+and, with [batched commits](#batched-commits), the room in the queue.
 
 **Which cells are due.** A cell with `fold_after_deltas` deltas, or dirty for `fold_after_ms` as
 this node first saw it. Every dirty cell is due while delta writes are turned off, or while
@@ -76,25 +77,29 @@ It is made again when the queues run out (at once if cells were left out, else a
 `fold_interval_ms`) or are a second old. An idle folder therefore notices a newly due cell within
 about `fold_interval_ms`.
 
-**One fold per cell.** Every fold takes a claim on its cell first, so two never work on the same
-cell. This avoids wasted work and lets a snapshot wait; it is not what keeps data right. That is
-still the compare-and-swap: a write that replaces the base meanwhile (a whole-cell write, a
-rewrite of a cell at its delta limit, a truncate, an unlink) takes no claim, and the fold that
-lost is rejected, giving its space back.
+**One fold per cell.** Every fold takes a claim on its cell first and keeps it until the fold has
+ended (also while it waits to be committed), so two never work on the same cell. This avoids
+wasted work and lets a snapshot wait; it is not what keeps data right. That is still the
+compare-and-swap: a write that replaces the base meanwhile (a whole-cell write, a rewrite of a
+cell at its delta limit, a truncate, an unlink) takes no claim, and the fold that lost is left
+out or skipped, giving its space back.
 
 **Snapshots.** A snapshot folds what no one else is folding, then stops new deltas on its target,
-takes the write lock, waits for the folds in progress on its cells and folds the rest. While a
-target is stopped, the folders take its cells before any other, which shortens the time the write
-lock is held. A folder never waits for the write lock or for a second claim, so this cannot
-deadlock; no new delta lands on the target, so it ends under continuous writes.
+takes the write lock, waits for the folds in progress or queued on its cells and folds the rest.
+While a target is stopped, the folders take its cells before any other, which shortens the time
+the write lock is held. Neither a folder nor a committer ever waits for the write lock or for a
+second claim, so this cannot deadlock; no new delta lands on the target, so it ends under
+continuous writes. The folds a snapshot (or `fold_all_deltas`) makes itself are committed one
+command each, and a truncate rewrites its cell as an ordinary write.
 
 **Failures.** A folder whose fold fails (a data node down or full, a commit that timed out or
 lost its leader) pauses for `fold_interval_ms`, doubling with each failure in a row up to 5
-seconds. A fold with an unknown outcome keeps its space reserved for 300 s, as before; if it
+seconds. When a batch has a failed fold, all folders leave that group alone for the same kind of
+pause. A fold with an unknown outcome keeps its space reserved for 300 s, as before; if it
 applies after all, a later fold of the same cell loses the compare-and-swap. A folder that loses
 leadership mid-fold ends that fold: data nodes refuse its writes once they have seen a newer
 term, and its commit is bound to its term. A panic in a fold is counted as a failure and the
-folder goes on.
+folder or committer goes on (a batch whose commit panicked keeps its space reserved).
 
 **Reclaim** runs on its own thread, so a slow reclaim does not stop folding, nor the reverse.
 Every `fold_interval_ms` after the previous pass ends, it runs a GC pass in each led group whose
@@ -103,17 +108,47 @@ pending. The grace period applies as before.
 
 **Backpressure.** The folders stop starting folds while dead, unreclaimed bytes alone reach
 `max_pending_bytes`: folding more would only take more device space until reclaim catches up.
-Folds already running finish, so dead bytes can pass the limit by about one cell and its deltas
-per folder. Snapshots and truncates are not held back.
+Folds already running or queued finish, so dead bytes can pass the limit by about one cell and
+its deltas per folder and per fold in or waiting for a batch. Snapshots and truncates are not
+held back.
 
 **Shutdown** stops the folders from starting folds and waits for those in progress, each bounded
-by the data-node and proposal timeouts.
+by the data-node and proposal timeouts, and then for the committers to commit what is queued (at
+most the batch in progress and one more, each bounded by the proposal timeout).
 
-**Cost.** Each fold holds its cell in memory (a small multiple of `extent_bytes`) and uses up to
-8 reader threads, then one writer thread per replica or shard. Besides the folders, each snapshot
-being taken folds one cell at a time on its caller's thread. More folders also take more disk
-time and metadata commits from foreground writes. How many suit a given disk has not been
-measured.
+**Cost.** Each rewrite holds its cell in memory (a small multiple of `extent_bytes`) and uses up
+to 8 reader threads, then one writer thread per replica or shard; a queued fold holds only its
+extent record and its claim on device space. Besides the folders, each snapshot being taken folds
+one cell at a time on its caller's thread. More folders also take more disk time from foreground
+writes. How many suit a given disk has not been measured.
+
+### Batched commits
+
+With `fold_batch_cells` above 1 (the default is 32), delta writes on, and every metadata node
+advertising support, a folder does not commit its own fold. It hands the rewritten cell to the
+group's queue and takes the next cell, while one committer thread per group proposes whatever is
+queued as one `FoldCells` command, so those folds share one Raft round.
+
+- **No added wait.** The committer proposes as soon as it is free and anything is queued; it never
+  waits for a batch to fill. A batch is therefore what finished while the previous command was
+  committing: often one cell when commits are faster than rewrites.
+- **Bounded.** A command carries at most `fold_batch_cells` folds. The queue holds as many again,
+  and a folder with a rewrite for a full queue waits. So a group has at most twice
+  `fold_batch_cells` folds rewritten and not committed, besides one in each folder's hands.
+- **Compare-and-swap per cell.** Under the lock the command is proposed under, the leader leaves
+  out folds whose cell changed and content written under another term. When the command is
+  applied, each fold is checked again, in order, against the catalog alone: one that does not fit
+  is skipped, on every replica alike, and the rest apply. Apply reads no configuration.
+- **Outcomes.** A batch that times out, loses its leader or fails to be logged keeps the space of
+  every fold in it reserved, as a single fold does. Folds that were never proposed give their
+  space back.
+- **Otherwise single commands.** With delta writes off (folding what is left), with
+  `fold_batch_cells` 1, or while a metadata node has not advertised support, every fold is a
+  `FoldCell` command of its own, as before.
+
+Whether batching raises the fold rate, or what it does to foreground writes, has **not been
+measured**. Folders that no longer wait for commits can also fold faster and so take more disk
+time from foreground writes.
 
 ## Configuration
 
@@ -135,6 +170,7 @@ starting points that have not been tuned.
 | `fold_after_deltas` | 8 | A cell with this many deltas is due for folding. |
 | `fold_after_ms` | 5000 | So is a cell dirty this long. |
 | `fold_concurrency` | 4 | Folder threads per node, over all its metadata groups (1 to 32). |
+| `fold_batch_cells` | 32 | Most folds one command carries, and most queued for the next (1 to 256). 1 turns [batching](#batched-commits) off. |
 | `fold_interval_ms` | 200 | How long an idle folder waits before looking again; the pause between early GC passes; the first pause after a failed fold. It does not pace busy folders. |
 | `fold_cells_per_pass` | 8 | No longer limits a node. Still accepted; it bounds one `delta_maintenance_once` call of the library (used by tests). |
 | `gc_grace_ms` | 10000 | How long an extent stays dead before reclaim. |
@@ -161,6 +197,11 @@ background.
 - With the mode never enabled, no new command and no new field is written to the log or the
   catalog store, and data nodes are sent no new request. (Raft replies carry one new field,
   which older builds ignore.)
+- The batched fold command has its own capability bit. A leader proposes `FoldCells` only once
+  every node it replicates to has advertised it, and only with delta writes on; a cluster with an
+  older delta-capable node keeps using one command per fold. The command adds nothing to the
+  catalog, but **a node running a build without it cannot read a log that holds one**: the
+  downgrade steps below cover it, since they wait for the log to compact.
 - **Do not downgrade, or add a metadata node running an older build, while the log or the catalog
   may hold deltas.** Older builds cannot decode the new commands and silently drop the new
   catalog fields, which would lose acknowledged writes. Before a downgrade: turn the mode off,
@@ -182,7 +223,8 @@ They count what this node did while it led, since it started:
 | `atlas_native_delta_folds_total` | Folds committed. |
 | `atlas_native_delta_folded_deltas_total` | Deltas those folds consumed; divided by the folds, deltas per fold. |
 | `atlas_native_delta_fold_conflicts_total` | Folds the catalog rejected at commit, normally because the cell changed first. Their reads and writes were wasted. |
-| `atlas_native_delta_fold_seconds{phase}` | Histogram, one observation per fold attempt and phase reached. `read`: the base and its deltas. `write`: placing the new base on its replicas. `commit`: the fold command. |
+| `atlas_native_delta_fold_seconds{phase}` | Histogram, one observation per fold attempt and phase reached. `read`: the base and its deltas. `write`: placing the new base on its replicas. `commit`: the fold command; for a batched fold, from the start of its batch's commit to the outcome (not the wait in the queue). |
+| `atlas_native_delta_fold_batch_cells` | Histogram of the folds in each `FoldCells` command that reached the log; `_sum` over `_count` is the mean batch size. Folds committed on their own are not in it. |
 | `atlas_native_delta_dirty_cells`, `atlas_native_delta_pending`, `atlas_native_delta_pending_bytes` | Backlog: cells with deltas, deltas not folded, and their device bytes. |
 | `atlas_native_dead_bytes` | Device bytes of dead extents not reclaimed yet. |
 
@@ -201,8 +243,8 @@ Latency histograms have buckets from 0.1 ms to 30 s; `_count` is the number of c
 these start from zero when a process restarts.
 
 A node also counts `atlas_native_fold_runs_total` (background folds attempted, including those
-that lost their compare-and-swap; before the folders ran in parallel it counted passes) and
-`atlas_native_fold_errors_total` (folds that failed). Early reclaim passes are counted in
+that lost their compare-and-swap, each fold of a batch counted; before the folders ran in
+parallel it counted passes) and `atlas_native_fold_errors_total` (folds that failed). Early reclaim passes are counted in
 `atlas_native_gc_runs_total` and `atlas_native_gc_errors_total`.
 
 ## Known costs and limits
@@ -261,6 +303,16 @@ Covered by tests:
   successor rewrites the cells, a leader losing its quorum mid-fold (its folders then stop),
   idle followers, and a single node folding, reclaiming, shutting down with a backlog and
   restarting. The device failures, halts and stalls are injected inside the test process;
+- batched commits: a command that applies in part, one that changes nothing and an empty one,
+  replayed, reloaded and carried over a snapshot transfer (`metadata/delta/tests.rs`); leaving
+  out changed cells and other terms' content, and keeping the space of a batch whose committer
+  panicked (`engine/fold_batch/tests.rs`); the queue limit, changes, a snapshot and shutdown
+  while folds are queued, a panic in the committer, the capability gate with a node advertising
+  only the earlier capability, a leader halted after a rewrite, before proposing, after proposing
+  and after the commit, random writes and truncates with pools on every replica across leader
+  changes against a model, and a replica restarted behind a compacted log
+  (`tests/delta_folding.rs`); a random run against the model with the pool folding
+  (`tests/delta_writes.rs`);
 - a FUSE operations-layer client with direct reads on a cell with deltas
   (`crates/atlas-native-fuse/tests/ops.rs`);
 - the `atlas-native` and `atlas-native-fuse` tests with the mode off, and again with it on by
@@ -271,8 +323,9 @@ Covered by tests:
 Not verified:
 
 - **performance** beyond the two single runs below; none of the defaults are tuned. Both runs
-  predate parallel folding, which **has not been benchmarked**: neither the fold rate, the effect
-  on foreground writes, nor any `fold_concurrency` other than by the tests' correctness checks;
+  predate parallel folding and batched commits, **neither of which has been benchmarked**:
+  neither the fold rate, the batch sizes reached, the effect on foreground writes, nor any
+  `fold_concurrency` or `fold_batch_cells` other than by the tests' correctness checks;
 - more than one metadata group per node with the folders under load;
 - a data node that is really out of space (the test fails its writes instead);
 - a kernel FUSE mount with the mode on beyond the benchmark runs below and their 4 MiB `fio`
@@ -287,7 +340,7 @@ Not verified:
 
 ## Measured: one quick run against Ceph (2026-11-28)
 
-The runs below were made with the earlier, serial folding.
+The runs below were made with the earlier, serial folding, one command per fold.
 
 `deploy/bench-vs-ceph/compare.sh`, commit `598a6b31`, one shared host, one spinning disk, three
 copies for both systems, CephFS (Ceph 20.2.5, ceph-fuse) against atlas-native FUSE. 1 GiB data set,
