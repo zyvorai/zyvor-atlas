@@ -148,6 +148,7 @@ impl Cluster {
                         backend: DeviceBackend::Aligned,
                     },
                 ],
+                preallocate: Default::default(),
             });
             let n = NativeNode::start_with(
                 cfg,

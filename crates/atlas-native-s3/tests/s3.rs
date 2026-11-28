@@ -90,6 +90,7 @@ impl Cluster {
                 cfg.data_node = Some(DataNodeRole {
                     listen: l.local_addr().unwrap(),
                     devices: Vec::new(),
+                    preallocate: Default::default(),
                 });
                 let listeners = Listeners {
                     http: Some(bind()),

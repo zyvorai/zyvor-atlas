@@ -195,7 +195,13 @@ fn file_device_does_not_acknowledge_a_writer_whose_error_another_thread_holds() 
     assert_eq!(BlockStore::read_exact_at(&d, 0, 4).unwrap().len(), 4);
     drop(d);
     let d = FileDevice::open(&path).unwrap();
-    assert_eq!(d.append(b"again").unwrap(), 8192);
+    let again = d.append(b"again").unwrap();
+    if cfg!(feature = "prealloc-test") {
+        // A failed device's file is not cut back, so its prepared tail stays in it.
+        assert!(again >= 8192, "{again}");
+    } else {
+        assert_eq!(again, 8192);
+    }
 }
 
 #[test]

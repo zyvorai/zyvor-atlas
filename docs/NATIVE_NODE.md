@@ -95,6 +95,7 @@ data-node addresses are `host:port` and resolved on every connect, so DNS names 
 | `data_nodes[].free_bytes` | 1 TiB | Placement capacity hint. |
 | `data_nodes[].devices` | 1 | How many devices that data node serves; new replicas are striped across them round-robin. |
 | `data_node.devices` | `[]` | `[{"path", "backend"?}]`, served in index order. Empty: one `file` device at `data_dir/data/nvme0.data`. |
+| `data_node.preallocate` | off | `{"enabled", "ahead_bytes"?, "step_bytes"?}`: zero `file` devices ahead of their appends (see "Preallocation" below). |
 
 ### Devices
 
@@ -157,6 +158,60 @@ sync: keep a file-backed device's filesystem from filling up.
 
 `deploy/native/writeback-error-lab.sh` runs `tests/writeback_errors.rs` against real kernel
 writeback errors (a device-mapper target that fails chosen blocks; needs sudo on a lab host).
+
+### Preallocation
+
+Off by default; implemented, and its effect on a cluster has not been measured.
+
+```json
+"data_node": {
+  "listen": "10.0.0.1:7481",
+  "preallocate": { "enabled": true, "ahead_bytes": 67108864, "step_bytes": 1048576 }
+}
+```
+
+An append to a growing file makes the `fdatasync` that follows commit the file's new size and
+block allocation too. With this setting a background thread per device keeps `ahead_bytes`
+(default 64 MiB) of **written zeros** past the append position, `step_bytes` (default 1 MiB, a
+multiple of 4 KiB) at a time, syncing each step, so that appends overwrite blocks that exist.
+`fallocate` alone would leave unwritten extents, whose first write is a metadata change again.
+`file` devices only: the node refuses the setting with an `aligned` or `io_uring` device.
+
+What changes on disk and in reporting:
+
+- **No new on-disk state.** Recovery still rests on one rule: nothing at or beyond a device file's
+  length was ever handed out, so a reopened device appends from there. It holds after a crash at
+  any point of preparation, with the setting turned on or off, and for an older binary;
+- while the node runs, the file is longer than the space in use. `atlas_native_data_device_bytes`,
+  the engine's `atlas_native_device_bytes` and reads and overwrites go by the space in use; `du`
+  and `ls` see the prepared tail too;
+- a clean stop (`SIGTERM` or `SIGINT`, which the node catches only with the setting on) cuts each
+  file back to the space in use;
+- **any other stop loses the prepared tail**: up to `ahead_bytes + step_bytes` per device, each
+  time. It counts as used and is not reclaimed, because the end of the data cannot be told from
+  the bytes (data may end in zeros). After a failed sync the file is also left as it is.
+  Preparation starts at a device's first append, so restarts without writes lose nothing more.
+
+Costs: every appended byte is written twice (the zeros, then the data), the preparer's own syncs
+share the disk, a writer's `fdatasync` that overlaps a step also writes that step out, and each
+device keeps up to `ahead_bytes` more of the filesystem occupied.
+
+Writers do not wait for the preparer's syncs. An append that reaches into the range being zeroed
+waits until the zeros are written (not synced); when appends catch up, the preparer skips a step
+ahead of them. The preparer syncs through a file descriptor of its own, so it cannot take a
+writeback error away from a writer; a failed preparer sync fails the device exactly as in
+"Failed data syncs" above. A failed preparer write (a full filesystem, say) is logged, counted
+and retried after 10 s, and appends go on without prepared space.
+
+Metrics, present only with the setting on, labelled `node` and `device`:
+`atlas_native_data_prealloc_ahead_bytes`, `..._written_bytes_total`,
+`..._appends_total{prepared="true"|"false"}` (whether an append landed wholly in zeroed and synced
+space), `..._append_waits_total` and `..._failures_total`.
+
+`cargo test -p atlas-native --features prealloc-test` runs the existing tests with it on.
+`deploy/bench-vs-ceph/prealloc-probe.sh` checks the mechanism on the host's filesystem and probes
+the data writes; the `-prealloc` cases of `compare.sh` run the whole benchmark with it
+([`NATIVE_DELTA_REDESIGN.md`](NATIVE_DELTA_REDESIGN.md), "Phase 4").
 
 ### Erasure coding
 
