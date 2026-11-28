@@ -354,7 +354,8 @@ def required_metrics(item, system):
         if system == "atlas":
             need.append("elections")
         if mode == "busy":
-            need += ["bg_base_p99_ms", "bg_fork_p99_ms", "bg_fork_ops", "bg_base_ops"]
+            need += ["bg_base_p99_ms", "bg_base_max_ms", "bg_base_ops", "bg_fork_p99_ms", "bg_fork_max_ms",
+                     "bg_fork_ops"]
         return need
     if phase == "E":
         need = [

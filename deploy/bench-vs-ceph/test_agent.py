@@ -396,6 +396,19 @@ class ItemStateTest(unittest.TestCase):
         self.assertEqual(lib.item_state({"status": "great"}, "G", "atlas")[0], "incomplete")
         self.assertEqual(lib.item_state({"status": "failed"}, "G", "atlas")[0], "failed")
 
+    def test_reads_from_tmpfs_are_never_called_cold(self):
+        class System:
+            def evict_caches(self):
+                return []
+
+        r = object.__new__(agent_run.Runner)
+        r.system, r.floor, r.plan = System(), False, {"tmpfs_gb": 0}
+        self.assertEqual(r.drop_server_caches(), [])
+        r.plan = {"tmpfs_gb": 4}
+        self.assertIn("tmpfs", r.drop_server_caches()[0])
+        r.floor = True  # the floor stays on the host's disk
+        self.assertEqual(r.drop_server_caches(), [])
+
     def test_runner_classifies_what_a_step_ends_in(self):
         class System:
             retries = 0
@@ -428,8 +441,9 @@ class ItemStateTest(unittest.TestCase):
 def good_metrics(item, system):
     m = {name: 1.0 for name in lib.required_metrics(item, system)}
     if item.startswith("D/"):
-        m.update(fork_s=0.2, rss_growth_bytes=MIB, elections=0, bg_base_p99_ms=100.0, bg_fork_p99_ms=110.0,
-                 bg_after_p99_ms=120.0, bg_fork_ops=5, bg_base_ops=100)
+        m.update(fork_s=0.2, rss_growth_bytes=MIB, elections=0, bg_base_p99_ms=100.0, bg_base_max_ms=150.0,
+                 bg_base_ops=500, bg_fork_p99_ms=110.0, bg_fork_max_ms=110.0, bg_fork_ops=5,
+                 bg_after_p99_ms=120.0, bg_after_max_ms=130.0, bg_after_ops=200)
     return m
 
 
@@ -632,14 +646,33 @@ class Bet2Test(ReportBase):
 
         self.check("no", edit, "[FAIL] no election")
 
-    def test_doubled_p99_fails(self):
-        for key in ("bg_fork_p99_ms", "bg_after_p99_ms"):
-            def edit(n, mode, round_, r, key=key):
-                if mode == "busy" and n == 1000 and round_ == 1:
-                    r["metrics"][key] = 201.0
+    def busy(self, **figures):
+        def edit(n, mode, round_, r):
+            if mode == "busy" and n == 1000 and round_ == 1:
+                r["metrics"].update(figures)
 
-            shutil.rmtree(self.root / "results", ignore_errors=True)
+        shutil.rmtree(self.root / "results", ignore_errors=True)
+        return edit
+
+    def test_doubled_p99_with_enough_operations_fails(self):
+        for window in ("fork", "after"):
+            edit = self.busy(**{f"bg_{window}_p99_ms": 201.0, f"bg_{window}_ops": 100})
             self.check("no", edit, "[FAIL] foreground p99 at 1000")
+
+    def test_a_stall_beyond_anything_before_fails_even_with_few_operations(self):
+        edit = self.busy(bg_fork_p99_ms=301.0, bg_fork_max_ms=301.0, bg_fork_ops=1)
+        self.check("no", edit, "[FAIL] foreground p99 at 1000")
+
+    def test_few_operations_over_2x_but_seen_before_is_unknown(self):
+        edit = self.busy(bg_fork_p99_ms=250.0, bg_fork_max_ms=250.0, bg_fork_ops=9)
+        self.check("unknown", edit, "[UNKNOWN] foreground p99 at 1000")
+
+    def test_memory_with_a_writer_is_not_judged(self):
+        def edit(n, mode, round_, r):
+            if mode == "busy" and n == 100000:
+                r["metrics"]["rss_growth_bytes"] = 900 * MIB
+
+        self.check("yes", edit, "[PASS] quiet: metadata memory growth")
 
     def test_failed_item_is_unknown_not_met(self):
         def edit(n, mode, round_, r):

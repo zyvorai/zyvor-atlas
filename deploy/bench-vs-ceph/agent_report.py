@@ -40,6 +40,8 @@ BET2_SECONDS = 1.0
 BET2_FACTOR = 2.0
 # Memory growth below this is allocator noise; the 2x rule is applied to at least this much.
 BET2_MEMORY_FLOOR = 8 * MIB
+# With fewer operations in a window its p99 is just its slowest one.
+P99_OPS = 100
 BET1_WRITERS = 8
 BET1_FACTOR = 3.0
 
@@ -308,16 +310,19 @@ def bet2(results, case):
             out.append((PASS if a <= BET2_FACTOR * b else FAIL,
                         f"{mode}: median time within {BET2_FACTOR:g}x from {BET2_SMALL} to {BET2_LARGE} files: "
                         f"{number(b)} s -> {number(a)} s"))
-        large, why_l = results.values(case, f"D/{BET2_LARGE}/{mode}/clone", "rss_growth_bytes")
-        small, why_s = results.values(case, f"D/{BET2_SMALL}/{mode}/clone", "rss_growth_bytes")
-        if large is None or small is None:
-            out.append((UNKNOWN, f"{mode}: metadata memory growth: {why_l or why_s}"))
-        else:
-            a, b = statistics.median(large), statistics.median(small)
-            floor = max(b, BET2_MEMORY_FLOOR)
-            out.append((PASS if a <= BET2_FACTOR * floor else FAIL,
-                        f"{mode}: metadata memory growth within {BET2_FACTOR:g}x: {b / MIB:.1f} -> {a / MIB:.1f} MiB"
-                        f" (compared with at least {BET2_MEMORY_FLOOR // MIB} MiB)"))
+    # Memory is judged on the quiet forks only: with a writer, its own growth is in the figure.
+    large, why_l = results.values(case, f"D/{BET2_LARGE}/quiet/clone", "rss_growth_bytes")
+    small, why_s = results.values(case, f"D/{BET2_SMALL}/quiet/clone", "rss_growth_bytes")
+    if "quiet" not in plan["fork_modes"]:
+        out.append((UNKNOWN, "metadata memory growth: no quiet fork in this run"))
+    elif large is None or small is None:
+        out.append((UNKNOWN, f"quiet: metadata memory growth: {why_l or why_s}"))
+    else:
+        a, b = statistics.median(large), statistics.median(small)
+        floor = max(b, BET2_MEMORY_FLOOR)
+        out.append((PASS if a <= BET2_FACTOR * floor else FAIL,
+                    f"quiet: metadata memory growth within {BET2_FACTOR:g}x: {b / MIB:.1f} -> {a / MIB:.1f} MiB"
+                    f" (compared with at least {BET2_MEMORY_FLOOR // MIB} MiB)"))
     elections, missing = [], []
     for mode in plan["fork_modes"]:
         for n in sizes:
@@ -335,29 +340,40 @@ def bet2(results, case):
     if "busy" not in plan["fork_modes"]:
         out.append((UNKNOWN, "foreground p99: no run with a background writer"))
         return out
-    for n in sizes:
-        item = f"D/{n}/busy/clone"
-        base, why = results.values(case, item, "bg_base_p99_ms")
-        during, why_d = results.values(case, item, "bg_fork_p99_ms")
-        if base is None or during is None:
-            out.append((UNKNOWN, f"foreground p99 at {n}: {why or why_d}"))
+    return out + [foreground(results, case, n) for n in sizes]
+
+
+def window_verdict(base_p99, base_max, p99, worst, ops):
+    """Whether the foreground p99 stayed within 2x in one window of one round. A short window has no
+    p99 of its own: it fails only if an operation took longer than twice anything seen before."""
+    if p99 <= BET2_FACTOR * base_p99:
+        return PASS
+    return FAIL if ops >= P99_OPS or worst > BET2_FACTOR * base_max else UNKNOWN
+
+
+def foreground(results, case, n):
+    """(status, text) for the background writer of the clone fork of the tree of n files."""
+    item = f"D/{n}/busy/clone"
+    got, why = {}, ""
+    for key in ("base_p99_ms", "base_max_ms", "fork_p99_ms", "fork_max_ms", "fork_ops",
+                "after_p99_ms", "after_max_ms", "after_ops"):
+        got[key], reason = results.values(case, item, "bg_" + key)
+        if not key.startswith("after"):
+            why = why or reason
+    if why:
+        return UNKNOWN, f"foreground p99 at {n}: {why}"
+    statuses, parts = [], []
+    for window, label in (("fork", "during"), ("after", "after it")):
+        columns = [got[f"{window}_p99_ms"], got[f"{window}_max_ms"], got[f"{window}_ops"]]
+        if None in columns:
+            statuses.append(UNKNOWN)
+            parts.append("no figure for the time after the fork")
             continue
-        after, _ = results.values(case, item, "bg_after_p99_ms")
-        ratios = [d / b for d, b in zip(during, base)]
-        text = f"foreground p99 at {n} files at most doubled in every round: during x{', x'.join(f'{r:.2f}' for r in ratios)}"
-        worst = max(ratios)
-        if after is None:
-            status = FAIL if worst > BET2_FACTOR else UNKNOWN
-            text += "; no figure for the time after the fork"
-        else:
-            later = [a / b for a, b in zip(after, base)]
-            text += f"; after it x{', x'.join(f'{r:.2f}' for r in later)}"
-            status = FAIL if max(worst, *later) > BET2_FACTOR else PASS
-        ops, _ = results.values(case, item, "bg_fork_ops")
-        if ops is not None:
-            text += f" (operations during the fork: {', '.join(number(v) for v in ops)})"
-        out.append((status, text))
-    return out
+        rounds = list(zip(got["base_p99_ms"], got["base_max_ms"], *columns))
+        statuses += [window_verdict(*r) for r in rounds]
+        parts.append(f"{label} " + ", ".join(f"x{r[2] / r[0]:.2f} ({r[4]:.0f} ops)" for r in rounds))
+    return combine(statuses), (f"foreground p99 at {n} files at most doubled in every round: " + "; ".join(parts)
+                               + f" [under {P99_OPS} ops, over 2x counts only beyond twice the slowest before]")
 
 
 def bet2_section(results):
@@ -466,6 +482,9 @@ def report(plan, root):
         lines += ["", "## What each fork method guarantees", ""]
         shown = set(plan["methods"]) | ({"reflink"} if "floor" in plan["cases"] else set())
         lines += [f"- **{name}**: {text}" for name, text in GUARANTEES if name in shown]
+        if "D" in plan["phases"] and "busy" in plan["fork_modes"]:
+            lines.append("- In D's busy rows the memory and space figures include what the background writer "
+                         "itself caused.")
         lines.append("- First reads follow a fresh client mount (overlay-shared on CephFS: remounted before the "
                      "fork). Cold reads in E drop the server files' page cache and, for Ceph, OSD and MDS caches; "
                      "atlas-native's catalog stays in memory.")
