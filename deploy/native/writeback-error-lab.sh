@@ -66,7 +66,11 @@ dm_exists() {
 }
 
 : >"$log"
-[ ! -e "$img" ] || die "$img exists: remove it after checking that no loop device uses it"
+[ ! -e "$img" ] && [ ! -L "$img" ] ||
+    die "$img exists: remove it after checking that no loop device uses it"
+# A link here would make truncate write, or mount cover, a path outside the work directory.
+[ ! -L "$mnt" ] || die "$mnt is a symbolic link"
+[ ! -e "$mnt" ] || [ -z "$(ls -A "$mnt")" ] || die "$mnt is not an empty directory"
 ! dm_exists || die "a device-mapper device named $NAME already exists"
 ! findmnt -rn "$mnt" >/dev/null || die "$mnt is already a mount point"
 
