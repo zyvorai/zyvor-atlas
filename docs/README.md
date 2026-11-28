@@ -23,6 +23,7 @@ duplicated.
 - **[NATIVE_VS_CEPH.md](NATIVE_VS_CEPH.md)** — gap analysis: what atlas-native lacks before it could replace Ceph.
 - **[NATIVE_DELTA_WRITES.md](NATIVE_DELTA_WRITES.md)** — opt-in delta writes for small overwrites, with measurements against Ceph.
 - **[NATIVE_DELTA_REDESIGN.md](NATIVE_DELTA_REDESIGN.md)** — plan to make delta folding keep up (phases 0 to 2 approved).
+- **[NATIVE_STORAGE_RESEARCH.md](NATIVE_STORAGE_RESEARCH.md)** — storage research for speed and AI-agent workloads, a proposed agent benchmark and three ranked bets (nothing measured).
 - **[WORM.md](WORM.md)** — retention-locked snapshots, S3 object retention and the ransomware assessment/protect flow.
 - **[CHECKPOINTS.md](CHECKPOINTS.md)** — `atlasctl checkpoint seal`: snapshot, lock and prune finished training checkpoints (DCP, Megatron-LM, Orbax layouts).
 - **[IO_EBPF.md](IO_EBPF.md)** — `atlas-io`, the optional observe-first eBPF storage I/O sensor.
