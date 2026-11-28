@@ -2,7 +2,7 @@
 <!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Delta writes: redesign plan
 
-**Status: proposed on 2026-11-28. Nothing below is approved or implemented.**
+**Status (2026-11-28): phases 0 to 2 approved; none implemented yet. Phases 3 and 4 are not approved.**
 
 ## The problem
 
@@ -147,8 +147,8 @@ Latency of a single write at queue depth 1, small file creation, NVMe, and more 
 atlas-native may still not beat Ceph after all of this. Results from one shared host with one
 spinning disk say nothing about other hardware.
 
-## Decisions needed
+## Decisions
 
-1. Approve phases 0 to 2. Delta writes stay off by default throughout.
-2. Accept or change the target above.
-3. Phase 3 later: go or no go, and where checksums live.
+1. Phases 0 to 2: approved 2026-11-28. Delta writes stay off by default throughout.
+2. The target above is the gate used unless it is changed.
+3. Open, for later: phase 3 go or no go, and where its checksums live.

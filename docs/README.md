@@ -22,7 +22,7 @@ duplicated.
 - **[NATIVE_DATA_REDUCTION.md](NATIVE_DATA_REDUCTION.md)** — atlas-native LZ4 compression and extent deduplication: what they do, the savings report, limits.
 - **[NATIVE_VS_CEPH.md](NATIVE_VS_CEPH.md)** — gap analysis: what atlas-native lacks before it could replace Ceph.
 - **[NATIVE_DELTA_WRITES.md](NATIVE_DELTA_WRITES.md)** — opt-in delta writes for small overwrites, with measurements against Ceph.
-- **[NATIVE_DELTA_REDESIGN.md](NATIVE_DELTA_REDESIGN.md)** — proposed plan to make delta folding keep up (not approved).
+- **[NATIVE_DELTA_REDESIGN.md](NATIVE_DELTA_REDESIGN.md)** — plan to make delta folding keep up (phases 0 to 2 approved).
 - **[WORM.md](WORM.md)** — retention-locked snapshots, S3 object retention and the ransomware assessment/protect flow.
 - **[CHECKPOINTS.md](CHECKPOINTS.md)** — `atlasctl checkpoint seal`: snapshot, lock and prune finished training checkpoints (DCP, Megatron-LM, Orbax layouts).
 - **[IO_EBPF.md](IO_EBPF.md)** — `atlas-io`, the optional observe-first eBPF storage I/O sensor.
