@@ -918,6 +918,12 @@ impl RaftServer {
         Ok(p.finish())
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn with_node<R>(&self, f: impl FnOnce(&mut RaftNode) -> R) -> R {
+        f(&mut self.shared.node.lock().unwrap())
+    }
+
     /// The first fatal error (e.g. a failed fsync) that stopped this server, if any.
     pub fn fatal_error(&self) -> Option<String> {
         self.shared.fatal.lock().ok().and_then(|f| f.clone())

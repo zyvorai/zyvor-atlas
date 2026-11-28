@@ -1695,6 +1695,14 @@ impl NativeEngine {
         Ok(p.finish())
     }
 
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn set_log_sync(&self, sync: Box<dyn crate::device::DeviceSync>) {
+        if let Meta::Local { wal, .. } = &self.meta {
+            wal.lock().unwrap().set_sync(sync);
+        }
+    }
+
     /// Persists the catalog and drops every WAL record it covers. Returns the records removed.
     /// Raft-backed engines compact their log inside the Raft node instead.
     pub fn checkpoint(&self) -> Result<u64, NativeError> {

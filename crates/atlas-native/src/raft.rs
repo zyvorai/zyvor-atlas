@@ -860,6 +860,11 @@ impl RaftNode {
     pub fn counters(&self) -> RaftCounters {
         self.counters
     }
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn wal_mut(&mut self) -> &mut Wal {
+        &mut self.wal
+    }
     /// Highest log index known to be replicated on each peer; empty unless leader.
     pub fn peer_match_index(&self) -> BTreeMap<NodeId, u64> {
         if self.role == Role::Leader {

@@ -3,6 +3,7 @@
 
 use std::{
     fs::{File, OpenOptions},
+    io,
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::Mutex,
@@ -37,6 +38,22 @@ pub trait BlockStore: std::fmt::Debug + Send + Sync {
     }
 }
 
+/// Makes the data written to a file durable. [`DataSync`] is what devices and the metadata log
+/// use; tests substitute one that stalls or fails.
+pub trait DeviceSync: std::fmt::Debug + Send + Sync {
+    fn sync_data(&self, file: &File) -> io::Result<()>;
+}
+
+/// `fdatasync` ([`File::sync_data`]).
+#[derive(Debug, Default, Clone, Copy)]
+pub struct DataSync;
+
+impl DeviceSync for DataSync {
+    fn sync_data(&self, file: &File) -> io::Result<()> {
+        file.sync_data()
+    }
+}
+
 impl BlockStore for FileDevice {
     fn append(&self, _fence: u64, data: &[u8]) -> Result<u64, NativeError> {
         FileDevice::append(self, data)
@@ -61,10 +78,20 @@ pub struct FileDevice {
     /// End of the space handed out to appends, including ones still being written.
     end: Mutex<u64>,
     positional: File,
+    sync: Box<dyn DeviceSync>,
 }
 
 impl FileDevice {
     pub fn open(path: impl AsRef<Path>) -> Result<Self, NativeError> {
+        Self::open_with_sync(path, Box::new(DataSync))
+    }
+
+    /// [`Self::open`] with `sync` in place of `fdatasync`.
+    #[doc(hidden)]
+    pub fn open_with_sync(
+        path: impl AsRef<Path>,
+        sync: Box<dyn DeviceSync>,
+    ) -> Result<Self, NativeError> {
         let path = path.as_ref().to_path_buf();
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
@@ -81,6 +108,7 @@ impl FileDevice {
             path,
             end: Mutex::new(end),
             positional: file,
+            sync,
         })
     }
 
@@ -104,7 +132,7 @@ impl FileDevice {
         let written = self
             .positional
             .write_all_at(data, off)
-            .and_then(|()| self.positional.sync_data());
+            .and_then(|()| self.sync.sync_data(&self.positional));
         if let Err(e) = written {
             // Give the space back unless a later append already took the space after it; an
             // unacknowledged append is referenced by nothing either way.
@@ -128,7 +156,7 @@ impl FileDevice {
             )));
         }
         self.positional.write_all_at(data, offset)?;
-        self.positional.sync_data()?;
+        self.sync.sync_data(&self.positional)?;
         Ok(())
     }
 

@@ -9,7 +9,10 @@ use std::{
 
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 
-use crate::durable::sync_dir;
+use crate::{
+    device::{DataSync, DeviceSync},
+    durable::sync_dir,
+};
 
 #[derive(Debug, thiserror::Error)]
 pub enum WalError {
@@ -44,6 +47,8 @@ pub struct Wal {
     /// Highest index known to be on disk (written by an fsynced append or a rewrite).
     synced_index: u64,
     records: u64,
+    /// What [`Wal::sync`] flushes `file` with.
+    sync: Box<dyn DeviceSync>,
 }
 
 impl Wal {
@@ -60,6 +65,7 @@ impl Wal {
             last_index: lines.last().map(|(i, _)| *i).unwrap_or(0),
             synced_index: lines.last().map(|(i, _)| *i).unwrap_or(0),
             records: lines.len() as u64,
+            sync: Box::new(DataSync),
         };
         if torn {
             // A torn final line was never fsynced as a whole record, so it was never acknowledged.
@@ -93,7 +99,7 @@ impl Wal {
     /// Flushes every unsynced append with one fsync; a no-op when there is none.
     pub fn sync(&mut self) -> Result<(), WalError> {
         if self.synced_index < self.last_index {
-            self.file.sync_data()?;
+            self.sync.sync_data(&self.file)?;
             self.synced_index = self.last_index;
         }
         Ok(())
@@ -101,6 +107,12 @@ impl Wal {
 
     pub fn synced_index(&self) -> u64 {
         self.synced_index
+    }
+
+    #[cfg(test)]
+    #[allow(dead_code)]
+    pub(crate) fn set_sync(&mut self, sync: Box<dyn DeviceSync>) {
+        self.sync = sync;
     }
 
     pub fn replay<T: DeserializeOwned>(&self) -> Result<Vec<WalRecord<T>>, WalError> {
