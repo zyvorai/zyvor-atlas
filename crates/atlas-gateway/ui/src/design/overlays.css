@@ -135,6 +135,10 @@ button.at-theme-item:hover {
   box-shadow: var(--a-shadow-pop);
   animation: a-slide-in 0.35s var(--a-ease);
 }
+/* The panel itself takes focus on open; keep its ring inside the viewport edge. */
+.at-slideover:focus-visible {
+  outline-offset: -2px;
+}
 .at-slideover-bar {
   display: flex;
   align-items: center;
