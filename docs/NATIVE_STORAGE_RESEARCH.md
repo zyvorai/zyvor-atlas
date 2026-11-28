@@ -227,7 +227,7 @@ author copy did not exist).
 | Need | What exists | Verified? | Gap |
 |---|---|---|---|
 | Fork a workspace | Filesystem snapshot and clone, no data copied ([NATIVE_FS](NATIVE_FS.md)) | Isolation checked over FUSE, three nodes on one host, 2026-10-04. Fork time **not measured** | Cost grows with files (K4); snapshot trees stay in memory |
-| Lifecycle per run | Workspace create, reset, discard, TTL, quotas; REST and MCP (`atlas-gateway/src/routes/workspaces.rs`) | Fixture driver only; **not run on a cluster** | Reset is delete plus clone; no commit back to the source; no change listing for users (replication has a snapshot diff) |
+| Lifecycle per run | Workspace create, reset, discard, TTL, quotas; REST and MCP (`atlas-gateway/src/routes/workspaces.rs`) | Fixture driver only; **not run on a cluster** | Reset is delete plus clone; no commit back to the source. A [change listing](NATIVE_FS.md#what-changed) (REST, MCP, `atlasctl`) has in-process tests only, not run on a cluster or measured |
 | git and small files | POSIX filesystem | pjdfstest, `git clone` and `fsck` on the lab (2026-10-04) | Creates about 5-6x slower than CephFS in one run (K1-K3) |
 | Many sandboxes | CSI driver, one mount per pod ([NATIVE_CSI](NATIVE_CSI.md)) | Single-node k3s | No node-wide cache (K5); mounts break if the node plugin restarts |
 | Isolation | Per-filesystem byte and inode quotas; gateway tenant checks | Unit and integration tests | One shared node API token (NATIVE_VS_CEPH O4); no per-workspace I/O limit found |

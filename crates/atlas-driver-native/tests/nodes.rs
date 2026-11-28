@@ -442,3 +442,164 @@ async fn real_driver_manages_filesystems_on_a_live_cluster() {
     }
     assert!(d.list_volumes(POOL_NAME).await.unwrap().is_empty());
 }
+
+/// The change listing over HTTP: the leader answers (followers redirect), pages follow one
+/// listing, and the shape the node sends is the one the driver reads.
+#[tokio::test(flavor = "multi_thread")]
+async fn real_driver_lists_filesystem_changes_on_a_live_cluster() {
+    use atlas_api_types::FsChangeKind::{Created, Deleted, Modified, Renamed};
+
+    let c = Cluster::start();
+    let d = driver(c.endpoints(), TOKEN);
+    wait_healthy(&d).await;
+    let mut req = create("source");
+    req.kind = VolumeKind::Filesystem;
+    let source = d.create_volume(req).await.unwrap().backend_native_id;
+    let src = source.strip_prefix("fs:").unwrap();
+    let mk = |fs: String, name: &'static str| {
+        let c = &c;
+        async move {
+            let body = format!(
+                r#"{{"name":"{name}","op_id":"{fs}-{name}","kind":"file","mode":420}}"#
+            );
+            on_leader(
+                c,
+                reqwest::Method::POST,
+                &format!("/v1/fs/{fs}/inodes/1/entries"),
+                body.into_bytes(),
+            )
+            .await["ino"]
+                .as_u64()
+                .unwrap()
+        }
+    };
+    let kept = mk(src.into(), "kept").await;
+    mk(src.into(), "doomed").await;
+    mk(src.into(), "old-name").await;
+    let snap = d
+        .create_snapshot(CreateSnapshotRequest {
+            volume_id: source.clone(),
+            name: "base".into(),
+        })
+        .await
+        .unwrap()
+        .backend_native_id;
+    let copy = d
+        .clone_snapshot(CloneSnapshotRequest {
+            snapshot_id: snap.clone(),
+            new_volume_name: "copy".into(),
+            size_bytes: None,
+        })
+        .await
+        .unwrap();
+    let ws = copy.backend_native_id.strip_prefix("fs:").unwrap();
+
+    let none = d
+        .filesystem_changes(&copy.backend_native_id, None, 100)
+        .await
+        .unwrap();
+    assert_eq!((none.total, none.next), (0, None));
+    assert_eq!(none.fs, ws);
+    assert_eq!(format!("fs:{}", none.base_snapshot), snap);
+
+    on_leader(
+        &c,
+        reqwest::Method::PUT,
+        &format!("/v1/fs/{ws}/inodes/{kept}/data?offset=0"),
+        vec![9u8; 100],
+    )
+    .await;
+    on_leader(
+        &c,
+        reqwest::Method::POST,
+        &format!("/v1/fs/{ws}/inodes/1/unlink"),
+        br#"{"name":"doomed"}"#.to_vec(),
+    )
+    .await;
+    on_leader(
+        &c,
+        reqwest::Method::POST,
+        &format!("/v1/fs/{ws}/rename"),
+        br#"{"parent":1,"name":"old-name","new_parent":1,"new_name":"new-name"}"#.to_vec(),
+    )
+    .await;
+    mk(ws.into(), "added").await;
+
+    // By the Atlas volume id as well as the backend id.
+    let all = d
+        .filesystem_changes(&copy.volume_id, None, 100)
+        .await
+        .unwrap();
+    let got: Vec<_> = all
+        .changes
+        .iter()
+        .map(|c| (c.change, c.path.as_str(), c.from.as_deref()))
+        .collect();
+    assert_eq!(
+        got,
+        [
+            (Created, "/added", None),
+            (Deleted, "/doomed", None),
+            (Modified, "/kept", None),
+            (Renamed, "/new-name", Some("/old-name")),
+        ]
+    );
+    assert_eq!(all.changes[2].size, Some(100));
+    assert_eq!(all.changes[2].file_type, "file");
+    assert_eq!(all.changes[2].changed[..2], ["content", "size"]);
+    assert_eq!(all.summary.renamed, 1);
+
+    let first = d
+        .filesystem_changes(&copy.backend_native_id, None, 3)
+        .await
+        .unwrap();
+    let cursor = first.next.clone().unwrap();
+    let last = d
+        .filesystem_changes(&copy.backend_native_id, Some(&cursor), 3)
+        .await
+        .unwrap();
+    assert_eq!(last.next, None);
+    let paged: Vec<_> = first.changes.into_iter().chain(last.changes).collect();
+    assert_eq!(paged, all.changes);
+
+    // Refusals: a cursor of another filesystem, a malformed one, a filesystem that is no clone,
+    // a block volume, and a deleted base snapshot.
+    let other = d
+        .clone_snapshot(CloneSnapshotRequest {
+            snapshot_id: snap.clone(),
+            new_volume_name: "other".into(),
+            size_bytes: None,
+        })
+        .await
+        .unwrap();
+    let refused = |r: Result<atlas_api_types::FsChangesPage, DriverError>, says: &str| match r {
+        Err(DriverError::Backend(m)) => assert!(m.contains(says), "{m}"),
+        got => panic!("wanted a refusal saying {says:?}, got {got:?}"),
+    };
+    refused(
+        d.filesystem_changes(&other.backend_native_id, Some(&cursor), 3)
+            .await,
+        "cursor",
+    );
+    refused(
+        d.filesystem_changes(&copy.backend_native_id, Some("a&limit=1"), 3)
+            .await,
+        "malformed cursor",
+    );
+    refused(d.filesystem_changes(&source, None, 3).await, "not cloned");
+    refused(
+        d.filesystem_changes("vol_native_abc", None, 3).await,
+        "filesystem volumes only",
+    );
+    refused(
+        d.filesystem_changes("fs:missing", None, 3).await,
+        "not found",
+    );
+    d.delete_snapshot(DeleteSnapshotRequest { snapshot_id: snap })
+        .await
+        .unwrap();
+    refused(
+        d.filesystem_changes(&copy.backend_native_id, None, 3).await,
+        "has been deleted",
+    );
+}

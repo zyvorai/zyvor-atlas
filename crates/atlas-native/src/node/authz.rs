@@ -128,6 +128,8 @@ const ROUTES: &[Route] = &[
 
     r("DELETE", "v1/fs/{fs}",                         LIFE,        On::Object),
     r("GET",    "v1/fs/{fs}/activity",                READ | LIFE, On::Object),
+    // Closed to scoped tokens (admin only) until someone decides which roles may list paths.
+    r("GET",    "v1/fs/{fs}/changes",                 NONE,        On::Object),
     r("GET",    "v1/fs/{fs}/statfs",                  READ | DATA | LIFE, On::Object),
     r("GET",    "v1/fs/{fs}/quota",                   READ | LIFE, On::Object),
     r("PUT",    "v1/fs/{fs}/quota",                   LIFE,        On::Object),

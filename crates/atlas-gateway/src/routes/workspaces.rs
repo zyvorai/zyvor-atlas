@@ -8,15 +8,18 @@
 //! tenant and quota checks are the ones the rest of the API applies. `reset` re-clones from the base
 //! snapshot (rollback), `discard` deletes the clone and the snapshot Atlas took, and the GC discards
 //! expired workspaces. The source volume is never written. Only atlas-native sources are supported.
+//! `changes` lists the paths a filesystem workspace changed since its base snapshot (read-only,
+//! metadata only; there is no commit back to the source).
 
-use axum::extract::{Path, State};
+use axum::extract::{Path, Query, State};
 use axum::http::StatusCode;
 use axum::{Extension, Json};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use atlas_common::{AppError, AppResult};
-use atlas_driver_core::StorageDriver;
+use atlas_driver_core::{DriverError, StorageDriver};
+use atlas_driver_native::{native_snapshot_ref, native_volume_ref, NativeRef};
 use atlas_inventory::workspaces::{self as store, Workspace};
 
 use super::volumes::{self, audit, driver_error, native_driver_for_volume};
@@ -28,6 +31,8 @@ const DEFAULT_TTL_SECS: i64 = 3600;
 const MIN_TTL_SECS: i64 = 60;
 const DEFAULT_MAX_TTL_SECS: i64 = 7 * 24 * 3600;
 const DEFAULT_MAX_PER_TENANT: i64 = 10;
+const DEFAULT_CHANGES: u32 = 1000;
+const MAX_CHANGES: u32 = 10_000;
 /// Default seconds between GC passes (`ATLAS_WORKSPACE_GC_SECS`; 0 turns the worker off).
 const DEFAULT_GC_SECS: u64 = 60;
 
@@ -474,6 +479,91 @@ pub(crate) async fn get_workspace(
 ) -> AppResult<Json<Value>> {
     let w = load(&s, &actor, &id).await?;
     Ok(Json(view(&s, &w).await?))
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub(crate) struct ChangesQuery {
+    /// `next_cursor` of the previous page; omit to compute a new listing.
+    #[serde(default)]
+    pub(crate) cursor: Option<String>,
+    /// Changes per page, 1 to 10000 (default 1000).
+    #[serde(default)]
+    pub(crate) limit: Option<u32>,
+}
+
+/// `GET /workspaces/{id}/changes` — the paths a filesystem workspace created, modified, deleted or
+/// renamed since the snapshot it was cloned from, a page at a time. Read-only and metadata only;
+/// open to any role of the workspace's tenant, like `GET /workspaces/{id}`.
+pub(crate) async fn workspace_changes(
+    State(s): State<AppState>,
+    Extension(actor): Extension<Actor>,
+    Path(id): Path<String>,
+    Query(q): Query<ChangesQuery>,
+) -> AppResult<Json<Value>> {
+    let w = load(&s, &actor, &id).await?;
+    let limit = q.limit.unwrap_or(DEFAULT_CHANGES);
+    if !(1..=MAX_CHANGES).contains(&limit) {
+        return Err(AppError::Validation(format!(
+            "limit must be between 1 and {MAX_CHANGES}"
+        )));
+    }
+    if w.state != store::ACTIVE {
+        return Err(AppError::Conflict(format!(
+            "workspace {id} is {}; only an active workspace has changes to list",
+            w.state
+        )));
+    }
+    let vol = atlas_inventory::get_volume(&s.pool, &w.volume_id)
+        .await?
+        .ok_or_else(|| AppError::Conflict(format!("workspace {id} has no volume")))?;
+    let native = vol
+        .backend_native_id
+        .clone()
+        .unwrap_or_else(|| vol.id.clone());
+    let NativeRef::Filesystem(native_fs) = native_volume_ref(&native) else {
+        return Err(AppError::Validation(
+            "changes are listed for filesystem workspaces; a block volume has no paths".into(),
+        ));
+    };
+    let base = atlas_inventory::snapshots::get_snapshot(&s.pool, &w.base_snapshot_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::Conflict(format!(
+                "the base snapshot of workspace {id} has been deleted; its changes cannot be listed"
+            ))
+        })?;
+    let base_native = base
+        .backend_native_id
+        .clone()
+        .unwrap_or_else(|| base.id.clone());
+    let page = native_driver(&s)?
+        .filesystem_changes(&native, q.cursor.as_deref(), limit)
+        .await
+        .map_err(|e| match e {
+            DriverError::NotImplemented(why) => {
+                AppError::Conflict(format!("this backend cannot list changes: {why}"))
+            }
+            e => driver_error(e),
+        })?;
+    // The listing must be of this workspace against the snapshot it records, nothing else.
+    if page.fs != native_fs
+        || native_snapshot_ref(&base_native) != NativeRef::Filesystem(&page.base_snapshot)
+    {
+        return Err(AppError::Conflict(format!(
+            "the backend compared workspace {id} with something other than its base snapshot"
+        )));
+    }
+    Ok(Json(json!({
+        "workspace_id": w.id,
+        "volume_id": w.volume_id,
+        "base_snapshot_id": w.base_snapshot_id,
+        "as_of_index": page.as_of_index,
+        "computed_unix_ms": page.computed_unix_ms,
+        "total": page.total,
+        "summary": page.summary,
+        "changes": page.changes,
+        "next_cursor": page.next,
+    })))
 }
 
 /// `POST /workspaces/{id}/reset` — roll the workspace back to its base snapshot: the current clone

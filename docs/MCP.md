@@ -29,7 +29,7 @@ Transport is streamable HTTP. Per-tool detail and REST equivalents are in [API.m
 | Volumes | `get_volume`, `volume_protection` (by `id`) — operator, tenant-checked like the REST routes |
 | Storage records | `list_buckets` (S3 secret is a reference only), `list_backups` and `list_schedules` (optional `volume_id`; no download URLs) — operator, tenant-filtered; `list_osds` (cluster-wide like the other Ceph tools; OSD rows carry no tenant) |
 | Governance | `list_policies` (static catalogue), `list_audit` (operator; tenant-filtered; request and result bodies are not returned) |
-| Agent workspaces | `list_workspaces`, `get_workspace`: disposable clones of native volumes and filesystems for agent runs ([NATIVE_FS.md](NATIVE_FS.md#agent-workspaces)); tenant-scoped like the REST routes |
+| Agent workspaces | `list_workspaces`, `get_workspace`: disposable clones of native volumes and filesystems for agent runs ([NATIVE_FS.md](NATIVE_FS.md#agent-workspaces)); `workspace_changes`: the paths a filesystem workspace created, modified, deleted or renamed since its base snapshot, never file contents ([what changed](NATIVE_FS.md#what-changed)); tenant-scoped like the REST routes |
 | AI data (atlas_data) | Only when `ATLAS_DATA_URL` is set: `data_artifact_list`, `data_artifact_get`, `data_artifact_revisions`, `data_job_ready`, `data_workspace_review`, `data_cost_report`, `data_cost_estimate`; guarded writes (with `ATLAS_MCP_WRITE_ENABLE=1`): `data_workspace_change`, `data_workspace_publish`, `data_workspace_discard`, `data_job_release`. See [AI data tools](#ai-data-tools-atlas_data) |
 | Guarded write | `create_snapshot`, `ack_alert`, `silence_alert`, and the workspace tools `create_workspace`, `reset_workspace`, `discard_workspace`, only when `ATLAS_MCP_WRITE_ENABLE=1` |
 
@@ -294,7 +294,7 @@ the plan shows the source and the limits, and the token is bound to all of them.
 (the gateway discards expired workspaces) and never writes to the source. `reset_workspace` rolls a workspace back to the state it was
 created from, and `discard_workspace` deletes it with everything written to it. Both touch only the workspace's own clone and the snapshot
 Atlas took for it, and a non-admin caller may only reset or discard a workspace they created themselves (REST lets any operator of the
-tenant do it). The tools are not listed at all unless `ATLAS_MCP_WRITE_ENABLE=1`; `list_workspaces` and `get_workspace` are always listed.
+tenant do it). The tools are not listed at all unless `ATLAS_MCP_WRITE_ENABLE=1`; `list_workspaces`, `get_workspace` and `workspace_changes` are always listed. `workspace_changes` (`workspace_id`, optional `cursor` and `limit`, 200 per page and at most 1000) only reads; there is no tool that commits a workspace back to its source.
 Tenant quotas, per-tenant workspace limits and the TTL bounds are the REST handler's (`ATLAS_WORKSPACE_*`, see
 [NATIVE_FS.md](NATIVE_FS.md#agent-workspaces)). A token scoped with `--tool` can call only the tools it lists. Tested over the fixture
 driver (`crates/atlas-gateway/tests/mcp_workspaces.rs`); not run with a real agent or on the lab.
