@@ -245,6 +245,7 @@ impl Node {
             data_dir: td.path().join(id),
             http_listen: "127.0.0.1:0".parse().unwrap(),
             api_token_file: Some(td.path().join("token")),
+            api_tokens_file: None,
             tls: None,
             http_tls: None,
             data_node: None,
@@ -266,6 +267,7 @@ impl Node {
         cfg.data_node = Some(DataNodeRole {
             listen: data_l.local_addr().unwrap(),
             devices: Vec::new(),
+            preallocate: Default::default(),
         });
         let data = NativeNode::start_with(
             cfg,
@@ -288,6 +290,8 @@ impl Node {
             compression: false,
             dedup: false,
             cross_group_dedup: false,
+            concurrent_commits: None,
+            parallel_log_sync: None,
             delta_writes: Default::default(),
             rebuild_delay_secs: 60,
             rebuild_bytes_per_sec: 0,
