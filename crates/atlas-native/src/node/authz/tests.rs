@@ -232,12 +232,14 @@ impl Scan {
             })
             .collect();
         for (m, p) in self.routes.difference(&table) {
-            self.problems
-                .push(format!("unclassified route {m} {p}: add it to authz::ROUTES"));
+            self.problems.push(format!(
+                "unclassified route {m} {p}: add it to authz::ROUTES"
+            ));
         }
         for (m, p) in table.difference(&self.routes) {
-            self.problems
-                .push(format!("authz::ROUTES lists {m} {p}, which the router lacks"));
+            self.problems.push(format!(
+                "authz::ROUTES lists {m} {p}, which the router lacks"
+            ));
         }
         self.problems
     }
@@ -417,22 +419,67 @@ fn bad_token_lists_are_refused_without_repeating_secrets() {
     let bad = [
         ("{".to_string(), "line 1"),
         (r#"{"tokens":[]}"#.into(), "no tokens"),
-        (one(r#""token":"secret-inline-aaaaaaaa","roles":["admin"]"#), "valid token list"),
-        (one(r#""token_file":"a","roles":"secret-misplaced-aaaa""#), "valid token list"),
-        (one(r#""token_file":"a","roles":["root"]"#), "valid token list"),
+        (
+            one(r#""token":"secret-inline-aaaaaaaa","roles":["admin"]"#),
+            "valid token list",
+        ),
+        (
+            one(r#""token_file":"a","roles":"secret-misplaced-aaaa""#),
+            "valid token list",
+        ),
+        (
+            one(r#""token_file":"a","roles":["root"]"#),
+            "valid token list",
+        ),
         (one(r#""token_file":"a","roles":[]"#), "no roles"),
-        (one(r#""token_file":"missing","roles":["admin"]"#), "missing"),
-        (one(r#""token_file":"short","roles":["admin"]"#), "at least 16"),
-        (one(r#""token_file":"spaced","roles":["admin"]"#), "without spaces"),
-        (one(r#""token_file":"admin-copy","roles":["read-only"]"#), "same value as api_token_file"),
-        (one(r#""token_file":"a","roles":["data"]"#), "needs filesystems or volumes"),
-        (one(r#""token_file":"a","roles":["data"],"filesystems":[]"#), "both empty"),
-        (one(r#""token_file":"a","roles":["data"],"filesystems":["a@s"]"#), "must be ids"),
-        (one(r#""token_file":"a","roles":["data"],"filesystems":["*","a"]"#), "must be ids"),
-        (one(r#""token_file":"a","roles":["data"],"filesystems":["a*"]"#), "must be ids"),
-        (one(r#""token_file":"a","roles":["lifecycle"],"filesystems":["a"]"#), "only limit"),
-        (one(r#""token_file":"a","roles":["data","lifecycle"],"volumes":["*"]"#), "only limit"),
-        (one(r#""token_file":"a","roles":["admin"],"filesystem":["a"]"#), "valid token list"),
+        (
+            one(r#""token_file":"missing","roles":["admin"]"#),
+            "missing",
+        ),
+        (
+            one(r#""token_file":"short","roles":["admin"]"#),
+            "at least 16",
+        ),
+        (
+            one(r#""token_file":"spaced","roles":["admin"]"#),
+            "without spaces",
+        ),
+        (
+            one(r#""token_file":"admin-copy","roles":["read-only"]"#),
+            "same value as api_token_file",
+        ),
+        (
+            one(r#""token_file":"a","roles":["data"]"#),
+            "needs filesystems or volumes",
+        ),
+        (
+            one(r#""token_file":"a","roles":["data"],"filesystems":[]"#),
+            "both empty",
+        ),
+        (
+            one(r#""token_file":"a","roles":["data"],"filesystems":["a@s"]"#),
+            "must be ids",
+        ),
+        (
+            one(r#""token_file":"a","roles":["data"],"filesystems":["*","a"]"#),
+            "must be ids",
+        ),
+        (
+            one(r#""token_file":"a","roles":["data"],"filesystems":["a*"]"#),
+            "must be ids",
+        ),
+        (
+            one(r#""token_file":"a","roles":["lifecycle"],"filesystems":["a"]"#),
+            "only limit",
+        ),
+        (
+            one(r#""token_file":"a","roles":["data","lifecycle"],"volumes":["*"]"#),
+            "only limit",
+        ),
+        (
+            one(r#""token_file":"a","roles":["admin"],"filesystem":["a"]"#),
+            "valid token list",
+        ),
         (
             r#"{"tokens":[{"name":"x","token_file":"a","roles":["admin"]},
                 {"name":"x","token_file":"b","roles":["admin"]}]}"#

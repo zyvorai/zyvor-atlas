@@ -459,8 +459,8 @@ and file, never a value.
 
 | Role | May call |
 | --- | --- |
-| `read-only` | `GET`s: status, members, listings, volume, snapshot and file data, filesystem metadata, diffs, exports and transfers. |
-| `data` | The data path of mounts, S3, NFS, SMB and `ublk`: everything under a filesystem's inodes, rename, sessions, locks, `statfs`, volume data (read and write), status and the volume and filesystem listings. |
+| `read-only` | `GET`s: status, members, listings, volume, snapshot and file data, filesystem metadata (content tags included), diffs, exports and transfers. Not `GET /v1/fs/{fs}/changes`, which no scoped role but `admin` may call. |
+| `data` | The data path of mounts, S3, NFS, SMB and `ublk`: everything under a filesystem's inodes (content tags included), rename and conditional rename (`rename-if`), sessions, locks, `statfs`, volume data (read and write), status and the volume and filesystem listings. |
 | `lifecycle` | Create, resize, delete, snapshot, clone and **lock** volumes, filesystems and snapshots; quotas; activity; reduction; listings. No file or volume data. The CSI controller's role. |
 | `replication` | What `atlas-native-replicate` calls on either side: filesystem listings, create filesystem, create and delete filesystem snapshots, diffs, file data reads, and `replica/apply`, `replica/inodes/*/data` and `replica/commit`. |
 | `admin` | Every route the node knows **except unlock**, including membership changes, repair, GC, tiering, export and import, locality pins, replica promote and demote. |
