@@ -192,8 +192,9 @@ that mount in the first run. The probe's signer was cross-checked against `botoc
   unverified. It was a plain-process gateway with `--domain`, not the Helm chart's `s3.domains`, and the client was a
   Python script, not the AWS CRT.
 - Eight concurrent create-only `PUT`s of one key **all succeeded**, which is what [NATIVE_S3.md](NATIVE_S3.md) says to expect
-  (the condition is checked before the write, not atomically). A store that enforces `If-None-Match: *` would let one
-  win. This is a count from one run, not a bound, but it shows the race is reachable.
+  at that commit (the condition was checked before the write, not atomically). A store that enforces
+  `If-None-Match: *` lets one win. The gateway has enforced it atomically since
+  ([NATIVE_S3](NATIVE_S3.md#conditional-writes)); the probe has not been rerun here.
 - `link()` onto an existing name returned `EEXIST` for every loser, 20 rounds of 8 threads, on the FUSE mount.
 
 It does not show that LMCache, vLLM or Lance work against Atlas, says nothing about speed, and used a loaded shared host.
@@ -239,7 +240,7 @@ command is `snapshot-volume`; there is no `atlasctl create-snapshot`.
 |---|---|---|
 | **pgvector** (Postgres) | pgvector's README: it "uses the write-ahead log (WAL), which allows for replication and point-in-time recovery", so backup is PostgreSQL's. The PostgreSQL manual describes (a) a "consistent snapshot" of the whole data directory, which "will work even while the database server is running" but restarts as a crash with WAL replay, needs the WAL in the same snapshot, and is unsafe if data, WAL or tablespaces sit on different filesystems unless the snapshots are simultaneous; and (b) continuous archiving with `pg_basebackup`, `archive_command`, or the low-level `pg_backup_start`/`pg_backup_stop` API, which "is immune to file system changes during the backup" | B1: archive and base backups on an Atlas filesystem, then snapshot and lock that filesystem. B2: whole `PGDATA` on one Atlas filesystem, snapshot it. B2 is **untested**: no Postgres has been run on an Atlas mount |
 | **Qdrant** | Own snapshot API: `POST /collections/{name}/snapshots` makes a tar file of one collection on one node (a distributed cluster needs one per node); restore through `PUT .../snapshots/recover`, upload, or `--snapshot` at start-up, to the same or next minor version only. Whole-storage snapshots (`POST /snapshots`) are for single-node deployments. Snapshots can be stored on the local file system (`snapshots_path`) or in an S3-compatible service (`snapshots_config` with `endpoint_url`). **Live storage "requires block-level access to storage devices with a POSIX-compatible file system"; "Qdrant won't work with Network file systems such as NFS, or Object storage systems such as S3"** | Use Qdrant's snapshots, store the snapshot files on Atlas, then snapshot and lock that filesystem. Do not put Qdrant's live storage on an `atlas-native-mount`, NFS or S3 path: Qdrant's page says network filesystems do not work, and `atlas-native-mount` is a network filesystem client (reading that sentence to cover it is our interpretation; not tested) |
-| **LanceDB / Lance** | A Lance table is a directory of data files plus immutable, numbered manifests; "each commit creates a new immutable table version through atomic storage operations", which "rely on atomic write operations provided by the underlying object store": rename-if-not-exists or put-if-not-exists, so that exactly one concurrent writer wins. Local writes are not fsynced unless `local_fsync` is `"true"`. On `s3://`, concurrent writers need the store to enforce `If-None-Match: *` atomically, which Lance does not check | Snapshot a Lance directory on an Atlas mount when no writer is active, or with `local_fsync` on; time travel and tags are Lance's own, a snapshot adds a copy-free point in the filesystem. Concurrent writers over the **S3 gateway are not safe**: Atlas documents its `If-None-Match: *` as not atomic. Concurrent writers over a mount depend on `link()` exclusivity (probe) |
+| **LanceDB / Lance** | A Lance table is a directory of data files plus immutable, numbered manifests; "each commit creates a new immutable table version through atomic storage operations", which "rely on atomic write operations provided by the underlying object store": rename-if-not-exists or put-if-not-exists, so that exactly one concurrent writer wins. Local writes are not fsynced unless `local_fsync` is `"true"`. On `s3://`, concurrent writers need the store to enforce `If-None-Match: *` atomically, which Lance does not check | Snapshot a Lance directory on an Atlas mount when no writer is active, or with `local_fsync` on; time travel and tags are Lance's own, a snapshot adds a copy-free point in the filesystem. Over the **S3 gateway**, Atlas documents `If-None-Match: *` as atomic in current releases; concurrent Lance writers over it are untried. Concurrent writers over a mount depend on `link()` exclusivity (probe) |
 | **Milvus** | Not covered by a filesystem snapshot in anything we read. Milvus has its own tool, [`milvus-backup`](https://github.com/zilliztech/milvus-backup), "a command-line tool and API service for backing up and restoring Milvus data" that runs "while the Milvus cluster remains available" and writes backups to object storage | Use `milvus-backup`. We did not evaluate pointing its backup storage at the Atlas S3 gateway, so no recipe is given |
 
 ### pgvector (PostgreSQL) recipes
@@ -314,9 +315,10 @@ Lance's atomicity comes from the store, so the question for Atlas is which primi
   them.
 - **Over S3.** Lance's guide warns that concurrent writes through `s3://` need a store that atomically enforces
   `If-None-Match: *`, that some S3-compatible stores "accept this header but ignore the condition", and that Lance
-  "does not check". [NATIVE_S3.md](NATIVE_S3.md) states the gateway checks `If-None-Match: *` before the write, not
-  atomically with the rename, so two concurrent creators can both succeed. Use a single writer, or Lance's documented
-  custom commit lock, if you put a Lance table in an Atlas bucket. The S3 options Lance documents for a custom endpoint
+  "does not check". [NATIVE_S3.md](NATIVE_S3.md#conditional-writes) states the gateway enforces `If-None-Match: *`
+  atomically across its replicas, once the metadata nodes and every gateway run a release that has it (older ones check
+  before the write, so two concurrent creators can both succeed). Concurrent Lance writers over an Atlas bucket have
+  not been tried: use a single writer, or Lance's documented custom commit lock, until you have. The S3 options Lance documents for a custom endpoint
   are `endpoint`, `region`, `allow_http`, and `virtual_hosted_style_request` (default `false`, which suits the
   gateway's always-available path-style).
 

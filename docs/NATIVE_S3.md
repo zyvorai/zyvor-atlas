@@ -248,6 +248,12 @@ behaviour against a cluster that refuses the compare-and-swap (through a proxy s
 older node, not an older binary); and tagging with its limits. The metadata capability gate and the
 retry of an applied rename are tested in `crates/atlas-native/tests/conditional_rename.rs`.
 
+On 2026-11-28 `deploy/native/s3-conditional-check.sh` passed 43 of 43 checks with aws-cli 2.42.5 on the
+lab host: conditional puts and multipart completion, three rounds of 8 concurrent creates through two
+gateways (one winner each), tagging, a multipart `aws s3 cp` keeping tags, and retention. The cluster
+was three metadata and three data nodes as plain processes in one container (debug build), with the
+two gateways beside them; not the Helm chart, separate hosts or an upgrade from an older release.
+
 Verified on the lab k3s (single node, one data node on the host's shared HDD) through the Helm
 chart with two gateway replicas and aws-cli 2.37:
 
