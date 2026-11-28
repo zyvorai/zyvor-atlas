@@ -443,6 +443,7 @@ pub struct NativeEngine {
     /// propose, not through its commit.
     write_lock: Mutex<()>,
     concurrent: concurrent::Concurrent,
+    truncates: files::Truncates,
     /// Free ranges held by placements whose commit hasn't applied yet.
     inflight: inflight::Inflight,
     delta: delta::DeltaState,
@@ -541,6 +542,7 @@ impl NativeEngine {
             log_failed: AtomicBool::new(false),
             write_lock: Mutex::new(()),
             concurrent: Default::default(),
+            truncates: Default::default(),
             inflight: Default::default(),
             delta: Default::default(),
             direct: Default::default(),

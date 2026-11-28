@@ -19,7 +19,10 @@ use s3s::{
 
 use crate::{
     checksum,
-    store::{hex, Bucket, Headers, Listed, StoreError, Writer, CHUNK, EMPTY_ETAG},
+    store::{
+        hex, Bucket, Condition, Headers, Listed, ObjectSpec, StoreError, Writer, CHUNK, EMPTY_ETAG,
+    },
+    tagging::{self, Tags},
 };
 
 /// What one access key may do.
@@ -113,6 +116,19 @@ fn s3_err(e: StoreError) -> S3Error {
             S3Error::with_message(S3ErrorCode::EntityTooSmall, e.to_string())
         }
         StoreError::BadDigest => s3_error!(BadDigest),
+        StoreError::PreconditionFailed(m) => {
+            S3Error::with_message(S3ErrorCode::PreconditionFailed, m)
+        }
+        StoreError::ConditionalConflict(m) => {
+            S3Error::with_message(S3ErrorCode::ConditionalRequestConflict, m)
+        }
+        StoreError::InvalidTag(m) => S3Error::with_message(S3ErrorCode::InvalidTag, m),
+        StoreError::ConditionalUnsupported => {
+            S3Error::with_message(S3ErrorCode::NotImplemented, e.to_string())
+        }
+        StoreError::ConditionalUnavailable => {
+            S3Error::with_message(S3ErrorCode::ServiceUnavailable, e.to_string())
+        }
         StoreError::Io(_) => S3Error::with_message(S3ErrorCode::InternalError, e.to_string()),
     }
 }
@@ -355,6 +371,40 @@ fn preconditions(
     }
 }
 
+/// The condition of a write: `If-None-Match: *` or `If-Match: <etag>`. Any other form is
+/// refused, so no condition is ever ignored.
+fn write_condition(
+    if_match: Option<&ETagCondition>,
+    if_none_match: Option<&ETagCondition>,
+) -> S3Result<Condition> {
+    match (if_match, if_none_match) {
+        (None, None) => Ok(Condition::Always),
+        (None, Some(ETagCondition::Any)) => Ok(Condition::Absent),
+        (Some(ETagCondition::ETag(ETag::Strong(tag))), None) => Ok(Condition::Match(tag.clone())),
+        // A weak ETag never matches strongly.
+        (Some(ETagCondition::ETag(ETag::Weak(_))), None) => Err(s3_error!(PreconditionFailed)),
+        _ => Err(s3_error!(
+            NotImplemented,
+            "a write takes `If-None-Match: *` or `If-Match: <etag>`, not both"
+        )),
+    }
+}
+
+/// The tags of an `x-amz-tagging` header (none without one).
+fn tag_header(header: Option<&str>) -> S3Result<Tags> {
+    header.map_or(Ok(Tags::new()), |h| {
+        tagging::parse_header(h).map_err(s3_err)
+    })
+}
+
+/// Tags work on the current object only: there are no versions.
+fn unversioned(version: Option<&str>) -> S3Result<()> {
+    match version {
+        None | Some("null") => Ok(()),
+        Some(_) => Err(s3_error!(NotImplemented, "versioning is not supported")),
+    }
+}
+
 /// `x-amz-copy-source-if-*`: every failed condition is 412 for a copy.
 async fn copy_preconditions(
     src: &Arc<Bucket>,
@@ -581,12 +631,8 @@ impl S3 for Gateway {
         let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, true)?;
         let trailers = req.trailing_headers;
         let input = req.input;
-        if input.if_match.is_some() {
-            return Err(s3_error!(
-                NotImplemented,
-                "If-Match on PUT is not supported"
-            ));
-        }
+        let condition = write_condition(input.if_match.as_ref(), input.if_none_match.as_ref())?;
+        let tags = tag_header(input.tagging.as_deref())?;
         let mut expected = Checksum {
             checksum_crc32: input.checksum_crc32,
             checksum_crc32c: input.checksum_crc32c,
@@ -608,21 +654,23 @@ impl S3 for Gateway {
             input.cache_control,
             input.metadata,
         );
-        if input.if_none_match.as_ref().is_some_and(|c| c.is_any()) {
-            let (b, key) = (b.clone(), input.key.clone());
-            match blocking(move || b.head(&key)).await {
-                Ok(_) => return Err(s3_error!(PreconditionFailed, "the object exists")),
-                Err(e) if *e.code() == S3ErrorCode::NoSuchKey => {}
-                Err(e) => return Err(e),
-            }
+        // Refused before the body is read; the publish judges the condition again.
+        {
+            let (b, key, c) = (b.clone(), input.key.clone(), condition.clone());
+            blocking(move || b.check(&key, &c)).await?;
         }
+        let spec = ObjectSpec {
+            headers: h,
+            tags,
+            condition,
+        };
         let mut body = input.body;
         if input.key.ends_with('/') {
             require_empty(body.take()).await?;
         }
         let target = {
-            let (b, key, h) = (b.clone(), input.key.clone(), h.clone());
-            blocking(move || b.prepare_put(&key, &h)).await?
+            let (b, key, spec) = (b.clone(), input.key.clone(), spec.clone());
+            blocking(move || b.prepare_put(&key, &spec)).await?
         };
         let Some((parent, name)) = target else {
             return Ok(S3Response::new(PutObjectOutput {
@@ -642,7 +690,7 @@ impl S3 for Gateway {
             discard(&b, w).await;
             return Err(e);
         }
-        let o = blocking(move || b.commit(w, &name, md5, None, h)).await?;
+        let o = blocking(move || b.commit(w, &name, md5, None, spec)).await?;
         Ok(S3Response::new(PutObjectOutput {
             e_tag: Some(etag(o.etag)),
             checksum_crc32: actual.checksum_crc32,
@@ -712,12 +760,77 @@ impl S3 for Gateway {
         }))
     }
 
+    async fn put_object_tagging(
+        &self,
+        req: S3Request<PutObjectTaggingInput>,
+    ) -> S3Result<S3Response<PutObjectTaggingOutput>> {
+        let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, true)?;
+        let input = req.input;
+        unversioned(input.version_id.as_deref())?;
+        let tags = input
+            .tagging
+            .tag_set
+            .into_iter()
+            .map(|t| {
+                t.key
+                    .zip(t.value)
+                    .ok_or_else(|| s3_error!(InvalidTag, "a tag needs a Key and a Value"))
+            })
+            .collect::<S3Result<Tags>>()?;
+        let key = input.key;
+        blocking(move || b.set_tags(&key, &tags)).await?;
+        Ok(S3Response::new(PutObjectTaggingOutput::default()))
+    }
+
+    async fn get_object_tagging(
+        &self,
+        req: S3Request<GetObjectTaggingInput>,
+    ) -> S3Result<S3Response<GetObjectTaggingOutput>> {
+        let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, false)?;
+        let input = req.input;
+        unversioned(input.version_id.as_deref())?;
+        let key = input.key;
+        let tags = blocking(move || b.tags(&key)).await?;
+        Ok(S3Response::new(GetObjectTaggingOutput {
+            tag_set: tags
+                .into_iter()
+                .map(|(k, v)| Tag {
+                    key: Some(k),
+                    value: Some(v),
+                })
+                .collect(),
+            ..Default::default()
+        }))
+    }
+
+    async fn delete_object_tagging(
+        &self,
+        req: S3Request<DeleteObjectTaggingInput>,
+    ) -> S3Result<S3Response<DeleteObjectTaggingOutput>> {
+        let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, true)?;
+        let input = req.input;
+        unversioned(input.version_id.as_deref())?;
+        let key = input.key;
+        blocking(move || b.set_tags(&key, &Tags::new())).await?;
+        Ok(S3Response::new(DeleteObjectTaggingOutput::default()))
+    }
+
     async fn delete_object(
         &self,
         req: S3Request<DeleteObjectInput>,
     ) -> S3Result<S3Response<DeleteObjectOutput>> {
         let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, true)?;
-        let key = req.input.key;
+        let input = req.input;
+        if input.if_match.is_some()
+            || input.if_match_size.is_some()
+            || input.if_match_last_modified_time.is_some()
+        {
+            return Err(s3_error!(
+                NotImplemented,
+                "conditional deletes are not supported"
+            ));
+        }
+        let key = input.key;
         blocking(move || b.delete(&key)).await?;
         Ok(S3Response::new(DeleteObjectOutput::default()))
     }
@@ -727,6 +840,18 @@ impl S3 for Gateway {
         req: S3Request<DeleteObjectsInput>,
     ) -> S3Result<S3Response<DeleteObjectsOutput>> {
         let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, true)?;
+        if req
+            .input
+            .delete
+            .objects
+            .iter()
+            .any(|o| o.e_tag.is_some() || o.size.is_some() || o.last_modified_time.is_some())
+        {
+            return Err(s3_error!(
+                NotImplemented,
+                "conditional deletes are not supported"
+            ));
+        }
         let quiet = req.input.delete.quiet.unwrap_or(false);
         let keys: Vec<String> = req
             .input
@@ -793,6 +918,18 @@ impl S3 for Gateway {
             .metadata_directive
             .as_ref()
             .is_some_and(|d| d.as_str() == MetadataDirective::REPLACE);
+        let condition = write_condition(input.if_match.as_ref(), input.if_none_match.as_ref())?;
+        // `None`: the copy keeps the source's tags.
+        let new_tags = match input.tagging_directive.as_ref().map(|d| d.as_str()) {
+            None | Some(TaggingDirective::COPY) => None,
+            Some(TaggingDirective::REPLACE) => Some(tag_header(input.tagging.as_deref())?),
+            Some(_) => {
+                return Err(s3_error!(
+                    InvalidArgument,
+                    "the tagging directive is COPY or REPLACE"
+                ))
+            }
+        };
         let new_headers = headers(
             input.content_type,
             input.content_encoding,
@@ -809,7 +946,13 @@ impl S3 for Gateway {
                     "copying an object onto itself needs the REPLACE metadata directive"
                 ));
             }
-            blocking(move || dst.set_headers(&key, new_headers)).await?
+            if condition != Condition::Always {
+                return Err(s3_error!(
+                    NotImplemented,
+                    "a conditional copy of an object onto itself is not supported"
+                ));
+            }
+            blocking(move || dst.set_headers(&key, new_headers, new_tags.as_ref())).await?
         } else {
             blocking(move || {
                 let s = src.head(&src_key)?;
@@ -818,7 +961,16 @@ impl S3 for Gateway {
                 } else {
                     s.headers.clone()
                 };
-                let Some((parent, name)) = dst.prepare_put(&key, &h)? else {
+                dst.check(&key, &condition)?;
+                let spec = ObjectSpec {
+                    headers: h,
+                    tags: match new_tags {
+                        Some(t) => t,
+                        None => src.tags_of(s.ino)?,
+                    },
+                    condition,
+                };
+                let Some((parent, name)) = dst.prepare_put(&key, &spec)? else {
                     return dst.head(&key);
                 };
                 let mut w = dst.writer(parent)?;
@@ -826,7 +978,7 @@ impl S3 for Gateway {
                     dst.discard(w);
                     return Err(e);
                 }
-                dst.commit(w, &name, None, None, h)
+                dst.commit(w, &name, None, None, spec)
             })
             .await?
         };
@@ -935,8 +1087,9 @@ impl S3 for Gateway {
             input.cache_control,
             input.metadata,
         );
+        let tags = tag_header(input.tagging.as_deref())?;
         let key = input.key.clone();
-        let id = blocking(move || b.create_upload(&key, h)).await?;
+        let id = blocking(move || b.create_upload(&key, h, tags)).await?;
         Ok(S3Response::new(CreateMultipartUploadOutput {
             bucket: Some(input.bucket),
             key: Some(input.key),
@@ -1109,6 +1262,7 @@ impl S3 for Gateway {
     ) -> S3Result<S3Response<CompleteMultipartUploadOutput>> {
         let b = self.bucket(req.credentials.as_ref(), &req.input.bucket, true)?;
         let input = req.input;
+        let condition = write_condition(input.if_match.as_ref(), input.if_none_match.as_ref())?;
         let parts: Vec<(i32, String)> = input
             .multipart_upload
             .and_then(|m| m.parts)
@@ -1123,11 +1277,17 @@ impl S3 for Gateway {
             })
             .collect::<S3Result<_>>()?;
         let (bucket, key, id) = (input.bucket, input.key, input.upload_id);
+        // A condition that fails now gets its status; one that fails at the publish is reported
+        // in the body of the 200 below.
+        if condition != Condition::Always {
+            let (b, id, key, c) = (b.clone(), id.clone(), key.clone(), condition.clone());
+            blocking(move || b.check_completion(&id, &key, &c)).await?;
+        }
         // Assembling a large object takes a while: s3s keeps the connection alive meanwhile.
         Ok(S3Response::new(CompleteMultipartUploadOutput {
             future: Some(Box::pin(async move {
                 let k = key.clone();
-                let o = blocking(move || b.complete_upload(&id, &k, &parts)).await?;
+                let o = blocking(move || b.complete_upload(&id, &k, &parts, condition)).await?;
                 Ok(CompleteMultipartUploadOutput {
                     bucket: Some(bucket),
                     key: Some(key),

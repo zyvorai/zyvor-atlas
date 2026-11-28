@@ -4,18 +4,41 @@
 //! File and directory operations over the namespace in the catalog. File data goes through the
 //! same extent grid, replication and copy-on-write path as volume data.
 
+use std::sync::{Arc, Mutex, RwLock};
+
 use serde::{Deserialize, Serialize};
 
-use super::{now_ns, NativeEngine, NativeError, Scope, Target};
+use super::{now_ns, Meta, NativeEngine, NativeError, Scope, Target};
 use crate::{
     metadata::{Catalog, MetaCommand, MetaError, SnapshotId},
     namespace::{
-        FsId, FsMeta, FsOp, FsQuota, Inode, InodeKind, NodeType, ReplicaState, SetAttr, XattrMode,
+        ConditionalRename, FsId, FsMeta, FsOp, FsQuota, Inode, InodeKind, NodeType, ReplicaState,
+        SetAttr, XattrMode,
     },
+    raft::CAP_RENAME_IF,
 };
 
 /// File extent grid for new filesystems: a 4 KiB write rewrites at most this much.
 pub const DEFAULT_FS_EXTENT_BYTES: u64 = 1 << 20;
+
+type TruncateHook = Arc<dyn Fn() + Send + Sync>;
+
+/// Orders truncates into an extent against filesystem snapshots.
+#[derive(Default)]
+pub(super) struct Truncates {
+    /// Held by a truncate into an extent across its two commits (the extent without its tail,
+    /// then the size) and shared by filesystem snapshots, which therefore hold both or neither.
+    /// Taken after `write_lock` where both are held, never before it.
+    commits: RwLock<()>,
+    /// Runs between those two commits, for tests.
+    hook: Mutex<Option<TruncateHook>>,
+}
+
+impl std::fmt::Debug for Truncates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Truncates")
+    }
+}
 
 /// What `stat(2)` needs about an inode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -498,9 +521,62 @@ impl NativeEngine {
         Ok(())
     }
 
+    /// [`Self::fs_rename`], applied only if the conditions hold at its place in the log: a
+    /// compare-and-swap every client of the filesystem sees. Refused as unsupported until
+    /// every metadata replica is known to decode it, so no replica ever skips a condition.
+    pub fn fs_rename_if(&self, mut r: ConditionalRename) -> Result<(), NativeError> {
+        writable(&r.fs)?;
+        r.now_ns = now_ns();
+        let fence = match &self.meta {
+            Meta::Local { .. } => None,
+            Meta::Raft { server, .. } => {
+                // Ties the check and the proposal to one term of leadership, and applies
+                // every earlier term's entries first, so the catalog's record is current.
+                let term = self.term_fence()?;
+                if !self.with_catalog(|c| c.features & CAP_RENAME_IF != 0)?
+                    && !server.peers_support(CAP_RENAME_IF)?
+                {
+                    return Err(MetaError::Unsupported(
+                        "conditional rename: not every metadata node is known to support it".into(),
+                    )
+                    .into());
+                }
+                Some(term)
+            }
+        };
+        let (fs, name) = (r.fs.clone(), r.name.clone());
+        self.commit(
+            MetaCommand::Fs {
+                op: FsOp::RenameIf(r),
+            },
+            fence,
+        )?;
+        // As in `fs_rename`: publishing a temp file is not renaming data.
+        if !is_internal_name(&name) {
+            self.fs_activity.record_rename(&fs);
+        }
+        Ok(())
+    }
+
+    #[doc(hidden)]
+    pub fn set_truncate_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        if let Ok(mut h) = self.truncates.hook.lock() {
+            *h = hook;
+        }
+    }
+
+    fn between_truncate_commits(&self) {
+        let hook = self.truncates.hook.lock().ok().and_then(|h| h.clone());
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
     /// Changes attributes. Truncating into the middle of an extent first rewrites that extent
     /// (folding any deltas on it) without its tail, so growing the file again later reads zeros
-    /// there, not stale bytes.
+    /// there, not stale bytes. That and the new size are two commits: no snapshot taken by this
+    /// engine falls between them, but a failure after the first (a lost leadership, a crash)
+    /// leaves the old size over the shortened extent until the truncate is repeated.
     pub fn fs_setattr(&self, fs: &str, ino: u64, attr: SetAttr) -> Result<Attr, NativeError> {
         writable(fs)?;
         // With concurrent commits only a change of size needs ordering against writes: nothing
@@ -510,6 +586,8 @@ impl NativeEngine {
             .transpose()
             .map_err(|_| NativeError::Poisoned("write"))?;
         let mut fence = None;
+        // Held from before the first of two commits until after the second.
+        let mut between = None;
         if let Some(size) = attr.size {
             // Before the catalog is read: it must include every delta proposed so far, and
             // while the write lock is held no more are proposed.
@@ -527,7 +605,14 @@ impl NativeEngine {
                     if cell + view.base.len() as u64 > size {
                         let (_, mut buf) = self.read_view(view, Some(&target))?;
                         buf.truncate((size - cell) as usize);
+                        between = Some(
+                            self.truncates
+                                .commits
+                                .write()
+                                .map_err(|_| NativeError::Poisoned("truncate"))?,
+                        );
                         self.install_extent(&target, cell, &buf, term)?;
+                        self.between_truncate_commits();
                     }
                 }
             }
@@ -539,6 +624,7 @@ impl NativeEngine {
             now_ns: now_ns(),
         };
         self.commit(MetaCommand::Fs { op }, fence)?;
+        drop(between);
         self.fs_getattr(fs, ino)
     }
 
@@ -743,6 +829,13 @@ impl NativeEngine {
             now_ns: now_ns(),
         };
         self.commit_folded(Scope::Fs(fs.into()), |fence| {
+            // Never between the two commits of a truncate into an extent. `write_lock` alone
+            // would not do: with no deltas to fold it is not held here.
+            let _whole = self
+                .truncates
+                .commits
+                .read()
+                .map_err(|_| NativeError::Poisoned("truncate"))?;
             self.commit(MetaCommand::Fs { op: op.clone() }, fence)
         })?;
         Ok(id)

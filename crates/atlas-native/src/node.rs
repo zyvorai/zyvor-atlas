@@ -1151,6 +1151,7 @@ fn error_response(e: NativeError) -> Response {
         }
         (_, Some(MetaError::NoAttr(_))) => (404, "no_attr", None),
         (_, Some(MetaError::NoSession)) => (410, "no_session", None),
+        (_, Some(MetaError::Precondition(_))) => (412, "precondition", None),
         // Retryable: the client asks again once the pending delta writes are folded.
         (_, Some(MetaError::Busy(_))) => (503, "unavailable", None),
         (NativeError::Unknown(_), _) => (503, "unavailable", None),

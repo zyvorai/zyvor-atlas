@@ -746,3 +746,685 @@ fn retention_locked_objects_refuse_delete_and_overwrite_and_only_extend() {
             .is_success());
     });
 }
+
+/// `n` gateways of their own (clients, caches and sessions) serving filesystem `fs`.
+fn gateways(c: &Cluster, rt: &tokio::runtime::Runtime, fs: &str, n: usize) -> Vec<String> {
+    (0..n)
+        .map(|_| {
+            let g = Gateway::new(vec![c.bucket(fs, fs, false)], None);
+            format!("http://{}/{fs}", serve(rt, g, false))
+        })
+        .collect()
+}
+
+/// Status, ETag and body of a request.
+async fn send(req: reqwest::RequestBuilder) -> (u16, String, String) {
+    let r = req.send().await.unwrap();
+    let status = r.status().as_u16();
+    let etag = r
+        .headers()
+        .get("etag")
+        .map_or_else(String::new, |v| v.to_str().unwrap().to_string());
+    (status, etag, r.text().await.unwrap())
+}
+
+async fn status(req: reqwest::RequestBuilder) -> u16 {
+    send(req).await.0
+}
+
+/// The current content and ETag. A read can fail while its object is being replaced (the old
+/// file is gone before it is read), so it is repeated.
+async fn current(http: &reqwest::Client, url: &str) -> (String, String) {
+    for _ in 0..200 {
+        if let Ok(r) = http.get(url).send().await {
+            let etag = r.headers().get("etag").cloned();
+            if let (200, Some(etag)) = (r.status().as_u16(), etag) {
+                if let Ok(body) = r.text().await {
+                    return (etag.to_str().unwrap().to_string(), body);
+                }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    panic!("{url} could not be read");
+}
+
+/// Waits out the time until the cluster's leader has heard every metadata node, before which
+/// conditional writes are refused as unavailable.
+async fn conditions_available(http: &reqwest::Client, bucket_url: &str) {
+    for _ in 0..200 {
+        let req = http
+            .put(format!("{bucket_url}/warm"))
+            .header("if-none-match", "*");
+        if status(req.body("")).await != 503 {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    panic!("conditional writes never became available");
+}
+
+/// Starts a multipart upload of `url` and uploads `body` as its only part. Returns the upload id
+/// and the request body that completes it.
+async fn start_upload(
+    http: &reqwest::Client,
+    url: &str,
+    tagging: Option<&str>,
+    body: &str,
+) -> (String, String) {
+    let mut req = http.post(format!("{url}?uploads"));
+    if let Some(t) = tagging {
+        req = req.header("x-amz-tagging", t);
+    }
+    let (s, _, xml) = send(req).await;
+    assert_eq!(s, 200, "{xml}");
+    let id = tags(&xml, "UploadId").pop().unwrap();
+    let part = http
+        .put(format!("{url}?partNumber=1&uploadId={id}"))
+        .body(body.to_string());
+    let (s, etag, text) = send(part).await;
+    assert_eq!(s, 200, "{text}");
+    let done = format!(
+        "<CompleteMultipartUpload><Part><PartNumber>1</PartNumber><ETag>{etag}</ETag></Part>\
+         </CompleteMultipartUpload>"
+    );
+    (id, done)
+}
+
+fn complete(
+    http: &reqwest::Client,
+    url: &str,
+    (id, body): &(String, String),
+) -> reqwest::RequestBuilder {
+    http.post(format!("{url}?uploadId={id}")).body(body.clone())
+}
+
+/// Whether a multipart completion succeeded: a failure after the copy started is a 200 too.
+fn completed((status, _, body): &(u16, String, String)) -> bool {
+    *status == 200 && body.contains("<CompleteMultipartUploadResult")
+}
+
+fn no_temporary_files(ops: &Ops) {
+    let mut dirs = vec![ROOT_INO];
+    while let Some(dir) = dirs.pop() {
+        for e in ops.readdir(dir).unwrap() {
+            assert!(!e.name.starts_with(".atlas_s3_tmp_"), "{}", e.name);
+            if e.kind == NodeType::Dir {
+                dirs.push(e.ino);
+            }
+        }
+    }
+}
+
+#[test]
+fn concurrent_conditional_writes_through_two_gateways_have_one_winner() {
+    let c = Cluster::start();
+    c.create_fs("cas");
+    let rt = runtime();
+    let g = gateways(&c, &rt, "cas", 2);
+    let http = reqwest::Client::new();
+    rt.block_on(async {
+        conditions_available(&http, &g[0]).await;
+
+        for round in 0..8 {
+            let writers: Vec<_> = (0..8)
+                .map(|i| {
+                    let url = format!("{}/lock/{round}", g[i % 2]);
+                    let req = http.put(url).header("if-none-match", "*");
+                    tokio::spawn(send(req.body(format!("writer {i}"))))
+                })
+                .collect();
+            let mut won = Vec::new();
+            for (i, w) in writers.into_iter().enumerate() {
+                let (s, _, text) = w.await.unwrap();
+                match s {
+                    200 => won.push(i),
+                    412 => {}
+                    _ => panic!("round {round} writer {i}: {s} {text}"),
+                }
+            }
+            assert_eq!(won.len(), 1, "round {round}: {won:?}");
+            for base in &g {
+                let (_, _, text) = send(http.get(format!("{base}/lock/{round}"))).await;
+                assert_eq!(text, format!("writer {}", won[0]));
+            }
+        }
+
+        // A counter incremented by read, then write if unchanged: no increment is lost.
+        const WRITERS: usize = 6;
+        const EACH: usize = 5;
+        let counter = format!("{}/counter", g[0]);
+        assert_eq!(status(http.put(counter).body("0")).await, 200);
+        let writers: Vec<_> = (0..WRITERS)
+            .map(|i| {
+                let (http, url) = (http.clone(), format!("{}/counter", g[i % 2]));
+                tokio::spawn(async move {
+                    for _ in 0..EACH {
+                        let mut tries = 0;
+                        loop {
+                            tries += 1;
+                            assert!(tries < 500, "writer {i} made no progress");
+                            // The ETag of the very bytes read.
+                            let (etag, text) = current(&http, &url).await;
+                            let next = text.parse::<usize>().unwrap() + 1;
+                            let put = http.put(&url).header("if-match", etag);
+                            let (s, _, text) = send(put.body(next.to_string())).await;
+                            match s {
+                                200 => break,
+                                412 | 409 => {}
+                                _ => panic!("{s} {text}"),
+                            }
+                        }
+                    }
+                })
+            })
+            .collect();
+        for w in writers {
+            w.await.unwrap();
+        }
+        for base in &g {
+            let (_, _, text) = send(http.get(format!("{base}/counter"))).await;
+            assert_eq!(text, (WRITERS * EACH).to_string());
+        }
+
+        // Multipart completions of one new key race through both gateways.
+        for round in 0..4 {
+            let urls = [
+                format!("{}/mp/{round}", g[0]),
+                format!("{}/mp/{round}", g[1]),
+            ];
+            let a = start_upload(&http, &urls[0], None, "first").await;
+            let b = start_upload(&http, &urls[1], None, "second").await;
+            let (ra, rb) = tokio::join!(
+                send(complete(&http, &urls[0], &a).header("if-none-match", "*")),
+                send(complete(&http, &urls[1], &b).header("if-none-match", "*")),
+            );
+            assert!(completed(&ra) != completed(&rb), "{ra:?} {rb:?}");
+            let (lost, lost_url, lost_upload, content) = if completed(&ra) {
+                (rb, &urls[1], &b, "first")
+            } else {
+                (ra, &urls[0], &a, "second")
+            };
+            // Judged before the copy (412) or at the publish (in the body of a 200).
+            assert!(
+                lost.2.contains("<Code>PreconditionFailed</Code>"),
+                "{lost:?}"
+            );
+            let (_, etag, text) = send(http.get(&urls[0])).await;
+            assert_eq!(text, content);
+            // The loser's upload is intact and can replace the winner by naming its ETag.
+            let stale = complete(&http, lost_url, lost_upload).header("if-match", "\"x\"");
+            assert_eq!(status(stale).await, 412);
+            let r = send(complete(&http, lost_url, lost_upload).header("if-match", etag)).await;
+            assert!(completed(&r), "{r:?}");
+            assert_ne!(send(http.get(&urls[0])).await.2, content);
+        }
+    });
+    drop(rt);
+    no_temporary_files(&c.ops("cas"));
+}
+
+#[test]
+fn write_conditions_are_applied_or_refused_never_ignored() {
+    let c = Cluster::start();
+    c.create_fs("cond");
+    let rt = runtime();
+    let g = gateways(&c, &rt, "cond", 1).remove(0);
+    let http = reqwest::Client::new();
+    let url = |k: &str| format!("{g}/{k}");
+    rt.block_on(async {
+        conditions_available(&http, &g).await;
+        let put = |k: &str, body: &'static str| http.put(url(k)).body(body);
+        let (s, first, _) = send(put("a", "v1")).await;
+        assert_eq!(s, 200);
+        let on_match = |k: &str, etag: &str, body: &'static str| {
+            put(k, body).header("if-match", etag.to_string())
+        };
+
+        assert_eq!(status(on_match("nope/x", &first, "v")).await, 404);
+        assert_eq!(status(on_match("a", "\"x\"", "v2")).await, 412);
+        assert_eq!(
+            status(on_match("a", &format!("W/{first}"), "v2")).await,
+            412
+        );
+        // Unquoted ETags are accepted, as some SDKs send them.
+        let (s, second, _) = send(on_match("a", first.trim_matches('"'), "v2")).await;
+        assert_eq!(s, 200);
+        assert_eq!(status(on_match("a", &first, "v3")).await, 412);
+        assert_eq!(
+            status(put("a", "v3").header("if-none-match", "*")).await,
+            412
+        );
+        for (name, value) in [("if-none-match", second.as_str()), ("if-match", "*")] {
+            assert_eq!(status(put("a", "v3").header(name, value)).await, 501);
+        }
+        let both = put("b", "v")
+            .header("if-match", &second)
+            .header("if-none-match", "*");
+        assert_eq!(status(both).await, 501);
+        assert_eq!(status(http.head(url("b"))).await, 404);
+        assert_eq!(send(http.get(url("a"))).await.2, "v2");
+
+        // Copies take the same conditions on their destination.
+        let copy = |to: &str| http.put(url(to)).header("x-amz-copy-source", "/cond/a");
+        assert_eq!(status(put("old", "old")).await, 200);
+        assert_eq!(status(copy("old").header("if-none-match", "*")).await, 412);
+        assert_eq!(status(copy("old").header("if-match", "\"x\"")).await, 412);
+        assert_eq!(send(http.get(url("old"))).await.2, "old");
+        assert_eq!(status(copy("new").header("if-none-match", "*")).await, 200);
+        assert_eq!(status(copy("old").header("if-match", "*")).await, 501);
+        let onto_self = copy("a")
+            .header("x-amz-metadata-directive", "REPLACE")
+            .header("if-match", &second);
+        assert_eq!(status(onto_self).await, 501);
+
+        // Multipart completion: judged before the parts are copied.
+        let upload = start_upload(&http, &url("a"), None, "parts").await;
+        let done = |name: &'static str, v: &str| {
+            complete(&http, &url("a"), &upload).header(name, v.to_string())
+        };
+        assert_eq!(status(done("if-none-match", "*")).await, 412);
+        assert_eq!(status(done("if-match", &first)).await, 412);
+        assert_eq!(status(done("if-none-match", &second)).await, 501);
+        let missing = start_upload(&http, &url("missing"), None, "parts").await;
+        let r = complete(&http, &url("missing"), &missing).header("if-match", &second);
+        assert_eq!(status(r).await, 404);
+        let r = send(done("if-match", &second)).await;
+        assert!(completed(&r), "{r:?}");
+        assert_eq!(send(http.get(url("a"))).await.2, "parts");
+
+        // Conditional deletes are not supported: refused, and nothing deleted.
+        let r = http.delete(url("a")).header("if-match", "\"x\"");
+        assert_eq!(status(r).await, 501);
+        let batch = "<Delete><Object><Key>old</Key></Object><Object><Key>a</Key>\
+                     <ETag>\"x\"</ETag></Object></Delete>";
+        let r = http.post(format!("{g}?delete")).body(batch);
+        assert_eq!(status(r).await, 501);
+        assert_eq!(status(http.head(url("a"))).await, 200);
+        assert_eq!(status(http.head(url("old"))).await, 200);
+
+        // Directory markers.
+        let marker = || put("dir/", "");
+        assert_eq!(status(marker().header("if-match", &second)).await, 404);
+        assert_eq!(status(marker().header("if-none-match", "*")).await, 200);
+        assert_eq!(status(marker().header("if-none-match", "*")).await, 412);
+        assert_eq!(status(marker().header("if-match", "\"x\"")).await, 412);
+        let empty = "\"d41d8cd98f00b204e9800998ecf8427e\"";
+        assert_eq!(status(marker().header("if-match", empty)).await, 200);
+    });
+    drop(rt);
+    let ops = c.ops("cond");
+    // A refused `If-Match` on a missing key made no directories.
+    assert_eq!(ops.lookup(ROOT_INO, "nope").unwrap_err(), libc::ENOENT);
+    no_temporary_files(&ops);
+}
+
+#[test]
+fn objects_carry_tags_within_aws_limits() {
+    let c = Cluster::start();
+    c.create_fs("tags");
+    let gateway = Gateway::new(
+        vec![
+            c.bucket("tags", "tags", false),
+            c.bucket("frozen", "tags", true),
+        ],
+        None,
+    );
+    let rt = runtime();
+    let addr = serve(&rt, gateway, false);
+    let http = reqwest::Client::new();
+    let url = |k: &str| format!("http://{addr}/tags/{k}");
+    let xml = |pairs: &[(&str, &str)]| {
+        let tags: String = pairs
+            .iter()
+            .map(|(k, v)| format!("<Tag><Key>{k}</Key><Value>{v}</Value></Tag>"))
+            .collect();
+        format!("<Tagging><TagSet>{tags}</TagSet></Tagging>")
+    };
+    let pairs = |list: &[(&str, &str)]| -> Vec<(String, String)> {
+        list.iter()
+            .map(|(k, v)| (k.to_string(), v.to_string()))
+            .collect()
+    };
+    rt.block_on(async {
+        let read = |key: &str| {
+            let req = http.get(format!("{}?tagging", url(key)));
+            async move {
+                let (s, _, text) = send(req).await;
+                assert_eq!(s, 200, "{text}");
+                tags(&text, "Key")
+                    .into_iter()
+                    .zip(tags(&text, "Value"))
+                    .collect::<Vec<_>>()
+            }
+        };
+        let tagged = |k: &str, header: &str| {
+            http.put(url(k))
+                .header("x-amz-tagging", header.to_string())
+                .body("data")
+        };
+        let put_tags = |k: &str, body: String| http.put(format!("{}?tagging", url(k))).body(body);
+
+        let (s, etag, text) = send(tagged("a", "team=ml&note=x+y%2Bz&empty=")).await;
+        assert_eq!(s, 200, "{text}");
+        assert_eq!(
+            read("a").await,
+            pairs(&[("team", "ml"), ("note", "x y+z"), ("empty", "")])
+        );
+
+        // Replacing and removing tags changes neither the object nor its ETag.
+        assert_eq!(status(put_tags("a", xml(&[("k", "v")]))).await, 200);
+        assert_eq!(read("a").await, pairs(&[("k", "v")]));
+        let (_, now, text) = send(http.get(url("a"))).await;
+        assert_eq!((now, text.as_str()), (etag.clone(), "data"));
+        for _ in 0..2 {
+            let r = http.delete(format!("{}?tagging", url("a")));
+            assert_eq!(status(r).await, 204);
+            assert!(read("a").await.is_empty());
+        }
+
+        // Limits: refused, and nothing changes.
+        assert_eq!(status(put_tags("a", xml(&[("keep", "1")]))).await, 200);
+        let keys: Vec<String> = (0..11).map(|i| format!("k{i}")).collect();
+        let header: Vec<String> = keys.iter().map(|k| format!("{k}=v")).collect();
+        let long_key = "k".repeat(129);
+        let long_value = "v".repeat(257);
+        for bad in [
+            header.join("&"),
+            "aws:x=1".to_string(),
+            "a=1&a=2".to_string(),
+            format!("{long_key}=1"),
+            format!("k={long_value}"),
+            "k=a*b".to_string(),
+        ] {
+            let (s, _, text) = send(tagged("refused", &bad)).await;
+            assert_eq!(s, 400, "{bad}: {text}");
+            assert!(text.contains("InvalidTag"), "{text}");
+        }
+        assert_eq!(status(http.head(url("refused"))).await, 404);
+        let eleven: Vec<(&str, &str)> = keys.iter().map(|k| (k.as_str(), "v")).collect();
+        for bad in [
+            xml(&eleven),
+            xml(&[("a", "1"), ("a", "2")]),
+            xml(&[("", "1")]),
+        ] {
+            assert_eq!(status(put_tags("a", bad)).await, 400);
+        }
+        assert_eq!(read("a").await, pairs(&[("keep", "1")]));
+        assert_eq!(status(tagged("ten", &header[..10].join("&"))).await, 200);
+        assert_eq!(read("ten").await.len(), 10);
+
+        let r = http.get(format!("{}?tagging", url("none")));
+        assert_eq!(status(r).await, 404);
+        assert_eq!(status(put_tags("none", xml(&[]))).await, 404);
+        let r = http.get(format!("{}?tagging&versionId=abc", url("a")));
+        assert_eq!(status(r).await, 501);
+        // A read-only bucket serves tags but doesn't change them.
+        let frozen = format!("http://{addr}/frozen/a?tagging");
+        assert_eq!(status(http.get(&frozen)).await, 200);
+        assert_eq!(status(http.put(&frozen).body(xml(&[]))).await, 403);
+        assert_eq!(status(http.delete(&frozen)).await, 403);
+
+        // Copies keep the source's tags unless told to replace them.
+        let copy = |from: &str, to: &str| {
+            http.put(url(to))
+                .header("x-amz-copy-source", format!("/tags/{from}"))
+        };
+        assert_eq!(status(copy("a", "kept")).await, 200);
+        assert_eq!(read("kept").await, pairs(&[("keep", "1")]));
+        let ignored = copy("a", "ignored").header("x-amz-tagging", "other=1");
+        assert_eq!(status(ignored).await, 200);
+        assert_eq!(read("ignored").await, pairs(&[("keep", "1")]));
+        let replaced = copy("a", "replaced")
+            .header("x-amz-tagging-directive", "REPLACE")
+            .header("x-amz-tagging", "other=2");
+        assert_eq!(status(replaced).await, 200);
+        assert_eq!(read("replaced").await, pairs(&[("other", "2")]));
+        let cleared = copy("a", "cleared").header("x-amz-tagging-directive", "REPLACE");
+        assert_eq!(status(cleared).await, 200);
+        assert!(read("cleared").await.is_empty());
+        let onto_self = || copy("a", "a").header("x-amz-metadata-directive", "REPLACE");
+        assert_eq!(status(onto_self()).await, 200);
+        assert_eq!(read("a").await, pairs(&[("keep", "1")]));
+        let retag = onto_self()
+            .header("x-amz-tagging-directive", "REPLACE")
+            .header("x-amz-tagging", "self=1");
+        assert_eq!(status(retag).await, 200);
+        assert_eq!(read("a").await, pairs(&[("self", "1")]));
+
+        // An overwrite replaces the tags with its own, here none.
+        assert_eq!(status(http.put(url("a")).body("new")).await, 200);
+        assert!(read("a").await.is_empty());
+
+        // Multipart: tags given at creation arrive with the object.
+        let upload = start_upload(&http, &url("big"), Some("mp=1"), "parts").await;
+        let r = send(complete(&http, &url("big"), &upload)).await;
+        assert!(completed(&r), "{r:?}");
+        assert_eq!(read("big").await, pairs(&[("mp", "1")]));
+
+        // A directory marker's tags go with it, though its directory stays.
+        assert_eq!(status(tagged("m/", "m=1").body("")).await, 200);
+        assert_eq!(read("m/").await, pairs(&[("m", "1")]));
+        assert_eq!(status(http.put(url("m/child")).body("x")).await, 200);
+        assert_eq!(status(http.delete(url("m/"))).await, 204);
+        assert_eq!(status(put_tags("m/", xml(&[]))).await, 404);
+        assert_eq!(status(http.put(url("m/")).body("")).await, 200);
+        assert!(read("m/").await.is_empty());
+    });
+    drop(rt);
+}
+
+/// A `COMPLIANCE` retention document ending an hour from now.
+fn locked_for_an_hour() -> String {
+    let until = time::OffsetDateTime::now_utc() + time::Duration::hours(1);
+    let until = until
+        .format(&time::format_description::well_known::Rfc3339)
+        .unwrap();
+    format!(
+        "<Retention><Mode>COMPLIANCE</Mode><RetainUntilDate>{until}</RetainUntilDate></Retention>"
+    )
+}
+
+#[test]
+fn retention_holds_against_conditional_and_concurrent_writes() {
+    let c = Cluster::start();
+    c.create_fs("worm");
+    let rt = runtime();
+    let g = gateways(&c, &rt, "worm", 2);
+    let http = reqwest::Client::new();
+    let url = |k: &str| format!("{}/{k}", g[0]);
+    rt.block_on(async {
+        conditions_available(&http, &g[0]).await;
+        let lock = |url: String| {
+            http.put(format!("{url}?retention"))
+                .body(locked_for_an_hour())
+        };
+        let (s, etag, _) = send(http.put(url("a")).body("v1")).await;
+        assert_eq!(s, 200);
+        let upload = start_upload(&http, &url("a"), None, "parts").await;
+        assert_eq!(status(lock(url("a"))).await, 200);
+        let put = || http.put(url("a")).body("v2");
+        assert_eq!(status(put().header("if-none-match", "*")).await, 412);
+        assert_eq!(status(put().header("if-match", &etag)).await, 403);
+        let (s, _, text) = send(complete(&http, &url("a"), &upload)).await;
+        assert!(text.contains("<Code>AccessDenied</Code>"), "{s} {text}");
+        let r = complete(&http, &url("a"), &upload).header("if-match", &etag);
+        let (s, _, text) = send(r).await;
+        assert!(text.contains("<Code>AccessDenied</Code>"), "{s} {text}");
+        let copy = || http.put(url("a")).header("x-amz-copy-source", "/worm/a");
+        let retag = copy().header("x-amz-metadata-directive", "REPLACE");
+        assert_eq!(status(retag).await, 403);
+        assert_eq!(status(http.put(url("b")).body("b")).await, 200);
+        let over = http.put(url("a")).header("x-amz-copy-source", "/worm/b");
+        assert_eq!(status(over).await, 403);
+        // Tags are not the object's data: a locked object can be tagged.
+        let tag = "<Tagging><TagSet><Tag><Key>k</Key><Value>v</Value></Tag></TagSet></Tagging>";
+        let r = http.put(format!("{}?tagging", url("a"))).body(tag);
+        assert_eq!(status(r).await, 200);
+        assert_eq!(send(http.get(url("a"))).await.2, "v1");
+
+        // A directory marker can be locked too.
+        assert_eq!(status(http.put(url("held/")).body("")).await, 200);
+        assert_eq!(status(lock(url("held/"))).await, 200);
+        assert_eq!(status(http.put(url("held/")).body("")).await, 403);
+        assert_eq!(status(http.delete(url("held/"))).await, 403);
+        assert_eq!(status(http.head(url("held/"))).await, 200);
+
+        // Once a lock is confirmed, no write racing it through either gateway lands.
+        for round in 0..6u64 {
+            let key = format!("race/{round}");
+            assert_eq!(status(http.put(url(&key)).body("start")).await, 200);
+            let writers: Vec<_> = (0..4)
+                .map(|i| {
+                    let (http, url) = (http.clone(), format!("{}/{key}", g[i % 2]));
+                    tokio::spawn(async move {
+                        for n in 0..12 {
+                            let req = http.put(&url).body(format!("writer {i} write {n}"));
+                            let (s, _, text) = send(req).await;
+                            match s {
+                                200 => {}
+                                403 => break,
+                                _ => panic!("{s} {text}"),
+                            }
+                        }
+                    })
+                })
+                .collect();
+            tokio::time::sleep(Duration::from_millis(20 * round)).await;
+            let target = format!("{}/{key}", g[1]);
+            let (s, _, text) = send(lock(target.clone())).await;
+            assert_eq!(s, 200, "{text}");
+            let held = current(&http, &target).await.1;
+            for w in writers {
+                w.await.unwrap();
+            }
+            for base in &g {
+                let now = send(http.get(format!("{base}/{key}"))).await.2;
+                assert_eq!(now, held, "round {round}: replaced after it was locked");
+            }
+        }
+    });
+    drop(rt);
+    no_temporary_files(&c.ops("worm"));
+}
+
+/// Forwards to one metadata node, but answers a conditional rename as a cluster that can't do
+/// it would: `refuse` 404 (a node from before the route) or 409 `unsupported` (not every node
+/// known to support it).
+fn refusing_proxy(upstream: SocketAddr, refuse: u16) -> String {
+    use std::io::{BufRead, BufReader, Read, Write};
+    use std::net::TcpStream;
+    fn relay(mut client: TcpStream, upstream: SocketAddr, refuse: u16) -> std::io::Result<()> {
+        let mut reader = BufReader::new(client.try_clone()?);
+        let (mut head, mut len) = (String::new(), 0usize);
+        loop {
+            let mut line = String::new();
+            if reader.read_line(&mut line)? == 0 {
+                return Ok(());
+            }
+            if line == "\r\n" {
+                break;
+            }
+            let lower = line.to_ascii_lowercase();
+            if let Some(v) = lower.strip_prefix("content-length:") {
+                len = v.trim().parse().unwrap();
+            }
+            if !lower.starts_with("connection:") {
+                head.push_str(&line);
+            }
+        }
+        let mut body = vec![0; len];
+        reader.read_exact(&mut body)?;
+        if head.lines().next().unwrap_or("").contains("/rename-if") {
+            let (reason, text) = match refuse {
+                404 => ("Not Found", "no such route"),
+                _ => ("Conflict", r#"{"code":"unsupported","error":"not yet"}"#),
+            };
+            return write!(
+                client,
+                "HTTP/1.1 {refuse} {reason}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{text}",
+                text.len()
+            );
+        }
+        let mut node = TcpStream::connect(upstream)?;
+        write!(node, "{head}Connection: close\r\n\r\n")?;
+        node.write_all(&body)?;
+        std::io::copy(&mut node, &mut client)?;
+        Ok(())
+    }
+    let listener = bind();
+    let addr = listener.local_addr().unwrap();
+    std::thread::spawn(move || {
+        for conn in listener.incoming().flatten() {
+            std::thread::spawn(move || relay(conn, upstream, refuse));
+        }
+    });
+    format!("http://{addr}")
+}
+
+#[test]
+fn a_cluster_without_conditional_renames_refuses_conditions_and_keeps_plain_writes() {
+    let c = Cluster::start();
+    c.create_fs("older");
+    let rt = runtime();
+    for (refuse, code, name) in [
+        (404u16, 501u16, "NotImplemented"),
+        (409, 503, "ServiceUnavailable"),
+    ] {
+        let endpoints = c
+            .meta
+            .iter()
+            .map(|n| refusing_proxy(n.http_addr(), refuse))
+            .collect();
+        let mut cfg = ClientConfig::new(endpoints);
+        cfg.token = Some(TOKEN.into());
+        cfg.retry_for = Duration::from_secs(20);
+        let ops = Ops::new(
+            Client::new(cfg).unwrap(),
+            "older",
+            OpsConfig {
+                max_io_bytes: 1 << 20,
+                cache_leases: true,
+                readahead_bytes: 0,
+                ..OpsConfig::default()
+            },
+        );
+        let bucket = Bucket {
+            name: "older".into(),
+            ops,
+            read_only: false,
+            uid: 0,
+            gid: 0,
+        };
+        let addr = serve(&rt, Gateway::new(vec![bucket], None), false);
+        let http = reqwest::Client::new();
+        let url = |k: &str| format!("http://{addr}/older/{refuse}/{k}");
+        rt.block_on(async {
+            // Unconditional writes go ahead as before, retention included.
+            assert_eq!(status(http.put(url("a")).body("v1")).await, 200);
+            let (s, etag, _) = send(http.put(url("a")).body("v2")).await;
+            assert_eq!(s, 200);
+            // Conditional ones are refused, whether or not they would hold.
+            let create = http.put(url("new")).header("if-none-match", "*");
+            assert_eq!(status(create.body("v")).await, code);
+            assert_eq!(status(http.head(url("new"))).await, 404);
+            let replace = http.put(url("a")).header("if-match", &etag);
+            assert_eq!(status(replace.body("v3")).await, code);
+            assert_eq!(send(http.get(url("a"))).await.2, "v2");
+            let upload = start_upload(&http, &url("mp"), None, "parts").await;
+            let done = complete(&http, &url("mp"), &upload).header("if-none-match", "*");
+            let (_, _, text) = send(done).await;
+            assert!(text.contains(&format!("<Code>{name}</Code>")), "{text}");
+            assert_eq!(status(http.head(url("mp"))).await, 404);
+            let r = send(complete(&http, &url("mp"), &upload)).await;
+            assert!(completed(&r), "{r:?}");
+            let lock = http
+                .put(format!("{}?retention", url("a")))
+                .body(locked_for_an_hour());
+            assert_eq!(status(lock).await, 200);
+            assert_eq!(status(http.put(url("a")).body("v4")).await, 403);
+        });
+    }
+    drop(rt);
+    no_temporary_files(&c.ops("older"));
+}

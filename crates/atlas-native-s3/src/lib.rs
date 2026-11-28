@@ -9,3 +9,4 @@ pub mod checksum;
 pub mod config;
 pub mod service;
 pub mod store;
+pub mod tagging;

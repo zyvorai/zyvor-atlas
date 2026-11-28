@@ -32,6 +32,15 @@ with `atlas-native-mount`; the Atlas gateway creates, snapshots and clones files
   **Clones** start a new filesystem from a snapshot. Writes on either side allocate new extents, so a
   filesystem, its snapshots and its clones never see each other's changes. Each survives deleting the
   others; extents are freed by GC once nothing references them.
+- **A truncate into an extent is two metadata commits**: the extent without its tail, then the new
+  size. The leader takes no filesystem snapshot between them, so a snapshot holds the file from
+  before the truncate or from after it (a read of the live file made meanwhile can still see zeros
+  past the new end under the old size). The pair is not atomic across a failure. If the second commit
+  is never made (the leader stops or loses its term, the first commit times out but applies later, or
+  a process on a local log crashes), the file keeps its old size with zeros from the new end to the end
+  of that extent, and reads and later snapshots see exactly that until the truncate is repeated. The
+  call has not succeeded then; `atlas-native-mount` retries it on the next leader for as long as it
+  retries any request (30 s by default), but a snapshot taken before the retry stays as it was.
 
 ## Node API
 
@@ -48,6 +57,7 @@ All routes need the API token (and client certificate where configured), like th
 | `GET /v1/fs/{fs}/locality?path=&max_inodes=` | Where a file or directory tree's data lives (see "Dataset locality"). `path` defaults to `/`, `max_inodes` to 100000. |
 | `POST /v1/fs/{fs}/locality/pin` | `{"hosts": [...], "path"?, "after"?, "max_extents"?, "max_inodes"?}` → `{examined, local, moved, bytes_moved, tiered, erasure_coded, deferred, next, truncated}`. Leader only. |
 | `POST /v1/fs/{fs}/rename` | `{parent, name, new_parent, new_name}` → 204. |
+| `POST /v1/fs/{fs}/rename-if` | A compare-and-swap rename: `{parent, name, ino, new_parent, new_name, expect?, retain_xattr?}` → 204. `name` must still name `ino`. `expect`: `{"kind":"absent"}`, or `{"kind":"unchanged", ino, size, mtime_ns, xattr, value}` for the destination as it was read (`value`: the bytes of extended attribute `xattr`, `null` if unset); 412 `precondition` otherwise. `retain_xattr` names an attribute holding Unix seconds until which the destination can't be replaced (409 `locked`). A repeat that finds `ino` already at the destination succeeds. 409 `unsupported` until every metadata node can decode it; see [NATIVE_S3](NATIVE_S3.md#conditional-writes). |
 | `POST /v1/fs/{fs}/snapshots` | `{"name", "id"?}` → 201 `{"id"}`. |
 | `GET /v1/fs-snapshots` | `{"snapshots": [{id, fs_id, name, created_ns, inodes}]}`. |
 | `DELETE /v1/fs-snapshots/{id}` | 204. |

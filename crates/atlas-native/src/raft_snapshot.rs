@@ -98,6 +98,7 @@ impl Outgoing {
             dirty: catalog.dirty.clone(),
             delta_totals: Default::default(),
             in_store: false,
+            features: catalog.features,
         };
         Self {
             index: catalog.applied_index,
@@ -356,6 +357,8 @@ mod tests {
                 },
             },
         );
+
+        c.features = crate::raft::CAP_RENAME_IF;
 
         let follower_dir = tempfile::tempdir().unwrap();
         let wire = |o: &Outgoing| -> SnapshotChunk {

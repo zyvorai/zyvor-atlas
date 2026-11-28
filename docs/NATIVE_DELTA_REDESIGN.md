@@ -2,9 +2,10 @@
 <!-- SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0 -->
 # Delta writes: redesign plan
 
-**Status (2026-11-28): phases 0 to 2 approved; phase 0 has a [first result](#phase-0-results) and
-phase 1 (parallel folding, `fold_concurrency`) is implemented but not yet benchmarked. Phases 3 and
-4 are not approved.**
+**Status (2026-11-28): phase 1 (parallel folding, `fold_concurrency`) was benchmarked and
+[did not meet the target](#phase-1-results). Phase 2 is therefore due. The measurements of phase 0 are
+[here](#phase-0-results). A [design for phase 3](NATIVE_DELTA_INPLACE.md) advises against building it
+yet.**
 
 ## The problem
 
@@ -163,6 +164,23 @@ No change to on-disk formats or commands.
 - Try longer election timeouts if phase 0 ties elections to disk stalls.
 
 Risk: more folding takes disk time from foreground writes. Measure at several concurrency levels.
+
+### Phase 1 results
+
+Three alternating rounds against Ceph, `fold_concurrency` 4, 2026-11-28. Details and caveats:
+[NATIVE_DELTA_WRITES](NATIVE_DELTA_WRITES.md#measured-parallel-folding-three-alternating-rounds-2026-11-28).
+
+| Check (median of 3) | Ceph | 1 MiB cells | 128 KiB cells |
+|---|---:|---:|---:|
+| Write IOPS | 38.0 | 23.6 **fail** | 37.9 **fail** |
+| p99 write latency (ms) | 1317 | 3137 **fail** | 2089 **fail** |
+| Backlog not growing (rounds passing) | n/a | 2 of 3 **fail** | 0 of 3 **fail** |
+| Sequential read (MiB/s) | 102 | 250 pass, from memory | 2.4 **fail** |
+| `fio` verification (rounds passing) | n/a | 3 of 3 | 3 of 3 |
+
+The gate's sequential read check is not trustworthy as the harness stands: the data set fits in
+memory and atlas-native reads through the page cache. The harness needs a larger data set or a cold
+cache. `fold_concurrency` values other than 4 have not been measured.
 
 ## Phase 2: commit folds in batches
 

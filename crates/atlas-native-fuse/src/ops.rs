@@ -18,7 +18,8 @@ use std::{
 use atlas_native::{
     checksum,
     engine::{Attr, DirEntry, FileLayout, FsStat, LayoutExtent, NewNode},
-    BlockStore, NodeType, RdmaConfig, RdmaSnapshot, RemoteDevice, SetAttr, TlsIdentity,
+    BlockStore, ConditionalRename, NodeType, RdmaConfig, RdmaSnapshot, RemoteDevice, SetAttr,
+    TlsIdentity,
 };
 use reqwest::Method;
 use serde_json::json;
@@ -867,6 +868,40 @@ impl Ops {
             })),
             Retry::Remove,
         )
+    }
+
+    /// [`Self::rename`] applied only if `r`'s conditions hold when it takes effect (`r.fs` and
+    /// `r.now_ns` are the server's to set). `ECANCELED`: the destination is not as expected;
+    /// `EAGAIN`: it is retention-locked; `ENOENT`: the source is gone; `EOPNOTSUPP`: the
+    /// cluster can't yet tell that every metadata node supports it; `ENOSYS`: the leader
+    /// predates it. In every error case nothing changed, except that `ENOENT` may follow a
+    /// retried request that took effect and whose destination changed again since.
+    pub fn rename_if(&self, r: &ConditionalRename) -> Result<(), Errno> {
+        check_name(&r.new_name)?;
+        self.forget_entry(r.parent, &r.name);
+        self.forget_entry(r.new_parent, &r.new_name);
+        if let Ok(mut c) = self.attrs.lock() {
+            c.clear();
+        }
+        let body = serde_json::to_value(r).map_err(|_| libc::EINVAL)?;
+        // Not `Retry::Remove`: the server recognises its own repeat.
+        match self.client.request(
+            Method::POST,
+            &self.path("/rename-if"),
+            Body::Json(body),
+            Retry::Idempotent,
+        ) {
+            Ok(_) => Ok(()),
+            Err(Error::Api {
+                status: 404, code, ..
+            }) if code.is_empty() => Err(libc::ENOSYS),
+            Err(e) => Err(errno(e)),
+        }
+    }
+
+    /// Drops what is cached about `name` in `parent`, so the next lookup asks the cluster.
+    pub fn forget_entry(&self, parent: u64, name: &str) {
+        self.drop_name(parent, name);
     }
 
     pub fn setattr(&self, ino: u64, attr: SetAttr) -> Result<Attr, Errno> {
