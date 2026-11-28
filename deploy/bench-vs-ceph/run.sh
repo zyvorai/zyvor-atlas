@@ -9,8 +9,12 @@
 # Usage: run.sh <system> <tag>      system: ceph | atlas; tag names the result set
 #   PROFILE=quick|full (default quick)   STEADY_SECS=0 (extra long 4k random-write run)
 #   SIZE_MB RAMP RUNTIME REPEATS override the profile.
-#   The long run leaves steady_per_minute.txt (its last minute may be partial).
+#   The long run leaves steady_per_minute.txt (its last minute may be partial), host-series.txt (load,
+#   IO pressure, disk counters) and, for atlas, metrics-series.txt: the whole /metrics of all six
+#   nodes. Both are sampled every SAMPLE_SECS=60, t counting seconds from the start of fio. A failed
+#   scrape is noted in the file and never fails the run.
 #   STEADY_ONLY=1   layout, the long run (STEADY_SECS) and what follows it; skips the other workloads.
+#   BENCH_SESSION and BENCH_ROUND (set by compare.sh) are recorded in env.txt for gate.py.
 set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=common.sh
@@ -29,6 +33,8 @@ esac
 STEADY_SECS="${STEADY_SECS:-0}"
 STEADY_ONLY="${STEADY_ONLY:-0}"
 [ "$STEADY_ONLY" != 1 ] || [ "$STEADY_SECS" -gt 0 ] || { echo "STEADY_ONLY=1 needs STEADY_SECS" >&2; exit 2; }
+SAMPLE_SECS="${SAMPLE_SECS:-60}"
+[[ "$SAMPLE_SECS" =~ ^[1-9][0-9]*$ ]] || { echo "SAMPLE_SECS must be a number of seconds" >&2; exit 2; }
 FILES=32
 FILE_MB=$((SIZE_MB / FILES))
 
@@ -63,6 +69,10 @@ disk_sectors() { awk -v d="$DISK" '$3 == d {print $6, $10}' /proc/diskstats; } #
   echo "io_pressure=$(head -1 /proc/pressure/io)"
   echo "fio=$(inct fio --version)"
   echo "commit=$(cat "$HERE/COMMIT" 2>/dev/null || echo unknown)"
+  echo "session=${BENCH_SESSION:-}"
+  echo "round=${BENCH_ROUND:-}"
+  # Which build actually ran: the image tag and the build cache are shared on this host.
+  [ "$SYSTEM" != atlas ] || echo "node_binary=$(inct sha256sum /usr/local/bin/atlas-native-node | cut -d' ' -f1)"
   env | grep -E '^ATLAS_(EXTENT_BYTES|DELTA)' || true
 } >"$OUT/env.txt"
 
@@ -124,13 +134,75 @@ echo "laying out $FILES files of ${FILE_MB} MiB"
 fio_run layout 1 0 "${ONE[@]}" --rw=write --bs=1m --file_service_type=sequential --end_fsync=1
 [ "$FAILED" -eq 0 ] || { echo "layout failed; nothing else would be meaningful" >&2; exit 1; }
 
-# Delta write counters of the three metadata nodes, kept before the container goes away.
+# The whole /metrics of the three data nodes (72xx) and the three metadata nodes (74xx), scraped
+# side by side. Nothing is filtered, so metric families added later are kept. Runs in the container.
+# shellcheck disable=SC2016
+SCRAPE='d=$(mktemp -d) || exit 1
+  token=$(cat /run/atlas/token)
+  ports="7201 7202 7203 7401 7402 7403"
+  for p in $ports; do
+    { curl -sf --max-time 15 -H "Authorization: Bearer $token" -o "$d/$p" "http://127.0.0.1:$p/metrics" &&
+      : >"$d/$p.ok"; } &
+  done
+  wait
+  for p in $ports; do
+    if [ -e "$d/$p.ok" ]; then echo "# port $p"; cat "$d/$p"; echo; else echo "# port $p scrape-failed"; fi
+  done
+  rm -rf "$d"'
+scrape() { timeout 30 "${BPODMAN[@]}" exec "$CT" sh -c "$SCRAPE" 9>&-; }
+
+# One snapshot, kept before the container goes away.
 node_metrics() {
   [ "$SYSTEM" = atlas ] || return 0
-  inct sh -c 'for p in 7401 7402 7403; do echo "# port $p"
-    curl -s --max-time 20 -H "Authorization: Bearer $(cat /run/atlas/token)" "http://127.0.0.1:$p/metrics" |
-      grep "^atlas_native_delta"; done' >"$OUT/metrics-$1.txt" || true
+  scrape >"$OUT/metrics-$1.txt" || echo "WARNING: metrics scrape '$1' failed" >&2
 }
+
+# sample_loop <epoch of t=0>: a sample now and every SAMPLE_SECS until $OUT/.sampler-stop appears.
+# Each sample is appended once it is complete; "done" is when its scrape returned.
+sample_loop() {
+  local t0=$1 next=0 t body status pressure
+  while [ ! -e "$OUT/.sampler-stop" ]; do
+    t=$(($(date +%s) - t0))
+    pressure="$(awk '$1 == "some" {sub("avg60=", "", $3); print $3}' /proc/pressure/io)"
+    echo "t=$t load1=$(awk '{print $1}' /proc/loadavg) io_some_avg60=$pressure" \
+      "disk_sectors_read_written=$(disk_sectors | tr ' ' ,)" >>"$OUT/host-series.txt"
+    if [ "$SYSTEM" = atlas ]; then
+      status=ok
+      body="$(scrape 2>/dev/null)" || status=failed
+      printf '## sample t=%d done=%d status=%s\n%s\n' "$t" "$(($(date +%s) - t0))" "$status" "$body" \
+        >>"$OUT/metrics-series.txt"
+    fi
+    # Keep to the schedule, skipping any slot a slow scrape has overrun.
+    while [ "$next" -le "$(($(date +%s) - t0))" ]; do next=$((next + SAMPLE_SECS)); done
+    while [ ! -e "$OUT/.sampler-stop" ] && [ "$(($(date +%s) - t0))" -lt "$next" ]; do sleep 1; done
+  done
+}
+
+SAMPLER=""
+start_sampler() {
+  rm -f "$OUT/.sampler-stop"
+  # Its own failures must not end it, and it must not keep the benchmark lock.
+  (
+    set +e
+    sample_loop "$1"
+  ) 9>&- &
+  SAMPLER=$!
+}
+stop_sampler() {
+  [ -n "$SAMPLER" ] || return 0
+  touch "$OUT/.sampler-stop"
+  # A scrape in progress gets a moment; the run does not wait longer than that for it.
+  local _
+  for _ in $(seq 1 10); do
+    kill -0 "$SAMPLER" 2>/dev/null || break
+    sleep 1
+  done
+  kill "$SAMPLER" 2>/dev/null || true
+  wait "$SAMPLER" 2>/dev/null || true
+  SAMPLER=""
+  rm -f "$OUT/.sampler-stop"
+}
+trap stop_sampler EXIT
 
 # measure <name> <fio args...>: REPEATS runs, reads start with a cold server cache.
 measure() {
@@ -153,8 +225,15 @@ if [ "$STEADY_ONLY" != 1 ]; then
   measure seqwrite-1m "${ONE[@]}" --rw=write --bs=1m --sync=1 --file_service_type=sequential
 fi
 if [ "$STEADY_SECS" -gt 0 ]; then
+  T0=$(date +%s)
+  start_sampler "$T0"
   fio_run steady-randwrite-4k-qd32 1 "$STEADY_SECS" "${MANY[@]}" --rw=randwrite --bs=4k --sync=1 \
     --write_lat_log=/srv/bench/steady
+  T_END=$(($(date +%s) - T0))
+  stop_sampler
+  # Samples finished after this moment were not taken under the write load.
+  echo "t=$T_END load-end" >>"$OUT/host-series.txt"
+  [ "$SYSTEM" != atlas ] || echo "## load-end t=$T_END" >>"$OUT/metrics-series.txt"
   # One line per completed write (all jobs together), then completions per second for each minute.
   # An averaged IOPS log is useless here: per job it is a whole number near 1.
   inct sh -c 'cat /srv/bench/steady_clat*.log' >"$OUT/steady_clat.log" || true
