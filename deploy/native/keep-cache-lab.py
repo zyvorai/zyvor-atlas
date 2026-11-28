@@ -6,8 +6,8 @@
 Starts 3 metadata + 3 data atlas-native-node processes on localhost, mounts one filesystem
 through FUSE several times, and checks after every kind of change that an open on a keeping mount
 returns the current bytes, and that the kernel kept or dropped its page cache as expected
-(asked with cachestat(2) right after each open). Needs Linux 6.5+, /dev/fuse and the right to
-mount (a container with --device /dev/fuse --cap-add SYS_ADMIN, or fusermount3).
+(asked with mincore(2) right after each open). Needs Linux, /dev/fuse and the right to mount (a
+container with --device /dev/fuse --cap-add SYS_ADMIN, or fusermount3).
 
     keep-cache-lab.py --node .../atlas-native-node --mount .../atlas-native-mount [--work DIR]
     keep-cache-lab.py ... --bench      # repeated-read timings with the flag off and on
@@ -38,8 +38,18 @@ PAGE = mmap.PAGESIZE
 MIB = 1 << 20
 TOKEN = "keep-cache-lab-token"
 XATTR = "user.atlas.keep_cache"
-SYS_CACHESTAT = 451  # x86_64 and aarch64
 LIBC = ctypes.CDLL(None, use_errno=True)
+LIBC.mmap.restype = ctypes.c_void_p
+LIBC.mmap.argtypes = [
+    ctypes.c_void_p,
+    ctypes.c_size_t,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_int,
+    ctypes.c_long,
+]
+LIBC.munmap.argtypes = [ctypes.c_void_p, ctypes.c_size_t]
+LIBC.mincore.argtypes = [ctypes.c_void_p, ctypes.c_size_t, ctypes.c_void_p]
 
 
 class Failed(Exception):
@@ -51,31 +61,24 @@ def check(ok, what):
         raise Failed(what)
 
 
-class CachestatRange(ctypes.Structure):
-    _fields_ = [("off", ctypes.c_uint64), ("len", ctypes.c_uint64)]
-
-
-class Cachestat(ctypes.Structure):
-    _fields_ = [
-        (n, ctypes.c_uint64)
-        for n in ("cache", "dirty", "writeback", "evicted", "recently_evicted")
-    ]
-
-
 def resident(fd):
-    """Pages of the open file in the page cache."""
-    span, out = CachestatRange(0, 0), Cachestat()
-    r = LIBC.syscall(
-        ctypes.c_long(SYS_CACHESTAT),
-        ctypes.c_int(fd),
-        ctypes.byref(span),
-        ctypes.byref(out),
-        ctypes.c_uint(0),
-    )
-    if r != 0:
+    """Pages of the open file in the page cache, without reading any (mincore(2))."""
+    size = os.fstat(fd).st_size
+    if size == 0:
+        return 0
+    addr = LIBC.mmap(None, size, mmap.PROT_READ, mmap.MAP_SHARED, fd, 0)
+    if addr == ctypes.c_void_p(-1).value:
         e = ctypes.get_errno()
-        raise OSError(e, "cachestat: " + os.strerror(e))
-    return out.cache
+        raise OSError(e, "mmap: " + os.strerror(e))
+    try:
+        pages = (size + PAGE - 1) // PAGE
+        vec = (ctypes.c_ubyte * pages)()
+        if LIBC.mincore(addr, size, vec) != 0:
+            e = ctypes.get_errno()
+            raise OSError(e, "mincore: " + os.strerror(e))
+        return sum(v & 1 for v in vec)
+    finally:
+        LIBC.munmap(addr, size)
 
 
 def read_fd(fd, offset=0, length=None):
@@ -617,21 +620,24 @@ class Suite:
         self.refills(snap + "/f", data, "a snapshot mount")
         self.m.unmount(snap)
 
-    def run(self, rounds):
-        for fs in ("remote0", "remote60", "conc", "lost", "fail", "restore"):
+    def run(self, rounds, only=None):
+        sections = (
+            ("remote0", "remote changes, no attribute caching",
+             lambda fs: self.remote_changes(fs, 0, True)),
+            ("remote60", "remote changes, attributes and read-ahead cached for 60 s",
+             lambda fs: self.remote_changes(fs, 60_000, False)),
+            ("conc", "concurrent writer and readers",
+             lambda fs: self.concurrent(fs, rounds)),
+            ("lost", "lost write-back", self.lost_writes),
+            ("restore", "snapshot restore", self.restore),
+            ("fail", "leader failover and a stale leader", self.failover),
+        )
+        for fs, title, section in sections:
+            if only and fs not in only:
+                continue
             self.c.api("POST", "/v1/fs", {"id": fs, "name": fs})
-        print("remote changes, no attribute caching")
-        self.remote_changes("remote0", 0, True)
-        print("remote changes, attributes and read-ahead cached for 60 s (sizes fixed)")
-        self.remote_changes("remote60", 60_000, False)
-        print("concurrent writer and readers")
-        self.concurrent("conc", rounds)
-        print("lost write-back")
-        self.lost_writes("lost")
-        print("snapshot restore")
-        self.restore("restore")
-        print("leader failover and a stale leader")
-        self.failover("fail")
+            print(title, flush=True)
+            section(fs)
 
 
 def bench(cluster, mounts, mib, files, passes):
@@ -720,6 +726,11 @@ def main():
     p.add_argument("--mount", required=True, help="atlas-native-mount binary (fuse)")
     p.add_argument("--work", help="existing directory for data, logs and mount points")
     p.add_argument("--rounds", type=int, default=200, help="concurrent rewrites")
+    p.add_argument(
+        "--only",
+        action="append",
+        help="run only this section (remote0, remote60, conc, lost, restore, fail)",
+    )
     p.add_argument("--bench", action="store_true")
     p.add_argument("--bench-mib", type=int, default=256)
     p.add_argument("--bench-files", type=int, default=1000)
@@ -735,7 +746,7 @@ def main():
             bench(cluster, mounts, args.bench_mib, args.bench_files, args.bench_passes)
         else:
             suite = Suite(cluster, mounts)
-            suite.run(args.rounds)
+            suite.run(args.rounds, args.only)
             print(f"{suite.passed} checks passed on Linux {os.uname().release}")
         status = 0
     except (Failed, OSError) as e:

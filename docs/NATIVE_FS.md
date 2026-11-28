@@ -443,8 +443,15 @@ and keeps the cache only if all of these hold:
 - **Upgrades**: upgrade every metadata node first. An older one has no tag route, so opens drop
   the cache; the tree number is part of the replicated catalog, and an older node ignores it.
 - **Verification**: `deploy/native/keep-cache-lab.py` runs several mounts on a real kernel and
-  checks data and page-cache residency (`cachestat(2)`) after each kind of change; `--bench`
-  times repeated reads with the flag off and on. Speed has not been measured.
+  checks data and page-cache residency (`mincore(2)`) after each kind of change; `--bench`
+  times repeated reads with the flag off and on. Speed has not been measured. Its 39 checks
+  passed on the lab host (Linux 7.0, rootless container, 3+3 nodes on one host, debug build,
+  2026-11-28). One earlier run of its concurrent section failed with an `EIO` write-back error
+  on the writing mount, which runs without the flag; eight later runs of that section did not
+  reproduce it and its cause is unknown. Not tested: `--keep-cache` with `--direct-writes`,
+  `--cache-leases`, mTLS or several metadata groups, the NFS and SMB gateways, a replica
+  promoted or demoted under a live kernel mount (engine tests cover the tag), and a mixed-version
+  upgrade.
 
 ## Atlas gateway
 

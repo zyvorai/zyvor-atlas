@@ -2346,7 +2346,7 @@ fn keep_cache_follows_a_leader_failover_and_a_restore() {
     reopen(&a, f);
     assert!(reopen(&a, f));
     put(&b, f, 0, b"newer than that");
-    assert_eq!(a.read(f, 0, 64).unwrap(), b"newer than that");
+    assert_eq!(a.read_direct(f, 0, 64).unwrap(), b"newer than that");
     c.client()
         .request(Method::DELETE, "/v1/fs/kf", Body::Empty, Retry::Remove)
         .unwrap();
