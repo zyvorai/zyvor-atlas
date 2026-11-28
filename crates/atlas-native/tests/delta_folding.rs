@@ -1022,7 +1022,7 @@ struct Latch {
     proposals: AtomicUsize,
 }
 
-struct Held<'a>(&'a NativeEngine, Arc<Latch>);
+struct HeldCommitter<'a>(&'a NativeEngine, Arc<Latch>);
 
 /// Opens a [`Latch`] when dropped.
 struct Release(Arc<Latch>);
@@ -1033,7 +1033,7 @@ impl Drop for Release {
     }
 }
 
-impl<'a> Held<'a> {
+impl<'a> HeldCommitter<'a> {
     fn new(e: &'a NativeEngine) -> Self {
         let latch = Arc::new(Latch::default());
         let l = latch.clone();
@@ -1074,7 +1074,7 @@ impl<'a> Held<'a> {
     }
 }
 
-impl Drop for Held<'_> {
+impl Drop for HeldCommitter<'_> {
     fn drop(&mut self) {
         self.release();
         self.0.set_delta_hook(None);
@@ -1099,7 +1099,7 @@ fn folds_that_wait_share_the_next_batch_up_to_the_limit() {
     let mut cfg = config(td.path());
     cfg.delta_writes.fold_batch_cells = 3;
     let (e, a) = dirty_file(cfg, 20);
-    let held = Held::new(&e);
+    let held = HeldCommitter::new(&e);
     with_pool(&e, None, |attempts| {
         let _release = held.releaser();
         // One to three cells in the batch being committed, three queued, and four folders each
@@ -1130,7 +1130,7 @@ fn folds_that_wait_share_the_next_batch_up_to_the_limit() {
 fn a_batch_keeps_the_changes_made_while_it_waited() {
     let td = tempfile::tempdir().unwrap();
     let (e, mut a) = dirty_file(config(td.path()), 6);
-    let held = Held::new(&e);
+    let held = HeldCommitter::new(&e);
     with_pool(&e, None, |attempts| {
         let _release = held.releaser();
         held.wait_for(6);
@@ -1161,7 +1161,7 @@ fn a_batch_keeps_the_changes_made_while_it_waited() {
 fn a_snapshot_waits_for_a_queued_fold() {
     let td = tempfile::tempdir().unwrap();
     let (e, a) = dirty_file(config(td.path()), 6);
-    let held = Held::new(&e);
+    let held = HeldCommitter::new(&e);
     with_pool(&e, None, |_| {
         let _release = held.releaser();
         held.wait_for(6);
@@ -1189,7 +1189,7 @@ fn a_snapshot_waits_for_a_queued_fold() {
 fn stopping_the_pool_commits_what_is_queued() {
     let td = tempfile::tempdir().unwrap();
     let (e, a) = dirty_file(config(td.path()), 6);
-    let held = Held::new(&e);
+    let held = HeldCommitter::new(&e);
     let stop = AtomicBool::new(false);
     thread::scope(|s| {
         let _finish = Finish(&stop, None);
