@@ -236,6 +236,9 @@ native:
   endpoints: ""
   # Secret with key `token` (the atlas-native chart creates "<release>-api").
   tokenSecret: ""
+  # Key of the token in that Secret when it is not `token`: "gateway" for the atlas-native
+  # chart's scoped tokens ("<release>-api-tokens", docs/NATIVE_NODE.md).
+  tokenSecretKey: ""
   # Secret with `ca.crt` (private CA of the node API) and, when clientCert is true, the client
   # `tls.crt`/`tls.key` for nodes running with httpTls.requireClientCert.
   tlsSecret: ""

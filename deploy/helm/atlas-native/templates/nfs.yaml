@@ -108,7 +108,7 @@ spec:
         - name: fuse
           hostPath: { path: /dev/fuse, type: CharDevice }
         - name: api-token
-          secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+          {{- include "atlas-native.componentToken" (list . "nfs") | nindent 10 }}
         - name: exports
           configMap: { name: {{ $full }}-nfs }
         {{- if .Values.httpTls.enabled }}

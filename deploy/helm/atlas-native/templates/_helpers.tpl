@@ -36,6 +36,61 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
 {{- .Values.apiToken.existingSecret | default (printf "%s-api" (include "atlas-native.fullname" .)) -}}
 {{- end -}}
 
+{{/* "true" when scoped tokens are on (absent values, as after --reuse-values, mean off). */}}
+{{- define "atlas-native.scopedEnabled" -}}
+{{- if (.Values.scopedTokens | default dict).enabled }}true{{ end -}}
+{{- end -}}
+
+{{- define "atlas-native.scopedTokenSecret" -}}
+{{- .Values.scopedTokens.existingSecret | default (printf "%s-api-tokens" (include "atlas-native.fullname" .)) -}}
+{{- end -}}
+
+{{/* The node's scoped token list (api_tokens_file): one token per enabled component, each with
+     only what that component calls. Token values live in the Secret, one key per name. */}}
+{{- define "atlas-native.scopedTokenList" -}}
+{{- $v := .Values -}}
+{{- $s := .Values.scopedTokens -}}
+{{- $gateway := list "lifecycle" "data" -}}
+{{- if ($s.gateway | default dict).retentionUnlock }}{{ $gateway = append $gateway "retention-unlock" }}{{ end -}}
+{{- $tokens := list (dict "name" "gateway" "roles" $gateway) -}}
+{{- if $v.csi.enabled -}}
+{{- $tokens = append $tokens (dict "name" "csi-controller" "roles" (list "lifecycle")) -}}
+{{- $tokens = append $tokens (dict "name" "csi-node" "roles" (list "data") "filesystems" (list "*")) -}}
+{{- end -}}
+{{- range $component, $items := dict "s3" $v.s3.buckets "nfs" $v.nfs.exports "smb" $v.smb.shares -}}
+{{- if (index $v $component).enabled -}}
+{{- $fs := list -}}
+{{- range $items }}{{ $fs = append $fs (required (printf "every %s entry needs fs" $component) .fs) }}{{ end -}}
+{{- if $fs -}}
+{{- $tokens = append $tokens (dict "name" $component "roles" (list "data") "filesystems" (uniq $fs)) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if or $v.replication.enabled $s.acceptReplication -}}
+{{- $tokens = append $tokens (dict "name" "replicate" "roles" (list "replication")) -}}
+{{- end -}}
+{{- range $s.extra -}}
+{{- $tokens = append $tokens (deepCopy .) -}}
+{{- end -}}
+{{- range $tokens -}}
+{{- $_ := set . "token_file" (printf "/etc/atlas-native/token-keys/%s" (required "every scopedTokens.extra entry needs name" .name)) -}}
+{{- end -}}
+{{- toPrettyJson (dict "tokens" $tokens) -}}
+{{- end -}}
+
+{{/* The source of a component's `token` file: (list root component). */}}
+{{- define "atlas-native.componentToken" -}}
+{{- $root := index . 0 -}}
+{{- $component := index . 1 -}}
+{{- if and (include "atlas-native.scopedEnabled" $root) $root.Values.scopedTokens.useForComponents -}}
+secret:
+  secretName: {{ include "atlas-native.scopedTokenSecret" $root }}
+  items: [{ key: {{ $component }}, path: token }]
+{{- else -}}
+secret: { secretName: {{ include "atlas-native.tokenSecret" $root }} }
+{{- end -}}
+{{- end -}}
+
 {{- define "atlas-native.tlsSecret" -}}
 {{- if .Values.tls.certManager.enabled -}}
 {{- printf "%s-tls" (include "atlas-native.fullname" .) -}}
@@ -107,6 +162,9 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version }}
     "groups" (.Values.node.metadataGroups | int)
     "cache_inodes" (.Values.node.cacheInodes | int64)
     "store_cache_bytes" (.Values.node.storeCacheBytes | int64)) -}}
+{{- if include "atlas-native.scopedEnabled" . -}}
+{{- $_ := set $cfg "api_tokens_file" "/etc/atlas-native/tokens/tokens.json" -}}
+{{- end -}}
 {{- if .Values.tiering.enabled -}}
 {{- $t := .Values.tiering -}}
 {{- $byo := and $t.endpoint $t.bucket $t.existingSecret -}}

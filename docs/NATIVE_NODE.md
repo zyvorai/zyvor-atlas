@@ -68,7 +68,8 @@ data-node addresses are `host:port` and resolved on every connect, so DNS names 
 
 | Field | Default | Notes |
 | --- | --- | --- |
-| `api_token_file` | none | Bearer token required on every `/v1/*` request. Without it `/v1/*` is open: keep `http_listen` on localhost or a private network. |
+| `api_token_file` | none | The administrator's bearer token: with it, every `/v1/*` request needs it (or a scoped token), and its holder may call everything. With neither this nor `api_tokens_file`, `/v1/*` is open: keep `http_listen` on localhost or a private network. |
+| `api_tokens_file` | none | JSON list of named tokens limited to roles and to filesystems and volumes; see [API tokens](#api-tokens). |
 | `http_tls` | none | `{"cert", "key", "client_ca"?}`: serve the HTTP API over TLS. With `client_ca`, every `/v1/*` request must also present a client certificate signed by it (401 otherwise; a certificate from another CA fails the handshake), while `/healthz`, `/readyz` and `/metrics` stay open to probes and scrapers. |
 | `tls` | none | Mutual TLS for the Raft and data-node transports (not the HTTP endpoint). Node ids must then be DNS names present as SANs on each node's certificate. |
 | `max_request_bytes` | 64 MiB | Larger HTTP bodies and read lengths get 413. |
@@ -284,7 +285,8 @@ leading the group; resubmit them to the new leader. `GET /v1/transfers/{id}` rep
 Errors are JSON `{"error": "...", "code": "...", "leader": ...}`; `code` is a stable machine-readable
 reason (`not_found`, `exists`, `invalid`, `read_only`, `not_leader`, `unavailable`, …). A mutation sent
 to a follower returns **421** with the leader's node id in `leader` (null while unknown). Status codes: 400 bad request, 401 missing or
-invalid token, 404 unknown volume/snapshot/route (or no metadata role), 409 rejected by the state
+invalid token, 403 `forbidden` (a [scoped token](#api-tokens) whose roles or limits do not cover
+the request), 404 unknown volume/snapshot/route (or no metadata role), 409 rejected by the state
 machine, 413 body too large, 503 retryable (not enough data nodes, leadership changed, timeout).
 
 The HTTP server is deliberately small: HTTP/1.1 persistent connections (closed on
@@ -292,6 +294,105 @@ The HTTP server is deliberately small: HTTP/1.1 persistent connections (closed o
 `Content-Length` bodies only (chunked requests get 411), 16 KiB of headers, 30 s socket timeouts,
 optional TLS (`http_tls`). A small request on a reused connection costs about 60 µs locally; a new
 connection per request costs about 7 ms.
+
+## API tokens
+
+`api_token_file` holds one token that may do everything. `api_tokens_file` adds named tokens that
+may do less. Both can be set, either alone, or neither (open API).
+
+```json
+{"tokens": [
+  {"name": "gateway", "token_file": "gateway", "roles": ["lifecycle", "data"]},
+  {"name": "s3", "token_file": "s3", "roles": ["data"], "filesystems": ["team-share"]},
+  {"name": "auditor", "token_file": "auditor", "roles": ["read-only"]},
+  {"name": "officer", "token_file": "officer", "roles": ["retention-unlock"]}
+]}
+```
+
+`token_file` is relative to the list's directory unless absolute. A token is at least 16
+printable ASCII characters without spaces, and no two (the administrator's included) may be equal.
+Names are 1-64 of `A-Za-z0-9._-`. A bad list stops the node at startup; the error names the token
+and file, never a value.
+
+| Role | May call |
+| --- | --- |
+| `read-only` | `GET`s: status, members, listings, volume, snapshot and file data, filesystem metadata, diffs, exports and transfers. |
+| `data` | The data path of mounts, S3, NFS, SMB and `ublk`: everything under a filesystem's inodes, rename, sessions, locks, `statfs`, volume data (read and write), status and the volume and filesystem listings. |
+| `lifecycle` | Create, resize, delete, snapshot, clone and **lock** volumes, filesystems and snapshots; quotas; activity; reduction; listings. No file or volume data. The CSI controller's role. |
+| `replication` | What `atlas-native-replicate` calls on either side: filesystem listings, create filesystem, create and delete filesystem snapshots, diffs, file data reads, and `replica/apply`, `replica/inodes/*/data` and `replica/commit`. |
+| `admin` | Every route the node knows **except unlock**, including membership changes, repair, GC, tiering, export and import, locality pins, replica promote and demote. |
+| `retention-unlock` | `POST /v1/snapshots/{id}/unlock` and `POST /v1/fs-snapshots/{id}/unlock`, nothing else. No other role includes it. |
+
+A token may list several roles. `filesystems` and `volumes` limit a token whose roles are only
+`read-only` and `data` (a config error on any other): ids, or `["*"]` for all. A `data` token must
+name at least one of the two; once either is given, an omitted one means none. A limited token
+may use only the routes that name one of its filesystems (`<fs>@<snapshot>` counts as `<fs>`) or
+volumes, `GET /v1/status`, and the three listings, which are cut down to what it may see.
+Everything else, block snapshot data included, is refused.
+
+Scoped tokens are deny by default. The node has one table of method and path
+(`crates/atlas-native/src/node/authz.rs`); a request not in it is 403 for every scoped token,
+`admin` included, and a test fails when the router has a route the table lacks. Paths are matched
+exactly as the router reads them: no percent decoding or `..` handling, surrounding slashes
+ignored. The `api_token_file` token is not subject to the table.
+
+Refusals are written to stderr as `atlas-native-audit {json}` (event, token name, method, route
+pattern, object id, reason, status), as is every authorized unlock (`retention_unlock`), and
+counted in `atlas_native_api_denied_total{reason}`.
+
+### Limits
+
+- **HTTP API only.** The data-node and Raft transports have no roles. Whoever a data node accepts
+  (see [`NATIVE_METADATA.md`](NATIVE_METADATA.md)) can read any
+  extent, and without `grant_key_file` overwrite any, a locked snapshot's included. A limited
+  mount with direct reads or writes needs data-node access that is not limited to its filesystem.
+- **Ids that are not tied to a path.** A client session is not bound to a filesystem in the API: a
+  `data` token that learns the session id of another filesystem's mount can renew, close or reopen
+  that session through its own filesystem's routes. Likewise `direct-commit` or `direct-abort`
+  with another file's lease id ends that lease. Both ids are random UUIDs; a session id also shows
+  in its filesystem's lock listing.
+- **Retention.** Only the node's snapshot locks need `retention-unlock`. S3 object retention is
+  checked by the S3 gateway alone, so any token with `data` on that filesystem can delete the file
+  ([`WORM.md`](WORM.md)). A `lifecycle` token can set a very long lock that only an unlock
+  holder can clear, pinning capacity. The `api_token_file` token still clears locks.
+- **Coarse roles.** `lifecycle`, `replication` and `admin` cannot be limited to some objects.
+  `replication` reads every filesystem's data, deletes any unlocked filesystem snapshot and can
+  create ordinary filesystems. A CSI node plugin needs `data` on all filesystems, so one
+  compromised host reaches all file data. These are roles for components, not tenants or users.
+- **Static.** Lists and token files are read at startup: adding, rotating or revoking a token needs
+  a restart of every metadata node (and of the clients that hold it). Tokens do not expire. Every
+  metadata node needs the same list.
+- **Audit** is a log, not a durable record. At most 20 refusals a second of each kind (401, 403)
+  are written; the next line says how many were dropped. `retention_unlock` records that the call
+  was authorized, not that it succeeded.
+- Bearer tokens cross the network in clear without `http_tls`. `/healthz`, `/readyz` and
+  `/metrics` need no credential, as before.
+
+### In the Helm chart
+
+`scopedTokens.enabled=true` makes the nodes accept one token per component, from Secret
+`<fullname>-api-tokens` (generated, or `scopedTokens.existingSecret`), and with
+`useForComponents` (default) mounts each component's own:
+
+| Key | Roles | Limits |
+| --- | --- | --- |
+| `gateway` | `lifecycle`, `data` (and `retention-unlock` with `gateway.retentionUnlock`) | none |
+| `csi-controller` | `lifecycle` | none |
+| `csi-node` | `data` | all filesystems |
+| `s3`, `nfs`, `smb` | `data` | the filesystems of the buckets, exports or shares |
+| `replicate` | `replication` | none |
+
+`apiToken` stays, mounted by the nodes, as the administrator's. When turning this on for a running
+release, upgrade first with `useForComponents=false`, wait for the metadata pods to roll, then set
+it to `true`, so no component presents a token a node does not know yet. Restarting the CSI node
+plugin breaks its mounts ([`NATIVE_CSI.md`](NATIVE_CSI.md)). Changing a token's value in the
+Secret does not roll anything: restart the StatefulSet and the component.
+
+For replication into this cluster set `scopedTokens.acceptReplication=true` and give the source's
+`replication.target.tokenSecret`/`tokenKey` the `replicate` key. For the Atlas gateway set its
+chart's `native.tokenSecret` to a copy of this Secret and `native.tokenSecretKey=gateway`; its
+two-admin unlock then needs `gateway.retentionUnlock=true`, which also lets whoever holds that
+token unlock alone.
 
 ## Operations
 
