@@ -75,6 +75,7 @@ impl Error {
                 "locked" => libc::EAGAIN,
                 "quota" => libc::EDQUOT,
                 "no_session" => libc::ENOLCK,
+                "precondition" => libc::ECANCELED,
                 _ if *status == 413 => libc::EFBIG,
                 _ => libc::EIO,
             },

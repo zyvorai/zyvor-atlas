@@ -72,7 +72,8 @@ pub use grant::{Grant, GrantKey};
 pub use membership::Membership;
 pub use metadata::{Catalog, MetaCommand, SnapshotId, VolumeId};
 pub use namespace::{
-    FsId, FsOp, FsQuota, Inode, InodeKind, NodeType, SetAttr, XattrMode, ROOT_INO,
+    ConditionalRename, FsId, FsOp, FsQuota, Inode, InodeKind, NodeType, RenameExpect, SetAttr,
+    XattrMode, ROOT_INO,
 };
 pub use placement::{FailureDomain, Node, PlacementPolicy};
 pub use raft::{Envelope, Message, RaftConfig, RaftCounters, RaftError, RaftNode, ReadLease, Role};

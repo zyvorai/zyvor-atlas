@@ -6,12 +6,14 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::{now_ns, NativeEngine, NativeError, Scope, Target};
+use super::{now_ns, Meta, NativeEngine, NativeError, Scope, Target};
 use crate::{
     metadata::{Catalog, MetaCommand, MetaError, SnapshotId},
     namespace::{
-        FsId, FsMeta, FsOp, FsQuota, Inode, InodeKind, NodeType, ReplicaState, SetAttr, XattrMode,
+        ConditionalRename, FsId, FsMeta, FsOp, FsQuota, Inode, InodeKind, NodeType, ReplicaState,
+        SetAttr, XattrMode,
     },
+    raft::CAP_RENAME_IF,
 };
 
 /// File extent grid for new filesystems: a 4 KiB write rewrites at most this much.
@@ -494,6 +496,43 @@ impl NativeEngine {
         // mass renaming.
         if !is_internal_name(name) {
             self.fs_activity.record_rename(fs);
+        }
+        Ok(())
+    }
+
+    /// [`Self::fs_rename`], applied only if the conditions hold at its place in the log: a
+    /// compare-and-swap every client of the filesystem sees. Refused as unsupported until
+    /// every metadata replica is known to decode it, so no replica ever skips a condition.
+    pub fn fs_rename_if(&self, mut r: ConditionalRename) -> Result<(), NativeError> {
+        writable(&r.fs)?;
+        r.now_ns = now_ns();
+        let fence = match &self.meta {
+            Meta::Local { .. } => None,
+            Meta::Raft { server, .. } => {
+                // Ties the check and the proposal to one term of leadership, and applies
+                // every earlier term's entries first, so the catalog's record is current.
+                let term = self.term_fence()?;
+                if !self.with_catalog(|c| c.features & CAP_RENAME_IF != 0)?
+                    && !server.peers_support(CAP_RENAME_IF)?
+                {
+                    return Err(MetaError::Unsupported(
+                        "conditional rename: not every metadata node is known to support it".into(),
+                    )
+                    .into());
+                }
+                Some(term)
+            }
+        };
+        let (fs, name) = (r.fs.clone(), r.name.clone());
+        self.commit(
+            MetaCommand::Fs {
+                op: FsOp::RenameIf(r),
+            },
+            fence,
+        )?;
+        // As in `fs_rename`: publishing a temp file is not renaming data.
+        if !is_internal_name(&name) {
+            self.fs_activity.record_rename(&fs);
         }
         Ok(())
     }

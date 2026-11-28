@@ -57,6 +57,8 @@ struct StateRef<'a> {
         serialize_with = "crate::metadata::dirty_cells::serialize"
     )]
     dirty: &'a BTreeMap<DeltaCell, u32>,
+    #[serde(skip_serializing_if = "crate::metadata::no_features")]
+    features: u64,
 }
 
 #[derive(Deserialize)]
@@ -70,6 +72,8 @@ struct State {
     leases: Leases,
     #[serde(default, with = "crate::metadata::dirty_cells")]
     dirty: BTreeMap<DeltaCell, u32>,
+    #[serde(default)]
+    features: u64,
 }
 
 /// A filesystem without its inodes, which have records of their own.
@@ -236,6 +240,7 @@ impl CatalogStore {
             raft_addrs: state.raft_addrs,
             leases: state.leases,
             dirty: state.dirty,
+            features: state.features,
             ..Catalog::default()
         };
         c.volumes = read_table(&tx, VOLUMES)?;
@@ -370,6 +375,7 @@ fn write_state(tx: &WriteTransaction, c: &Catalog) -> io::Result<()> {
         raft_addrs: &c.raft_addrs,
         leases: &c.leases,
         dirty: &c.dirty,
+        features: c.features,
     })?;
     tx.open_table(STATE)
         .map_err(err)?
