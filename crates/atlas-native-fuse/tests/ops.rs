@@ -137,6 +137,7 @@ impl Cluster {
                     compression: false,
                     dedup: false,
                     cross_group_dedup: false,
+                    concurrent_commits: None,
                     delta_writes: delta_writes.clone(),
                     rebuild_delay_secs: 60,
                     rebuild_bytes_per_sec: 0,

@@ -25,6 +25,8 @@ pub struct NativeIoCounters {
     delta_fallbacks: AtomicU64,
     delta_fold_conflicts: AtomicU64,
     delta_folded_deltas: AtomicU64,
+    concurrent_commits: AtomicU64,
+    concurrent_conflicts: AtomicU64,
     /// Where a fold's time goes: reading the cell, placing the new base on its replicas, and
     /// committing it. Failed attempts count.
     pub fold_read: Histogram,
@@ -60,6 +62,10 @@ pub struct NativeIoSnapshot {
     /// Folds the catalog rejected, and the deltas the successful ones consumed.
     pub delta_fold_conflicts: u64,
     pub delta_folded_deltas: u64,
+    /// Writes committed concurrently, and those whose cell changed before they could be
+    /// proposed.
+    pub concurrent_commits: u64,
+    pub concurrent_conflicts: u64,
 }
 
 impl NativeIoCounters {
@@ -112,6 +118,12 @@ impl NativeIoCounters {
     pub fn delta_fallback(&self) {
         self.delta_fallbacks.fetch_add(1, Ordering::Relaxed);
     }
+    pub fn concurrent_commit(&self) {
+        self.concurrent_commits.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn concurrent_conflict(&self) {
+        self.concurrent_conflicts.fetch_add(1, Ordering::Relaxed);
+    }
     pub fn snapshot(&self) -> NativeIoSnapshot {
         NativeIoSnapshot {
             reads: self.reads.load(Ordering::Relaxed),
@@ -132,6 +144,8 @@ impl NativeIoCounters {
             delta_fallbacks: self.delta_fallbacks.load(Ordering::Relaxed),
             delta_fold_conflicts: self.delta_fold_conflicts.load(Ordering::Relaxed),
             delta_folded_deltas: self.delta_folded_deltas.load(Ordering::Relaxed),
+            concurrent_commits: self.concurrent_commits.load(Ordering::Relaxed),
+            concurrent_conflicts: self.concurrent_conflicts.load(Ordering::Relaxed),
         }
     }
 }

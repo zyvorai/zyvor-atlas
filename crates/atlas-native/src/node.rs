@@ -148,6 +148,11 @@ pub struct MetadataRole {
     /// On: the reduction report says so. Writes do not share across groups yet (`cdc`).
     #[serde(default)]
     pub cross_group_dedup: bool,
+    /// Writes that create a cell's extent or replace all of it hold the group's write lock only
+    /// to propose, not while they wait for the commit (`docs/NATIVE_METADATA.md`, "Concurrent
+    /// commits"); off by default. It takes effect on the node that leads a group.
+    #[serde(default)]
+    pub concurrent_commits: Option<bool>,
     #[serde(default = "default_extent_bytes")]
     pub extent_bytes: usize,
     #[serde(default = "default_tick_ms")]
@@ -731,6 +736,9 @@ impl NativeNode {
                     ecfg.compression = m.compression;
                     ecfg.dedup = m.dedup;
                     ecfg.cross_group_dedup = m.cross_group_dedup;
+                    if let Some(on) = m.concurrent_commits {
+                        ecfg.concurrent_commits = on;
+                    }
                     ecfg.delta_writes = m.delta_writes.clone();
                     ecfg.grant_key = grant_key.clone();
                     ecfg.meta_group = g;
@@ -2031,6 +2039,38 @@ mod tests {
         assert!(cfg(Some(serde_json::json!({ "enable": true }))).is_err());
         let bad = serde_json::json!({ "max_pending_bytes": 10, "fold_headroom_bytes": 10 });
         assert!(cfg(Some(bad)).unwrap().validate().is_err());
+    }
+
+    #[test]
+    fn concurrent_commits_are_configured_per_node_and_off_unless_asked_for() {
+        let cfg = |value: Option<bool>| {
+            let mut metadata = serde_json::json!({
+                "listen": "127.0.0.1:0",
+                "peers": {},
+                "data_nodes": [{ "id": "d1", "addr": "d1:7000" }],
+                "replicas": 1,
+            });
+            if let Some(v) = value {
+                metadata["concurrent_commits"] = v.into();
+            }
+            let node: super::NodeConfig = serde_json::from_value(serde_json::json!({
+                "node_id": "m1",
+                "data_dir": "/tmp/x",
+                "http_listen": "127.0.0.1:0",
+                "metadata": metadata,
+            }))
+            .unwrap();
+            node.metadata.unwrap().concurrent_commits
+        };
+        // Unset takes the engine default, which is off.
+        assert_eq!(cfg(None), None);
+        let engine = crate::engine::EngineConfig::new("/tmp/x");
+        assert_eq!(
+            engine.concurrent_commits,
+            cfg!(feature = "concurrent-commits-test")
+        );
+        assert_eq!(cfg(Some(true)), Some(true));
+        assert_eq!(cfg(Some(false)), Some(false));
     }
 
     /// Both say "ask again": the FUSE client retries 503 and gives up on 409.

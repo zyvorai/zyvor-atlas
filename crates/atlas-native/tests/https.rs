@@ -142,6 +142,7 @@ fn start_node(root: &Path, server: &(String, String), client_ca: &str) -> Native
             compression: false,
             dedup: false,
             cross_group_dedup: false,
+            concurrent_commits: None,
             delta_writes: Default::default(),
             rebuild_delay_secs: 60,
             rebuild_bytes_per_sec: 0,

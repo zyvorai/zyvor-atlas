@@ -408,6 +408,42 @@ all configured with the same node ids and data-node addresses:
 - `checkpoint` is refused: the Raft node compacts its own log. `wal_records` reports the Raft log
   length above its compaction point.
 
+#### Concurrent commits (opt-in)
+
+By default a write that is neither a delta nor a whole number of grid cells (a new file smaller
+than the grid, say) holds the group's write lock while it places its data **and** waits for the
+Raft commit, and a whole-cell write holds it for the commit, so one such commit is in flight per
+group. With `metadata.concurrent_commits` (`EngineConfig::concurrent_commits`, **off by
+default**) a write whose every cell is new, or covered completely, goes differently:
+
+1. it takes a turn on each of its cells, kept until its commit has applied: writes of one cell
+   run one at a time, in the order they asked; writes of other cells do not wait;
+2. it places its replicas without the write lock;
+3. it takes the lock only to propose, and proposes only if, in the catalog the command will apply
+   on (applied plus every logged entry), each cell is still new or covered completely and the file
+   or volume still exists. This compare-and-swap is made by the leader under the node lock, with
+   nothing proposed in between and refused if the term has moved; the command itself is the same
+   `InstallExtents` as without the option, so there is no new log record and no upgrade rule;
+4. it releases the lock and waits for the commit.
+
+If the cell changed meanwhile (a partial overwrite or a truncate got in), nothing is proposed and
+the write takes the locked path, which reads and merges; the data already placed is left unused
+(`atlas_native_concurrent_commit_conflicts_total`). Everything that reads before it writes still
+holds the write lock: it knows no command is proposed meanwhile, and waiting for the applied index
+to reach the log's end covers those proposed before. With the option on, a `setattr` that does not
+change the size no longer takes the lock.
+
+Acknowledgement is unchanged: the replicas are durable and the command has committed and applied
+on the leader. What is **not** concurrent: partial overwrites of existing extents (delta writes are
+the separate answer for small ones), truncates, and snapshots while delta writes are in use. A
+locked write holds the lock until the proposals made before it have applied, and others wait to
+propose until it is done.
+
+The setting acts on the node that leads a group; set it on every metadata node so behaviour does
+not depend on who leads. `atlas_native_concurrent_commits_total` counts the writes that went this
+way. Tests: `tests/concurrent_commits.rs` and `src/engine/concurrent/tests.rs`. **No performance
+measurement of this option exists.**
+
 Node health and repair are described in the next section.
 
 `tests/data_node.rs` covers the remote device and its bounds, fencing across a data-node restart, an

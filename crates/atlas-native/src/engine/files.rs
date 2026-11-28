@@ -503,9 +503,11 @@ impl NativeEngine {
     /// there, not stale bytes.
     pub fn fs_setattr(&self, fs: &str, ino: u64, attr: SetAttr) -> Result<Attr, NativeError> {
         writable(fs)?;
-        let _write = self
-            .write_lock
-            .lock()
+        // With concurrent commits only a change of size needs ordering against writes: nothing
+        // else here touches a cell.
+        let _write = (attr.size.is_some() || !self.cfg.concurrent_commits)
+            .then(|| self.write_lock.lock())
+            .transpose()
             .map_err(|_| NativeError::Poisoned("write"))?;
         let mut fence = None;
         if let Some(size) = attr.size {
@@ -579,7 +581,7 @@ impl NativeEngine {
         if data.is_empty() {
             self.with_catalog(|c| target.extent_at(c, 0))??;
         } else if !self.try_delta(&target, offset, data)?
-            && !self.write_aligned(&target, offset, data, |c| {
+            && !self.write_unlocked(&target, offset, data, |c| {
                 target.extent_at(c, 0).map(|_| ())
             })?
         {

@@ -62,10 +62,10 @@ pub use alloc::{FreeList, FreeRange};
 pub use data_node::{DataNodeServer, RemoteDevice};
 pub use device::{BlockStore, DeviceId, FileDevice};
 pub use engine::{
-    run_folders, DeltaConfig, DeltaPoint, EngineConfig, ExportInfo, ExportManifest, ExportStats,
-    FileLayout, HostLocality, LayoutExtent, LayoutReplica, Locality, MetaBackend, NativeEngine,
-    NativeError, NodeLocality, NodeStatus, ObjectKind, PinReport, RepairStats, TierPolicy,
-    TierStats, VolumeInfo, MAX_FOLD_CONCURRENCY,
+    run_folders, CommitPoint, DeltaConfig, DeltaPoint, EngineConfig, ExportInfo, ExportManifest,
+    ExportStats, FileLayout, HostLocality, LayoutExtent, LayoutReplica, Locality, MetaBackend,
+    NativeEngine, NativeError, NodeLocality, NodeStatus, ObjectKind, PinReport, RepairStats,
+    TierPolicy, TierStats, VolumeInfo, MAX_FOLD_CONCURRENCY,
 };
 pub use gc::GcStats;
 pub use grant::{Grant, GrantKey};
