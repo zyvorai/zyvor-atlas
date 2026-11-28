@@ -37,6 +37,7 @@ use crate::{
     wal::{Wal, WalError, WalRecord},
 };
 
+mod changes;
 mod combiner;
 mod delta;
 mod direct;
@@ -51,6 +52,10 @@ mod replica;
 mod tier;
 use delta::{CellView, Scope};
 
+pub use changes::{
+    ChangeKind, ChangeLimits, ChangeSummary, ChangedField, FsChange, FsChangesPage,
+    DEFAULT_CHANGES_LIMIT, MAX_CHANGES_LIMIT,
+};
 pub use delta::{DeltaConfig, DeltaPoint};
 pub use direct::{
     DirectCell, DirectCellDone, DirectCommit, DirectLease, DirectReplicaDone, DirectTarget,

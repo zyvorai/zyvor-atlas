@@ -6,6 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
+use atlas_api_types::FsChangesPage;
 use atlas_driver_core::DriverError;
 use reqwest::{Method, StatusCode};
 use serde::Deserialize;
@@ -261,6 +262,17 @@ fn path_id(id: &str) -> Result<&str, DriverError> {
     }
 }
 
+/// A change listing cursor is `<hex id>.<offset>`; anything else is refused before it reaches a
+/// query string.
+fn cursor_param(c: &str) -> Result<&str, DriverError> {
+    if !c.is_empty() && c.len() <= 64 && c.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'.')
+    {
+        Ok(c)
+    } else {
+        Err(DriverError::Backend("invalid: malformed cursor".into()))
+    }
+}
+
 #[async_trait]
 impl NativeApi for HttpApi {
     /// Waits up to [`ELECTION_WAIT`] for a metadata leader, so an election in progress isn't
@@ -410,6 +422,20 @@ impl NativeApi for HttpApi {
             .ok()
             .and_then(|v| v["samples"].as_array().cloned())
             .ok_or_else(|| DriverError::Parse(format!("{path}: missing samples")))
+    }
+
+    async fn fs_changes(
+        &self,
+        fs_id: &str,
+        cursor: Option<&str>,
+        limit: u32,
+    ) -> Result<FsChangesPage, DriverError> {
+        let mut path = format!("/v1/fs/{}/changes?limit={limit}", path_id(fs_id)?);
+        if let Some(c) = cursor {
+            path.push_str("&cursor=");
+            path.push_str(cursor_param(c)?);
+        }
+        self.get(&path).await
     }
 
     async fn reduction(&self) -> Result<Value, DriverError> {

@@ -872,6 +872,73 @@ pub struct IoLease {
     pub reason: String,
 }
 
+/// What happened to one path of a filesystem since the snapshot it was cloned from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FsChangeKind {
+    Created,
+    Modified,
+    Deleted,
+    Renamed,
+}
+
+/// One changed path (`docs/NATIVE_FS.md#what-changed`). Metadata only: never file contents,
+/// symlink targets or extended attributes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsChange {
+    /// A path in the filesystem; for a deletion, a path in the snapshot.
+    pub path: String,
+    pub change: FsChangeKind,
+    /// `file`, `dir`, `symlink`, `fifo`, `socket`, `char_device` or `block_device`.
+    #[serde(rename = "type")]
+    pub file_type: String,
+    /// Renames: the path in the snapshot.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub from: Option<String>,
+    /// How the object differs from itself in the snapshot: `content`, `size`, `mode`, `owner`,
+    /// `xattrs`, `links`, `mtime`, `atime`, `ctime`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub changed: Vec<String>,
+    /// The path existed in the snapshot but held a different object.
+    #[serde(default)]
+    pub replaced: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_type: Option<String>,
+    /// The object exists both in the snapshot and in the filesystem.
+    #[serde(default)]
+    pub object_in_both: bool,
+    /// Inode number: entries with the same one are names of the same object.
+    pub ino: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size: Option<u64>,
+}
+
+/// Changes per kind over a whole listing, not just one page.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsChangeSummary {
+    pub created: u64,
+    pub modified: u64,
+    pub deleted: u64,
+    pub renamed: u64,
+}
+
+/// One page of the changes of a filesystem since the snapshot it was cloned from, in path order.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct FsChangesPage {
+    /// Backend ids of the filesystem and of the snapshot.
+    pub fs: String,
+    pub base_snapshot: String,
+    /// The backend's metadata log index the listing describes.
+    pub as_of_index: u64,
+    pub computed_unix_ms: u64,
+    pub total: u64,
+    pub summary: FsChangeSummary,
+    pub changes: Vec<FsChange>,
+    /// Pass as the cursor for the next page; `None` on the last.
+    #[serde(default)]
+    pub next: Option<String>,
+}
+
 /// Limits for a dedup-savings estimate. The scan reads real data, so every field is a ceiling.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct DedupEstimateOptions {

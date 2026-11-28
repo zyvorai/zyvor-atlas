@@ -6,6 +6,7 @@ use std::collections::BTreeMap;
 use std::sync::Mutex;
 
 use async_trait::async_trait;
+use atlas_api_types::FsChangesPage;
 use atlas_driver_core::DriverError;
 
 use crate::{DataNodeInfo, Layout, NativeApi, NativeFs, NativeVolume, NodeStatus, RaftInfo};
@@ -327,6 +328,25 @@ impl NativeApi for FakeApi {
             w(21.0, 1.0, 1.0, 0.05)
         });
         Ok(v)
+    }
+
+    /// Fixture: the fake stores no file tree, so it cannot say what changed. It refuses rather
+    /// than answer with an empty or made-up listing.
+    async fn fs_changes(
+        &self,
+        fs_id: &str,
+        _cursor: Option<&str>,
+        _limit: u32,
+    ) -> Result<FsChangesPage, DriverError> {
+        let s = lock(&self.state)?;
+        if !s.filesystems.contains_key(fs_id) {
+            return Err(DriverError::Backend(format!(
+                "not found: filesystem {fs_id}"
+            )));
+        }
+        Err(DriverError::NotImplemented(
+            "filesystem_changes: the fixture driver stores no file tree",
+        ))
     }
 
     /// Fixture: the fake stores no data, so there is nothing to reduce; all zeros.

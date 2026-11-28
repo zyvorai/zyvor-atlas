@@ -8,10 +8,10 @@
 //!
 //! | gate                                     | tools | made of                                   |
 //! |------------------------------------------|-------|-------------------------------------------|
-//! | default (read-only)                      | 54    | `mcp.rs` 22 + `mcp/ops.rs` 30 + 2 workspace reads |
-//! | `ATLAS_MCP_WRITE_ENABLE`                 | 60    | + 3 guarded writes + 3 workspace writes   |
-//! | `ATLAS_DATA_URL`                         | 61    | default + 7 `atlas_data` reads            |
-//! | both                                     | 71    | write + 7 reads + 4 `atlas_data` writes   |
+//! | default (read-only)                      | 55    | `mcp.rs` 22 + `mcp/ops.rs` 30 + 3 workspace reads |
+//! | `ATLAS_MCP_WRITE_ENABLE`                 | 61    | + 3 guarded writes + 3 workspace writes   |
+//! | `ATLAS_DATA_URL`                         | 62    | default + 7 `atlas_data` reads            |
+//! | both                                     | 72    | write + 7 reads + 4 `atlas_data` writes   |
 #![cfg(feature = "mcp")]
 
 use std::collections::HashSet;
@@ -20,10 +20,10 @@ mod common;
 mod mcp_data_support;
 use mcp_data_support::*;
 
-const COUNT_READ_ONLY: usize = 54;
-const COUNT_WITH_WRITES: usize = 60;
-const COUNT_WITH_DATA: usize = 61;
-const COUNT_WITH_BOTH: usize = 71;
+const COUNT_READ_ONLY: usize = 55;
+const COUNT_WITH_WRITES: usize = 61;
+const COUNT_WITH_DATA: usize = 62;
+const COUNT_WITH_BOTH: usize = 72;
 
 fn tool_attrs(src: &str) -> usize {
     src.matches("#[tool(").count()
@@ -37,11 +37,11 @@ fn source_attribute_counts_match_the_documented_breakdown() {
     let ws = tool_attrs(include_str!("../src/mcp/workspaces.rs"));
     let write = tool_attrs(include_str!("../src/mcp/write.rs"));
     let data = tool_attrs(include_str!("../src/mcp/data.rs"));
-    assert_eq!((core, ops, ws, write, data), (22, 30, 5, 3, 11));
+    assert_eq!((core, ops, ws, write, data), (22, 30, 6, 3, 11));
     assert_eq!(
-        core + ops + 2,
+        core + ops + 3,
         COUNT_READ_ONLY,
-        "2 of the 5 workspace tools are reads"
+        "3 of the 6 workspace tools are reads"
     );
     assert_eq!(COUNT_READ_ONLY + write + 3, COUNT_WITH_WRITES);
     assert_eq!(COUNT_READ_ONLY + 7, COUNT_WITH_DATA);
