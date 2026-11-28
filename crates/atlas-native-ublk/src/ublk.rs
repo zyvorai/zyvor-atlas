@@ -9,6 +9,7 @@ use std::{
     fs::OpenOptions,
     io,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
+    path::Path,
     rc::Rc,
     sync::{Arc, Mutex, MutexGuard},
     thread,
@@ -25,6 +26,7 @@ use libublk::{
 use crate::{
     dispatch::Dispatcher,
     params::{completion, device_params, DeviceParams, SECTOR},
+    rundir,
     volume::{Op, Reply, Request, Volume},
 };
 
@@ -206,6 +208,9 @@ impl Process {
         opts: DeviceOptions,
         ready: impl FnOnce(&str) + Send + Sync + 'static,
     ) -> Result<(), String> {
+        // libublk writes there as this user when the device starts.
+        let run_dir = UblkCtrl::run_dir();
+        rundir::secure(Path::new(&run_dir)).map_err(|e| format!("{run_dir}: {e}"))?;
         let workers = usize::from(opts.queues) * usize::from(opts.depth);
         let pool = Arc::new(
             Dispatcher::new(workers, {

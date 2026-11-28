@@ -42,7 +42,7 @@ for bin in "$NODE_BIN" "$UBLK_BIN"; do
   [ -x "$bin" ] || die "$bin not found or not executable"
 done
 for tool in curl cmp dd blockdev blkdiscard mkfs.ext4 e2fsck mount umount mountpoint sha256sum \
-  find timeout readlink; do
+  find timeout readlink stat; do
   command -v "$tool" >/dev/null || die "$tool is not installed"
 done
 
@@ -275,6 +275,8 @@ assert_ours
 [ "$(cat "$q/write_cache")" = "write through" ] || die "write cache: $(cat "$q/write_cache")"
 [ "$(cat "$q/discard_max_bytes")" = 0 ] || die "discard should be unsupported"
 [ "$(cat "$q/write_zeroes_max_bytes")" -gt 0 ] || die "write zeroes should be supported"
+# libublk's run directory, which the server writes to as root.
+[ $((8#$(stat -c %a /run/ublksrvd) & 8#22)) = 0 ] || die "other users can write /run/ublksrvd"
 for f in physical_block_size minimum_io_size optimal_io_size max_hw_sectors_kb \
   write_zeroes_max_bytes nr_requests; do
   echo "$f: $(cat "$q/$f")"

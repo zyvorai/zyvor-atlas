@@ -95,6 +95,17 @@ it started mounted after the host had unmounted it. With two devices, unmounting
 first, mounted before the second server started, succeeded on the host but left that filesystem
 active (still listed in `/sys/fs/ext4`), and `mke2fs` reported the device in use.
 
+### Run directory
+
+`libublk` records each device in `/run/ublksrvd/NNNN.json`. It creates that directory writable by
+everyone, without the sticky bit, and writes the file following symlinks. On the lab host an
+unprivileged user's symlink there made a server running as root overwrite the root-owned file it
+pointed at (`fs.protected_symlinks` does not cover a directory without the sticky bit). The server
+now creates the directory, or takes it over, before `libublk` writes there: owned by its user, no
+write permission for others, symlinks removed. Another ublk program on the same host that relies on
+the directory being world-writable (unprivileged ublk) would stop working. A program that creates the
+directory afresh and runs without this step is still exposed.
+
 ### Server death
 
 If the server is killed, the kernel fails its requests and removes `/dev/ublkbN`, but keeps the
@@ -170,10 +181,13 @@ clippy `-D warnings` and its tests on Linux (x86-64, Rust 1.98.1).
 
 2026-11-28, one lab host: Ubuntu 26.04.1, kernel 7.0.0-44-generic, x86-64, in-tree `ublk_drv`, fio
 3.41, release binaries. `deploy/native/ublk-live-check.sh`, with three nodes on localhost (2
-replicas, 1 MiB extents), passed twice with the cluster's data on a tmpfs, and once with it on a
-7200 rpm disk with the fio steps skipped. It checks:
+replicas, 1 MiB extents), passed with the cluster's data on a tmpfs. The build before the
+[run directory](#run-directory) change had passed twice that way, and once with the data on a
+7200 rpm disk and the fio steps skipped. It checks:
 
 - the device's size and queue limits: `write through`, no discard, write zeroes;
+- that other users cannot write `/run/ublksrvd` (a symlink planted there by an unprivileged user was
+  separately seen removed, its target untouched);
 - direct I/O compared with the volume read over HTTP, the last block, a refused write past the end;
 - fio with crc32c verification (4 KiB random writes at queue depth 16, and 4 KiB to 1 MiB with four
   jobs), verified again after a server restart, and failing on a block overwritten on purpose;

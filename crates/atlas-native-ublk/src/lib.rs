@@ -10,6 +10,7 @@
 
 pub mod dispatch;
 pub mod params;
+pub mod rundir;
 pub mod split;
 #[cfg(all(feature = "ublk", target_os = "linux"))]
 pub mod ublk;
