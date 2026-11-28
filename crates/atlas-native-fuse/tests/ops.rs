@@ -4,7 +4,13 @@
 //! The FUSE operations layer against a live in-process cluster: 3 Raft metadata nodes and 3
 //! data nodes on localhost.
 
-use std::{collections::BTreeMap, net::TcpListener, path::Path, sync::Arc, time::Duration};
+use std::{
+    collections::BTreeMap,
+    net::TcpListener,
+    path::Path,
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use atlas_native::{
     node::{DataNodeRole, DataNodeSpec, Listeners, MetadataRole, NativeNode, NodeConfig},
@@ -12,7 +18,7 @@ use atlas_native::{
 };
 use atlas_native_fuse::{
     client::{Body, Client, ClientConfig, Retry},
-    ops::{DirectReads, Ops, OpsConfig},
+    ops::{DirectReads, Ops, OpsConfig, WriteMode},
 };
 use rcgen::{BasicConstraints, CertificateParams, ExtendedKeyUsagePurpose, IsCa, Issuer, KeyPair};
 use reqwest::Method;
@@ -248,17 +254,28 @@ fn checkpoint_writes_go_in_the_background_and_report_failures_at_flush() {
     assert_eq!(other.read(f.ino, 0, 4 << 20).unwrap(), want);
 
     // Another client removes the file: the background runs fail. Later writes to it fail
-    // fast, and flush (fsync, close) reports the failure once.
+    // fast, and every handle's own fsync reports the loss.
     let g = ops
         .mknode(ROOT_INO, "gone.pt", NodeType::File, None, 0o644, 0, 0)
         .unwrap();
     other.unlink(ROOT_INO, "gone.pt").unwrap();
+    let (a, b) = (
+        ops.open(g.ino, true).unwrap(),
+        ops.open(g.ino, true).unwrap(),
+    );
     for i in 0..8u64 {
         if ops.write(g.ino, i << 17, &[7u8; 128 << 10]) == Err(libc::ENOENT) {
             break;
         }
     }
-    assert_eq!(ops.flush(g.ino), Err(libc::ENOENT));
+    // This used to assert that one `flush` of the inode failed and the next succeeded: the
+    // failure was one per inode and the first caller to ask used it up, so a second handle's
+    // fsync returned success although its bytes were lost. It is one report per handle.
+    assert_eq!(ops.fsync(a), Err(libc::ENOENT));
+    assert_eq!(ops.fsync(a), Ok(()));
+    assert_eq!(ops.fsync(b), Err(libc::ENOENT));
+    assert_eq!(ops.fsync(b), Ok(()));
+    // By inode number an fsync counts as a new opener: this loss has been synced.
     assert_eq!(ops.flush(g.ino), Ok(()));
 }
 
@@ -408,7 +425,7 @@ fn posix_operations_through_the_ops_layer() {
     let o = ops
         .mknode(ROOT_INO, "open.txt", NodeType::File, None, 0o644, 0, 0)
         .unwrap();
-    ops.opened(o.ino);
+    let handle = ops.open(o.ino, true).unwrap();
     ops.write(o.ino, 0, b"still here").unwrap();
     ops.unlink(ROOT_INO, "open.txt").unwrap();
     assert_eq!(ops.lookup(ROOT_INO, "open.txt"), Err(libc::ENOENT));
@@ -419,7 +436,7 @@ fn posix_operations_through_the_ops_layer() {
         .unwrap()
         .iter()
         .all(|e| e.name != "open.txt" && !e.name.starts_with(".atlas_hidden_")));
-    ops.released(o.ino).unwrap();
+    ops.release(handle).unwrap();
     assert_eq!(ops.getattr(o.ino), Err(libc::ENOENT));
 
     assert_eq!(ops.rmdir(ROOT_INO, "moved.txt"), Err(libc::ENOTDIR));
@@ -1093,6 +1110,340 @@ fn quota_overruns_fail_with_edquot_directly_and_at_flush() {
     }
     let failed = failed.or_else(|| wb.flush(g.ino).err());
     assert_eq!(failed, Some(libc::EDQUOT));
+}
+
+// ---- Lost write-back -------------------------------------------------------------------------
+//
+// A quota makes the cluster refuse bytes that write calls already accepted into write-back.
+// Every case runs with runs sent in the background (4) and in the calling thread (0).
+
+const PARALLEL: [usize; 2] = [4, 0];
+const KIB: usize = 1024;
+
+fn set_quota(c: &Cluster, fs: &str, max_bytes: u64) {
+    c.client()
+        .json(
+            Method::PUT,
+            &format!("/v1/fs/{fs}/quota"),
+            Body::Json(json!({ "max_bytes": max_bytes })),
+            Retry::Idempotent,
+        )
+        .unwrap();
+}
+
+/// A filesystem limited to 64 KiB, a mount of it, an empty file, and the inodes the mount
+/// was told lost bytes.
+fn lossy(c: &Cluster, fs: &str, cfg: OpsConfig) -> (Ops, u64, Arc<Mutex<Vec<u64>>>) {
+    create_fs(c, fs);
+    set_quota(c, fs, 64 << 10);
+    let ops = mount(c, fs, cfg);
+    let lost = Arc::new(Mutex::new(Vec::new()));
+    let seen = lost.clone();
+    ops.on_lost_writes(move |ino| seen.lock().unwrap().push(ino));
+    let ino = new_file(&ops, "f");
+    (ops, ino, lost)
+}
+
+fn sending(parallel: usize) -> OpsConfig {
+    OpsConfig {
+        writeback_parallel: parallel,
+        ..OpsConfig::default()
+    }
+}
+
+/// 128 KiB the quota will refuse, accepted into write-back.
+fn accept(ops: &Ops, handle: u64) {
+    let data = [7u8; 128 * KIB];
+    assert_eq!(
+        ops.handle_write(handle, 0, &data, WriteMode::Buffered),
+        Ok(data.len())
+    );
+}
+
+#[test]
+fn every_handle_learns_of_a_loss_from_its_own_fsync_or_close() {
+    let c = Cluster::start();
+    for p in PARALLEL {
+        let (ops, f, _) = lossy(&c, &format!("each{p}"), sending(p));
+        let a = ops.open(f, true).unwrap();
+        let b = ops.open(f, true).unwrap();
+        let dup = ops.open(f, true).unwrap();
+        let reader = ops.open(f, false).unwrap();
+        accept(&ops, a);
+
+        assert_eq!(ops.fsync(a), Err(libc::EDQUOT), "{p}");
+        assert_eq!(ops.fsync(a), Ok(()), "once per handle");
+        assert_eq!(ops.close(a), Ok(()), "its fsync has told it");
+        // Another handle's fsync took nothing from this one.
+        assert_eq!(ops.fsync(b), Err(libc::EDQUOT), "{p}");
+        // Closing descriptors of one handle (each may be ignored) leaves its fsync due.
+        assert_eq!(ops.close(dup), Err(libc::EDQUOT));
+        assert_eq!(ops.close(dup), Err(libc::EDQUOT));
+        assert_eq!(ops.fsync(dup), Err(libc::EDQUOT));
+        assert_eq!(ops.close(dup), Ok(()));
+        // A reader lost nothing at close; its fsync still answers for the file.
+        assert_eq!(ops.close(reader), Ok(()));
+        assert_eq!(ops.fsync(reader), Err(libc::EDQUOT));
+        // Opened after an fsync reported it: clean.
+        let late = ops.open(f, true).unwrap();
+        assert_eq!(ops.close(late), Ok(()));
+        assert_eq!(ops.fsync(late), Ok(()));
+        for h in [a, b, dup, reader, late] {
+            ops.release(h).unwrap();
+        }
+        assert_eq!(ops.flush_all(), Ok(()));
+    }
+}
+
+#[test]
+fn concurrent_fsyncs_do_not_take_the_report_from_each_other() {
+    let c = Cluster::start();
+    for p in PARALLEL {
+        let (ops, f, _) = lossy(&c, &format!("conc{p}"), sending(p));
+        let handles: Vec<u64> = (0..8).map(|_| ops.open(f, true).unwrap()).collect();
+        accept(&ops, handles[0]);
+        std::thread::scope(|s| {
+            let calls: Vec<_> = handles.iter().map(|h| s.spawn(|| ops.fsync(*h))).collect();
+            for call in calls {
+                assert_eq!(call.join().unwrap(), Err(libc::EDQUOT), "{p}");
+            }
+        });
+    }
+}
+
+#[test]
+fn internal_flushes_do_not_use_up_the_report() {
+    type Internal = fn(&Ops, u64, u64);
+    let cases: [(&str, Internal); 7] = [
+        ("read", |ops, f, _| {
+            // A buffered read (a page fault, perhaps) returns what is stored.
+            assert_eq!(ops.read(f, 0, 16), Ok(Vec::new()));
+        }),
+        ("read-direct", |ops, f, _| {
+            assert_eq!(ops.read_direct(f, 0, 16), Err(libc::EDQUOT));
+            assert_eq!(ops.read_direct(f, 0, 16), Ok(Vec::new()));
+        }),
+        ("write-direct", |ops, f, other| {
+            assert_eq!(
+                ops.handle_write(other, 0, b"direct", WriteMode::Direct),
+                Err(libc::EDQUOT)
+            );
+            assert_eq!(ops.read(f, 0, 16), Ok(Vec::new()));
+        }),
+        ("truncate", |ops, f, _| {
+            // A truncate is not a sync: it goes through.
+            let cut = SetAttr {
+                size: Some(10),
+                ..SetAttr::default()
+            };
+            assert_eq!(ops.setattr(f, cut).unwrap().size, 10);
+        }),
+        ("release", |ops, _, other| {
+            assert_eq!(ops.release(other), Err(libc::EDQUOT));
+        }),
+        ("rename", |ops, _, _| {
+            ops.rename(ROOT_INO, "f", ROOT_INO, "g").unwrap();
+            assert_eq!(ops.flush_all(), Err(libc::EDQUOT));
+        }),
+        ("unmount", |ops, _, _| {
+            // Still unreported, so it is reported again.
+            assert_eq!(ops.flush_all(), Err(libc::EDQUOT));
+            assert_eq!(ops.flush_all(), Err(libc::EDQUOT));
+        }),
+    ];
+    let c = Cluster::start();
+    for p in PARALLEL {
+        for (name, internal) in cases {
+            let (ops, f, _) = lossy(&c, &format!("{name}{p}"), sending(p));
+            let writer = ops.open(f, true).unwrap();
+            let other = ops.open(f, true).unwrap();
+            accept(&ops, writer);
+            internal(&ops, f, other);
+            assert_eq!(ops.fsync(writer), Err(libc::EDQUOT), "{name} {p}");
+            assert_eq!(ops.fsync(writer), Ok(()), "{name} {p}");
+            assert_eq!(ops.flush_all(), Ok(()), "{name} {p}");
+        }
+        // Unlinking a file nobody has open succeeds: it is not a sync either.
+        let (ops, f, _) = lossy(&c, &format!("unlink{p}"), sending(p));
+        ops.write(f, 0, &[7u8; 128 * KIB]).unwrap();
+        assert_eq!(ops.unlink(ROOT_INO, "f"), Ok(()), "{p}");
+        assert_eq!(ops.lookup(ROOT_INO, "f"), Err(libc::ENOENT));
+    }
+}
+
+#[test]
+fn lost_bytes_are_not_served_as_written() {
+    let c = Cluster::start();
+    for p in PARALLEL {
+        let fs = format!("stale{p}");
+        // Long cache lifetimes: only the loss itself can make the mount look again.
+        let (ops, f, lost) = lossy(
+            &c,
+            &fs,
+            OpsConfig {
+                ttl: Duration::from_secs(60),
+                ..sending(p)
+            },
+        );
+        let h = ops.open(f, true).unwrap();
+        ops.handle_write(h, 0, b"stored", WriteMode::Buffered)
+            .unwrap();
+        ops.fsync(h).unwrap();
+        assert_eq!(ops.read(f, 0, 64).unwrap(), b"stored");
+        accept(&ops, h);
+        assert_eq!(ops.getattr(f).unwrap().size, 128 << 10);
+        assert!(lost.lock().unwrap().is_empty());
+        assert_eq!(ops.fsync(h), Err(libc::EDQUOT));
+        assert_eq!(*lost.lock().unwrap(), [f]);
+        assert_eq!(ops.getattr(f).unwrap().size, 6);
+        assert_eq!(ops.read(f, 0, 64).unwrap(), b"stored");
+        // The bytes were dropped, not kept for another try.
+        set_quota(&c, &fs, 1 << 20);
+        assert_eq!(ops.fsync(h), Ok(()));
+        assert_eq!(ops.read(f, 0, 64).unwrap(), b"stored");
+    }
+}
+
+#[test]
+fn a_loss_found_in_the_background_reaches_handles_with_nobody_waiting() {
+    let c = Cluster::start();
+    let (ops, f, lost) = lossy(
+        &c,
+        "bg",
+        OpsConfig {
+            writeback_bytes: 128 << 10,
+            ..sending(4)
+        },
+    );
+    let h = ops.open(f, true).unwrap();
+    accept(&ops, h);
+    let until = std::time::Instant::now() + Duration::from_secs(20);
+    while lost.lock().unwrap().is_empty() {
+        assert!(std::time::Instant::now() < until, "the run never failed");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(ops.read(f, 0, 16), Ok(Vec::new()));
+    assert_eq!(ops.close(h), Err(libc::EDQUOT));
+    assert_eq!(ops.fsync(h), Err(libc::EDQUOT));
+}
+
+#[test]
+fn a_loss_nobody_synced_reaches_a_later_openers_fsync() {
+    let c = Cluster::start();
+    for p in PARALLEL {
+        let (ops, f, _) = lossy(&c, &format!("later{p}"), sending(p));
+        let h = ops.open(f, true).unwrap();
+        accept(&ops, h);
+        // As for dirty pages of a mapping written back after the last close: only release,
+        // whose result the kernel ignores, sees the failure.
+        assert_eq!(ops.release(h), Err(libc::EDQUOT));
+        let reader = ops.open(f, false).unwrap();
+        assert_eq!(ops.close(reader), Ok(()));
+        ops.release(reader).unwrap();
+        let again = ops.open(f, true).unwrap();
+        assert_eq!(ops.close(again), Ok(()), "not a loss of this handle");
+        assert_eq!(ops.fsync(again), Err(libc::EDQUOT), "{p}");
+        ops.release(again).unwrap();
+        let after = ops.open(f, true).unwrap();
+        assert_eq!(ops.fsync(after), Ok(()));
+    }
+}
+
+#[test]
+fn a_write_after_a_loss_fails_once_and_mapped_pages_are_always_taken() {
+    let c = Cluster::start();
+    for p in PARALLEL {
+        let fs = format!("refuse{p}");
+        let (ops, f, _) = lossy(&c, &fs, sending(p));
+        let a = ops.open(f, true).unwrap();
+        let b = ops.open(f, true).unwrap();
+        accept(&ops, a);
+        assert_eq!(ops.read_direct(f, 0, 1), Err(libc::EDQUOT));
+        set_quota(&c, &fs, 1 << 20);
+        // Written back from a mapping, through whichever handle the kernel picks.
+        assert_eq!(ops.handle_write(a, 0, b"mapped", WriteMode::Mapped), Ok(6));
+        for (h, mode) in [(a, WriteMode::Buffered), (b, WriteMode::Direct)] {
+            assert_eq!(ops.handle_write(h, 6, b"+", mode), Err(libc::EDQUOT), "{p}");
+            assert_eq!(ops.handle_write(h, 6, b"+", mode), Ok(1), "{p}");
+        }
+        assert_eq!(ops.fsync(a), Err(libc::EDQUOT));
+        assert_eq!(ops.fsync(b), Err(libc::EDQUOT));
+        assert_eq!(ops.fsync(a), Ok(()));
+        assert_eq!(ops.read(f, 0, 64).unwrap(), b"mapped+");
+    }
+}
+
+#[test]
+fn a_failed_run_sent_by_a_write_call_is_recorded_and_the_next_run_still_goes() {
+    let c = Cluster::start();
+    for p in PARALLEL {
+        let (ops, f, _) = lossy(
+            &c,
+            &format!("two{p}"),
+            OpsConfig {
+                writeback_bytes: 64 << 10,
+                ..sending(p)
+            },
+        );
+        let a = ops.open(f, true).unwrap();
+        let b = ops.open(f, true).unwrap();
+        // 64 KiB stored: the quota is full, so only overwrites pass.
+        ops.handle_write(a, 0, &[1u8; 64 * KIB], WriteMode::Buffered)
+            .unwrap();
+        ops.fsync(a).unwrap();
+        // Accepted into the buffer, past the quota.
+        ops.handle_write(a, 1 << 20, &[2u8; 32 * KIB], WriteMode::Buffered)
+            .unwrap();
+        // `b` pushes that run out, then fills a run of its own, which is an overwrite.
+        // The other run's failure is not this write's: its bytes are taken and stored.
+        assert_eq!(
+            ops.handle_write(b, 0, &[3u8; 64 * KIB], WriteMode::Buffered),
+            Ok(64 * KIB),
+            "{p}"
+        );
+        assert_eq!(ops.fsync(a), Err(libc::EDQUOT), "{p}");
+        assert_eq!(ops.read(f, 0, 64 * KIB).unwrap(), [3u8; 64 * KIB], "{p}");
+    }
+}
+
+#[test]
+fn a_write_that_fails_only_its_own_bytes_concerns_only_its_caller() {
+    let c = Cluster::start();
+    for (name, cfg) in [
+        (
+            "through",
+            OpsConfig {
+                writeback_bytes: 0,
+                ..sending(0)
+            },
+        ),
+        (
+            "full",
+            OpsConfig {
+                writeback_bytes: 64 << 10,
+                ..sending(0)
+            },
+        ),
+    ] {
+        let (ops, f, lost) = lossy(&c, name, cfg);
+        let a = ops.open(f, true).unwrap();
+        let b = ops.open(f, true).unwrap();
+        assert_eq!(
+            ops.handle_write(a, 0, &[1u8; 128 * KIB], WriteMode::Buffered),
+            Err(libc::EDQUOT)
+        );
+        assert_eq!(
+            ops.handle_write(a, 0, &[1u8; 128 * KIB], WriteMode::Direct),
+            Err(libc::EDQUOT)
+        );
+        // The caches are dropped all the same: part of such a write may have been stored.
+        assert!(!lost.lock().unwrap().is_empty());
+        // Nothing that a call accepted is gone, so nothing is left to report.
+        for h in [a, b] {
+            assert_eq!(ops.fsync(h), Ok(()), "{name}");
+            assert_eq!(ops.close(h), Ok(()), "{name}");
+        }
+    }
 }
 
 #[test]

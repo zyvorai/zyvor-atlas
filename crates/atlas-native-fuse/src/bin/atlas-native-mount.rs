@@ -49,7 +49,8 @@ struct Args {
     #[arg(long, default_value_t = 4 << 20)]
     writeback_bytes: usize,
     /// Full write-back runs sent at once in the background (0 sends them in the write call). A
-    /// failed one is reported by the next write to the file, fsync or close.
+    /// failed one drops its bytes and is reported to every handle open on the file, by its next
+    /// write and by its own fsync or close.
     #[arg(long, default_value_t = 4)]
     writeback_parallel: usize,
     /// Fetch at least this much per read and serve following reads from it (0 disables).
@@ -215,8 +216,22 @@ fn mount(args: &Args, ops: Ops) -> Result<(), String> {
     }
     cfg.n_threads = Some(args.fuse_threads.max(1));
     cfg.clone_fd = args.fuse_threads > 1;
-    let fs = atlas_native_fuse::fuse::AtlasFs::new(ops).with_posix_acl(args.acl);
-    fuser::mount(fs, &args.mountpoint, &cfg).map_err(|e| format!("mount: {e}"))
+    let (invalidator, queue) = atlas_native_fuse::invalidate::channel();
+    let fs = atlas_native_fuse::fuse::AtlasFs::new(ops)
+        .with_posix_acl(args.acl)
+        .with_invalidation(invalidator);
+    let session =
+        fuser::Session::new(fs, &args.mountpoint, &cfg).map_err(|e| format!("mount: {e}"))?;
+    let kernel = session.notifier();
+    queue
+        .serve(move |ino| {
+            // Offset 0, length 0: the attributes and every cached page.
+            if let Err(e) = kernel.inval_inode(fuser::INodeNo(ino), 0, 0) {
+                tracing::warn!(ino, error = %e, "could not drop the kernel's copy of lost data");
+            }
+        })
+        .map_err(|e| format!("invalidation thread: {e}"))?;
+    session.run().map_err(|e| format!("mount: {e}"))
 }
 
 #[cfg(not(all(feature = "fuse", target_os = "linux")))]
@@ -250,14 +265,23 @@ mod tests {
     use super::*;
 
     fn args(extra: &[&str]) -> Args {
-        let mut v = vec!["atlas-native-mount", "--endpoint", "http://x:1", "--fs", "f", "/mnt"];
+        let mut v = vec![
+            "atlas-native-mount",
+            "--endpoint",
+            "http://x:1",
+            "--fs",
+            "f",
+            "/mnt",
+        ];
         v.extend_from_slice(extra);
         Args::try_parse_from(v).unwrap()
     }
 
     #[test]
     fn rdma_is_off_unless_asked_for() {
-        assert!(rdma_config(&args(&["--direct-reads"]), false).unwrap().is_none());
+        assert!(rdma_config(&args(&["--direct-reads"]), false)
+            .unwrap()
+            .is_none());
     }
 
     #[test]

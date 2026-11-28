@@ -20,7 +20,12 @@ use fuser::{
     ReplyOpen, ReplyStatfs, ReplyWrite, ReplyXattr, Request, TimeOrNow, WriteFlags,
 };
 
-use crate::{dirs::DirStreams, locks::F_UNLCK, ops::Ops};
+use crate::{
+    dirs::DirStreams,
+    invalidate::Invalidator,
+    locks::F_UNLCK,
+    ops::{Ops, WriteMode},
+};
 
 const STATFS_BLOCK: u64 = 4096;
 
@@ -62,6 +67,8 @@ pub struct AtlasFs {
     pub ops: Ops,
     dirs: DirStreams,
     posix_acl: bool,
+    /// Drops the kernel's cached copy of files that lost buffered writes.
+    invalidator: Option<Invalidator>,
 }
 
 fn time(ns: i64) -> SystemTime {
@@ -122,21 +129,31 @@ fn name(n: &OsStr) -> Result<&str, Errno> {
     n.to_str().ok_or(Errno::EINVAL)
 }
 
-/// File handle bit: opened with `O_DIRECT`.
+/// File handle bit: opened with `O_DIRECT`. The other bits are the [`Ops`] handle.
 const FH_DIRECT: u64 = 1;
 
-/// The handle and open flags for a file opened with `flags`: `O_DIRECT` bypasses the kernel's
-/// page cache (`FOPEN_DIRECT_IO`, with parallel writes to one file allowed) and this client's
-/// write-back and read-ahead.
-fn handle(flags: i32) -> (FileHandle, FopenFlags) {
+/// The [`Ops`] handle in a FUSE file handle.
+fn ops_handle(fh: FileHandle) -> u64 {
+    fh.0 >> 1
+}
+
+/// The file handle and open flags for a file opened with `flags` as [`Ops`] handle `ops`:
+/// `O_DIRECT` bypasses the kernel's page cache (`FOPEN_DIRECT_IO`, with parallel writes to one
+/// file allowed) and this client's write-back and read-ahead.
+fn handle(ops: u64, flags: i32) -> (FileHandle, FopenFlags) {
     if flags & libc::O_DIRECT != 0 {
         (
-            FileHandle(FH_DIRECT),
+            FileHandle(ops << 1 | FH_DIRECT),
             FopenFlags::FOPEN_DIRECT_IO | FopenFlags::FOPEN_PARALLEL_DIRECT_WRITES,
         )
     } else {
-        (FileHandle(0), FopenFlags::empty())
+        (FileHandle(ops << 1), FopenFlags::empty())
     }
+}
+
+/// Whether a handle opened with `flags` can write.
+fn writable(flags: i32) -> bool {
+    flags & libc::O_ACCMODE != libc::O_RDONLY
 }
 
 /// A node to create with the umask applied, and the mode before it for a parent with a default
@@ -172,6 +189,26 @@ impl AtlasFs {
             ops,
             dirs: DirStreams::default(),
             posix_acl: false,
+            invalidator: None,
+        }
+    }
+
+    /// Drops the kernel's cached copy of a file whose buffered writes are lost, and does so
+    /// before replying to an fsync or close that reports it. The caller serves the queue of
+    /// `invalidator` with the session's notifier.
+    pub fn with_invalidation(mut self, invalidator: Invalidator) -> Self {
+        let lost = invalidator.clone();
+        self.ops.on_lost_writes(move |ino| lost.lost(ino));
+        self.invalidator = Some(invalidator);
+        self
+    }
+
+    /// Replies to an fsync or close of `ino`.
+    fn report(&self, ino: u64, result: Result<(), i32>, reply: ReplyEmpty) {
+        match (result, &self.invalidator) {
+            (Ok(()), _) => reply.ok(),
+            (Err(e), Some(i)) => i.then(ino, move || reply.error(err(e))),
+            (Err(e), None) => reply.error(err(e)),
         }
     }
 
@@ -527,9 +564,13 @@ impl Filesystem for AtlasFs {
         if self.ops.read_only() && flags.acc_mode() != OpenAccMode::O_RDONLY {
             return reply.error(Errno::EROFS);
         }
-        self.ops.opened(ino.0);
-        let (fh, open_flags) = handle(flags.0);
-        reply.opened(fh, open_flags);
+        match self.ops.open(ino.0, writable(flags.0)) {
+            Ok(h) => {
+                let (fh, open_flags) = handle(h, flags.0);
+                reply.opened(fh, open_flags)
+            }
+            Err(e) => reply.error(err(e)),
+        }
     }
 
     fn create(
@@ -544,13 +585,13 @@ impl Filesystem for AtlasFs {
     ) {
         tri!(reply, self.mutate());
         let n = tri!(reply, name(n));
-        match self
+        let created = self
             .ops
             .create(parent.0, new_node(req, n, NodeType::File, mode, umask))
-        {
-            Ok(a) => {
-                self.ops.opened(a.ino);
-                let (fh, open_flags) = handle(flags);
+            .and_then(|a| Ok((self.ops.open(a.ino, writable(flags))?, a)));
+        match created {
+            Ok((h, a)) => {
+                let (fh, open_flags) = handle(h, flags);
                 reply.created(&self.ttl(), &file_attr(&a), Generation(0), fh, open_flags)
             }
             Err(e) => reply.error(err(e)),
@@ -582,21 +623,23 @@ impl Filesystem for AtlasFs {
     fn write(
         &self,
         _req: &Request,
-        ino: INodeNo,
+        _ino: INodeNo,
         fh: FileHandle,
         offset: u64,
         data: &[u8],
-        _write_flags: WriteFlags,
+        write_flags: WriteFlags,
         _flags: OpenFlags,
         _lock_owner: Option<LockOwner>,
         reply: ReplyWrite,
     ) {
-        let r = if fh.0 & FH_DIRECT != 0 {
-            self.ops.write_through(ino.0, offset, data)
+        let mode = if write_flags.contains(WriteFlags::FUSE_WRITE_CACHE) {
+            WriteMode::Mapped
+        } else if fh.0 & FH_DIRECT != 0 {
+            WriteMode::Direct
         } else {
-            self.ops.write(ino.0, offset, data)
+            WriteMode::Buffered
         };
-        match r {
+        match self.ops.handle_write(ops_handle(fh), offset, data, mode) {
             Ok(n) => reply.written(n as u32),
             Err(e) => reply.error(err(e)),
         }
@@ -606,7 +649,7 @@ impl Filesystem for AtlasFs {
         &self,
         _req: &Request,
         ino: INodeNo,
-        _fh: FileHandle,
+        fh: FileHandle,
         lock_owner: LockOwner,
         reply: ReplyEmpty,
     ) {
@@ -614,17 +657,14 @@ impl Filesystem for AtlasFs {
         if let Err(e) = self.ops.release_locks(ino.0, lock_owner.0) {
             tracing::warn!(errno = e, "releasing locks at close failed");
         }
-        match self.ops.flush(ino.0) {
-            Ok(()) => reply.ok(),
-            Err(e) => reply.error(err(e)),
-        }
+        self.report(ino.0, self.ops.close(ops_handle(fh)), reply);
     }
 
     fn release(
         &self,
         _req: &Request,
         ino: INodeNo,
-        _fh: FileHandle,
+        fh: FileHandle,
         _flags: OpenFlags,
         lock_owner: Option<LockOwner>,
         _flush: bool,
@@ -636,7 +676,8 @@ impl Filesystem for AtlasFs {
                 tracing::warn!(errno = e, "releasing locks at close failed");
             }
         }
-        match self.ops.released(ino.0) {
+        // The kernel ignores this reply: a loss stays recorded for later openers.
+        match self.ops.release(ops_handle(fh)) {
             Ok(()) => reply.ok(),
             Err(e) => reply.error(err(e)),
         }
@@ -646,14 +687,24 @@ impl Filesystem for AtlasFs {
         &self,
         _req: &Request,
         ino: INodeNo,
+        fh: FileHandle,
+        _datasync: bool,
+        reply: ReplyEmpty,
+    ) {
+        self.report(ino.0, self.ops.fsync(ops_handle(fh)), reply);
+    }
+
+    /// Every change to a directory is committed by the cluster before its call returns, so
+    /// there is nothing left to sync.
+    fn fsyncdir(
+        &self,
+        _req: &Request,
+        _ino: INodeNo,
         _fh: FileHandle,
         _datasync: bool,
         reply: ReplyEmpty,
     ) {
-        match self.ops.flush(ino.0) {
-            Ok(()) => reply.ok(),
-            Err(e) => reply.error(err(e)),
-        }
+        reply.ok();
     }
 
     fn opendir(&self, _req: &Request, ino: INodeNo, _flags: OpenFlags, reply: ReplyOpen) {
@@ -765,10 +816,13 @@ mod open_tests {
 
     #[test]
     fn o_direct_opens_bypass_the_page_cache() {
-        let (fh, f) = handle(libc::O_RDWR | libc::O_DIRECT);
-        assert_eq!(fh.0 & FH_DIRECT, FH_DIRECT);
+        let (fh, f) = handle(7, libc::O_RDWR | libc::O_DIRECT);
+        assert_eq!((fh.0 & FH_DIRECT, ops_handle(fh)), (FH_DIRECT, 7));
         assert!(f.contains(FopenFlags::FOPEN_DIRECT_IO | FopenFlags::FOPEN_PARALLEL_DIRECT_WRITES));
-        let (fh, f) = handle(libc::O_RDWR | libc::O_SYNC);
-        assert_eq!((fh.0, f), (0, FopenFlags::empty()));
+        let (fh, f) = handle(7, libc::O_RDWR | libc::O_SYNC);
+        assert_eq!((fh.0 & FH_DIRECT, ops_handle(fh)), (0, 7));
+        assert_eq!(f, FopenFlags::empty());
+        assert!(writable(libc::O_WRONLY) && writable(libc::O_RDWR | libc::O_APPEND));
+        assert!(!writable(libc::O_RDONLY | libc::O_DIRECT));
     }
 }
