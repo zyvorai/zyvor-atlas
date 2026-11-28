@@ -32,6 +32,15 @@ with `atlas-native-mount`; the Atlas gateway creates, snapshots and clones files
   **Clones** start a new filesystem from a snapshot. Writes on either side allocate new extents, so a
   filesystem, its snapshots and its clones never see each other's changes. Each survives deleting the
   others; extents are freed by GC once nothing references them.
+- **A truncate into an extent is two metadata commits**: the extent without its tail, then the new
+  size. The leader takes no filesystem snapshot between them, so a snapshot holds the file from
+  before the truncate or from after it (a read of the live file made meanwhile can still see zeros
+  past the new end under the old size). The pair is not atomic across a failure. If the second commit
+  is never made (the leader stops or loses its term, the first commit times out but applies later, or
+  a process on a local log crashes), the file keeps its old size with zeros from the new end to the end
+  of that extent, and reads and later snapshots see exactly that until the truncate is repeated. The
+  call has not succeeded then; `atlas-native-mount` retries it on the next leader for as long as it
+  retries any request (30 s by default), but a snapshot taken before the retry stays as it was.
 
 ## Node API
 

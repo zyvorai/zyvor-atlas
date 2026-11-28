@@ -354,6 +354,7 @@ pub struct NativeEngine {
     /// Serializes writes that read what they overwrite (partial extents) through their commit,
     /// and every write's commit; aligned whole-extent writes place their data without it.
     write_lock: Mutex<()>,
+    truncates: files::Truncates,
     /// Free ranges held by placements whose commit hasn't applied yet.
     inflight: inflight::Inflight,
     /// Leases clients hold to write data nodes directly, until they commit or expire.
@@ -448,6 +449,7 @@ impl NativeEngine {
             nodes: runtimes,
             meta,
             write_lock: Mutex::new(()),
+            truncates: Default::default(),
             inflight: Default::default(),
             direct: Default::default(),
             repair_lock: Mutex::new(()),

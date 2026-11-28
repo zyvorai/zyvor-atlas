@@ -4,6 +4,8 @@
 //! File and directory operations over the namespace in the catalog. File data goes through the
 //! same extent grid, replication and copy-on-write path as volume data.
 
+use std::sync::{Arc, Mutex, RwLock};
+
 use serde::{Deserialize, Serialize};
 
 use super::{now_ns, NativeEngine, NativeError, Target};
@@ -16,6 +18,25 @@ use crate::{
 
 /// File extent grid for new filesystems: a 4 KiB write rewrites at most this much.
 pub const DEFAULT_FS_EXTENT_BYTES: u64 = 1 << 20;
+
+type TruncateHook = Arc<dyn Fn() + Send + Sync>;
+
+/// Orders truncates into an extent against filesystem snapshots.
+#[derive(Default)]
+pub(super) struct Truncates {
+    /// Held by a truncate into an extent across its two commits (the extent without its tail,
+    /// then the size) and shared by filesystem snapshots, which therefore hold both or neither.
+    /// Taken after `write_lock` where both are held, never before it.
+    commits: RwLock<()>,
+    /// Runs between those two commits, for tests.
+    hook: Mutex<Option<TruncateHook>>,
+}
+
+impl std::fmt::Debug for Truncates {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("Truncates")
+    }
+}
 
 /// What `stat(2)` needs about an inode.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -498,14 +519,33 @@ impl NativeEngine {
         Ok(())
     }
 
+    #[doc(hidden)]
+    pub fn set_truncate_hook(&self, hook: Option<Arc<dyn Fn() + Send + Sync>>) {
+        if let Ok(mut h) = self.truncates.hook.lock() {
+            *h = hook;
+        }
+    }
+
+    fn between_truncate_commits(&self) {
+        let hook = self.truncates.hook.lock().ok().and_then(|h| h.clone());
+        if let Some(hook) = hook {
+            hook();
+        }
+    }
+
     /// Changes attributes. Truncating into the middle of an extent first rewrites that extent
     /// without its tail, so growing the file again later reads zeros there, not stale bytes.
+    /// That and the new size are two commits: no snapshot taken by this engine falls between
+    /// them, but a failure after the first (a lost leadership, a crash) leaves the old size
+    /// over the shortened extent until the truncate is repeated.
     pub fn fs_setattr(&self, fs: &str, ino: u64, attr: SetAttr) -> Result<Attr, NativeError> {
         writable(fs)?;
         let _write = self
             .write_lock
             .lock()
             .map_err(|_| NativeError::Poisoned("write"))?;
+        // Held from before the first of two commits until after the second.
+        let mut between = None;
         if let Some(size) = attr.size {
             let target = Target::File {
                 fs,
@@ -520,7 +560,14 @@ impl NativeEngine {
                         let fence = self.write_fence()?;
                         let mut buf = self.read_extent(&ext)?;
                         buf.truncate((size - cell) as usize);
+                        between = Some(
+                            self.truncates
+                                .commits
+                                .write()
+                                .map_err(|_| NativeError::Poisoned("truncate"))?,
+                        );
                         self.install_extent(&target, cell, &buf, fence)?;
+                        self.between_truncate_commits();
                     }
                 }
             }
@@ -531,6 +578,7 @@ impl NativeEngine {
             attr,
             now_ns: now_ns(),
         })?;
+        drop(between);
         self.fs_getattr(fs, ino)
     }
 
@@ -701,6 +749,13 @@ impl NativeEngine {
         name: impl Into<String>,
     ) -> Result<SnapshotId, NativeError> {
         writable(fs)?;
+        // Never between the two commits of a truncate into an extent, which `write_lock`
+        // alone does not prevent: snapshots do not take it.
+        let _whole = self
+            .truncates
+            .commits
+            .read()
+            .map_err(|_| NativeError::Poisoned("truncate"))?;
         self.fs_commit(FsOp::SnapshotFs {
             id: id.clone(),
             fs: fs.into(),
