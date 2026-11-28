@@ -344,7 +344,7 @@ pub enum MetaBackend {
 enum Meta {
     Local {
         catalog: Box<RwLock<Catalog>>,
-        wal: Mutex<Wal>,
+        wal: Box<Mutex<Wal>>,
         store: CatalogStore,
     },
     Raft {
@@ -529,7 +529,7 @@ impl NativeEngine {
                 Meta::Local {
                     store,
                     catalog: Box::new(RwLock::new(catalog)),
-                    wal: Mutex::new(wal),
+                    wal: Box::new(Mutex::new(wal)),
                 }
             }
             MetaBackend::Raft { server, timeout } => Meta::Raft { server, timeout },
