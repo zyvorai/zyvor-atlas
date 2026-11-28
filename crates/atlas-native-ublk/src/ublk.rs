@@ -6,6 +6,7 @@
 //! through the queue's io_uring. Linux 6.0 or newer with `ublk_drv`, and `CAP_SYS_ADMIN`.
 
 use std::{
+    fs::OpenOptions,
     io,
     os::fd::{AsRawFd, FromRawFd, OwnedFd},
     rc::Rc,
@@ -73,9 +74,40 @@ fn stop(ctrl: &UblkCtrl) -> Result<(), UblkError> {
     ctrl.kill_dev().map(drop)
 }
 
+/// Removes device `id` after its server died without removing it, which the kernel keeps until
+/// asked. Refuses a device that is not stopped, or that a process still serves: removing it would
+/// take it away from that server (also one that is just creating it).
+pub fn delete_device(id: u32) -> Result<(), String> {
+    let number = i32::try_from(id).map_err(|_| format!("device number {id} is out of range"))?;
+    let ctrl =
+        UblkCtrl::new_simple(number).map_err(|e| format!("no ublk device {id} to remove: {e}"))?;
+    let state = u32::from(ctrl.dev_info().state);
+    if state != sys::UBLK_S_DEV_DEAD {
+        return Err(format!(
+            "ublk device {id} is not stopped (state {state}); stop its server instead"
+        ));
+    }
+    // The control node admits one opener, the server. Closed again before the removal, which
+    // waits for every holder.
+    let cdev = ctrl.get_cdev_path();
+    OpenOptions::new()
+        .read(true)
+        .write(true)
+        .open(&cdev)
+        .map_err(|e| format!("{cdev}: {e}; a process still serves the device"))?;
+    ctrl.del_dev()
+        .map(drop)
+        .map_err(|e| format!("removing ublk device {id}: {e}"))
+}
+
 /// A server that shares a mount namespace with users of its own device can deadlock when it
 /// exits (the exit unmounts, and the unmount waits for I/O only this process can serve).
-fn private_mount_namespace() -> io::Result<()> {
+///
+/// Mounts are made slaves rather than private: nothing mounted here reaches the caller, but an
+/// unmount there reaches here. With private mounts this process would keep every filesystem that
+/// existed when it started mounted after its owner unmounted it, another ublk device's included,
+/// whose data would then not be written back by that unmount.
+fn own_mount_namespace() -> io::Result<()> {
     // SAFETY: plain system calls with constant, NUL-terminated or null arguments.
     unsafe {
         if libc::unshare(libc::CLONE_NEWNS) != 0 {
@@ -85,7 +117,7 @@ fn private_mount_namespace() -> io::Result<()> {
             std::ptr::null(),
             c"/".as_ptr(),
             std::ptr::null(),
-            libc::MS_REC | libc::MS_PRIVATE,
+            libc::MS_REC | libc::MS_SLAVE,
             std::ptr::null(),
         ) != 0
         {
@@ -104,8 +136,8 @@ impl Process {
     /// those requests.
     pub fn prepare(share_mount_namespace: bool) -> Result<Self, String> {
         if !share_mount_namespace {
-            private_mount_namespace()
-                .map_err(|e| format!("private mount namespace (needs CAP_SYS_ADMIN): {e}"))?;
+            own_mount_namespace()
+                .map_err(|e| format!("own mount namespace (needs CAP_SYS_ADMIN): {e}"))?;
         }
         // Memory this process allocates while serving writeback must not wait on that writeback.
         // SAFETY: prctl with integer arguments.

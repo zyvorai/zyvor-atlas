@@ -4,6 +4,7 @@
 //! `atlas-native-ublk --endpoint https://node:7400 --volume <id>`: attaches an atlas-native block
 //! volume as `/dev/ublkbN`. Runs in the foreground until interrupted. `--check` only looks the
 //! volume up and prints what the device would be, on any OS and without privileges.
+//! `--delete-device N` removes a device left behind by a server that was killed.
 
 use std::{path::PathBuf, process::ExitCode, time::Duration};
 
@@ -25,13 +26,13 @@ struct Args {
         long,
         env = "ATLAS_NATIVE_ENDPOINTS",
         value_delimiter = ',',
-        required = true
+        required_unless_present = "delete_device"
     )]
     endpoint: Vec<String>,
     /// Volume id. Attach a volume in one place at a time: nothing in the cluster prevents a
     /// second writer.
-    #[arg(long)]
-    volume: String,
+    #[arg(long, required_unless_present = "delete_device")]
+    volume: Option<String>,
     /// File holding the API bearer token.
     #[arg(long, env = "ATLAS_NATIVE_TOKEN_FILE")]
     token_file: Option<PathBuf>,
@@ -74,13 +75,18 @@ struct Args {
     #[arg(long, default_value_t = -1, allow_hyphen_values = true,
           value_parser = clap::value_parser!(i32).range(-1..))]
     device_id: i32,
-    /// Stay in the caller's mount namespace. Mounting the device where its server can see the
-    /// mount can deadlock when the server exits.
+    /// Stay in the caller's mount namespace. A server whose exit unmounts its own device
+    /// deadlocks, which is possible when it shares the namespace the device is mounted in.
     #[arg(long)]
     share_mount_namespace: bool,
     /// Only check that the volume can be attached, print the device it would be, and exit.
     #[arg(long)]
     check: bool,
+    /// Remove ublk device N, left behind by a server that was killed, and exit. Refused while a
+    /// server still has the device.
+    #[arg(long, value_name = "N", conflicts_with_all = ["volume", "check"],
+          value_parser = clap::value_parser!(u32).range(..=i64::from(i32::MAX)))]
+    delete_device: Option<u32>,
 }
 
 fn read(path: &Option<PathBuf>, what: &str) -> Result<Option<Vec<u8>>, String> {
@@ -108,7 +114,8 @@ fn open(args: &Args) -> Result<Volume, String> {
     cfg.identity_pem = read(&args.identity_file, "identity file")?;
     cfg.request_timeout = Duration::from_secs(args.request_timeout_secs);
     let client = Client::new(cfg).map_err(|e| e.to_string())?;
-    Volume::open(client, &args.volume, volume_config(args))
+    let volume = args.volume.as_deref().ok_or("--volume is required")?;
+    Volume::open(client, volume, volume_config(args))
 }
 
 fn describe(args: &Args, volume: &Volume) -> String {
@@ -127,7 +134,12 @@ fn describe(args: &Args, volume: &Volume) -> String {
 
 #[cfg(all(feature = "ublk", target_os = "linux"))]
 fn run(args: &Args) -> Result<(), String> {
-    use atlas_native_ublk::ublk::{DeviceOptions, Process};
+    use atlas_native_ublk::ublk::{delete_device, DeviceOptions, Process};
+    if let Some(id) = args.delete_device {
+        delete_device(id)?;
+        println!("removed ublk device {id}");
+        return Ok(());
+    }
     if args.check {
         println!("{}", describe(args, &open(args)?));
         return Ok(());
@@ -151,11 +163,16 @@ fn run(args: &Args) -> Result<(), String> {
 
 #[cfg(not(all(feature = "ublk", target_os = "linux")))]
 fn run(args: &Args) -> Result<(), String> {
+    const UNSUPPORTED: &str =
+        "this build has no ublk support; rebuild on Linux with `--features ublk`";
+    if args.delete_device.is_some() {
+        return Err(UNSUPPORTED.into());
+    }
     println!("{}", describe(args, &open(args)?));
     if args.check {
         return Ok(());
     }
-    Err("this build has no ublk support; rebuild on Linux with `--features ublk`".into())
+    Err(UNSUPPORTED.into())
 }
 
 fn main() -> ExitCode {
@@ -209,6 +226,18 @@ mod tests {
     fn a_zero_io_timeout_never_gives_up() {
         let a = args(&["--io-timeout-secs", "0", "--device-id", "-1"]).unwrap();
         assert_eq!(volume_config(&a).io_timeout, None);
+    }
+
+    #[test]
+    fn removing_a_device_needs_no_cluster() {
+        let parse = |v: &[&str]| Args::try_parse_from([&["atlas-native-ublk"], v].concat());
+        let a = parse(&["--delete-device", "3"]).unwrap();
+        assert_eq!(a.delete_device, Some(3));
+        assert_eq!(a.volume, None);
+        assert!(parse(&["--endpoint", "http://x:1"]).is_err());
+        assert!(parse(&["--delete-device", "-1"]).is_err());
+        assert!(parse(&["--delete-device", "4294967295"]).is_err());
+        assert!(args(&["--delete-device", "0"]).is_err(), "with --volume");
     }
 
     #[test]
