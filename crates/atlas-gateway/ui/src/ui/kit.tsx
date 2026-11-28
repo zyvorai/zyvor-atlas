@@ -1,7 +1,7 @@
 // Copyright (c) 2026 ZyvorAI Labs Private Limited.
 // SPDX-License-Identifier: LicenseRef-Zyvor-Production-2.0
 // Atlas primitives, styled by the design system in ../design.
-import React, { useEffect, useId, useState } from "react";
+import React, { useEffect, useId, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { Loader2, X } from "lucide-react";
 import { cx } from "../lib/format";
@@ -14,6 +14,39 @@ function useEscape(active: boolean, onClose: () => void) {
     window.addEventListener("keydown", h);
     return () => window.removeEventListener("keydown", h);
   }, [active, onClose]);
+}
+
+const TABBABLE =
+  'a[href], button:not([disabled]), input:not([disabled]):not([hidden]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+/** Keyboard focus for a modal panel: move into it on open, keep Tab inside it, and hand focus back to
+ * whatever opened it on close. */
+function useModalFocus<T extends HTMLElement>(open: boolean) {
+  const ref = useRef<T>(null);
+  useEffect(() => {
+    if (!open) return;
+    const opener = document.activeElement as HTMLElement | null;
+    ref.current?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [open]);
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const root = ref.current;
+    if (e.key !== "Tab" || !root) return;
+    const items = root.querySelectorAll<HTMLElement>(TABBABLE);
+    const first = items[0];
+    const last = items[items.length - 1];
+    const at = document.activeElement;
+    if (e.shiftKey && (at === first || at === root)) {
+      e.preventDefault();
+      last?.focus();
+    } else if (!e.shiftKey && at === last) {
+      e.preventDefault();
+      first?.focus();
+    }
+  };
+  return { ref, onKeyDown, tabIndex: -1 };
 }
 
 type Variant = "primary" | "secondary" | "ghost" | "danger";
@@ -311,12 +344,14 @@ export function SlideOver({
   width?: number;
 }) {
   useEscape(open, onClose);
+  const focus = useModalFocus<HTMLDivElement>(open);
   const titleId = useId();
   if (!open) return null;
   return createPortal(
     <div className="fixed inset-0 z-50" onMouseDown={onClose}>
       <div className="at-overlay-scrim" />
       <div
+        {...focus}
         className="at-slideover"
         role="dialog"
         aria-modal="true"
