@@ -51,9 +51,13 @@ POST /api/atlas/v1/snapshots/{id}/unlock/confirm   {"proposal_id": "prp_…"}
 ```
 
 The node also accepts `POST /v1/snapshots/{id}/unlock` and `POST /v1/fs-snapshots/{id}/unlock`.
-That call is what the driver makes. Anyone who can reach the node API with its token can unlock
-without the second admin, so keep that API limited to the gateway. This is still software
-retention: it does not survive someone editing the catalog files.
+That call is what the driver makes. Anyone who can reach the node API with the `api_token_file`
+token, or with a [scoped token](NATIVE_NODE.md#api-tokens) that has `retention-unlock`, can unlock
+without the second admin: give components scoped tokens without it and keep the administrator
+token out of them. The gateway's two-admin unlock works only if its token has `retention-unlock`
+(or is the administrator's). With the API open (no token configured) anyone can unlock. This is
+still software retention: it does not survive someone editing the catalog files, or writing to the
+data nodes directly.
 
 ## 2. S3 object retention
 

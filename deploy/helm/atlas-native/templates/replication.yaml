@@ -103,7 +103,7 @@ spec:
           resources: {{- toYaml $.Values.replication.resources | nindent 12 }}
       volumes:
         - name: source-token
-          secret: { secretName: {{ include "atlas-native.tokenSecret" $ }} }
+          {{- include "atlas-native.componentToken" (list $ "replicate") | nindent 10 }}
         - name: target-token
           secret:
             secretName: {{ $target.tokenSecret }}

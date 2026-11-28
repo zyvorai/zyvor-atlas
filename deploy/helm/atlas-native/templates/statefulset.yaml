@@ -27,6 +27,10 @@ spec:
       annotations:
         # The config is mounted with subPath, which never sees ConfigMap updates: roll on change.
         checksum/config: {{ include "atlas-native.config" . | sha256sum }}
+        {{- if include "atlas-native.scopedEnabled" . }}
+        # The node reads its token list once, at startup.
+        checksum/tokens: {{ include "atlas-native.scopedTokenList" . | sha256sum }}
+        {{- end }}
         {{- with .Values.podAnnotations }}
         {{- toYaml . | nindent 8 }}
         {{- end }}
@@ -110,6 +114,10 @@ spec:
             - { name: state, mountPath: /var/lib/atlas-native }
             - { name: config, mountPath: /etc/atlas-native/node.json, subPath: node.json, readOnly: true }
             - { name: api-token, mountPath: /etc/atlas-native/api, readOnly: true }
+            {{- if include "atlas-native.scopedEnabled" . }}
+            - { name: api-tokens, mountPath: /etc/atlas-native/tokens, readOnly: true }
+            - { name: api-token-keys, mountPath: /etc/atlas-native/token-keys, readOnly: true }
+            {{- end }}
             {{- if .Values.tls.enabled }}
             - { name: tls, mountPath: /etc/atlas-native/tls, readOnly: true }
             {{- end }}
@@ -124,6 +132,12 @@ spec:
           configMap: { name: {{ $full }}-config }
         - name: api-token
           secret: { secretName: {{ include "atlas-native.tokenSecret" . }} }
+        {{- if include "atlas-native.scopedEnabled" . }}
+        - name: api-tokens
+          configMap: { name: {{ $full }}-api-tokens }
+        - name: api-token-keys
+          secret: { secretName: {{ include "atlas-native.scopedTokenSecret" . }} }
+        {{- end }}
         {{- if .Values.tls.enabled }}
         - name: tls
           secret: { secretName: {{ include "atlas-native.tlsSecret" . }} }
